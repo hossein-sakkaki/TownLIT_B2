@@ -1,0 +1,25 @@
+# Ignore virtualenv environments
+.env/
+venv/
+ENV/
+
+# Ignore Django media files
+media/
+
+# Ignore Python cache files
+__pycache__/
+*.py[cod]
+*.sqlite3
+
+# Ignore IDE/editor-specific files
+*.swp
+*.swo
+*.idea/
+.vscode/
+
+# Ignore OS-generated files
+.DS_Store
+Thumbs.db
+
+# Ignore env vars or local config
+.env

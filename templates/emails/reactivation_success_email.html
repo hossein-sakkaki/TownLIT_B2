@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Welcome Back to TownLIT!</title>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f9f9f9; padding: 20px; }
+        .container { max-width: 600px; background: #ffffff; padding: 20px; margin: auto; border-radius: 8px; box-shadow: 0px 0px 10px rgba(0,0,0,0.1); }
+        .header { font-size: 24px; font-weight: bold; text-align: center; color: #4CAF50; }
+        .content { font-size: 16px; line-height: 1.6; text-align: center; }
+        .footer { font-size: 14px; text-align: center; color: #777; margin-top: 20px; }
+        .button { display: inline-block; padding: 10px 20px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 5px; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">🎉 Welcome Back to TownLIT! 🎉</div>
+        <div class="content">
+            <p>Dear {{ user.name }},</p>
+            <p>We're thrilled to have you back! Your account has been successfully reactivated on {{ reactivated_at }}.</p>
+            <p>Click below to return to TownLIT and continue your journey with us:</p>
+            <a href="{{ site_url }}" class="button">Go to TownLIT</a>
+            <p>If you have any questions, feel free to reach out to our support team.</p>
+        </div>
+        <div class="footer">
+            &copy; {{ site_url }} | TownLIT Community
+        </div>
+    </div>
+</body>
+</html>
