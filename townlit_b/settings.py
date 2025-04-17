@@ -104,6 +104,9 @@ MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django_otp.middleware.OTPMiddleware',  # 2FA
+    
+    'townlit_b.middleware.media_headers.AddMediaCORSHeadersMiddleware',
+
 ]
 
 # To active WebSocket
@@ -115,8 +118,10 @@ CORS_ALLOW_CREDENTIALS = os.getenv('CORS_ALLOW_CREDENTIALS', 'True').lower() in 
 CORS_ALLOW_ALL_ORIGINS = True
 
 CORS_ALLOW_HEADERS = list(default_headers) + [
+    'Range',
     'x-device-id',
 ]
+CORS_EXPOSE_HEADERS = ['Content-Range', 'Accept-Ranges']
 
 # Cookies setting ----------------------------------------------------------------------
 # SESSION_COOKIE_SAMESITE = None
