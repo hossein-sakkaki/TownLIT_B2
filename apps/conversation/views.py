@@ -627,7 +627,7 @@ class MessageViewSet(viewsets.ModelViewSet):
     def send_message(self, request):
         dialogue_id = request.data.get('dialogue_id')
         is_encrypted = request.data.get('is_encrypted', False)
-        encrypted_contents = request.data.get('encrypted_contents', [])  # 🆕 new list
+        encrypted_contents = request.data.get('encrypted_contents', []) 
         user = request.user
         dialogue = get_object_or_404(Dialogue, id=dialogue_id, participants=user)
 
@@ -646,11 +646,15 @@ class MessageViewSet(viewsets.ModelViewSet):
             content = request.data.get('content', '').strip()
             if not content:
                 return Response({'error': 'Message content is required for group chat.'}, status=400)
-
+            
+            # content_base64 = base64.b64encode(content.encode('utf-8'))
+            plain_text = content.strip()
+            base64_str = base64.b64encode(plain_text.encode("utf-8")).decode("utf-8")  # str
+            content_bytes = base64_str.encode("utf-8")
             message = Message.objects.create(
                 dialogue=dialogue,
                 sender=user,
-                content_encrypted=content.encode('utf-8'),
+                content_encrypted=content_bytes,
                 is_encrypted=False
             )
 

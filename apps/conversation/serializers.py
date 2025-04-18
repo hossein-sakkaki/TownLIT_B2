@@ -137,14 +137,21 @@ class MessageSerializer(serializers.ModelSerializer):
             'timestamp': {'read_only': True},
             'is_encrypted': {'read_only': True},
         }
-
+            
     def get_content_encrypted(self, obj):
         request = self.context.get("request")
         device_id = self.context.get("device_id") or (request.query_params.get("device_id") if request else None)
 
         if not obj.is_encrypted:
-            return base64.b64encode(obj.content_encrypted).decode("utf-8") if obj.content_encrypted else None
+            if obj.content_encrypted:
+                try:
+                    # ✅ تبدیل Binary → UTF-8 (اگر پیام گروهی باشد)
+                    return base64.b64decode(obj.content_encrypted).decode("utf-8")
+                except Exception as e:
+                    return "⚠️ Failed to decode content"
+            return None
 
+        # پیام رمزنگاری شده:
         if not device_id:
             return None
 
@@ -153,7 +160,6 @@ class MessageSerializer(serializers.ModelSerializer):
             return encryption.encrypted_content
         else:
             return base64.b64encode(b"[Encrypted]").decode("utf-8")
-
 
     def get_encrypted_for_device(self, obj):
         return self.context.get("device_id")

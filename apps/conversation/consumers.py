@@ -1,6 +1,7 @@
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from asgiref.sync import sync_to_async
 import json
+import base64
 from datetime import datetime
 from apps.conversation.models import Message, Dialogue, MessageEncryption
 from apps.accounts.models import UserDeviceKey
@@ -353,20 +354,9 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
                 await self.handle_typing_status(data)
                 return
             
-            
-            
-            
             if data.get("type") == "chat_message":
                 await self.handle_message(data)
-                return
-
-            # Message Manage
-            # if 'message' in data:
-            #     await self.handle_message(data)
-            #     return
-            
-            
-            
+                return            
             
             # File Manage
             if data.get("type") == "file_message":
@@ -481,10 +471,7 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
 
         try:
             dialogue = await sync_to_async(Dialogue.objects.get)(id=dialogue_id)
-
-            # 📝 ذخیره پیام
             if is_encrypted:
-                # پیام خصوصی → مقدار جعلی برای وابستگی
                 message = await sync_to_async(Message.objects.create)(
                     dialogue=dialogue,
                     sender=self.user,
@@ -492,12 +479,15 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
                     is_encrypted=True
                 )
             else:
-                # پیام گروهی → متن واقعی
+                plain_message = encrypted_contents[0].get("encrypted_content", "").strip()
+                base64_str = base64.b64encode(plain_message.encode("utf-8")).decode("utf-8")
+                content_bytes = base64_str.encode("utf-8")
+                
                 plain_message = encrypted_contents[0].get("encrypted_content", "")
                 message = await sync_to_async(Message.objects.create)(
                     dialogue=dialogue,
                     sender=self.user,
-                    content_encrypted=plain_message.encode("utf-8"),
+                    content_encrypted=content_bytes,
                     is_encrypted=False
                 )
 
