@@ -35,18 +35,3 @@ class IsSanctuaryVerifiedMember(permissions.BasePermission):
     def has_permission(self, request, view):
         return request.user.is_verified_identity and request.user.is_sanctuary_participant
 
-
-# Conversation Permission ----------------------------------------------------------------
-class ConversationAccessPermission(permissions.BasePermission):
-    """
-    Custom permission to check if the user has access to the conversation system via the secure PIN cookie.
-    """
-    def has_permission(self, request, view):
-        return request.COOKIES.get("conversation_access") == "granted"
-    
-
-class IsDialogueParticipant(permissions.BasePermission):
-    """ Custom permission to allow only dialogue participants to access messages. """
-
-    def has_object_permission(self, request, view, obj):
-        return request.user in obj.dialogue.participants.all()

@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 cipher_suite = Fernet(settings.FERNET_KEY)
 
 # AUTH View  --------------------------------------------------------------------
-class AuthViewSet(viewsets.ViewSet):    
+class AuthViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['post'], permission_classes=[AllowAny])
     def register(self, request):  # Register
         try:

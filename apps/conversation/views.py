@@ -4,8 +4,9 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
-from django.db.models import Q
+# from django.db.models import Q
 from django.utils import timezone
+from datetime import timedelta
 from django.shortcuts import get_object_or_404
 from django.core.files.base import ContentFile
 import os
@@ -29,21 +30,18 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from .models import Dialogue, Message, MessageEncryption, UserDialogueMarker, DialogueParticipant, DialogueKey
 from .serializers import DialogueSerializer, MessageSerializer, UserDialogueMarkerSerializer, DialogueParticipantSerializer
+from .permissions import ConversationAccessPermission, IsDialogueParticipant
+from .decorators import require_conversation_access
 from apps.accounts.serializers import SimpleCustomUserSerializer
 from apps.accounts.models import UserDeviceKey
 from apps.profiles.models import Fellowship
-from apps.main.permissions import ConversationAccessPermission, IsDialogueParticipant
 from apps.conversation.utils import get_websocket_url
 from utils import send_email
 from common.mime_type_validator import validate_file_type, is_unsafe_file
 from django.template.loader import render_to_string
 
-
 from django.contrib.auth import get_user_model
-
 CustomUser = get_user_model()
-
-
 
 def send_system_message(dialogue, sender, system_event, content):
     system_message = Message.objects.create(
@@ -87,6 +85,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
         return Dialogue.objects.filter(participants=self.request.user).exclude(deleted_by_users=self.request.user)
     
     @action(detail=False, methods=['post'], url_path='create-dialogue', permission_classes=[IsAuthenticated])
+    @require_conversation_access
     def create_dialogue(self, request):
         recipient_id = request.data.get('recipient_id')
 
@@ -109,6 +108,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
         return Response({'dialogue_id': dialogue.id, 'message': 'New dialogue created.'}, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=['post'], url_path='create-group', permission_classes=[IsAuthenticated])
+    @require_conversation_access
     def create_group(self, request):
         data = request.data
         group_name = data.get('name')
@@ -129,6 +129,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
 
     # Update Group Image Action
     @action(detail=True, methods=["post"], url_path="update-group-image", permission_classes=[IsAuthenticated])
+    @require_conversation_access
     def update_group_image(self, request, pk=None):
         dialogue = self.get_object()
 
@@ -152,6 +153,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
         return Response({"detail": "Group image updated successfully."}, status=status.HTTP_200_OK)
     
     @action(detail=True, methods=['post'], url_path='smart-delete', permission_classes=[IsAuthenticated])
+    @require_conversation_access
     def smart_delete_dialogue(self, request, pk=None):
         user = request.user
         dialogue = get_object_or_404(Dialogue, pk=pk, participants=user)
@@ -184,6 +186,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
         return Response({'error': 'Only the founder can delete the group. To leave, use the leave action.'}, status=status.HTTP_403_FORBIDDEN)
 
     @action(detail=True, methods=['post'], url_path='add-participant', permission_classes=[IsAuthenticated])
+    @require_conversation_access
     def add_participant(self, request, pk=None):
         dialogue = get_object_or_404(Dialogue, pk=pk, is_group=True)
         participant_id = request.data.get('participant_id')
@@ -235,6 +238,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
         return Response({'message': f'{participant.username} added to the group.'}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], url_path='remove-participant', permission_classes=[IsAuthenticated])
+    @require_conversation_access
     def remove_participant(self, request, pk=None):
         dialogue = get_object_or_404(Dialogue, pk=pk, is_group=True)
         participant_id = request.data.get('participant_id')
@@ -278,6 +282,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
         return Response({'message': f'{participant.username} removed from the group.'}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['get'], url_path='participants', permission_classes=[IsAuthenticated])
+    @require_conversation_access
     def get_group_participants(self, request, pk=None):
         dialogue = get_object_or_404(Dialogue, pk=pk, is_group=True)
         participants = DialogueParticipant.objects.filter(dialogue=dialogue).select_related('user')
@@ -289,6 +294,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
     @action(detail=True, methods=['post'], url_path='promote-to-elder', permission_classes=[IsAuthenticated])
+    @require_conversation_access
     def promote_to_elder(self, request, pk=None):
         dialogue = get_object_or_404(Dialogue, pk=pk, is_group=True)
         user_id = request.data.get('user_id')
@@ -306,6 +312,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
         return Response({'message': 'User promoted to Elder.'}, status=200)
 
     @action(detail=True, methods=['post'], url_path='demote-to-participant', permission_classes=[IsAuthenticated])
+    @require_conversation_access
     def demote_to_participant(self, request, pk=None):
         dialogue = get_object_or_404(Dialogue, pk=pk, is_group=True)
         user_id = request.data.get('user_id')
@@ -328,6 +335,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
 
 
     @action(detail=True, methods=['post'], url_path='resign-elder-role', permission_classes=[IsAuthenticated])
+    @require_conversation_access
     def resign_elder_role(self, request, pk=None):
         dialogue = get_object_or_404(Dialogue, pk=pk, is_group=True)
         user = request.user
@@ -347,6 +355,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
 
 
     @action(detail=True, methods=['post'], url_path='leave-group', permission_classes=[IsAuthenticated])
+    @require_conversation_access
     def leave_group(self, request, pk=None):
         user = request.user
         dialogue = get_object_or_404(Dialogue, pk=pk, is_group=True)
@@ -385,6 +394,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
 
             
     @action(detail=True, methods=['post'], url_path='transfer-founder', permission_classes=[IsAuthenticated])
+    @require_conversation_access
     def transfer_founder(self, request, pk=None):
         dialogue = get_object_or_404(Dialogue, pk=pk, is_group=True)
 
@@ -423,7 +433,6 @@ class DialogueViewSet(viewsets.ModelViewSet):
         return Response({'message': 'Founder role transferred successfully. You have left the group.'}, status=200)
 
 
-
     @action(detail=False, methods=['post'], url_path='enter-chat', permission_classes=[IsAuthenticated])
     def enter_chat(self, request):
         user = request.user
@@ -435,6 +444,9 @@ class DialogueViewSet(viewsets.ModelViewSet):
             dialogues = Dialogue.objects.filter(participants=user).exclude(deleted_by_users=user)
             serializer = DialogueSerializer(dialogues, many=True, context={"request": request, "device_id": device_id})
             return Response({'status': 'Access granted', 'dialogues': serializer.data}, status=status.HTTP_200_OK)
+        
+        if user.pin_security_enabled and not entered_pin:
+            return Response({'error': 'PIN is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
         # مقداردهی اولیه `response`
         response_data = {'status': 'Access granted'}
@@ -443,12 +455,15 @@ class DialogueViewSet(viewsets.ModelViewSet):
         # بررسی اعتبار PIN
         if user.verify_access_pin(entered_pin) or user.verify_delete_pin(entered_pin):
             # اگر `delete_pin` وارد شده باشد، پیام‌های حساس حذف شوند
+            
             if user.verify_delete_pin(entered_pin):
-                # حذف سریع پیام‌های `is_sensitive`
-                Dialogue.objects.filter(
+                sensitive_dialogues = Dialogue.objects.filter(
                     participants=user,
-                    userdialoguemarker__is_sensitive=True
-                ).update(deleted_by_users=user)
+                    marked_users__is_sensitive=True
+                ).distinct()
+
+                for dialogue in sensitive_dialogues:
+                    dialogue.deleted_by_users.add(user)
 
                 # 🔹 اطلاع‌رسانی به دوستان معتمد
                 confidants = Fellowship.objects.filter(from_user=user, fellowship_type='Confidant', status='Accepted')
@@ -460,35 +475,43 @@ class DialogueViewSet(viewsets.ModelViewSet):
                         'profile_link': f'/profiles/{user.id}/'
                     })
                     send_email(subject, "", email_body, [confidant_user.email])
-                    
-            response.set_cookie(
-                "conversation_access",
-                "granted",
-                max_age=3600,
-                httponly=True,
-                secure=True,
-                samesite="Lax",
-            )
-
         else:
             return Response({'error': 'Wrong PIN! Please retry.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        # ایجاد کوکی دسترسی
+        max_age = 10 * 60
+        expires = timezone.now() + timedelta(seconds=max_age)
 
         dialogues = Dialogue.objects.filter(participants=user).exclude(deleted_by_users=user)
         serializer = DialogueSerializer(dialogues, many=True, context={"request": request, "device_id": device_id})
-        response_data['dialogues'] = serializer.data
-        response.data = response_data
+        response_data = {
+            'status': 'Access granted',
+            'dialogues': serializer.data
+        }
+
+        response = Response(response_data, status=status.HTTP_200_OK)
+        response.set_cookie(
+            "conversation_access",
+            "granted",
+            max_age=max_age,
+            httponly=True,
+            secure=True,
+            samesite="Lax",
+        )
         return response
-
-
 
     @action(detail=False, methods=['post'], url_path='logout-conversation', permission_classes=[IsAuthenticated])
     def logout_conversation(self, request):
         response = Response({"message": "Conversation access revoked"}, status=status.HTTP_200_OK)
-        response.delete_cookie("conversation_access")
+        response.delete_cookie(
+            "conversation_access",
+            path="/",
+            samesite="Lax",
+        )
         return response
     
-    
     @action(detail=False, methods=["get"], url_path="dialogue-keys", permission_classes=[IsAuthenticated])
+    @require_conversation_access
     def get_dialogue_keys(self, request):
         dialogue_id = request.query_params.get("dialogue_id")
         device_id = request.query_params.get("device_id")  # optional
@@ -519,6 +542,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
 
     # Get Last Seen Users 
     @action(detail=True, methods=['get'], url_path='last-seen', permission_classes=[IsAuthenticated])
+    @require_conversation_access
     def get_last_seen_view(self, request, pk=None):
         dialogue = get_object_or_404(Dialogue, pk=pk)
 
@@ -568,6 +592,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
 
     # Get Unread Counts 
     @action(detail=False, methods=["get"], url_path="unread-counts", permission_classes=[IsAuthenticated])
+    @require_conversation_access
     def get_unread_counts(self, request):
         user = request.user
         dialogues = Dialogue.objects.filter(participants=user)
@@ -589,17 +614,15 @@ class DialogueViewSet(viewsets.ModelViewSet):
 
 # MESSAGE VIEWSET -------------------------------------------------------------------------
 class MessageViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, ConversationAccessPermission, IsDialogueParticipant]
     queryset = Message.objects.all()
-    # permission_classes = [IsAuthenticated, ConversationAccessPermission]
-    # permission_classes = [IsAuthenticated, ConversationAccessPermission, IsDialogueParticipant]
     
     def list(self, request, dialogue_pk=None):
         """ Retrieve messages for a dialogue with pagination """
         dialogue_pk = request.query_params.get("dialogue_pk")
         offset = int(request.query_params.get("offset", 0))
         limit = int(request.query_params.get("limit", 20))
-        device_id = request.query_params.get("device_id")  # ✅ گرفتن device_id
+        device_id = request.query_params.get("device_id")
 
         dialogue = get_object_or_404(Dialogue, pk=dialogue_pk, participants=request.user)
 
@@ -1090,7 +1113,7 @@ class MessageViewSet(viewsets.ModelViewSet):
 
 # USER DIALOGUE MARKER VIEWSET -------------------------------------------------------------------------
 class UserDialogueMarkerViewSet(viewsets.ViewSet):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, ConversationAccessPermission]
 
     def list(self, request):
         markers = UserDialogueMarker.objects.filter(user=request.user)
