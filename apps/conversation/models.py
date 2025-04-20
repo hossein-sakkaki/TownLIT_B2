@@ -323,7 +323,7 @@ class UserDialogueMarker(models.Model):
 
     is_sensitive = models.BooleanField(default=False)
     delete_policy = models.CharField(max_length=50, choices=DELETE_POLICY_CHOICES, default='SOFT_DELETE')
-    last_typing_at = models.DateTimeField(null=True, blank=True, verbose_name="Last Typing At")  # ✅ اضافه شد
+    last_typing_at = models.DateTimeField(null=True, blank=True, verbose_name="Last Typing At")
 
 
     class Meta:

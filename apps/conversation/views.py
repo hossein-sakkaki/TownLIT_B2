@@ -439,7 +439,6 @@ class DialogueViewSet(viewsets.ModelViewSet):
         entered_pin = request.data.get("pin")
         device_id = request.data.get("device_id") 
 
-        # اگر کاربر نیازی به PIN نداشته باشد، دسترسی بدون ورود PIN داده شود
         if not (user.is_member and user.pin_security_enabled):
             dialogues = Dialogue.objects.filter(participants=user).exclude(deleted_by_users=user)
             serializer = DialogueSerializer(dialogues, many=True, context={"request": request, "device_id": device_id})
@@ -448,24 +447,26 @@ class DialogueViewSet(viewsets.ModelViewSet):
         if user.pin_security_enabled and not entered_pin:
             return Response({'error': 'PIN is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # مقداردهی اولیه `response`
-        response_data = {'status': 'Access granted'}
-        response = Response(response_data, status=status.HTTP_200_OK)
-
-        # بررسی اعتبار PIN
         if user.verify_access_pin(entered_pin) or user.verify_delete_pin(entered_pin):
-            # اگر `delete_pin` وارد شده باشد، پیام‌های حساس حذف شوند
-            
             if user.verify_delete_pin(entered_pin):
-                sensitive_dialogues = Dialogue.objects.filter(
-                    participants=user,
-                    marked_users__is_sensitive=True
-                ).distinct()
+                # 🔐 پیدا کردن دیالوگ‌هایی که برای کاربر با حساسیت علامت‌گذاری شده‌اند
+                sensitive_markers = UserDialogueMarker.objects.filter(user=user, is_sensitive=True).select_related('dialogue')
 
-                for dialogue in sensitive_dialogues:
+                for marker in sensitive_markers:
+                    dialogue = marker.dialogue
+                    other = dialogue.participants.exclude(id=user.id).first()
+
+                    # فقط برای چت دو نفره بررسی شود
+                    if not dialogue.is_group and other:
+                        if dialogue.deleted_by_users.filter(id=other.id).exists():
+                            # 🔥 Hard delete کامل
+                            dialogue.messages.all().delete()
+                            dialogue.delete()
+                            continue  # دیالوگ به صورت کامل حذف شده
+                    # ❗ Soft delete فقط برای این کاربر
                     dialogue.deleted_by_users.add(user)
 
-                # 🔹 اطلاع‌رسانی به دوستان معتمد
+                # 🔔 اطلاع‌رسانی به دوستان معتمد
                 confidants = Fellowship.objects.filter(from_user=user, fellowship_type='Confidant', status='Accepted')
                 for confidant in confidants:
                     confidant_user = confidant.to_user
@@ -478,15 +479,16 @@ class DialogueViewSet(viewsets.ModelViewSet):
         else:
             return Response({'error': 'Wrong PIN! Please retry.'}, status=status.HTTP_403_FORBIDDEN)
         
-        # ایجاد کوکی دسترسی
-        max_age = 10 * 60
+        # 🕒 ایجاد کوکی دسترسی
+        max_age = 5 * 60
         expires = timezone.now() + timedelta(seconds=max_age)
 
         dialogues = Dialogue.objects.filter(participants=user).exclude(deleted_by_users=user)
         serializer = DialogueSerializer(dialogues, many=True, context={"request": request, "device_id": device_id})
         response_data = {
             'status': 'Access granted',
-            'dialogues': serializer.data
+            'dialogues': serializer.data,
+            'expires_at': expires.isoformat()
         }
 
         response = Response(response_data, status=status.HTTP_200_OK)
@@ -499,6 +501,25 @@ class DialogueViewSet(viewsets.ModelViewSet):
             samesite="Lax",
         )
         return response
+
+        
+    @action(detail=False, methods=['get'], url_path='check-access', permission_classes=[IsAuthenticated])
+    def check_access(self, request):
+        user = request.user
+        if not getattr(user, "pin_security_enabled", False):
+            return Response({"access_granted": True, "expires_at": None})
+
+        has_cookie = request.COOKIES.get("conversation_access") == "granted"        
+        if has_cookie:
+            max_age = 5 * 60
+            approx_exp = timezone.now() + timedelta(seconds=max_age)
+            return Response({
+                "access_granted": True,
+                "expires_at": approx_exp.isoformat()
+            })
+        
+        return Response({"access_granted": False})
+
 
     @action(detail=False, methods=['post'], url_path='logout-conversation', permission_classes=[IsAuthenticated])
     def logout_conversation(self, request):

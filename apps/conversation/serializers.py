@@ -41,11 +41,15 @@ class DialogueSerializer(serializers.ModelSerializer):
     group_image = serializers.ImageField(required=False, allow_null=True)
     my_role = serializers.SerializerMethodField()
 
+    is_sensitive = serializers.SerializerMethodField()
+    marker_id = serializers.SerializerMethodField()
+    
     class Meta:
         model = Dialogue
         fields = [
             'id', 'name', 'group_image', 'participants', 'chat_partner', 'created_at', 'is_group', 'last_message',
-            'participants_roles', 'keys', 'is_encrypted', 'websocket_url', 'my_role'
+            'participants_roles', 'keys', 'is_encrypted', 'websocket_url', 'my_role',
+            'is_sensitive', 'marker_id'
         ]
 
     def get_websocket_url(self, obj):
@@ -106,6 +110,21 @@ class DialogueSerializer(serializers.ModelSerializer):
             role_obj = obj.participants_roles.filter(user=user).first()
             return role_obj.role if role_obj else None
         return None
+
+    def get_is_sensitive(self, obj):
+        request = self.context.get('request')
+        if not request:
+            return False
+        marker = obj.marked_users.filter(user=request.user).first()
+        return marker.is_sensitive if marker else False
+
+    def get_marker_id(self, obj):
+        request = self.context.get('request')
+        if not request:
+            return None
+        marker = obj.marked_users.filter(user=request.user).first()
+        return marker.id if marker else None
+
         
 
 # Message Serializer -------------------------------------------------------------------
