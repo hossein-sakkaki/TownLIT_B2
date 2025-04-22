@@ -10,7 +10,6 @@ import asyncio
 from django.utils import timezone
 from django.utils.timesince import timesince
 from .utils import get_message_content
-from django.db import transaction
 from services.redis_online_manager import (
     set_user_online, set_user_offline, 
     get_all_online_users, get_online_status_for_users,
@@ -901,12 +900,15 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
                     encrypted_content=encrypted_content
                 )
 
-        else:
-            # پیام غیررمزنگاری‌شده (گروهی)
+        else:            
             new_content = data.get("new_content", "").strip()
             if not new_content:
                 return
-            await sync_to_async(setattr)(message, "content_encrypted", new_content.encode())
+
+            base64_str = base64.b64encode(new_content.encode("utf-8")).decode("utf-8")
+            content_bytes = base64_str.encode("utf-8")
+            await sync_to_async(setattr)(message, "content_encrypted", content_bytes)
+
             await sync_to_async(setattr)(message, "is_edited", True)
             await sync_to_async(setattr)(message, "edited_at", now)
             await sync_to_async(setattr)(message, "is_encrypted", False)

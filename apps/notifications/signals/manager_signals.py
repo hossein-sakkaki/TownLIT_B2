@@ -5,7 +5,7 @@ from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from django.urls import reverse
 from apps.notifications.models import Notification
-from utils import send_push_notification
+from utils.common.utils import send_push_notification
 from apps.profilesOrg.models import OrganizationManager
 
 # Standard Notification for adding a new manager

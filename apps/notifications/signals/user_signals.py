@@ -5,7 +5,7 @@ from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from django.urls import reverse
 from apps.notifications.models import UserNotificationPreference, NOTIFICATION_TYPES
-from utils import send_push_notification
+from utils.common.utils import send_push_notification
 from django.contrib.auth import get_user_model
 
 CustomUser = get_user_model()

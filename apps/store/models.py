@@ -2,7 +2,7 @@ from django.db import models
 from django.utils import timezone
 from uuid import uuid4
 from apps.accounts.models import Address
-from utils import FileUpload, SlugMixin
+from utils.common.utils import FileUpload, SlugMixin
 from apps.profilesOrg.models import Organization
 from apps.products.models import Product
 from common.validators import (

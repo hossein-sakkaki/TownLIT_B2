@@ -6,7 +6,7 @@ from asgiref.sync import async_to_sync
 from django.urls import reverse
 from apps.notifications.models import Notification
 from apps.posts.models import Reaction
-from utils import send_push_notification
+from utils.common.utils import send_push_notification
 import logging
 
 logger = logging.getLogger(__name__)

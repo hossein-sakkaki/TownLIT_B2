@@ -4,17 +4,12 @@ from django.utils import timezone
 from django.conf import settings
 
 from cryptography.hazmat.primitives.asymmetric import padding
-from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 import os
 import uuid
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-# from utils import FileUpload
 from apps.config.conversation_constants import (
     DELETE_POLICY_CHOICES, MESSAGE_POLICY_CHOICES, KEEP, 
     GROUP_ROLE_CHOICES, PARTICIPANT, SYSTEM_MESSAGE_EVENT_CHOICES,
@@ -26,7 +21,7 @@ from common.validators import (
 
 def get_upload_path(category, file_type, sub_folder):
     """ Import FileUpload dynamically to avoid circular import issues. """
-    from utils import FileUpload  # 🔥 Import inside function to break circular import
+    from utils.common.utils import FileUpload
     return FileUpload(category, file_type, sub_folder).dir_upload
 
 
@@ -92,34 +87,6 @@ class Dialogue(models.Model):
         if self.is_group:
             return f"Group: {self.name} with {self.participants.count()} participants"
         return f"Dialogue between: {', '.join([user.username for user in self.participants.all()])}"
-
-
-# DIALOGUE KEYS Model -------------------------------------------------------------------------
-class DialogueKey(models.Model):
-    dialogue = models.ForeignKey(Dialogue, on_delete=models.CASCADE, related_name="keys")
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="user_keys")
-    public_key = models.BinaryField(blank=True, null=True)
-    last_updated = models.DateTimeField(auto_now=True)
-    rsa_used = models.BooleanField(default=False, verbose_name="RSA Used in This Chat")
-
-
-    def save_public_key(self, public_key):
-        """ Store the public key in binary format """
-        if public_key:
-            self.public_key = public_key.public_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PublicFormat.SubjectPublicKeyInfo
-            )
-            self.save()
-
-    def get_public_key(self):
-        """ Retrieve the public key """
-        if not self.public_key:
-            return None
-        return serialization.load_pem_public_key(self.public_key, backend=default_backend())
-
-    def has_valid_key(self):
-        return self.public_key is not None
 
 
 # DIALOGUE PARTICIPANT Model -------------------------------------------------------------------------

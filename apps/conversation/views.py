@@ -4,12 +4,9 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
-# from django.db.models import Q
 from django.utils import timezone
 from datetime import timedelta
 from django.shortcuts import get_object_or_404
-from django.core.files.base import ContentFile
-import os
 import base64
 
 
@@ -22,34 +19,31 @@ from django.utils.timesince import timesince
 from rest_framework.renderers import JSONRenderer
 import json
 
-from cryptography.hazmat.primitives.asymmetric import padding
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-
-from .models import Dialogue, Message, MessageEncryption, UserDialogueMarker, DialogueParticipant, DialogueKey
+from .models import Dialogue, Message, MessageEncryption, UserDialogueMarker, DialogueParticipant
 from .serializers import DialogueSerializer, MessageSerializer, UserDialogueMarkerSerializer, DialogueParticipantSerializer
 from .permissions import ConversationAccessPermission, IsDialogueParticipant
 from .decorators import require_conversation_access
 from apps.accounts.serializers import SimpleCustomUserSerializer
 from apps.accounts.models import UserDeviceKey
-from apps.profiles.models import Fellowship
 from apps.conversation.utils import get_websocket_url
-from utils import send_email
+from utils.security.dialogue_cleanup import handle_sensitive_dialogue_cleanup
 from common.mime_type_validator import validate_file_type, is_unsafe_file
-from django.template.loader import render_to_string
 
 from django.contrib.auth import get_user_model
 CustomUser = get_user_model()
 
 def send_system_message(dialogue, sender, system_event, content):
+    plain_text = content.strip()
+    base64_str = base64.b64encode(plain_text.encode("utf-8")).decode("utf-8")
+    content_bytes = base64_str.encode("utf-8")
+
     system_message = Message.objects.create(
         dialogue=dialogue,
         sender=sender,
-        content_encrypted=content.encode(),
+        content_encrypted=content_bytes,
         is_system=True,
-        system_event=system_event
+        system_event=system_event,
+        is_encrypted=False
     )
 
     dialogue.last_message = system_message
@@ -63,14 +57,15 @@ def send_system_message(dialogue, sender, system_event, content):
             "event_type": "system_message",
             "dialogue_id": dialogue.id,
             "message_id": system_message.id,
-            "content": content,
+            "content": base64_str,
             "sender": {
                 "id": sender.id,
                 "username": sender.username,
             },
             "timestamp": system_message.timestamp.isoformat(),
             "is_system": True,
-            "system_event": system_event
+            "system_event": system_event,
+            "is_encrypted": False
         }
     )
 
@@ -82,30 +77,54 @@ class DialogueViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
-        return Dialogue.objects.filter(participants=self.request.user).exclude(deleted_by_users=self.request.user)
+        return Dialogue.objects.filter(
+            participants=self.request.user
+        ).exclude(
+            deleted_by_users=self.request.user
+        ).prefetch_related('participants', 'participants_roles', 'marked_users')
+        
     
     @action(detail=False, methods=['post'], url_path='create-dialogue', permission_classes=[IsAuthenticated])
     @require_conversation_access
     def create_dialogue(self, request):
         recipient_id = request.data.get('recipient_id')
-
         if not recipient_id:
             return Response({'error': 'Recipient ID is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
         recipient = get_object_or_404(CustomUser, id=recipient_id)
+
+        # اگر دیالوگ قبلاً وجود دارد، همان را برگردان
         dialogue = Dialogue.objects.filter(
             participants=request.user,
             is_group=False
         ).filter(participants=recipient).first()
 
         if dialogue:
-            return Response({'dialogue_id': dialogue.id, 'message': 'Dialogue already exists.'}, status=status.HTTP_200_OK)
+            if dialogue.deleted_by_users.filter(id=request.user.id).exists():
+                dialogue.deleted_by_users.remove(request.user)
+                
+            serializer = DialogueSerializer(dialogue, context={"request": request})
+            return Response({
+                'dialogue': serializer.data,
+                'message': 'Dialogue already exists.'
+            }, status=status.HTTP_200_OK)
 
+        # ایجاد دیالوگ جدید
         dialogue = Dialogue.objects.create(is_group=False)
         dialogue.participants.add(request.user, recipient)
+
+        # اضافه کردن نقش‌ها
         DialogueParticipant.objects.create(dialogue=dialogue, user=request.user, role='participant')
         DialogueParticipant.objects.create(dialogue=dialogue, user=recipient, role='participant')
-        return Response({'dialogue_id': dialogue.id, 'message': 'New dialogue created.'}, status=status.HTTP_201_CREATED)
+
+        # سریال‌سازی و پاسخ کامل        
+        dialogue = Dialogue.objects.prefetch_related('participants').get(pk=dialogue.pk)
+        serializer = DialogueSerializer(dialogue, context={"request": request})
+        return Response({
+            'dialogue': serializer.data,
+            'message': 'New dialogue created.'
+        }, status=status.HTTP_201_CREATED)
+
 
     @action(detail=False, methods=['post'], url_path='create-group', permission_classes=[IsAuthenticated])
     @require_conversation_access
@@ -228,13 +247,12 @@ class DialogueViewSet(viewsets.ModelViewSet):
                 "dialogue": parsed_data
             }
         )
-
-        # System message
         send_system_message(dialogue, request.user, 'joined', f"{participant.username} joined the group.")
 
         # Restore if previously deleted
         if dialogue.deleted_by_users.filter(id=participant.id).exists():
             dialogue.deleted_by_users.remove(participant)
+    
         return Response({'message': f'{participant.username} added to the group.'}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], url_path='remove-participant', permission_classes=[IsAuthenticated])
@@ -449,33 +467,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
 
         if user.verify_access_pin(entered_pin) or user.verify_delete_pin(entered_pin):
             if user.verify_delete_pin(entered_pin):
-                # 🔐 پیدا کردن دیالوگ‌هایی که برای کاربر با حساسیت علامت‌گذاری شده‌اند
-                sensitive_markers = UserDialogueMarker.objects.filter(user=user, is_sensitive=True).select_related('dialogue')
-
-                for marker in sensitive_markers:
-                    dialogue = marker.dialogue
-                    other = dialogue.participants.exclude(id=user.id).first()
-
-                    # فقط برای چت دو نفره بررسی شود
-                    if not dialogue.is_group and other:
-                        if dialogue.deleted_by_users.filter(id=other.id).exists():
-                            # 🔥 Hard delete کامل
-                            dialogue.messages.all().delete()
-                            dialogue.delete()
-                            continue  # دیالوگ به صورت کامل حذف شده
-                    # ❗ Soft delete فقط برای این کاربر
-                    dialogue.deleted_by_users.add(user)
-
-                # 🔔 اطلاع‌رسانی به دوستان معتمد
-                confidants = Fellowship.objects.filter(from_user=user, fellowship_type='Confidant', status='Accepted')
-                for confidant in confidants:
-                    confidant_user = confidant.to_user
-                    subject = "Security Alert: Destructive PIN Used"
-                    email_body = render_to_string('emails/security_alert.html', {
-                        'username': user.username,
-                        'profile_link': f'/profiles/{user.id}/'
-                    })
-                    send_email(subject, "", email_body, [confidant_user.email])
+                handle_sensitive_dialogue_cleanup(user)
         else:
             return Response({'error': 'Wrong PIN! Please retry.'}, status=status.HTTP_403_FORBIDDEN)
         
@@ -691,7 +683,6 @@ class MessageViewSet(viewsets.ModelViewSet):
             if not content:
                 return Response({'error': 'Message content is required for group chat.'}, status=400)
             
-            # content_base64 = base64.b64encode(content.encode('utf-8'))
             plain_text = content.strip()
             base64_str = base64.b64encode(plain_text.encode("utf-8")).decode("utf-8")  # str
             content_bytes = base64_str.encode("utf-8")
@@ -809,42 +800,6 @@ class MessageViewSet(viewsets.ModelViewSet):
                 except Exception as e:
                     print("❌ Failed to parse/store per-device keys:", e)
 
-        # 3. رمزنگاری fallback در سرور (در صورت فقدان کلید)
-        else:
-            
-            receiver_key = DialogueKey.objects.filter(dialogue=dialogue).exclude(user=user).first()
-            if not receiver_key or not receiver_key.public_key:
-                return Response({'error': 'Recipient has no encryption key.'}, status=400)
-
-            file_bytes = uploaded_file.read()
-            aes_key = os.urandom(32)
-            nonce = os.urandom(12)
-            aesgcm = AESGCM(aes_key)
-            encrypted_file = aesgcm.encrypt(nonce, file_bytes, None)
-
-            receiver_public_key = receiver_key.get_public_key()
-            encrypted_aes_key = receiver_public_key.encrypt(
-                aes_key + nonce,
-                padding.OAEP(
-                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                    algorithm=hashes.SHA256(),
-                    label=None
-                )
-            )
-
-            temp_file = ContentFile(encrypted_file)
-            temp_file.name = f"encrypted_{uploaded_file.name}"
-
-            message = Message.objects.create(
-                dialogue=dialogue,
-                sender=user,
-                is_encrypted=True,
-                is_encrypted_file=True,
-                encrypted_for_device=str(receiver_key.user.id),
-                aes_key_encrypted=encrypted_aes_key,
-                **{field_name: temp_file},
-            )
-
         file_url = request.build_absolute_uri(getattr(message, field_name).url)
         return Response({
             "file_url": file_url,
@@ -915,9 +870,6 @@ class MessageViewSet(viewsets.ModelViewSet):
                             status=status.HTTP_403_FORBIDDEN)
 
         dialogue = message.dialogue
-        user = request.user
-
-        is_encrypted = request.data.get('is_encrypted', False)
         encrypted_contents = request.data.get('encrypted_contents', [])
         new_content = None  # will set if group
 
@@ -926,7 +878,11 @@ class MessageViewSet(viewsets.ModelViewSet):
             if not new_content:
                 return Response({'error': 'Message content cannot be empty.'}, status=status.HTTP_400_BAD_REQUEST)
 
-            message.content_encrypted = new_content.encode()
+            # 🟢 Encode like initial group message saving
+            base64_str = base64.b64encode(new_content.encode("utf-8")).decode("utf-8")
+            content_bytes = base64_str.encode("utf-8")
+
+            message.content_encrypted = content_bytes
             message.edited_at = timezone.now()
             message.is_edited = True
             message.is_encrypted = False

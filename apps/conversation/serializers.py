@@ -1,9 +1,8 @@
 from rest_framework import serializers
-from .models import Dialogue, DialogueParticipant, DialogueKey, Message, UserDialogueMarker, MessageEncryption
+from .models import Dialogue, DialogueParticipant, Message, UserDialogueMarker
 from apps.conversation.utils import get_websocket_url
 from apps.accounts.serializers import SimpleCustomUserSerializer
 from apps.accounts.models import UserDeviceKey
-from django.conf import settings
 import base64
 
 
@@ -19,21 +18,12 @@ class DialogueParticipantSerializer(serializers.ModelSerializer):
         read_only_fields = ['role_display']
 
 
-
-# Dialogue Key Serializer --------------------------------------------------------------
-class DialogueKeySerializer(serializers.ModelSerializer):
-    class Meta:
-        model = DialogueKey
-        fields = ['user', 'public_key', 'last_updated']
-
-
 # Dialogue Serializer ------------------------------------------------------------------
 class DialogueSerializer(serializers.ModelSerializer):
-    participants = serializers.StringRelatedField(many=True)
+    participants = SimpleCustomUserSerializer(many=True, read_only=True)
     chat_partner = serializers.SerializerMethodField()     
     last_message = serializers.SerializerMethodField()
     participants_roles = DialogueParticipantSerializer(many=True, read_only=True)
-    keys = DialogueKeySerializer(many=True, read_only=True)
 
     # Dynamically determine if any message in this dialogue is encrypted
     is_encrypted = serializers.SerializerMethodField()
@@ -48,7 +38,7 @@ class DialogueSerializer(serializers.ModelSerializer):
         model = Dialogue
         fields = [
             'id', 'name', 'group_image', 'participants', 'chat_partner', 'created_at', 'is_group', 'last_message',
-            'participants_roles', 'keys', 'is_encrypted', 'websocket_url', 'my_role',
+            'participants_roles', 'is_encrypted', 'websocket_url', 'my_role',
             'is_sensitive', 'marker_id'
         ]
 

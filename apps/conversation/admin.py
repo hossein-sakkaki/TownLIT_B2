@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Dialogue, DialogueKey, DialogueParticipant, Message, UserDialogueMarker
+from .models import Dialogue, DialogueParticipant, Message, UserDialogueMarker
 
 
 # Inline for managing group participants
@@ -12,15 +12,6 @@ class DialogueParticipantInline(admin.TabularInline):
 
 
 
-# Inline for managing encryption keys
-class DialogueKeyInline(admin.TabularInline):
-    model = DialogueKey
-    extra = 1
-    fields = ('user', 'public_key', 'last_updated')
-    readonly_fields = ('last_updated',)
-    verbose_name = "Dialogue Key"
-    verbose_name_plural = "Dialogue Keys"
-
 
 # Dialogue Admin -------------------------------------------------------------------------
 @admin.register(Dialogue)
@@ -29,7 +20,7 @@ class DialogueAdmin(admin.ModelAdmin):
     list_filter = ('is_group', 'created_at')
     search_fields = ('name', 'participants__username')
     filter_horizontal = ('participants', 'deleted_by_users')
-    inlines = [DialogueParticipantInline, DialogueKeyInline]
+    inlines = [DialogueParticipantInline]
 
     def display_participants(self, obj):
         """ Display list of chat participants """
@@ -67,19 +58,6 @@ class MessageAdmin(admin.ModelAdmin):
         return ", ".join([user.username for user in obj.deleted_by_users.all()])
     display_deleted_by_users.short_description = 'Deleted By'
 
-
-# DialogueKey Admin -------------------------------------------------------------------------
-@admin.register(DialogueKey)
-class DialogueKeyAdmin(admin.ModelAdmin):
-    list_display = ('dialogue', 'user', 'last_updated', 'has_public_key')
-    search_fields = ('dialogue__name', 'user__username')
-    readonly_fields = ('last_updated',)
-
-    def has_public_key(self, obj):
-        """ Check if a public key is set """
-        return obj.public_key is not None
-    has_public_key.boolean = True
-    has_public_key.short_description = 'Has Public Key'
 
 
 # DialogueParticipant Admin -------------------------------------------------------------------------

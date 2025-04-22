@@ -37,7 +37,8 @@ from .models import CustomLabel, SocialMediaLink, SocialMediaType
 from apps.profilesOrg.models import Organization
 from apps.profiles.models import Member, GuestUser
 from apps.main.models import TermsAndPolicy, UserAgreement
-from utils import send_email, create_active_code
+from utils.common.utils import send_email, create_active_code
+from utils.security.dialogue_cleanup import handle_sensitive_dialogue_cleanup
 from django.template.loader import render_to_string
 import utils as utils
 import logging
@@ -570,9 +571,7 @@ class AuthViewSet(viewsets.ViewSet):
                 return Response({"message": "Security pins removed and pin security disabled."}, status=status.HTTP_200_OK)
 
             elif user.verify_delete_pin(entered_pin):
-                from apps.conversation.models import Dialogue
-                dialogues = Dialogue.objects.filter(participants=user)
-                dialogues.delete()
+                handle_sensitive_dialogue_cleanup(user)
                 user.access_pin = None
                 user.delete_pin = None
                 user.pin_security_enabled = False

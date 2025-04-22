@@ -24,7 +24,7 @@ from common.validators import (
                                 validate_phone_number
                             )
 
-from utils import FileUpload, create_active_code
+from utils.common.utils import FileUpload, create_active_code
 
 
 # USER & SUPERUSER Manager ------------------------------------------

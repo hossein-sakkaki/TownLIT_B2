@@ -26,7 +26,7 @@ from common.validators import (
                             validate_phone_number,
                             validate_image_or_video_file
                         )
-from utils import FileUpload, SlugMixin
+from utils.common.utils import FileUpload, SlugMixin
 from django.contrib.auth import get_user_model
 
 CustomUser = get_user_model()

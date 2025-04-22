@@ -36,7 +36,7 @@ from .serializers import (
 from apps.accounts.serializers import SimpleCustomUserSerializer
 from common.validators import validate_phone_number
 from django.core.exceptions import ValidationError
-from utils import create_veriff_session, get_veriff_status, send_email, create_active_code
+from utils.common.utils import create_veriff_session, get_veriff_status, send_email, create_active_code
 from django.template.loader import render_to_string
 from services.friendship_suggestions import suggest_friends_for_friends_tab, suggest_friends_for_requests_tab
 import logging

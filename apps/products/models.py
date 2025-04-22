@@ -4,7 +4,7 @@ from ckeditor_uploader.fields import RichTextUploadingField
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 
-from utils import FileUpload, SlugMixin
+from utils.common.utils import FileUpload, SlugMixin
 from apps.config.constants import SELLING_TYPE_CHOICES
 from common.validators import (
                             validate_no_executable_file,

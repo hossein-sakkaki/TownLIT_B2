@@ -27,7 +27,7 @@ from apps.config.organization_constants import (
                                 CHRISTIAN_WOMENS_ORGANIZATION, CHRISTIAN_MENS_ORGANIZATION, CHRISTIAN_CHILDRENS_ORGANIZATION,
                             )
 
-from utils import FileUpload, SlugMixin
+from utils.common.utils import FileUpload, SlugMixin
 from common.validators import (
                                 validate_image_or_video_file,
                                 validate_audio_file,

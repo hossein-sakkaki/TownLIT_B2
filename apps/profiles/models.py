@@ -18,7 +18,7 @@ from common.validators import (
                             validate_no_executable_file,
                             validate_phone_number
                         )
-from utils import FileUpload, SlugMixin
+from utils.common.utils import FileUpload, SlugMixin
 from django.contrib.auth import get_user_model
 
 CustomUser = get_user_model()

@@ -6,7 +6,7 @@ from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from apps.notifications.models import Notification
 from apps.posts.models import Comment
-from utils import send_push_notification
+from utils.common.utils import send_push_notification
 
 # Standard Notification for new comment
 @receiver(post_save, sender=Comment)
