@@ -4,7 +4,7 @@ from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from django.utils.text import slugify
 
-from apps.config.constants import TERMS_AND_POLICIES_CHOICES, LOG_ACTION_CHOICES
+from apps.config.constants import TERMS_AND_POLICIES_CHOICES, LOG_ACTION_CHOICES, POLICY_DISPLAY_LOCATION_CHOICES, DISPLAY_IN_OFFICIAL
 from django.contrib.auth import get_user_model
 
 CustomUser = get_user_model()
@@ -13,6 +13,7 @@ CustomUser = get_user_model()
 # TERMS AND POLICY Model ---------------------------------------------------------------------------------------
 class TermsAndPolicy(models.Model):
     policy_type = models.CharField(max_length=50, choices=TERMS_AND_POLICIES_CHOICES, verbose_name='Policy Type')
+    display_location = models.CharField(max_length=20, choices=POLICY_DISPLAY_LOCATION_CHOICES, default=DISPLAY_IN_OFFICIAL, verbose_name='Display Location')
     title = models.CharField(max_length=255, verbose_name='Title')
     content = RichTextUploadingField(config_name='default', verbose_name='Content')
     last_updated = models.DateTimeField(auto_now=True, verbose_name='Last Updated')

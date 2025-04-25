@@ -174,9 +174,9 @@ BELIEVER = 'believer'
 SEEKER = 'seeker'
 PREFER_NOT_TO_SAY = 'prefer_not_to_say'
 USER_LABEL_CHOICES = [
-    (BELIEVER, 'Believer'),
-    (SEEKER,'Seeker'),
-    (PREFER_NOT_TO_SAY,'Prefer Not To Say')
+    (BELIEVER, 'I follow Jesus (Believer)'),
+    (SEEKER, 'I’m exploring faith (Seeker)'),
+    (PREFER_NOT_TO_SAY, 'I’d prefer not to say'),
 ]
 
 # Organization Service Category Choices -------------------------------------------------------------
@@ -362,6 +362,17 @@ TERMS_AND_POLICIES_CHOICES = [
     (COOKIE_POLICY, 'Cookie Policy'),
 ]
 
+
+# DISPLAY LOCATIONS for Terms and Policies --------------------------------------------
+DISPLAY_IN_FOOTER = 'footer'
+DISPLAY_IN_OFFICIAL = 'official'
+DISPLAY_IN_BOTH = 'both'
+
+POLICY_DISPLAY_LOCATION_CHOICES = [
+    (DISPLAY_IN_FOOTER, 'Footer'),
+    (DISPLAY_IN_OFFICIAL, 'Official Info Page'),
+    (DISPLAY_IN_BOTH, 'Both'),
+]
 
 # LOG ACTION Choices ---------------------------------------------------------------------
 VIEW = 'view'
