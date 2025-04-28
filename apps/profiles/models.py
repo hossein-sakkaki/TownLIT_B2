@@ -142,8 +142,9 @@ class MemberServiceType(models.Model):
 class Member(SlugMixin):
     FILE = FileUpload('profiles', 'file', 'member')
 
-    id = models.OneToOneField(CustomUser, on_delete=models.CASCADE, primary_key=True, verbose_name='id')
-    
+    id = models.BigAutoField(primary_key=True)
+    user = models.OneToOneField(CustomUser, on_delete=models.CASCADE, related_name="member_profile", verbose_name='User')
+        
     service_types = models.ManyToManyField(MemberServiceType, blank=True, db_index=True, related_name='member_service_types', verbose_name='Service Types')
     organization_memberships = models.ManyToManyField('profilesOrg.Organization', blank=True, db_index=True, related_name='memberships', verbose_name='Organization Memberships')
     
@@ -172,7 +173,7 @@ class Member(SlugMixin):
     url_name = 'member_detail' 
 
     def get_slug_source(self):
-        return self.id.username
+        return self.user.username
         
     def is_manager(self):
         return self.organization_adminships.exists()
@@ -185,12 +186,13 @@ class Member(SlugMixin):
         verbose_name_plural = "2. Members"
 
     def __str__(self):
-        return self.id.username
+        return self.user.username
 
 
 # GUESTUSER Manager -------------------------------------------------------------------------------------------
 class GuestUser(SlugMixin):
-    id = models.OneToOneField(CustomUser, on_delete=models.CASCADE, primary_key=True, verbose_name='id')    
+    id = models.BigAutoField(primary_key=True)
+    user = models.OneToOneField(CustomUser, on_delete=models.CASCADE, related_name="guest_profile", verbose_name='User')
     register_date = models.DateField(default=timezone.now, verbose_name='Register Date')      
     is_migrated = models.BooleanField(default=False, verbose_name='Is Migrated')
     is_active = models.BooleanField(default=True, verbose_name='Is Active')
@@ -198,14 +200,14 @@ class GuestUser(SlugMixin):
 
 
     def get_slug_source(self):
-        return self.id.username
+        return self.user.username
         
     class Meta:
         verbose_name = "1. Guest User"
         verbose_name_plural = "1. Guest Users"
 
     def __str__(self):
-        return self.id.username
+        return self.user.username
 
 
 # CLIENT Manager -------------------------------------------------------------------------------------------- 
@@ -230,7 +232,8 @@ class ClientRequest(models.Model):
     
 # Client Model
 class Client(SlugMixin):
-    id = models.OneToOneField(CustomUser, on_delete=models.CASCADE, primary_key=True)
+    id = models.BigAutoField(primary_key=True)
+    user = models.OneToOneField(CustomUser, on_delete=models.CASCADE, related_name="client_profile", verbose_name='User')
     organization_clients = models.ManyToManyField('profilesOrg.Organization', blank=True, related_name='organization_clients', verbose_name='Organization Clients')
     request = models.ForeignKey(ClientRequest, on_delete=models.CASCADE, null=True, blank=True, verbose_name="Request")
     register_date = models.DateField(default=timezone.now, verbose_name='Register Date')
@@ -250,7 +253,8 @@ class Client(SlugMixin):
 
 # CUSTOMER Manager ------------------------------------------------------------------------------------------ 
 class Customer(SlugMixin):
-    id = models.OneToOneField(CustomUser, on_delete=models.CASCADE, primary_key=True)
+    id = models.BigAutoField(primary_key=True)
+    user = models.OneToOneField(CustomUser, on_delete=models.CASCADE, related_name="customer_profile", verbose_name='User')
     billing_address = models.ForeignKey(Address, on_delete=models.PROTECT, null=True, blank=True, related_name='customer_billing_addresses', verbose_name='Billing Address')
     shipping_addresses = models.ManyToManyField(Address, related_name='customer_shipping_addresses', verbose_name='Shipping Addresses')
     customer_phone_number = models.CharField(max_length=20, validators=[validate_phone_number], verbose_name='Phone Number')

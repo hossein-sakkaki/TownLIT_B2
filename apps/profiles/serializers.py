@@ -209,7 +209,7 @@ class MemberServiceTypeSerializer(serializers.ModelSerializer):
 
 # MEMBER Serializer ------------------------------------------------------------------------------
 class MemberSerializer(serializers.ModelSerializer):
-    id = CustomUserSerializer(context=None)
+    user = CustomUserSerializer(context=None)
     service_types = MemberServiceTypeSerializer(many=True, read_only=True)
     organization_memberships = OrganizationSerializer(many=True, read_only=True)
     academic_record = AcademicRecordSerializer()
@@ -217,24 +217,25 @@ class MemberSerializer(serializers.ModelSerializer):
     class Meta:
         model = Member
         fields = [
-            'id', 'service_types', 'organization_memberships', 'academic_record', 'testimony',
+            'user', 'service_types', 'organization_memberships', 'academic_record', 'testimony',
             'spiritual_rebirth_day', 'biography', 'vision', 'denominations_type',
             'show_gifts_in_profile', 'show_fellowship_in_profile', 'is_hidden_by_confidants',
             'register_date', 'identity_verification_status', 'is_verified_identity', 'identity_verified_at', 'is_sanctuary_participant',
             'is_privacy', 'is_migrated', 'is_active'
         ]
-        read_only_fields = ['id', 'register_date', 'is_migrated', 'is_active', 'identity_verification_status', 'identity_verified_at', 'is_verified_identity', 'is_sanctuary_participant']
+        read_only_fields = ['register_date', 'is_migrated', 'is_active', 'identity_verification_status', 'identity_verified_at', 'is_verified_identity', 'is_sanctuary_participant']
         
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         context = kwargs.pop("context", {})
         if 'context' in kwargs:
-            self.fields["id"] = CustomUserSerializer(context=context)
+            self.fields["user"] = CustomUserSerializer(context=context)
 
     def update(self, instance, validated_data):
-        custom_user_data = validated_data.pop('id', None)
+        print('-------------------------   111')
+        custom_user_data = validated_data.pop('user', None)
         if custom_user_data:
-            custom_user_serializer = CustomUserSerializer(instance.id, data=custom_user_data, partial=True)
+            custom_user_serializer = CustomUserSerializer(instance.user, data=custom_user_data, partial=True)
             if custom_user_serializer.is_valid():
                 custom_user_serializer.save()
             else:
@@ -277,12 +278,12 @@ class MemberSerializer(serializers.ModelSerializer):
 
 # MEMBER Serializer ------------------------------------------------------------------------------
 class PublicMemberSerializer(serializers.ModelSerializer):
-    id = PublicCustomUserSerializer(read_only=True)
+    user = PublicCustomUserSerializer(read_only=True)
 
     class Meta:
         model = Member
         fields = [
-            'id', 'biography', 'vision', 'service_types', 'denominations_type',
+            'user', 'biography', 'vision', 'service_types', 'denominations_type',
         ]
         read_only_fields = fields
         
@@ -290,26 +291,26 @@ class PublicMemberSerializer(serializers.ModelSerializer):
         context = kwargs.get('context', None)
         super().__init__(*args, **kwargs)
         if context:
-            self.fields['id'] = PublicCustomUserSerializer(context=context)
+            self.fields['user'] = PublicCustomUserSerializer(context=context)
 
 
 # LIMITED MEMBER Serializer ------------------------------------------------------------------------------
 class LimitedMemberSerializer(serializers.ModelSerializer):
-    id = LimitedCustomUserSerializer(read_only=True)
+    user = LimitedCustomUserSerializer(read_only=True)
 
     class Meta:
         model = Member
         fields = [
-            'id', 'biography', 'spiritual_rebirth_day',
+            'user', 'biography', 'spiritual_rebirth_day',
             'register_date',
         ]
-        read_only_fields = ['id', 'register_date']
+        read_only_fields = ['user', 'register_date']
         
     def __init__(self, *args, **kwargs):
         context = kwargs.get('context', None)
         super().__init__(*args, **kwargs)
         if context:
-            self.fields['id'] = LimitedCustomUserSerializer(context=context)
+            self.fields['user'] = LimitedCustomUserSerializer(context=context)
 
 
 
@@ -349,7 +350,7 @@ class SpiritualGiftSurveyResponseSerializer(serializers.ModelSerializer):
         member = data.get('member')
         if not SpiritualGiftSurveyQuestion.objects.filter(id=question.id).exists():
             raise serializers.ValidationError("The question is not valid.")
-        if not Member.objects.filter(id=member.id).exists():
+        if not Member.objects.filter(user=member).exists():
             raise serializers.ValidationError("The member is not valid.")
         return data
         
@@ -365,48 +366,36 @@ class MemberSpiritualGiftsSerializer(serializers.ModelSerializer):
         
         
         
-        
-        
-        
-    
-
-
-
-
-
-
-
-
 
 
 
 
 # GUESTUSER serializer ----------------------------------------------------------------------------------
 class GuestUserSerializer(serializers.ModelSerializer):
-    id = CustomUserSerializer(read_only=True)
+    user = CustomUserSerializer(read_only=True)
 
     class Meta:
         model = GuestUser
-        fields = ['id', 'register_date', 'is_migrated', 'is_active', 'slug']
-        read_only_fields = ['id', 'register_date', 'is_migrated', 'is_active', 'slug']
+        fields = ['user', 'register_date', 'is_migrated', 'is_active', 'slug']
+        read_only_fields = ['user', 'register_date', 'is_migrated', 'is_active', 'slug']
 
     def update(self, instance, validated_data):
         # Update CustomUser fields
-        custom_user_data = validated_data.pop('id', None)
+        custom_user_data = validated_data.pop('user', None)
         if custom_user_data:
-            custom_user_serializer = CustomUserSerializer(instance.id, data=custom_user_data, partial=True)
+            custom_user_serializer = CustomUserSerializer(instance.user, data=custom_user_data, partial=True)
             if custom_user_serializer.is_valid():
                 custom_user_serializer.save()
 
 
 # LIMITED GUESTUSER serializer -----------------------------------------------------------------
 class LimitedGuestUserSerializer(serializers.ModelSerializer):
-    id = serializers.PrimaryKeyRelatedField(queryset=CustomUser.objects.all())
+    user = serializers.PrimaryKeyRelatedField(queryset=CustomUser.objects.all())
 
     class Meta:
         model = GuestUser
-        fields = ['id', 'register_date', 'slug']
-        read_only_fields = ['id', 'register_date', 'slug']
+        fields = ['user', 'register_date', 'slug']
+        read_only_fields = ['user', 'register_date', 'slug']
 
     
 # CLIENT serializer ------------------------------------------------------------------ 
@@ -440,13 +429,13 @@ class ClientRequestSerializer(serializers.ModelSerializer):
            
 # Client
 class ClientSerializer(serializers.ModelSerializer):
-    id = serializers.PrimaryKeyRelatedField(queryset=CustomUser.objects.all())
+    user = serializers.PrimaryKeyRelatedField(queryset=CustomUser.objects.all())
     organization_clients = SimpleOrganizationSerializer(many=True, read_only=True)
     request = ClientRequestSerializer(read_only=True)
 
     class Meta:
         model = Client
-        fields = ['id', 'organization_clients', 'request', 'register_date', 'is_active', 'slug']
+        fields = ['user', 'organization_clients', 'request', 'register_date', 'is_active', 'slug']
         read_only_fields = ['register_date', 'slug']
 
     def validate(self, data):
@@ -457,7 +446,7 @@ class ClientSerializer(serializers.ModelSerializer):
     
 # CUSTOMER serializer ------------------------------------------------------------------ 
 class CustomerSerializer(serializers.ModelSerializer):
-    id = serializers.PrimaryKeyRelatedField(queryset=CustomUser.objects.all())
+    user = serializers.PrimaryKeyRelatedField(queryset=CustomUser.objects.all())
     billing_address = AddressSerializer(read_only=True)
     shipping_addresses = AddressSerializer(many=True, read_only=True)
     customer_phone_number = serializers.CharField(
@@ -467,8 +456,8 @@ class CustomerSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Customer
-        fields = ['id', 'billing_address', 'shipping_addresses', 'customer_phone_number', 'register_date', 'deactivation_reason', 'deactivation_note', 'is_active']
-        read_only_fields = ['id', 'register_date', 'is_active']
+        fields = ['user', 'billing_address', 'shipping_addresses', 'customer_phone_number', 'register_date', 'deactivation_reason', 'deactivation_note', 'is_active']
+        read_only_fields = ['user', 'register_date', 'is_active']
 
     def validate_shipping_addresses(self, value):
         if not value:

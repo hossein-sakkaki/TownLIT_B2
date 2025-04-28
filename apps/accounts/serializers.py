@@ -255,7 +255,7 @@ class CustomUserSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
         exclude = ['registration_id', 'access_pin', 'delete_pin', 'is_active', 'is_admin', 'is_deleted', 'reports_count',
-                   'is_superuser', 'is_suspended', 'is_account_paused', 'reactivated_at', 'deletion_requested_at',
+                   'is_superuser', 'is_suspended', 'reactivated_at', 'deletion_requested_at',
                    'reset_token', 'reset_token_expiration', 'register_date', 'mobile_verification_code', 'mobile_verification_expiry', 'user_active_code', 'user_active_code_expiry',
                 ]        
         read_only_fields = ['id', 'register_date', ]
@@ -280,7 +280,7 @@ class CustomUserSerializer(serializers.ModelSerializer):
         # Remove sensitive fields
         password = validated_data.pop('password', None)
         validated_data.pop('is_active', None)
-
+        profile_image = validated_data.pop('profile_image', None)
 
         # Update other fields
         for attr, value in validated_data.items():
@@ -290,7 +290,6 @@ class CustomUserSerializer(serializers.ModelSerializer):
         if password is not None:
             instance.set_password(password)
             
-        profile_image = validated_data.pop('profile_image', None)
         if profile_image:
             instance.image_name = profile_image 
 

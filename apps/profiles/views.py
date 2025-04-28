@@ -34,6 +34,7 @@ from .serializers import (
                     SpiritualGiftSurveyResponseSerializer, SpiritualGiftSurveyQuestionSerializer, MemberSpiritualGiftsSerializer, SpiritualGift
                 )
 from apps.accounts.serializers import SimpleCustomUserSerializer
+
 from common.validators import validate_phone_number
 from django.core.exceptions import ValidationError
 from utils.common.utils import create_veriff_session, get_veriff_status, send_email, create_active_code
@@ -54,7 +55,7 @@ class ProfileMigrationViewSet(viewsets.ViewSet):
         user = request.user
         if user.label == CustomUser.BELIEVER: # For Believers
             if hasattr(user, 'guestuser'):
-                guest_profile = user.guestuser
+                guest_profile = user.guest_profile
                 guest_profile.is_active = False
                 guest_profile.is_migrated = True
                 guest_profile.save()
@@ -62,7 +63,7 @@ class ProfileMigrationViewSet(viewsets.ViewSet):
                 user.is_member = True
                 user.save()
 
-                member_data = {'name': user.id}
+                member_data = {'user': user}
                 member_serializer = MemberSerializer(data=member_data)
                 if member_serializer.is_valid():
                     member_serializer.save()
@@ -76,7 +77,7 @@ class ProfileMigrationViewSet(viewsets.ViewSet):
             else:
                 return Response({"message": "User is already a Member."}, status=status.HTTP_400_BAD_REQUEST)
 
-        elif user.label in [CustomUser.SEEKER, CustomUser.PREFER_NOT_TO_SAY]: # For Others
+        elif user.label in [CustomUser.SEEKER, CustomUser.PREFER_NOT_TO_SAY]: # For Others  
             if hasattr(user, 'member'):
                 member_profile = user.member
                 member_profile.is_active = False
@@ -86,7 +87,7 @@ class ProfileMigrationViewSet(viewsets.ViewSet):
                 user.is_member = False
                 user.save()
 
-                guest_user_data = {'name': user.id}
+                guest_user_data = {'user': user}
                 guest_user_serializer = GuestUserSerializer(data=guest_user_data)
                 if guest_user_serializer.is_valid():
                     guest_user_serializer.save()
@@ -114,7 +115,7 @@ class MemberViewSet(viewsets.ModelViewSet):
         try:
             member = self.get_object()
             # Check if the member is suspended
-            if member.id.is_suspended:
+            if member.user.is_suspended:
                 return Response({"error": "This profile is suspended and cannot be accessed."}, status=status.HTTP_403_FORBIDDEN)
             # Check if the profile is hidden
             if member.is_hidden_by_confidants:
@@ -126,24 +127,28 @@ class MemberViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='my-profile', permission_classes=[IsAuthenticated])
     def my_profile(self, request):
+        user = request.user
         try:
-            print(request.user)
-            member = request.user.member
-            # Check if the member is suspended
-            if member.id.is_suspended:
+            member = user.member_profile
+            if member.user.is_suspended:
                 return Response({"error": "Your profile is suspended and cannot be accessed by you."}, status=status.HTTP_403_FORBIDDEN)
             if member.is_hidden_by_confidants:
                 return Response({"error": "Your profile is currently hidden and cannot be accessed by you."}, status=status.HTTP_403_FORBIDDEN)
+            
             serializer = MemberSerializer(member, context={'request': request})
             return Response(serializer.data, status=status.HTTP_200_OK)
-        except Member.DoesNotExist:
-            return Response({"error": "Profile not found"}, status=status.HTTP_404_NOT_FOUND)
         
+        except Member.DoesNotExist:
+            return Response({"error": "Profile not found. Please complete your profile registration."}, status=status.HTTP_404_NOT_FOUND)
+        except AttributeError:
+            # یعنی کاربر member اصلاً ندارد!
+            return Response({"error": "Profile not found. Please complete your profile registration...."}, status=status.HTTP_404_NOT_FOUND)
+            
     # Update Profile ------------------------------------------------------------------------------------------------    
     @action(detail=False, methods=['post'], url_path='update-profile', permission_classes=[IsAuthenticated])
     def update_profile(self, request):        
         try:
-            member = request.user.member
+            member = request.user.member_profile
             serializer = MemberSerializer(member, data=request.data, partial=True)
             if serializer.is_valid():
                 updated_member = serializer.save()
@@ -168,7 +173,7 @@ class MemberViewSet(viewsets.ModelViewSet):
                 return Response({"error": "No profile image uploaded"}, status=status.HTTP_400_BAD_REQUEST)
             
             member = request.user.member
-            custom_user = member.id
+            custom_user = member.user
             custom_user.image_name = profile_image
             custom_user.save()
             
@@ -184,16 +189,16 @@ class MemberViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='profile/(?P<username>[^/.]+)', permission_classes=[IsAuthenticated])
     def view_member_profile(self, request, username=None):
         try:
-            member = Member.objects.get(id__username=username)
+            member = Member.objects.get(user__username=username)
 
             # بررسی حالت مسدودیت پروفایل
-            if member.id.is_suspended:
+            if member.user.is_suspended:
                 return Response({"error": "This profile is suspended."}, status=status.HTTP_403_FORBIDDEN)
 
             # بررسی حالت مخفی بودن توسط اشخاص مورد اعتماد
             if member.is_hidden_by_confidants:
                 confidants = Fellowship.objects.filter(
-                    to_user=member.id,
+                    to_user=member.user,
                     fellowship_type="Confidant",
                     status="Accepted"
                 ).values_list("from_user", flat=True)
@@ -206,7 +211,7 @@ class MemberViewSet(viewsets.ModelViewSet):
 
             # بررسی حالت محدودیت
             elif member.is_privacy:
-                if Friendship.objects.filter(from_user=request.user, to_user=member.id).exists():
+                if Friendship.objects.filter(from_user=request.user, to_user=member.user).exists():
                     serializer = PublicMemberSerializer(member, context={'request': request})
                 else:
                     serializer = LimitedMemberSerializer(member, context={'request': request})
@@ -445,10 +450,10 @@ class VeriffViewSet(viewsets.ViewSet):
             member.veriff_session_id = veriff_response.get('sessionId')
             member.identity_verification_status = 'submitted'
             member.save()
-            logger.info(f"Veriff session created for member {member.name.username}")
+            logger.info(f"Veriff session created for member {member.user.username}")
             return Response(veriff_response, status=status.HTTP_201_CREATED)
         except Exception as e:
-            logger.error(f"Error creating Veriff session for member {member.name.username}: {str(e)}")
+            logger.error(f"Error creating Veriff session for member {member.user.username}: {str(e)}")
             return Response({"error": "Unable to create Veriff session."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
@@ -467,10 +472,10 @@ class VeriffViewSet(viewsets.ViewSet):
                 member.is_verified_identity = True
                 member.identity_verified_at = timezone.now()
             member.save()
-            logger.info(f"Verification status updated for member {member.name.username}: {veriff_status.get('status')}")
+            logger.info(f"Verification status updated for member {member.user.username}: {veriff_status.get('status')}")
             return Response(veriff_status, status=status.HTTP_200_OK)
         except Exception as e:
-            logger.error(f"Error fetching Veriff status for member {member.name.username}: {str(e)}")
+            logger.error(f"Error fetching Veriff status for member {member.user.username}: {str(e)}")
             return Response({"error": "Unable to fetch verification status."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
@@ -486,8 +491,8 @@ class GuestUserViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='my-profile', permission_classes=[IsAuthenticated])
     def my_profile(self, request):
         try:
-            guest_user = request.user.guestuser
-            if guest_user.id.is_suspended:
+            guest_user = request.user.guest_profile
+            if guest_user.user.is_suspended:
                 return Response({"error": "Your account is suspended. Access denied."}, status=status.HTTP_403_FORBIDDEN)
             serializer = self.get_serializer(guest_user)
             return Response(serializer.data, status=status.HTTP_200_OK)
@@ -497,8 +502,8 @@ class GuestUserViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'], url_path='update-profile', permission_classes=[IsAuthenticated])
     def update_profile(self, request):
         try:
-            guest_user = request.user.guestuser
-            if guest_user.id.is_suspended:
+            guest_user = request.user.guest_profile
+            if guest_user.user.is_suspended:
                 return Response({"error": "Your account is suspended. You cannot update your profile."}, status=status.HTTP_403_FORBIDDEN)
             serializer = self.get_serializer(guest_user, data=request.data, partial=True)
             if serializer.is_valid():
@@ -512,7 +517,7 @@ class GuestUserViewSet(viewsets.ModelViewSet):
     def view_guest_profile(self, request, **kwargs):
         try:
             guest_user = GuestUser.objects.get(id=kwargs.get('pk'))
-            if guest_user.id.is_suspended:
+            if guest_user.user.is_suspended:
                 return Response({"error": "This guest account is suspended."}, status=status.HTTP_403_FORBIDDEN)
             else:
                 serializer = self.get_serializer(guest_user)
@@ -523,8 +528,8 @@ class GuestUserViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'], url_path='request-delete', permission_classes=[IsAuthenticated])
     def request_delete_profile(self, request):
         try:
-            guest_user = request.user.guestuser
-            if guest_user.id.is_suspended:
+            guest_user = request.user.guest_profile
+            if guest_user.user.is_suspended:
                 return Response({"error": "Your account is suspended. You cannot request profile deletion."}, status=status.HTTP_403_FORBIDDEN)
             serializer = GuestUserDeleteRequestSerializer(guest_user, data=request.data, partial=True)
             if serializer.is_valid():
@@ -537,8 +542,8 @@ class GuestUserViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'], url_path='reactivate', permission_classes=[IsAuthenticated])
     def reactivate_profile(self, request):
         try:
-            guest_user = request.user.guestuser
-            if guest_user.id.is_suspended:
+            guest_user = request.user.guest_profile
+            if guest_user.user.is_suspended:
                 return Response({"error": "Your account is suspended. Reactivation is not allowed."}, status=status.HTTP_403_FORBIDDEN)
             if guest_user.deletion_requested_at and (timezone.now() - guest_user.deletion_requested_at).days < 365:
                 guest_user.is_active = True
@@ -548,6 +553,15 @@ class GuestUserViewSet(viewsets.ModelViewSet):
             return Response({"error": "You cannot reactivate your profile after 1 year."}, status=status.HTTP_400_BAD_REQUEST)
         except GuestUser.DoesNotExist:
             return Response({"error": "Profile not found"}, status=status.HTTP_404_NOT_FOUND)
+
+
+
+
+
+
+
+
+
 
 
 # FRIENDSHIP View --------------------------------------------------------------------------------------------
@@ -814,6 +828,23 @@ class FriendshipViewSet(viewsets.ModelViewSet):
         except Exception as e:
             logger.error(f"Unexpected error in delete_friendship for user {request.user.id}: {e}")
             return Response({'error': 'An unexpected error occurred.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 # FELLOWSHIP View --------------------------------------------------------------------------------------------

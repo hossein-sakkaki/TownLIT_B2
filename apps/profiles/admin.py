@@ -119,13 +119,13 @@ class PrayInline(GenericTabularInline):
 # Member Admin
 @admin.register(Member)
 class MemberAdmin(admin.ModelAdmin):
-    list_display = ['id', 'spiritual_rebirth_day', 'is_migrated', 'is_active', 'is_privacy', 'register_date', 'identity_verification_status', 'is_verified_identity', 'is_sanctuary_participant','is_hidden_by_confidants']
+    list_display = ['user', 'spiritual_rebirth_day', 'is_migrated', 'is_active', 'is_privacy', 'register_date', 'identity_verification_status', 'is_verified_identity', 'is_sanctuary_participant','is_hidden_by_confidants']
     list_filter = ['is_migrated', 'is_active', 'is_privacy', 'register_date']
-    search_fields = ['id__username', 'biography', 'vision', 'service_types__service__name']
-    autocomplete_fields = ['id', 'testimony']
+    search_fields = ['user__username', 'biography', 'vision', 'service_types__service__name']
+    autocomplete_fields = ['user', 'testimony']
     filter_horizontal = ['service_types', 'organization_memberships']
     fieldsets = (
-        ('Personal Info', {'fields': ('id', 'biography', 'vision', 'spiritual_rebirth_day', 'denominations_type', 'show_gifts_in_profile','show_fellowship_in_profile')}),
+        ('Personal Info', {'fields': ('user', 'biography', 'vision', 'spiritual_rebirth_day', 'denominations_type', 'show_gifts_in_profile','show_fellowship_in_profile')}),
         ('Services', {'fields': ('service_types', 'academic_record')}),
         ('Organizations & Memberships', {'fields': ('organization_memberships',)}),
         ('Testimonies & Moments', {'fields': ('testimony',)}),
@@ -157,12 +157,12 @@ class GuestUserMomentInline(GenericTabularInline):
 # GUEST USER ADMIN Manager -----------------------------------------------------------
 @admin.register(GuestUser)
 class GuestUserAdmin(admin.ModelAdmin):
-    list_display = ['id', 'register_date', 'is_migrated', 'is_active']
+    list_display = ['user', 'register_date', 'is_migrated', 'is_active']
     list_filter = ['is_migrated', 'is_active', 'register_date']
-    search_fields = ['id__username']
+    search_fields = ['user__username']
     ordering = ['register_date', 'is_migrated', 'is_active']
     fieldsets = (
-        ('User Info', {'fields': ('id',)}),
+        ('User Info', {'fields': ('user',)}),
         ('Status', {'fields': ('is_migrated', 'is_active')}),
         ('Dates', {'fields': ('register_date',)}),
     )
@@ -172,12 +172,12 @@ class GuestUserAdmin(admin.ModelAdmin):
 # CUSTOMER ADMIN Manager -----------------------------------------------------------
 @admin.register(Customer)
 class CustomerAdmin(admin.ModelAdmin):
-    list_display = ['id', 'customer_phone_number', 'billing_address', 'get_shipping_addresses', 'register_date', 'is_active']
+    list_display = ['user', 'customer_phone_number', 'billing_address', 'get_shipping_addresses', 'register_date', 'is_active']
     list_filter = ['is_active', 'register_date', 'deactivation_reason']
-    search_fields = ['id__username', 'customer_phone_number']
+    search_fields = ['user__username', 'customer_phone_number']
 
     fieldsets = (
-        ('Customer Info', {'fields': ('id', 'customer_phone_number', 'billing_address', 'shipping_addresses')}),
+        ('Customer Info', {'fields': ('user', 'customer_phone_number', 'billing_address', 'shipping_addresses')}),
         ('Status', {'fields': ('is_active', 'deactivation_reason', 'deactivation_note')}),
         ('Dates', {'fields': ('register_date',)}),
     )
@@ -207,12 +207,12 @@ class ClientRequestAdmin(admin.ModelAdmin):
 # Client Admin
 @admin.register(Client)
 class ClientAdmin(admin.ModelAdmin):
-    list_display = ['id', 'request', 'register_date', 'is_active']
+    list_display = ['user', 'request', 'register_date', 'is_active']
     list_filter = ['is_active', 'register_date']
-    search_fields = ['id__username', 'request__request']
+    search_fields = ['user__username', 'request__request']
     
     fieldsets = (
-        ('Client Info', {'fields': ('id', 'organization_clients', 'request')}),
+        ('Client Info', {'fields': ('user', 'organization_clients', 'request')}),
         ('Status', {'fields': ('is_active',)}),
         ('Dates', {'fields': ('register_date',)}),
     )
@@ -239,14 +239,16 @@ class SpiritualGiftSurveyQuestionAdmin(admin.ModelAdmin):
 @admin.register(SpiritualGiftSurveyResponse)
 class SpiritualGiftSurveyResponseAdmin(admin.ModelAdmin):
     list_display = ('member', 'question', 'answer')
-    search_fields = ('member__username', 'question__question_text',)
+    # search_fields = ('member__username', 'question__question_text',)
+    search_fields = ('member__user__username', 'question__question_text',)
     list_filter = ('question',)
     ordering = ('member',)
 
 @admin.register(MemberSpiritualGifts)
 class MemberSpiritualGiftsAdmin(admin.ModelAdmin):
     list_display = ('member', 'get_gifts', 'survey_results')
-    search_fields = ('member__username',)
+    search_fields = ('member__user__username',)
+    # search_fields = ('member__username',)
     list_filter = ('member',)
     ordering = ('member',)
 

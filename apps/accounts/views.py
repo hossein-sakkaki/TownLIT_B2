@@ -19,9 +19,6 @@ from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from cryptography.fernet import Fernet
 
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.backends import default_backend
 from .models import UserDeviceKey
 
 
@@ -37,7 +34,7 @@ from .models import CustomLabel, SocialMediaLink, SocialMediaType
 from apps.profilesOrg.models import Organization
 from apps.profiles.models import Member, GuestUser
 from apps.main.models import TermsAndPolicy, UserAgreement
-from utils.common.utils import send_email, create_active_code
+from utils.common.utils import send_email, create_active_code, MAIN_URL
 from utils.security.dialogue_cleanup import handle_sensitive_dialogue_cleanup
 from django.template.loader import render_to_string
 import utils as utils
@@ -163,12 +160,12 @@ class AuthViewSet(viewsets.ViewSet):
 
             return Response({
                 "message": "User verified successfully. Please answer the category questions.",
-                "redirect_to_answer_questions": True
+                "redirect_to_choose_path": True
             }, status=status.HTTP_200_OK)
         return Response(ser_data.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    @action(detail=False, methods=['post'], url_path='answer-questions', permission_classes=[AllowAny])
-    def answer_questions(self, request):  # Answer the category questions
+    @action(detail=False, methods=['post'], url_path='choose-path', permission_classes=[AllowAny])
+    def choose_path(self, request):  # Answer the category questions
         user_session = request.session.get('user_session')
         if not user_session:
             return Response({"error": "Session data not found"}, status=status.HTTP_400_BAD_REQUEST)
@@ -203,7 +200,7 @@ class AuthViewSet(viewsets.ViewSet):
         # Create or retrieve the profile based on the category
         if category == BELIEVER:
             try:
-                member_instance, created = Member.objects.get_or_create(id=user)
+                member_instance, created = Member.objects.get_or_create(user=user)
             except Exception as e:
                 return Response({
                     "error": "Unable to create member profile. Please try again later or contact support.",
@@ -211,7 +208,7 @@ class AuthViewSet(viewsets.ViewSet):
                 }, status=status.HTTP_400_BAD_REQUEST)
         else:
             try:
-                guest_user_instance, created = GuestUser.objects.get_or_create(id=user)
+                guest_user_instance, created = GuestUser.objects.get_or_create(user=user)
             except Exception as e:
                 return Response({
                     "error": "Unable to create guest user profile. Please try again later or contact support.",
@@ -283,12 +280,16 @@ class AuthViewSet(viewsets.ViewSet):
                 otp_code = user.generate_two_factor_token()
 
                 # ارسال ایمیل با کد OTP
-                subject = "Two-Factor Authentication - Your OTP Code"
-                email_body = render_to_string('emails/login_by_2fa_email.html', {
-                    'otp_code': otp_code,
-                })
-                if not send_email(subject, "", email_body, [user.email]):
-                    return Response({"error": "Failed to send OTP email. Please try again later."}, status=500)
+                # subject = "Two-Factor Authentication - Your OTP Code"
+                # email_body = render_to_string('emails/login_by_2fa_email.html', {
+                #     'otp_code': otp_code,
+                # })
+                # if not send_email(subject, "", email_body, [user.email]):
+                #     return Response({"error": "Failed to send OTP email. Please try again later."}, status=500)
+                
+                print('------------------------')
+                print(otp_code)
+                print('------------------------')
 
                 return Response({
                     "message": "Two-factor authentication required. Please check your email for the OTP code.",
@@ -390,7 +391,7 @@ class AuthViewSet(viewsets.ViewSet):
                 user.reset_token = reset_token
                 user.reset_token_expiration = expiration_time
                 user.save()
-                reset_link = f'{utils.MAIN_URL}/auth/reset-password/{reset_token}/'
+                reset_link = f'{MAIN_URL}/auth/reset-password/{reset_token}/'
                 
                 # Send reset your password link via email
                 subject = "Password Reset Link"
