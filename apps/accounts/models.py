@@ -367,9 +367,13 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
         self.delete_pin = hashed_pin.decode('utf-8')
 
     def verify_access_pin(self, entered_pin: str) -> bool:
+        if not self.access_pin:
+            return False
         return bcrypt.checkpw(entered_pin.encode('utf-8'), self.access_pin.encode('utf-8'))
 
     def verify_delete_pin(self, entered_pin: str) -> bool:
+        if not self.delete_pin:
+            return False
         return bcrypt.checkpw(entered_pin.encode('utf-8'), self.delete_pin.encode('utf-8'))
     
     # Privacy

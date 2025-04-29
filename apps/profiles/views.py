@@ -1119,12 +1119,12 @@ class MemberSpiritualGiftsViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        member = self.request.user.member
+        member = self.request.user.member_profile
         return MemberSpiritualGifts.objects.filter(member=member)
     
     @action(detail=False, methods=['get'], url_path='spiritual-gifts', permission_classes=[IsAuthenticated])
     def get_spiritual_gifts_for_member(self, request):
-        member = request.user.member
+        member = request.user.member_profile
         member_spiritual_gifts = MemberSpiritualGifts.objects.filter(member=member).first()
         if member_spiritual_gifts:
             serializer = self.get_serializer(member_spiritual_gifts)
@@ -1133,7 +1133,7 @@ class MemberSpiritualGiftsViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'], url_path='submit-survey', permission_classes=[IsAuthenticated])
     def submit_survey(self, request):
-        member = request.user.member
+        member = request.user.member_profile
         last_submission = MemberSpiritualGifts.objects.filter(member=member).first()
         
         if last_submission and last_submission.created_at >= timezone.now() - timedelta(days=30):
@@ -1202,7 +1202,7 @@ class SpiritualGiftSurveyViewSet(viewsets.ModelViewSet):
     # Get all responses for the current member
     @action(detail=False, methods=['get'], url_path='get-answers', permission_classes=[IsAuthenticated])
     def get_answers(self, request):
-        user = request.user.member
+        user = request.user.member_profile
         responses = SpiritualGiftSurveyResponse.objects.filter(member=user)
         
         serializer = self.get_serializer(responses, many=True)
@@ -1210,7 +1210,7 @@ class SpiritualGiftSurveyViewSet(viewsets.ModelViewSet):
     
     @action(detail=True, methods=['post'], url_path='submit-answer', permission_classes=[IsAuthenticated])
     def submit_answer(self, request, pk=None):
-        member = request.user.member
+        member = request.user.member_profile
         question_id = request.data.get('question_id')
         question_number = request.data.get('question_number')
         answer = request.data.get('answer')
@@ -1239,7 +1239,7 @@ class SpiritualGiftSurveyViewSet(viewsets.ModelViewSet):
         
     @action(detail=False, methods=['get'], url_path='get-progress', permission_classes=[IsAuthenticated])
     def get_survey_progress(self, request):
-        user = request.user.member
+        user = request.user.member_profile
         progress = MemberSurveyProgress.objects.filter(member=user).first()
         total_questions = SpiritualGiftSurveyQuestion.objects.values('question_number').distinct().count()
         
@@ -1257,7 +1257,7 @@ class SpiritualGiftSurveyViewSet(viewsets.ModelViewSet):
         
     @action(detail=False, methods=['delete'], url_path='cancel-survey', permission_classes=[IsAuthenticated])
     def cancel_survey(self, request):
-        member = request.user.member 
+        member = request.user.member_profile 
         SpiritualGiftSurveyResponse.objects.filter(member=member).delete()        
         MemberSurveyProgress.objects.filter(member=member).delete()
         return Response(

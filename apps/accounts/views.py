@@ -347,7 +347,7 @@ class AuthViewSet(viewsets.ViewSet):
                 'access': str(access),
                 'is_member': user.is_member,
                 'user': user_data,
-                'user': user.id,
+                'user_id': user.id,
             }, status=status.HTTP_200_OK)
         else:
             return Response({
@@ -440,12 +440,16 @@ class AuthViewSet(viewsets.ViewSet):
             otp_code = user.generate_two_factor_token()
 
             # Send Email to User
-            subject = "Activate Two-Factor Authentication (2FA)"
-            email_body = render_to_string('emails/enable_2fa_email.html', {
-                'otp_code': otp_code,
-            })
-            if not send_email(subject, "", email_body, [user.email]):
-                return Response({"error": "Failed to send OTP email. Please try again later."}, status=500)
+            # subject = "Activate Two-Factor Authentication (2FA)"
+            # email_body = render_to_string('emails/enable_2fa_email.html', {
+            #     'otp_code': otp_code,
+            # })
+            # if not send_email(subject, "", email_body, [user.email]):
+            #     return Response({"error": "Failed to send OTP email. Please try again later."}, status=500)
+            
+            print('----------------------------------------')
+            print(otp_code)
+            print('----------------------------------------')
             
             return Response({"message": "A verification code has been sent to your email."}, status=status.HTTP_200_OK)
 
@@ -477,12 +481,16 @@ class AuthViewSet(viewsets.ViewSet):
             otp_code = user.generate_two_factor_token()
 
             # Send Email to User
-            subject = "Disable Two-Factor Authentication (2FA)"
-            email_body = render_to_string('emails/disable_2fa_email.html', {
-                'otp_code': otp_code,
-            })
-            if not send_email(subject, "", email_body, [user.email]):
-                return Response({"error": "Failed to send OTP email. Please try again later."}, status=500)
+            # subject = "Disable Two-Factor Authentication (2FA)"
+            # email_body = render_to_string('emails/disable_2fa_email.html', {
+            #     'otp_code': otp_code,
+            # })
+            # if not send_email(subject, "", email_body, [user.email]):
+            #     return Response({"error": "Failed to send OTP email. Please try again later."}, status=500)
+            
+            print('----------------------------------------')
+            print(otp_code)
+            print('----------------------------------------')
             
             return Response({"message": "A verification code has been sent to your email."}, status=status.HTTP_200_OK)
         except Exception as e:
@@ -512,16 +520,16 @@ class AuthViewSet(viewsets.ViewSet):
         new_password = request.data.get('new_password')
         
         if not old_password or not new_password:
-            return Response({"message": "Both old and new passwords are required."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "Both old and new passwords are required."}, status=status.HTTP_400_BAD_REQUEST)
         if not user.check_password(old_password):
-            return Response({"message": "The current password is incorrect."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "The current password is incorrect."}, status=status.HTTP_400_BAD_REQUEST)
         try:
             user.set_password(new_password)
             user.save()
             update_session_auth_hash(request, user)
             return Response({"message": "Password updated successfully."}, status=status.HTTP_200_OK)
         except Exception as e:
-            return Response({"message": "An unexpected error occurred. Please try again later."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({"error": "An unexpected error occurred. Please try again later."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
     # PINs Manage -----------------------------------------------------------------------------------------------
@@ -559,8 +567,7 @@ class AuthViewSet(viewsets.ViewSet):
     def disable_pin(self, request):
         try:
             user = request.user
-            entered_pin = request.data.get('pin')
-            
+            entered_pin = request.data.get('pin')            
             if not entered_pin:
                 return Response({"error": "Pin is required to disable pin security."}, status=status.HTTP_400_BAD_REQUEST)
 
