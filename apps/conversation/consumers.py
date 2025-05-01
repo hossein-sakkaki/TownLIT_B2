@@ -39,7 +39,7 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
         self.connected = True
         self.user = self.scope["user"]
 
-        # 🔐 استخراج device_id از query string
+        # 🔐 Extract device_id from query string
         query_string = self.scope.get("query_string", b"").decode()
         query_params = dict(qc.split("=") for qc in query_string.split("&") if "=" in qc)
         self.device_id = query_params.get("device_id")
@@ -48,23 +48,22 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
             await self.close()
             return
 
-        # ✅ لغو تایمر قطع اتصال قبلی (در صورت reconnect)
+        # ✅ Cancel previous disconnect timer if reconnected
         if DISCONNECT_TIMERS.get(self.user.id):
             DISCONNECT_TIMERS[self.user.id].cancel()
             del DISCONNECT_TIMERS[self.user.id]
 
-        # ✅ ثبت آنلاین بودن کاربر
+        # ✅ Set user as online in Redis
         await set_user_online(self.user.id, self.channel_name)
 
-        # ✅ ثبت در گروه کاربر
+        # ✅ Join user-specific groups
         await self.channel_layer.group_add(f"user_{self.user.id}", self.channel_name)
-
-        # ✅ ثبت در گروه دستگاه کاربر
         await self.channel_layer.group_add(f"device_{self.device_id}", self.channel_name)
 
-        # ✅ ثبت در گروه‌های دیالوگ
+        # ✅ Join all dialogue groups using slug instead of id
         dialogues = await sync_to_async(list)(Dialogue.objects.filter(participants=self.user))
-        self.group_names = set(f"dialogue_{dialogue.id}" for dialogue in dialogues)
+        self.dialogue_map = {f"dialogue_{d.slug}": d.id for d in dialogues}
+        self.group_names = set(self.dialogue_map.keys())
 
         for group in self.group_names:
             await self.channel_layer.group_add(group, self.channel_name)
@@ -75,16 +74,16 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
         await self.notify_user_online()
         await self.send_all_online_statuses()
 
-        # ✅ ارسال وضعیت آنلاین به کاربر تازه متصل شده
+        # ✅ Send initial online status to the connected user
         await self.send(text_data=json.dumps({
             "type": "user_online_status",
             "event_type": "user_online_status",
-            "dialogue_ids": [dialogue.id for dialogue in dialogues],
+            "dialogue_slugs": [dialogue.slug for dialogue in dialogues],
             "user_id": self.user.id,
             "is_online": True
         }))
 
-        # ✅ ارسال پیام‌های تحویل داده نشده
+        # ✅ Send undelivered messages to the user
         for dialogue in dialogues:
             undelivered_messages = await sync_to_async(list)(
                 dialogue.messages.filter(is_delivered=False).exclude(sender=self.user)
@@ -94,14 +93,13 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
 
                 content = get_message_content(message, self.user)
 
-
                 await self.channel_layer.group_send(
-                    f"dialogue_{dialogue.id}",
+                    f"dialogue_{dialogue.slug}",
                     {
                         "type": "chat_message",
                         "event_type": "chat_message",
                         "message_id": message.id,
-                        "dialogue_id": dialogue.id,
+                        "dialogue_slug": dialogue.slug,
                         "content": content,
                         "sender": {
                             "id": message.sender.id,
@@ -118,7 +116,7 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
                     {
                         "type": "mark_as_delivered",
                         "event_type": "mark_as_delivered",
-                        "dialogue_id": dialogue.id,
+                        "dialogue_slug": dialogue.slug,
                         "message_id": message.id,
                         "user_id": self.user.id,
                     }
@@ -130,97 +128,13 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
                 {
                     "type": "user_online_status",
                     "event_type": "user_online_status",
-                    "dialogue_id": int(group.split("_")[1]),
+                    "dialogue_slug": group.split("_", 1)[1],
                     "user_id": self.user.id,
                     "is_online": True
                 }
             )
 
 
-    # User Online ---------------------------
-    async def notify_user_online(self):
-        # ✅ ارسال پیام‌های تحویل داده نشده برای این کاربر
-        undelivered_messages = await sync_to_async(list)(
-            Message.objects.filter(is_delivered=False, dialogue__participants=self.user)
-        )
-        for message in undelivered_messages:
-            await self.mark_message_as_delivered(message)
-            await self.notify_message_delivered_to_sender(message)
-
-        for group in self.group_names:
-            await self.channel_layer.group_send(
-                group,
-                {
-                    "type": "user_online_status",
-                    "event_type": "user_online_status",
-                    "dialogue_id": int(group.split("_")[1]),
-                    "user_id": self.user.id,
-                    "is_online": True
-                }
-            )
-
-            
-    # Message Delivered after online ------------------------------
-    async def notify_message_delivered_to_sender(self, message):
-        recipient = await sync_to_async(
-            lambda: message.dialogue.participants.exclude(id=message.sender.id).first()
-        )()
-
-        if not recipient:
-            return
-
-        await self.channel_layer.group_send(
-            f"user_{message.sender.id}",  
-            {
-                "type": "mark_as_delivered",
-                "dialogue_id": message.dialogue.id,
-                "message_id": message.id,
-                "user_id": recipient.id, 
-            }
-        )
-            
-    
-    # User Offline ---------------------------       
-    async def notify_user_offline(self):
-        for group in self.group_names:
-            await self.channel_layer.group_send(
-                group,
-                {
-                    "type": "user_online_status",
-                    "event_type": "user_online_status",
-                    "dialogue_id": int(group.split("_")[1]),
-                    "user_id": self.user.id,
-                    "is_online": False
-                }
-            )
-
-    # Online Status ---------------------------
-    async def user_online_status(self, event):
-        await self.send(text_data=json.dumps({
-            "type": "user_online_status",
-            "event_type": "user_online_status",
-            "dialogue_id": event["dialogue_id"],
-            "user_id": event["user_id"],
-            "is_online": event["is_online"]
-        }))
-        
-    # Send All Online Status ---------------------------
-    async def send_all_online_statuses(self):
-        online_users = await get_all_online_users()
-        dialogues = await sync_to_async(list)(Dialogue.objects.filter(participants=self.user))
-        for dialogue in dialogues:
-            participants = await sync_to_async(list)(dialogue.participants.all())
-            
-            for participant in participants:
-                is_online = participant.id in online_users
-                await self.send(text_data=json.dumps({
-                    "type": "user_online_status",
-                    "event_type": "user_online_status",
-                    "dialogue_id": dialogue.id,
-                    "user_id": participant.id,
-                    "is_online": is_online
-                }))
-                
     # Force Logout -------------------------------------------------
     async def force_logout(self, event):
         user_id = event["user_id"]
@@ -252,10 +166,9 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
 
     # Finalize Disconnect -----------------------------------------
     async def finalize_disconnect(self):
-        # 🔴 اعلام قطع اتصال
         self.connected = False
 
-        # 🔴 توقف حلقه پینگ اگر در حال اجرا باشد
+        # ✅ Stop the ping loop
         if hasattr(self, "ping_task"):
             self.ping_task.cancel()
             try:
@@ -263,38 +176,36 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
             except asyncio.CancelledError:
                 pass
 
-        # حذف کاربر از Redis (لیست آنلاین‌ها)
+        # ✅ Mark user as offline
         await set_user_offline(self.user.id, self.channel_name)
 
-        # خروج از همه‌ی گروه‌ها
+        # ✅ Leave all dialogue groups
         for group in self.group_names:
             await self.channel_layer.group_discard(group, self.channel_name)
 
         await self.channel_layer.group_discard(f"user_{self.user.id}", self.channel_name)
 
-        # ارسال پیام آفلاین شدن به همه‌ی گروه‌ها
+        # ✅ Notify other participants about the disconnection
         for group in self.group_names:
             await self.channel_layer.group_send(
                 group,
                 {
                     "type": "user_online_status",
                     "event_type": "user_online_status",
-                    "dialogue_id": int(group.split("_")[1]),
+                    "dialogue_slug": group.split("_", 1)[1],
                     "user_id": self.user.id,
                     "is_online": False
                 }
             )
 
-        # حذف تایمر تایپ (اگر وجود دارد)
         if TYPING_TIMEOUTS.get(self.user.id):
             TYPING_TIMEOUTS[self.user.id].cancel()
             del TYPING_TIMEOUTS[self.user.id]
 
-        # حذف تایمر قطع اتصال (اگر وجود دارد)
         if DISCONNECT_TIMERS.get(self.user.id):
             del DISCONNECT_TIMERS[self.user.id]
 
-        # ارسال وضعیت آخرین بازدید (last_seen)
+        # ✅ Send last seen timestamp to all dialogue participants
         last_seen_ts = await get_last_seen(self.user.id)
         if last_seen_ts:
             last_seen_dt = datetime.fromtimestamp(last_seen_ts)
@@ -305,12 +216,13 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
                     group,
                     {
                         "type": "user_last_seen",
-                        "dialogue_id": int(group.split("_")[1]),
+                        "dialogue_slug": group.split("_", 1)[1],
                         "user_id": self.user.id,
                         "last_seen": last_seen_dt.isoformat(),
                         "last_seen_display": last_seen_display
                     }
                 )
+
 
         
     # Start Ping ---------------------------
@@ -383,11 +295,11 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
                 return
 
             if data.get("type") == "request_online_status":
-                dialogue_id = data.get("dialogue_id")
-                if not dialogue_id:
+                dialogue_slug = data.get("dialogue_slug")
+                if not dialogue_slug:
                     return
 
-                dialogue = await sync_to_async(Dialogue.objects.get)(id=dialogue_id)
+                dialogue = await sync_to_async(Dialogue.objects.get)(slug=dialogue_slug)
                 participants = await sync_to_async(list)(dialogue.participants.all())
                 participant_ids = [participant.id for participant in participants]
                 online_statuses = await get_online_status_for_users(participant_ids)
@@ -397,7 +309,7 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
                     await self.send(text_data=json.dumps({
                         "type": "user_online_status",
                         "event_type": "user_online_status",
-                        "dialogue_id": dialogue_id,
+                        "dialogue_slug": dialogue_slug,
                         "user_id": participant.id,
                         "is_online": online_status
                     }))
@@ -405,21 +317,108 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
         except Exception as e:
             await self.send_json({"type": "error", "message": str(e)})
 
-            
-    # Typing Status ----------------------
-    async def handle_typing_status(self, data):
-        dialogue_id = data.get("dialogue_id")
-        is_typing = data.get("is_typing", False)
 
-        if not dialogue_id:
+
+    # User Online ---------------------------
+    async def notify_user_online(self):
+        # ✅ Deliver undelivered messages and notify their senders
+        undelivered_messages = await sync_to_async(list)(
+            Message.objects.filter(is_delivered=False, dialogue__participants=self.user)
+        )
+        for message in undelivered_messages:
+            await self.mark_message_as_delivered(message)
+            await self.notify_message_delivered_to_sender(message)
+
+        # ✅ Notify all group members about user's online status
+        for group in self.group_names:
+            await self.channel_layer.group_send(
+                group,
+                {
+                    "type": "user_online_status",
+                    "event_type": "user_online_status",
+                    "dialogue_slug": group.split("_", 1)[1],
+                    "user_id": self.user.id,
+                    "is_online": True
+                }
+            )
+
+
+            
+    # Message Delivered after online ------------------------------
+    async def notify_message_delivered_to_sender(self, message):
+        recipient = await sync_to_async(
+            lambda: message.dialogue.participants.exclude(id=message.sender.id).first()
+        )()
+
+        if not recipient:
             return
 
         await self.channel_layer.group_send(
-            f"dialogue_{dialogue_id}",
+            f"user_{message.sender.id}",  
+            {
+                "type": "mark_as_delivered",
+                "dialogue_slug": message.dialogue.slug,
+                "message_id": message.id,
+                "user_id": recipient.id, 
+            }
+        )
+
+    # User Offline ---------------------------       
+    async def notify_user_offline(self):
+        for group in self.group_names:
+            await self.channel_layer.group_send(
+                group,
+                {
+                    "type": "user_online_status",
+                    "event_type": "user_online_status",
+                    "dialogue_slug": group.split("_", 1)[1],
+                    "user_id": self.user.id,
+                    "is_online": False
+                }
+            )
+
+
+    # Online Status ---------------------------
+    async def user_online_status(self, event):
+        await self.send(text_data=json.dumps({
+            "type": "user_online_status",
+            "event_type": "user_online_status",
+            "dialogue_slug": event["dialogue_slug"],
+            "user_id": event["user_id"],
+            "is_online": event["is_online"]
+        }))
+
+    # Send All Online Status ---------------------------
+    async def send_all_online_statuses(self):
+        online_users = await get_all_online_users()
+        dialogues = await sync_to_async(list)(Dialogue.objects.filter(participants=self.user))
+        for dialogue in dialogues:
+            participants = await sync_to_async(list)(dialogue.participants.all())
+            
+            for participant in participants:
+                is_online = participant.id in online_users
+                await self.send(text_data=json.dumps({
+                    "type": "user_online_status",
+                    "event_type": "user_online_status",
+                    "dialogue_slug": dialogue.slug,
+                    "user_id": participant.id,
+                    "is_online": is_online
+                }))
+            
+    # Typing Status ----------------------
+    async def handle_typing_status(self, data):
+        dialogue_slug = data.get("dialogue_slug")
+        is_typing = data.get("is_typing", False)
+
+        if not dialogue_slug:
+            return
+
+        await self.channel_layer.group_send(
+            f"dialogue_{dialogue_slug}",
             {
                 "type": "typing_status",
                 "event_type": "typing_status",
-                "dialogue_id": dialogue_id,
+                "dialogue_slug": dialogue_slug,
                 "sender": {
                     "id": self.user.id,
                     "username": self.user.username,
@@ -432,17 +431,18 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
         if is_typing:
             if TYPING_TIMEOUTS.get(self.user.id):
                 TYPING_TIMEOUTS[self.user.id].cancel()
-            TYPING_TIMEOUTS[self.user.id] = asyncio.create_task(self.clear_typing_status(dialogue_id))
+            TYPING_TIMEOUTS[self.user.id] = asyncio.create_task(self.clear_typing_status(dialogue_slug))
+
 
     # Delete Typing Status after 5 sec ----------------------
-    async def clear_typing_status(self, dialogue_id):
+    async def clear_typing_status(self, dialogue_slug):
         await asyncio.sleep(5)
         await self.channel_layer.group_send(
-            f"dialogue_{dialogue_id}",
+            f"dialogue_{dialogue_slug}",
             {
                 "type": "typing_status",
                 "event_type": "typing_status",
-                "dialogue_id": dialogue_id,
+                "dialogue_slug": dialogue_slug,
                 "sender": {
                     "id": self.user.id,
                     "username": self.user.username,
@@ -454,10 +454,11 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
         if TYPING_TIMEOUTS.get(self.user.id):
             del TYPING_TIMEOUTS[self.user.id]
 
+
     
     # Handle Message ----------------------                
     async def handle_message(self, data):
-        dialogue_id = data.get("dialogue_id")
+        dialogue_slug = data.get("dialogue_slug")
         encrypted_contents = data.get("encrypted_contents", [])
         is_encrypted = data.get("is_encrypted", False)
 
@@ -469,7 +470,7 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
             return
 
         try:
-            dialogue = await sync_to_async(Dialogue.objects.get)(id=dialogue_id)
+            dialogue = await sync_to_async(Dialogue.objects.get)(slug=dialogue_slug)
             if is_encrypted:
                 message = await sync_to_async(Message.objects.create)(
                     dialogue=dialogue,
@@ -482,7 +483,6 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
                 base64_str = base64.b64encode(plain_message.encode("utf-8")).decode("utf-8")
                 content_bytes = base64_str.encode("utf-8")
                 
-                plain_message = encrypted_contents[0].get("encrypted_content", "")
                 message = await sync_to_async(Message.objects.create)(
                     dialogue=dialogue,
                     sender=self.user,
@@ -490,7 +490,7 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
                     is_encrypted=False
                 )
 
-            # 🧩 ذخیره نسخه‌های رمزنگاری‌شده (در پیام خصوصی)
+            # Store encrypted versions (if applicable)
             if is_encrypted:
                 for item in encrypted_contents:
                     device_id = item.get("device_id")
@@ -504,7 +504,6 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
                         encrypted_content=encrypted_content
                     )
 
-            # 📌 بروزرسانی آخرین پیام گفتگو
             dialogue.last_message = message
             await sync_to_async(dialogue.save)(update_fields=['last_message'])
 
@@ -518,7 +517,6 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
 
         await self.handle_self_destruct_messages()
 
-        # 🔍 همه شرکت‌کننده‌ها
         participants = await sync_to_async(list)(dialogue.participants.all())
         user_ids = [p.id for p in participants if p.id != self.user.id]
         online_statuses = await get_online_status_for_users(user_ids)
@@ -526,9 +524,7 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
         for participant in participants:
             is_delivered = online_statuses.get(participant.id, False)
 
-            # 🔐 ارسال پیام برای همه device ها
             if is_encrypted:
-                # → خصوصی: بر اساس کلید دستگاه
                 user_device_keys = await sync_to_async(list)(
                     UserDeviceKey.objects.filter(user=participant, is_active=True)
                 )
@@ -547,7 +543,7 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
                                 "type": "chat_message",
                                 "event_type": "chat_message",
                                 "message_id": message.id,
-                                "dialogue_id": dialogue_id,
+                                "dialogue_slug": dialogue_slug,
                                 "content": enc.encrypted_content,
                                 "sender": {
                                     "id": self.user.id,
@@ -561,14 +557,13 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
                             }
                         )
             else:
-                # → گروهی: ارسال پیام برای هر کاربر (فقط یک نسخه برای همه)
                 await self.channel_layer.group_send(
                     f"user_{participant.id}",
                     {
                         "type": "chat_message",
                         "event_type": "chat_message",
                         "message_id": message.id,
-                        "dialogue_id": dialogue_id,
+                        "dialogue_slug": dialogue_slug,
                         "content": plain_message,
                         "sender": {
                             "id": self.user.id,
@@ -596,10 +591,11 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
 
 
 
+
     # Save Message ----------------------
     @sync_to_async
-    def save_message(self, dialogue_id, content, is_encrypted):
-        dialogue = Dialogue.objects.get(id=dialogue_id)   
+    def save_message(self, dialogue_slug, content, is_encrypted):
+        dialogue = Dialogue.objects.get(slug=dialogue_slug)   
             
         if dialogue.deleted_by_users.filter(id=self.user.id).exists():
             dialogue.deleted_by_users.remove(self.user) 
@@ -616,6 +612,8 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
         
         return message
 
+
+    # ---------------------------------------------------
     async def handle_self_destruct_messages(self):
         messages_to_delete = await sync_to_async(Message.objects.filter)(
             sender=self.user,
@@ -623,20 +621,21 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
         )
         await sync_to_async(messages_to_delete.delete)()
 
+    # ---------------------------------------------------
     async def chat_message(self, event):
         event["type"] = "chat_message"
         await self.send(text_data=json.dumps(event))
         
+    # ---------------------------------------------------
     async def typing_status(self, event):
         await self.send(text_data=json.dumps({
             "type": "typing_status",
             "event_type": "typing_status",
-            "dialogue_id": event["dialogue_id"],
+            "dialogue_slug": event["dialogue_slug"],
             "sender": event["sender"],
             "is_typing": event["is_typing"]
         }))
-    
-    
+        
     # Mark as Delieverd Message and send to Partner User ------------------------------------------
     async def mark_message_as_delivered(self, message):
         recipient = await sync_to_async(
@@ -654,7 +653,7 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
 
             await self.send(text_data=json.dumps({
                 "type": "mark_as_delivered",
-                "dialogue_id": message.dialogue.id,
+                "dialogue_slug": message.dialogue.slug,
                 "message_id": message.id,
                 "is_delivered": True
             }))
@@ -663,18 +662,19 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
                 f"user_{message.sender.id}",
                 {
                     "type": "mark_as_delivered",
-                    "dialogue_id": message.dialogue.id,
+                    "dialogue_slug": message.dialogue.slug,
                     "message_id": message.id,
-                    "user_id": self.user.id,  # یا recipient.id
+                    "user_id": self.user.id,
                 }
             )
+
 
 
     # Mark as Delivered Message and send to Sender User --------------------------------------------
     async def mark_as_delivered(self, event):
         await self.send(text_data=json.dumps({
             "type": "mark_as_delivered",
-            "dialogue_id": event["dialogue_id"],
+            "dialogue_slug": event["dialogue_slug"],
             "message_id": event["message_id"],
             "user_id": event["user_id"],
         }))
@@ -682,36 +682,36 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
          
     # Mark as Read Real-Time Update ----------------------------------------------------------------
     async def mark_message_as_read(self, data):
-        dialogue_id = data.get("dialogue_id")
-        if not dialogue_id:
+        dialogue_slug = data.get("dialogue_slug")
+        if not dialogue_slug:
             return
 
-        dialogue = await sync_to_async(Dialogue.objects.get)(id=dialogue_id)
+        dialogue = await sync_to_async(Dialogue.objects.get)(slug=dialogue_slug)
         unread_messages = await sync_to_async(list)(
             Message.objects.filter(dialogue=dialogue).exclude(seen_by_users=self.user)
         )
-                
+
         for message in unread_messages:
             if message.sender_id == self.user.id:
                 continue 
             await mark_message_as_read_atomic(message, self.user)
 
+        await self.channel_layer.group_send(
+            f"dialogue_{dialogue_slug}",
+            {
+                "type": "mark_as_read",
+                "event_type": "mark_as_read",
+                "dialogue_slug": dialogue_slug,
+                "reader": {
+                    "id": self.user.id,
+                    "username": self.user.username,
+                    "email": self.user.email,
+                },
+                "read_messages": [msg.id for msg in unread_messages]
+            }
+        )
+        await self.send_unread_counts()
 
-            await self.channel_layer.group_send(
-                f"dialogue_{dialogue_id}",
-                {
-                    "type": "mark_as_read",
-                    "event_type": "mark_as_read",
-                    "dialogue_id": dialogue_id,
-                    "reader": {
-                        "id": self.user.id,
-                        "username": self.user.username,
-                        "email": self.user.email,
-                    },
-                    "read_messages": [msg.id for msg in unread_messages]
-                }
-            )
-            await self.send_unread_counts()
 
     # Mark as Read  ----------------------
     async def mark_as_read(self, event):
@@ -719,16 +719,19 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
 
     # Handle File Messages ----------------------
     async def handle_file_message(self, data):
-        dialogue_id = data.get("dialogue_id")
+        dialogue_slug = data.get("dialogue_slug")
         message_id = data.get("message_id")  
         file_type = data.get("file_type")
         file_url = data.get("file_url")
 
-        if not dialogue_id or not message_id or not file_type or not file_url:
+        if not dialogue_slug or not message_id or not file_type or not file_url:
             return
 
         try:
-            message = await sync_to_async(Message.objects.get)(id=message_id, dialogue_id=dialogue_id)
+            # Get message via dialogue slug and message ID
+            message = await sync_to_async(
+                lambda: Message.objects.select_related("dialogue").get(id=message_id, dialogue__slug=dialogue_slug)
+            )()
         except Message.DoesNotExist:
             return
 
@@ -738,7 +741,7 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
             "email": message.sender.email,
         })()
 
-        # ✅ دریافت لیست کاربران (بجز فرستنده)
+        # Get all participants (excluding sender)
         participants = await sync_to_async(
             lambda: list(message.dialogue.participants.exclude(id=message.sender.id).values_list("id", flat=True))
         )()
@@ -750,7 +753,7 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
                     "type": "file_message",
                     "event_type": "file_message",
                     "message_id": message.id,
-                    "dialogue_id": dialogue_id,
+                    "dialogue_slug": dialogue_slug,
                     "file_type": file_type,
                     "file_url": file_url,
                     "sender": sender,
@@ -760,34 +763,41 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
                 }
             )
 
+
     # Handle File Canceled Message ----------------------
     async def handle_upload_canceled(self, data):
-        dialogue_id = data.get("dialogue_id")
+        dialogue_slug = data.get("dialogue_slug")
         file_type = data.get("file_type")
 
-        if not dialogue_id or not file_type:
+        if not dialogue_slug or not file_type:
             return
-        
-        # ✅ ارسال پیام به سایر کاربران این دیالوگ که آپلود لغو شده است
+
+        try:
+            dialogue = await sync_to_async(Dialogue.objects.get)(slug=dialogue_slug)
+        except Dialogue.DoesNotExist:
+            return
+
+        # ✅ Notify all participants via group that upload was canceled
         await self.channel_layer.group_send(
-            f"dialogue_{dialogue_id}",
+            f"dialogue_{dialogue_slug}",
             {
                 "type": "file_upload_status",
                 "event_type": "file_upload_status",
-                "dialogue_id": dialogue_id,
+                "dialogue_slug": dialogue_slug,
                 "file_type": file_type,
                 "status": "cancelled",
                 "progress": 0,
             }
         )
 
-        # ✅ ارسال تأییدیه لغو آپلود به فرستنده
+        # ✅ Confirm cancel to sender
         await self.send(text_data=json.dumps({
             "type": "upload_canceled",
-            "dialogue_id": dialogue_id,
+            "dialogue_slug": dialogue_slug,
             "file_type": file_type,
             "status": "cancelled"
         }))
+
 
 
 
@@ -797,49 +807,60 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
         
             
     # ارسال وضعیت ارسال فایل (در حال آپلود، در حال پردازش، آماده ارسال) ----------------------------------------------
-    async def send_file_status(self, dialogue_id, file_type, status, progress=None):
+    async def send_file_status(self, dialogue_slug, file_type, status, progress=None):
+        try:
+            dialogue = await sync_to_async(Dialogue.objects.get)(slug=dialogue_slug)
+        except Dialogue.DoesNotExist:
+            return
+
         await self.channel_layer.group_send(
-            f"dialogue_{dialogue_id}",
+            f"dialogue_{dialogue_slug}",
             {
                 "type": "file_upload_status",
                 "event_type": "file_upload_status",
-                "dialogue_id": dialogue_id,
+                "dialogue_slug": dialogue_slug,
                 "sender": {
                     "id": self.user.id,
                     "username": self.user.username,
                     "email": self.user.email,
                 },
                 "file_type": file_type,
-                "status": status,  # pending, uploading, processing, completed
+                "status": status,
                 "progress": progress,
             }
         )
-        
+   
     async def handle_file_upload_status(self, data):
-        dialogue_id = data.get("dialogue_id")
+        dialogue_slug = data.get("dialogue_slug")
         file_type = data.get("file_type")
         status = data.get("status")
         progress = data.get("progress", None)
 
-        if not dialogue_id or not file_type or not status:
+        if not dialogue_slug or not file_type or not status:
             return
 
-        await self.send_file_status(dialogue_id, file_type, status, progress)
+        await self.send_file_status(dialogue_slug, file_type, status, progress)
+
         
     async def handle_recording_status(self, data):
-        dialogue_id = data.get("dialogue_id")
+        dialogue_slug = data.get("dialogue_slug")
         is_recording = data.get("is_recording", False)
-        file_type = data.get("file_type")  # "audio" یا "video"
+        file_type = data.get("file_type")  # "audio" or "video"
 
-        if not dialogue_id or not file_type:
+        if not dialogue_slug or not file_type:
+            return
+
+        try:
+            dialogue = await sync_to_async(Dialogue.objects.get)(slug=dialogue_slug)
+        except Dialogue.DoesNotExist:
             return
 
         await self.channel_layer.group_send(
-            f"dialogue_{dialogue_id}",
+            f"dialogue_{dialogue_slug}",
             {
                 "type": "recording_status",
                 "event_type": "recording_status",
-                "dialogue_id": dialogue_id,
+                "dialogue_slug": dialogue_slug,
                 "sender": {
                     "id": self.user.id,
                     "username": self.user.username,
@@ -849,6 +870,7 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
                 "file_type": file_type,
             }
         )
+
 
     async def file_upload_status(self, event):
         await self.send(text_data=json.dumps(event))
@@ -875,6 +897,7 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
             return
 
         dialogue = await sync_to_async(lambda: message.dialogue)()
+        dialogue_slug = dialogue.slug
         now = timezone.now()
 
         if is_encrypted:
@@ -944,7 +967,7 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
                         {
                             "type": "edit_message",
                             "message_id": message.id,
-                            "dialogue_id": dialogue.id,
+                            "dialogue_slug": dialogue_slug,
                             "edited_at": now.isoformat(),
                             "is_encrypted": True,
                             "is_edited": True,
@@ -965,7 +988,7 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
                     {
                         "type": "edit_message",
                         "message_id": message.id,
-                        "dialogue_id": dialogue.id,
+                        "dialogue_slug": dialogue_slug,
                         "new_content": data.get("new_content", ""),
                         "edited_at": now.isoformat(),
                         "is_encrypted": False,
@@ -980,12 +1003,36 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     # Handle Real-Time Edit Update ----------------------------------------------
     async def edit_message(self, event):
         await self.send(text_data=json.dumps({
             "type": "edit_message",
             "message_id": event["message_id"],
-            "dialogue_id": event["dialogue_id"],
+            "dialogue_slug": event["dialogue_slug"],
             "edited_at": event["edited_at"],
             "is_encrypted": event.get("is_encrypted", False),
             "is_edited": event.get("is_edited", True),
@@ -1006,16 +1053,6 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
 
         await sync_to_async(lambda: message.mark_as_deleted_by_user(user))()
 
-        # dialogue_id = await sync_to_async(lambda: message.dialogue.id)()
-
-        # await self.channel_layer.group_send(
-        #     f"dialogue_{dialogue_id}",
-        #     {
-        #         "type": "message_soft_deleted",
-        #         "message_id": message.id,
-        #         "user_id": user.id,
-        #     }
-        # )
         await self.send(text_data=json.dumps({
             "type": "message_soft_deleted",
             "message_id": message.id,
@@ -1065,15 +1102,15 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
             # 🔐 حذف رمزنگاری‌های مرتبط
             await sync_to_async(lambda: message.encryptions.all().delete())()
 
-            dialogue_id = dialogue.id
+            dialogue_slug = dialogue.slug
             await sync_to_async(message.delete)()
 
             # ✅ به همه کاربران گفتگو
             await self.channel_layer.group_send(
-                f"dialogue_{dialogue_id}",
+                f"dialogue_{dialogue_slug}",
                 {
                     "type": "message_hard_deleted",
-                    "dialogue_id": dialogue_id,
+                    "dialogue_slug": dialogue_slug,
                     "message_id": message_id,
                 }
             )
@@ -1081,7 +1118,7 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
             # ✅ به فرستنده (مستقیم)
             await self.send(text_data=json.dumps({
                 "type": "message_hard_deleted",
-                "dialogue_id": dialogue_id,
+                "dialogue_slug": dialogue_slug,
                 "message_id": message_id,
             }))
 
@@ -1107,7 +1144,7 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
     async def message_hard_deleted(self, event):
         await self.send(text_data=json.dumps({
             "type": "message_hard_deleted",
-            "dialogue_id": event["dialogue_id"],
+            "dialogue_slug": event["dialogue_slug"],
             "message_id": event["message_id"],
         }))
 
@@ -1115,7 +1152,7 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
     async def user_last_seen(self, event):
         await self.send(text_data=json.dumps({
             "type": "user_last_seen",
-            "dialogue_id": event["dialogue_id"],
+            "dialogue_slug": event["dialogue_slug"],
             "user_id": event["user_id"],
             "last_seen": event["last_seen"],
             "last_seen_display": event["last_seen_display"],
@@ -1141,14 +1178,14 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
         await self.send_json({
             "type": "group_left",
             "user": event["user"],
-            "dialogue_id": event["dialogue_id"],
+            "dialogue_slug": event["dialogue_slug"],
         })
         
     # Founder Transferred -------------------------------------------------------
     async def founder_transferred(self, event):
         await self.send_json({
             "type": "founder_transferred",
-            "dialogue_id": event["dialogue_id"],
+            "dialogue_slug": event["dialogue_slug"],
             "new_founder_id": event["new_founder_id"],
         })
         
@@ -1170,7 +1207,7 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
             )()
             
             results.append({
-                "dialogue_id": dialogue.id,
+                "dialogue_slug": dialogue.slug,
                 "unread_count": unread_count
             })
 

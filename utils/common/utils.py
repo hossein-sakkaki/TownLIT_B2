@@ -167,6 +167,19 @@ class SlugMixin(models.Model):
     class Meta:
         abstract = True
         
+# Generate Unique Slug for Conversation ---------------------------------------
+from django.utils.timezone import now
+from apps.conversation.models import Dialogue
+
+def generate_unique_slug(base_slug: str) -> str:
+    slug = base_slug
+    timestamp = now().strftime("%Y%m%d%H%M%S") 
+    
+    if Dialogue.objects.filter(slug=slug).exists():
+        slug = f"{base_slug}-{timestamp}"
+
+    return slug
+        
 
 # Identity Verification Engine --------------------------------------------------
 import requests

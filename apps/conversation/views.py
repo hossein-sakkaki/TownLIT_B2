@@ -3,7 +3,6 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
-
 from django.utils import timezone
 from datetime import timedelta
 from django.shortcuts import get_object_or_404
@@ -51,11 +50,11 @@ def send_system_message(dialogue, sender, system_event, content):
 
     channel_layer = get_channel_layer()
     async_to_sync(channel_layer.group_send)(
-        f"dialogue_{dialogue.id}",
+        f"dialogue_{dialogue.slug}",
         {
             "type": "chat_message",
             "event_type": "system_message",
-            "dialogue_id": dialogue.id,
+            "dialogue_slug": dialogue.slug,
             "message_id": system_message.id,
             "content": base64_str,
             "sender": {
@@ -75,6 +74,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
     queryset = Dialogue.objects.all()
     serializer_class = DialogueSerializer
     permission_classes = [IsAuthenticated]
+    lookup_field = 'slug'
     
     def get_queryset(self):
         return Dialogue.objects.filter(
@@ -149,7 +149,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
     # Update Group Image Action
     @action(detail=True, methods=["post"], url_path="update-group-image", permission_classes=[IsAuthenticated])
     @require_conversation_access
-    def update_group_image(self, request, pk=None):
+    def update_group_image(self, request, **kwargs):
         dialogue = self.get_object()
 
         if not dialogue.is_group:
@@ -173,9 +173,9 @@ class DialogueViewSet(viewsets.ModelViewSet):
     
     @action(detail=True, methods=['post'], url_path='smart-delete', permission_classes=[IsAuthenticated])
     @require_conversation_access
-    def smart_delete_dialogue(self, request, pk=None):
+    def smart_delete_dialogue(self, request, slug=None):
         user = request.user
-        dialogue = get_object_or_404(Dialogue, pk=pk, participants=user)
+        dialogue = get_object_or_404(Dialogue, slug=slug, participants=user)
 
         if not dialogue.is_group:
             dialogue.mark_as_deleted_by_user(user)
@@ -206,8 +206,8 @@ class DialogueViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='add-participant', permission_classes=[IsAuthenticated])
     @require_conversation_access
-    def add_participant(self, request, pk=None):
-        dialogue = get_object_or_404(Dialogue, pk=pk, is_group=True)
+    def add_participant(self, request, slug=None):
+        dialogue = get_object_or_404(Dialogue, slug=slug, is_group=True)
         participant_id = request.data.get('participant_id')
 
         if not participant_id:
@@ -257,8 +257,8 @@ class DialogueViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='remove-participant', permission_classes=[IsAuthenticated])
     @require_conversation_access
-    def remove_participant(self, request, pk=None):
-        dialogue = get_object_or_404(Dialogue, pk=pk, is_group=True)
+    def remove_participant(self, request, slug=None):
+        dialogue = get_object_or_404(Dialogue, slug=slug, is_group=True)
         participant_id = request.data.get('participant_id')
 
         if not participant_id:
@@ -301,8 +301,8 @@ class DialogueViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'], url_path='participants', permission_classes=[IsAuthenticated])
     @require_conversation_access
-    def get_group_participants(self, request, pk=None):
-        dialogue = get_object_or_404(Dialogue, pk=pk, is_group=True)
+    def get_group_participants(self, request, slug=None):
+        dialogue = get_object_or_404(Dialogue, slug=slug, is_group=True)
         participants = DialogueParticipant.objects.filter(dialogue=dialogue).select_related('user')
         serializer = DialogueParticipantSerializer(
             participants,
@@ -313,8 +313,8 @@ class DialogueViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='promote-to-elder', permission_classes=[IsAuthenticated])
     @require_conversation_access
-    def promote_to_elder(self, request, pk=None):
-        dialogue = get_object_or_404(Dialogue, pk=pk, is_group=True)
+    def promote_to_elder(self, request, slug=None):
+        dialogue = get_object_or_404(Dialogue, slug=slug, is_group=True)
         user_id = request.data.get('user_id')
 
         if not user_id:
@@ -331,8 +331,8 @@ class DialogueViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='demote-to-participant', permission_classes=[IsAuthenticated])
     @require_conversation_access
-    def demote_to_participant(self, request, pk=None):
-        dialogue = get_object_or_404(Dialogue, pk=pk, is_group=True)
+    def demote_to_participant(self, request, slug=None):
+        dialogue = get_object_or_404(Dialogue, slug=slug, is_group=True)
         user_id = request.data.get('user_id')
 
         if not user_id:
@@ -354,8 +354,8 @@ class DialogueViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='resign-elder-role', permission_classes=[IsAuthenticated])
     @require_conversation_access
-    def resign_elder_role(self, request, pk=None):
-        dialogue = get_object_or_404(Dialogue, pk=pk, is_group=True)
+    def resign_elder_role(self, request, slug=None):
+        dialogue = get_object_or_404(Dialogue, slug=slug, is_group=True)
         user = request.user
 
         try:
@@ -374,9 +374,9 @@ class DialogueViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='leave-group', permission_classes=[IsAuthenticated])
     @require_conversation_access
-    def leave_group(self, request, pk=None):
+    def leave_group(self, request, slug=None):
         user = request.user
-        dialogue = get_object_or_404(Dialogue, pk=pk, is_group=True)
+        dialogue = get_object_or_404(Dialogue, slug=slug, is_group=True)
 
         participant = DialogueParticipant.objects.filter(dialogue=dialogue, user=user).first()
         if not participant:
@@ -404,7 +404,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
                 {
                     "type": "group_left",
                     "user": serialized_user,
-                    "dialogue_id": dialogue.id,
+                    "dialogue_slug": dialogue.slug,
                 }
             )
     
@@ -413,8 +413,8 @@ class DialogueViewSet(viewsets.ModelViewSet):
             
     @action(detail=True, methods=['post'], url_path='transfer-founder', permission_classes=[IsAuthenticated])
     @require_conversation_access
-    def transfer_founder(self, request, pk=None):
-        dialogue = get_object_or_404(Dialogue, pk=pk, is_group=True)
+    def transfer_founder(self, request, slug=None):
+        dialogue = get_object_or_404(Dialogue, slug=slug, is_group=True)
 
         if not dialogue.is_founder(request.user):
             return Response({'error': 'Only founder can transfer founder role.'}, status=403)
@@ -442,7 +442,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
                 f"user_{user.id}",
                 {
                     "type": "founder_transferred",
-                    "dialogue_id": dialogue.id,
+                    "dialogue_slug": dialogue.slug,
                     "new_founder_id": new_founder.user.id,
                 }
             )
@@ -523,32 +523,18 @@ class DialogueViewSet(viewsets.ModelViewSet):
         )
         return response
     
-    @action(detail=False, methods=["get"], url_path="dialogue-keys", permission_classes=[IsAuthenticated])
+    @action(detail=True, methods=["get"], url_path="keys", permission_classes=[IsAuthenticated])
     @require_conversation_access
-    def get_dialogue_keys(self, request):
-        dialogue_id = request.query_params.get("dialogue_id")
-        device_id = request.query_params.get("device_id")  # optional
-
-        if not dialogue_id:
-            return Response({"error": "dialogue_id is required."}, status=400)
-
-        dialogue = Dialogue.objects.get(pk=dialogue_id)
-        
+    def get_dialogue_keys(self, request, slug=None):
+        dialogue = self.get_object()
         user = request.user
 
-        # پیدا کردن طرف مقابل
         partner = dialogue.participants.exclude(id=user.id).first()
         if not partner:
             return Response({"error": "No chat partner found."}, status=404)
 
         keys = UserDeviceKey.objects.filter(user=partner, is_active=True)
-        result = [
-            {
-                "device_id": k.device_id,
-                "public_key": k.public_key
-            }
-            for k in keys
-        ]
+        result = [{"device_id": k.device_id, "public_key": k.public_key} for k in keys]
         return Response(result)
     
 
@@ -556,8 +542,8 @@ class DialogueViewSet(viewsets.ModelViewSet):
     # Get Last Seen Users 
     @action(detail=True, methods=['get'], url_path='last-seen', permission_classes=[IsAuthenticated])
     @require_conversation_access
-    def get_last_seen_view(self, request, pk=None):
-        dialogue = get_object_or_404(Dialogue, pk=pk)
+    def get_last_seen_view(self, request, slug=None):
+        dialogue = get_object_or_404(Dialogue, slug=slug)
 
         if request.user not in dialogue.participants.all():
             return Response({'error': 'You are not a participant of this dialogue.'}, status=status.HTTP_403_FORBIDDEN)
@@ -618,7 +604,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
             .exclude(sender=user)
 
             unread_data.append({
-                "dialogue_id": dialogue.id,
+                "dialogue_slug": dialogue.slug,
                 "unread_count": unread_count.count()
             })
 
@@ -630,21 +616,25 @@ class MessageViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, ConversationAccessPermission, IsDialogueParticipant]
     queryset = Message.objects.all()
     
-    def list(self, request, dialogue_pk=None):
+    def list(self, request, dialogue_slug=None):
         """ Retrieve messages for a dialogue with pagination """
-        dialogue_pk = request.query_params.get("dialogue_pk")
+        dialogue_slug = request.query_params.get("dialogue_slug")
         offset = int(request.query_params.get("offset", 0))
         limit = int(request.query_params.get("limit", 20))
         device_id = request.query_params.get("device_id")
 
-        dialogue = get_object_or_404(Dialogue, pk=dialogue_pk, participants=request.user)
+        dialogue = get_object_or_404(Dialogue, slug=dialogue_slug, participants=request.user)
 
-        messages_query = Message.objects.filter(dialogue=dialogue).exclude(deleted_by_users=request.user).order_by("-timestamp")
+        messages_query = Message.objects.filter(dialogue=dialogue)\
+            .exclude(deleted_by_users=request.user)\
+            .order_by("-timestamp")
+
         total_messages = messages_query.count()
         has_more = offset + limit < total_messages
 
         messages = messages_query[offset:offset + limit]
         is_encrypted = messages_query.filter(is_encrypted=True).exists()
+
         serializer = MessageSerializer(
             messages,
             many=True,
@@ -657,34 +647,36 @@ class MessageViewSet(viewsets.ModelViewSet):
             'has_more': has_more
         }, status=status.HTTP_200_OK)
 
-
-
-    @action(detail=False, methods=['post'], url_path='send-message', permission_classes=[IsAuthenticated], parser_classes=[JSONParser])
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path='send-message',
+        permission_classes=[IsAuthenticated],
+        parser_classes=[JSONParser]
+    )
     def send_message(self, request):
-        dialogue_id = request.data.get('dialogue_id')
-        is_encrypted = request.data.get('is_encrypted', False)
-        encrypted_contents = request.data.get('encrypted_contents', []) 
         user = request.user
-        dialogue = get_object_or_404(Dialogue, id=dialogue_id, participants=user)
+        dialogue_slug = request.data.get('dialogue_slug')
+        is_encrypted = request.data.get('is_encrypted', False)
+        encrypted_contents = request.data.get('encrypted_contents', [])
 
-        if dialogue.is_group and is_encrypted:
-            return Response({'error': 'Group messages should not be encrypted.'}, status=400)
+        if not dialogue_slug:
+            return Response({'error': 'dialogue_slug is required.'}, status=400)
 
-        if not dialogue_id:
-            return Response({'error': 'dialogue_id is required.'}, status=400)
-
+        dialogue = get_object_or_404(Dialogue, slug=dialogue_slug, participants=user)
 
         if dialogue.deleted_by_users.filter(id=user.id).exists():
             dialogue.deleted_by_users.remove(user)
 
-        # چت گروهی: بدون رمزنگاری
+        if dialogue.is_group and is_encrypted:
+            return Response({'error': 'Group messages should not be encrypted.'}, status=400)
+
         if dialogue.is_group:
             content = request.data.get('content', '').strip()
             if not content:
                 return Response({'error': 'Message content is required for group chat.'}, status=400)
-            
-            plain_text = content.strip()
-            base64_str = base64.b64encode(plain_text.encode("utf-8")).decode("utf-8")  # str
+
+            base64_str = base64.b64encode(content.encode("utf-8")).decode("utf-8")
             content_bytes = base64_str.encode("utf-8")
             message = Message.objects.create(
                 dialogue=dialogue,
@@ -692,13 +684,10 @@ class MessageViewSet(viewsets.ModelViewSet):
                 content_encrypted=content_bytes,
                 is_encrypted=False
             )
-
-        # چت خصوصی: ذخیره چند نسخه رمزنگاری‌شده
         else:
             if not encrypted_contents or not isinstance(encrypted_contents, list):
                 return Response({'error': 'encrypted_contents must be a non-empty list.'}, status=400)
 
-            # ذخیره پیام اصلی (بدون متن قابل خواندن، فقط برای وابستگی)
             message = Message.objects.create(
                 dialogue=dialogue,
                 sender=user,
@@ -706,13 +695,11 @@ class MessageViewSet(viewsets.ModelViewSet):
                 is_encrypted=True
             )
 
-            # ذخیره نسخه‌های رمزنگاری‌شده
             for enc in encrypted_contents:
                 device_id = enc.get('device_id')
                 encrypted_content = enc.get('encrypted_content')
-
                 if not device_id or not encrypted_content:
-                    continue  # skip invalid items
+                    continue
 
                 MessageEncryption.objects.create(
                     message=message,
@@ -720,26 +707,30 @@ class MessageViewSet(viewsets.ModelViewSet):
                     encrypted_content=encrypted_content
                 )
 
-        # بروزرسانی آخرین پیام گفتگو
         dialogue.last_message = message
         dialogue.save(update_fields=['last_message'])
 
         return Response({
-            'dialogue_id': dialogue.id,
+            'dialogue_slug': dialogue.slug,
             'message_id': message.id,
-            'websocket_url': get_websocket_url(request, dialogue.id)
+            'websocket_url': get_websocket_url(request, dialogue.slug)
         }, status=201)
 
-
     
-    @action(detail=False, methods=['post'], url_path='upload-file', permission_classes=[IsAuthenticated], parser_classes=[MultiPartParser, FormParser])
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path='upload-file',
+        permission_classes=[IsAuthenticated],
+        parser_classes=[MultiPartParser, FormParser]
+    )
     def upload_file(self, request):
-        dialogue_id = request.data.get("dialogue_id")
+        dialogue_slug = request.data.get("dialogue_slug")
         uploaded_file = request.FILES.get("file")
         user = request.user
 
-        if not dialogue_id or not uploaded_file:
-            return Response({"error": "Dialogue ID and file are required."}, status=400)
+        if not dialogue_slug or not uploaded_file:
+            return Response({"error": "Dialogue slug and file are required."}, status=400)
 
         MAX_FILE_SIZE = 1000 * 1024 * 1024
         if uploaded_file.size > MAX_FILE_SIZE:
@@ -755,7 +746,7 @@ class MessageViewSet(viewsets.ModelViewSet):
         if not field_name:
             return Response({"error": f"Unsupported file type: {file_type}"}, status=400)
 
-        dialogue = get_object_or_404(Dialogue, id=dialogue_id, participants=user)
+        dialogue = get_object_or_404(Dialogue, slug=dialogue_slug, participants=user)
         if dialogue.deleted_by_users.filter(id=user.id).exists():
             dialogue.deleted_by_users.remove(user)
 
@@ -784,8 +775,7 @@ class MessageViewSet(viewsets.ModelViewSet):
                 aes_key_encrypted=base64.b64decode(aes_key_encrypted_main),
                 **{field_name: uploaded_file},
             )
-            
-            # 🟢 ذخیره کلیدهای رمزنگاری‌شده برای همه دستگاه‌ها
+
             encrypted_keys_json = request.data.get("encrypted_keys_per_device")
             if encrypted_keys_json:
                 import json
@@ -805,9 +795,10 @@ class MessageViewSet(viewsets.ModelViewSet):
             "file_url": file_url,
             "message_id": message.id,
             "file_type": file_type,
-            "dialogue_id": dialogue_id,
+            "dialogue_slug": dialogue.slug,
             "is_encrypted": message.is_encrypted,
         }, status=201)
+
 
 
     @action(detail=True, methods=['get'], url_path='access-media', permission_classes=[IsAuthenticated])
@@ -921,11 +912,10 @@ class MessageViewSet(viewsets.ModelViewSet):
         channel_layer = get_channel_layer()
 
         async_to_sync(channel_layer.group_send)(
-            f"dialogue_{dialogue.id}",
+            f"dialogue_{dialogue.slug}",
             {
                 "type": "edit_message",
-                "message_id": message.id,
-                "dialogue_id": dialogue.id,
+                "dialogue_slug": dialogue.slug,
                 "edited_at": message.edited_at.isoformat(),
                 "is_encrypted": message.is_encrypted,
                 "is_edited": message.is_edited,
@@ -940,18 +930,25 @@ class MessageViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'], url_path='mark-as-delivered')
     def mark_as_delivered(self, request):
         message_id = request.data.get("message_id")
-        dialogue_id = request.data.get("dialogue_id")
+        dialogue_slug = request.data.get("dialogue_slug")
 
-        if not message_id or not dialogue_id:
-            return Response({'error': 'message_id and dialogue_id are required.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not message_id or not dialogue_slug:
+            return Response({'error': 'message_id and dialogue_slug are required.'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            message = Message.objects.get(id=message_id, dialogue_id=dialogue_id)
+            dialogue = get_object_or_404(Dialogue, slug=dialogue_slug, participants=request.user)
+            message = get_object_or_404(Message, id=message_id, dialogue=dialogue)
+            
+            if dialogue.slug != dialogue_slug:
+                return Response({'error': 'Invalid dialogue reference.'}, status=403)
+
             user = request.user
-            dialogue = message.dialogue
 
             if user not in dialogue.participants.all():
                 return Response({'error': 'You are not a participant in this dialogue.'}, status=status.HTTP_403_FORBIDDEN)
+
+            if message.sender == user:
+                return Response({'error': 'Sender cannot mark their own message as delivered.'}, status=403)
 
             message.is_delivered = True
             message.save(update_fields=["is_delivered"])
@@ -964,21 +961,27 @@ class MessageViewSet(viewsets.ModelViewSet):
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
+
     # Mark As Read  --------------------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='mark-as-read')
     def mark_as_read(self, request):
         message_ids = request.data.get("message_ids")
-        dialogue_id = request.data.get("dialogue_id")
+        dialogue_slug = request.data.get("dialogue_slug")
 
-        if not isinstance(message_ids, list) or not dialogue_id:
-            return Response({'error': 'message_ids (list) and dialogue_id are required.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not isinstance(message_ids, list) or not dialogue_slug:
+            return Response({'error': 'message_ids (list) and dialogue_slug are required.'}, status=status.HTTP_400_BAD_REQUEST)
 
         user = request.user
-        messages = Message.objects.filter(id__in=message_ids, dialogue_id=dialogue_id)
+
+        dialogue = get_object_or_404(Dialogue, slug=dialogue_slug, participants=user)
+        messages = Message.objects.filter(id__in=message_ids, dialogue=dialogue)
+
         for msg in messages:
             if user != msg.sender and user not in msg.seen_by_users.all():
                 msg.seen_by_users.add(user)
+
         return Response({'message': 'Messages marked as read.'}, status=status.HTTP_200_OK)
+
         
     @action(detail=True, methods=['get'], url_path='seen-by', permission_classes=[IsAuthenticated])
     def seen_by(self, request, pk=None):
@@ -1043,12 +1046,13 @@ class MessageViewSet(viewsets.ModelViewSet):
 
 
     @action(detail=True, methods=["get"], url_path="search-messages", permission_classes=[IsAuthenticated])
-    def search_messages(self, request, pk=None):
+    def search_messages(self, request, slug=None):
         query = request.query_params.get("q")
+        
         if not query:
             return Response({"error": "Search query `q` is required."}, status=400)
 
-        dialogue = get_object_or_404(Dialogue, pk=pk)
+        dialogue = get_object_or_404(Dialogue, slug=slug)
         if not dialogue.participants.filter(id=request.user.id).exists():
             return Response({"error": "You are not a participant of this dialogue."}, status=403)
 
@@ -1069,9 +1073,6 @@ class MessageViewSet(viewsets.ModelViewSet):
                 "note": "Client-side search is required for encrypted private chats.",
                 "messages": []
             })
-
-
-
 
     @action(detail=True, methods=["get"], url_path="get-message", permission_classes=[IsAuthenticated])
     def get_message(self, request, pk=None):
@@ -1099,16 +1100,14 @@ class UserDialogueMarkerViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=['post'], url_path='mark-dialogue', permission_classes=[IsAuthenticated])
     def mark_dialogue(self, request):
-        """ Mark a dialogue as sensitive or update its delete policy """
-        dialogue_id = request.data.get('dialogue_id')
+        dialogue_slug = request.data.get('dialogue_slug')
         is_sensitive = request.data.get('is_sensitive', False)
         delete_policy = request.data.get('delete_policy', 'SOFT_DELETE')
 
-        if not dialogue_id:
-            return Response({'detail': 'Dialogue ID is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not dialogue_slug:
+            return Response({'detail': 'Dialogue slug is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        dialogue = get_object_or_404(Dialogue, pk=dialogue_id, participants=request.user)
-
+        dialogue = get_object_or_404(Dialogue, slug=dialogue_slug, participants=request.user)
         marker, created = UserDialogueMarker.objects.get_or_create(
             user=request.user,
             dialogue=dialogue,
@@ -1123,9 +1122,9 @@ class UserDialogueMarkerViewSet(viewsets.ViewSet):
         serializer = UserDialogueMarkerSerializer(marker)
         return Response(serializer.data, status=status.HTTP_200_OK if not created else status.HTTP_201_CREATED)
 
+
     @action(detail=True, methods=['post'], url_path='unmark-dialogue', permission_classes=[IsAuthenticated])
     def unmark_dialogue(self, request, pk=None):
-        """ Unmark a dialogue from being sensitive """
         marker = get_object_or_404(UserDialogueMarker, pk=pk, user=request.user)
         marker.delete()
         return Response({'detail': 'Dialogue unmarked as sensitive.'}, status=status.HTTP_204_NO_CONTENT)

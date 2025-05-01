@@ -1,9 +1,9 @@
 from django.http import HttpRequest
 
-def get_websocket_url(request: HttpRequest, dialogue_id: int) -> str:
+def get_websocket_url(request: HttpRequest, dialogue_slug: str) -> str:
     scheme = "wss" if request.is_secure() else "ws"
     host = request.get_host()
-    return f"{scheme}://{host}/ws/conversation/{dialogue_id}/"
+    return f"{scheme}://{host}/ws/conversation/{dialogue_slug}/"
 
 def get_message_content(message, user):
     if message.is_system:

@@ -2,6 +2,7 @@ from django.db import models
 from datetime import timedelta
 from django.utils import timezone
 from django.conf import settings
+from django.utils.text import slugify
 
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives import hashes
@@ -9,7 +10,7 @@ import os
 import uuid
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
+from utils.common import utils
 from apps.config.conversation_constants import (
     DELETE_POLICY_CHOICES, MESSAGE_POLICY_CHOICES, KEEP, 
     GROUP_ROLE_CHOICES, PARTICIPANT, SYSTEM_MESSAGE_EVENT_CHOICES,
@@ -36,9 +37,18 @@ class Dialogue(models.Model):
     last_message = models.ForeignKey('Message', on_delete=models.SET_NULL, null=True, blank=True, related_name="last_message_dialogue")
     deleted_by_users = models.ManyToManyField(settings.AUTH_USER_MODEL, related_name="deleted_dialogues", blank=True)
     rsa_required = models.BooleanField(default=False, verbose_name="Requires RSA Encryption")
+    
+    slug = models.SlugField(max_length=255, unique=True, blank=True, null=True, verbose_name="Slug")
+    
+    def generate_dialogue_slug(usernames: list[str], group_name: str | None = None) -> str:
+        if group_name:
+            base_slug = slugify(group_name)
+        else:
+            sorted_usernames = sorted(usernames)
+            base_slug = slugify(f"{sorted_usernames[0]}--{sorted_usernames[1]}")
+        
+        return utils.generate_unique_slug(base_slug)
 
-    
-    
     # ✅ بررسی اینکه آیا کاربر نقش خاصی دارد
     def has_role(self, user, role: str) -> bool:
         return self.participants_roles.filter(user=user, role=role).exists()

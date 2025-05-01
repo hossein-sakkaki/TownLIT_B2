@@ -37,7 +37,7 @@ class DialogueSerializer(serializers.ModelSerializer):
     class Meta:
         model = Dialogue
         fields = [
-            'id', 'name', 'group_image', 'participants', 'chat_partner', 'created_at', 'is_group', 'last_message',
+            'id', 'slug', 'name', 'group_image', 'participants', 'chat_partner', 'created_at', 'is_group', 'last_message',
             'participants_roles', 'is_encrypted', 'websocket_url', 'my_role',
             'is_sensitive', 'marker_id'
         ]
@@ -45,7 +45,7 @@ class DialogueSerializer(serializers.ModelSerializer):
     def get_websocket_url(self, obj):
         request = self.context.get('request')
         if request:
-            return get_websocket_url(request, obj.id)
+            return get_websocket_url(request, obj.slug)
         return None
 
     def get_is_encrypted(self, obj):

@@ -79,7 +79,7 @@ class ProfileMigrationViewSet(viewsets.ViewSet):
 
         elif user.label in [CustomUser.SEEKER, CustomUser.PREFER_NOT_TO_SAY]: # For Others  
             if hasattr(user, 'member'):
-                member_profile = user.member
+                member_profile = user.member_profile
                 member_profile.is_active = False
                 member_profile.is_migrated = True
                 member_profile.save()
@@ -172,7 +172,7 @@ class MemberViewSet(viewsets.ModelViewSet):
             if not profile_image:
                 return Response({"error": "No profile image uploaded"}, status=status.HTTP_400_BAD_REQUEST)
             
-            member = request.user.member
+            member = request.user.member_profile
             custom_user = member.user
             custom_user.image_name = profile_image
             custom_user.save()
@@ -440,7 +440,7 @@ class MemberViewSet(viewsets.ModelViewSet):
 class VeriffViewSet(viewsets.ViewSet):
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def create_verification_session(self, request, pk=None):
-        member = request.user.member
+        member = request.user.member_profile
 
         # Check if the member is already verified
         if member.is_verified_identity:
@@ -458,7 +458,7 @@ class VeriffViewSet(viewsets.ViewSet):
 
     @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
     def get_verification_status(self, request, pk=None):
-        member = request.user.member
+        member = request.user.member_profile
 
         # Check if the session exists
         if not member.veriff_session_id:
