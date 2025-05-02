@@ -66,6 +66,7 @@ class UserAgreement(models.Model):
 
 # POLICY CHANGE HISTORY Model -----------------------------------------------------------------------------------
 class PolicyChangeHistory(models.Model):
+    id = models.BigAutoField(primary_key=True)
     policy = models.ForeignKey(TermsAndPolicy, on_delete=models.CASCADE, related_name='change_history', verbose_name='Policy')
     old_content = RichTextUploadingField(config_name='default', verbose_name='Old Content')
     changed_at = models.DateTimeField(verbose_name='Changed At')

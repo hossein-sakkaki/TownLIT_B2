@@ -14,6 +14,7 @@ CustomUser = get_user_model()
 
 # SANCTUARY REQUSE Model -----------------------------------------------------------------------------------------------------------
 class SanctuaryRequest(models.Model):
+    id = models.BigAutoField(primary_key=True)
     request_type = models.CharField(max_length=50, choices=REQUEST_TYPE_CHOICES, verbose_name="Request Type")
     reason = models.CharField(max_length=255, verbose_name="Request Reason")
     description = models.TextField(null=True, blank=True, verbose_name="Description")
@@ -28,11 +29,15 @@ class SanctuaryRequest(models.Model):
     object_id = models.PositiveIntegerField()
     content_object = GenericForeignKey('content_type', 'object_id')
 
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        if self.request_type == POST_REQUEST and self.reason not in dict(POST_REPORT_CHOICES).keys():
+            raise ValidationError("Invalid reason for post report.")
+        elif self.request_type == ACCOUNT_REQUEST and self.reason not in dict(ACCOUNT_REPORT_CHOICES).keys():
+            raise ValidationError("Invalid reason for account report.")
+    
     def save(self, *args, **kwargs):
-        if self.request_type == POST_REQUEST:
-            self.reason = models.CharField(max_length=255, choices=POST_REPORT_CHOICES, verbose_name="Request Reason")
-        elif self.request_type == ACCOUNT_REQUEST:
-            self.reason = models.CharField(max_length=255, choices=ACCOUNT_REPORT_CHOICES, verbose_name="Request Reason")
+        self.full_clean()
         super().save(*args, **kwargs)
 
     def __str__(self):
@@ -41,6 +46,7 @@ class SanctuaryRequest(models.Model):
 
 # SANCTUARY REVIEW Model ------------------------------------------------------------------------------------------------------------
 class SanctuaryReview(models.Model):
+    id = models.BigAutoField(primary_key=True)
     sanctuary_request = models.ForeignKey('SanctuaryRequest', on_delete=models.CASCADE, related_name='reviews', verbose_name="Sanctuary Request")
     reviewer = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='sanctuary_reviews', verbose_name="Reviewer")
     review_status = models.CharField(max_length=50, choices=REVIEW_STATUS_CHOICES, default=NO_OPINION, verbose_name="Review Status")
@@ -49,11 +55,13 @@ class SanctuaryReview(models.Model):
     assigned_at = models.DateTimeField(auto_now_add=True, verbose_name="Assigned At")
 
     def __str__(self):
-        return f"Review by {self.reviewer} - {self.sanctuary_request}"
+        return f"Review by {self.reviewer.username} on {self.sanctuary_request.request_type}"
+
 
 
 # SANCTUARY OUTCOME Model ------------------------------------------------------------------------------------------------------------
 class SanctuaryOutcome(models.Model):
+    id = models.BigAutoField(primary_key=True)
     outcome_status = models.CharField(max_length=50, choices=OUTCOME_CHOICES, verbose_name="Outcome Status")
     completion_date = models.DateTimeField(auto_now_add=True, verbose_name="Completion Date")
     sanctuary_requests = models.ManyToManyField('SanctuaryRequest', related_name='outcomes', verbose_name="Sanctuary Requests")

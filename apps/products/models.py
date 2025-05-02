@@ -18,6 +18,7 @@ from common.validators import (
 class Brand(SlugMixin):
     BRAND_IMAGE = FileUpload('products','images', 'brand')
     
+    id = models.BigAutoField(primary_key=True)
     brand_title = models.CharField(max_length=100, verbose_name='Brand')
     image_name = models.ImageField(upload_to=BRAND_IMAGE.dir_upload, validators=[validate_image_or_video_file, validate_no_executable_file], verbose_name='Product group picture')
     url_name = 'brand_detail'
@@ -33,6 +34,7 @@ class Brand(SlugMixin):
 class ProductGroup(SlugMixin):
     PRODUCT_GROUP_IMAGE = FileUpload('products','images','product_group')
     
+    id = models.BigAutoField(primary_key=True)
     group_title = models.CharField(max_length=100, verbose_name='Product Group Title')
     image_name = models.ImageField(upload_to=PRODUCT_GROUP_IMAGE.dir_upload, validators=[validate_image_or_video_file, validate_no_executable_file], verbose_name='Product Group Picture')
     description = models.TextField(blank=True, verbose_name='Product Group Description')
@@ -53,6 +55,7 @@ class ProductGroup(SlugMixin):
     
 # FEATURE Manager PART 1 --------------------------------------------
 class Feature(models.Model):
+    id = models.BigAutoField(primary_key=True)
     feature = models.CharField(max_length=50, verbose_name='Feature')
     product_groups = models.ManyToManyField(ProductGroup, related_name='features', verbose_name='Product Group Feature')
     
@@ -64,6 +67,7 @@ class Feature(models.Model):
 class Product(SlugMixin):
     PRODUCT_IMAGE = FileUpload('products','images','product')
     
+    id = models.BigAutoField(primary_key=True)
     product_name = models.CharField(max_length=150, verbose_name='Product Name')
     summary_description = models.TextField(null=True, blank=True, verbose_name='Summary Description')
     description = RichTextUploadingField(config_name='default', blank=True, null=True, verbose_name='Product Description')
@@ -90,6 +94,7 @@ class Product(SlugMixin):
 
 # FEATURE Manager PART 2 --------------------------------------------
 class FeatureValue(models.Model):
+    id = models.BigAutoField(primary_key=True)
     value_title = models.CharField(max_length=50, verbose_name='Value Title')
     feature = models.ForeignKey(Feature, on_delete=models.CASCADE, related_name='values_of_features', verbose_name='Feature')
     
@@ -97,6 +102,7 @@ class FeatureValue(models.Model):
         return self.value_title
 
 class ProductFeature(models.Model):
+    id = models.BigAutoField(primary_key=True)
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='product_features', verbose_name='Product Feature')
     feature = models.ForeignKey(Feature, on_delete=models.CASCADE, verbose_name='Feature')
     feature_value = models.ForeignKey(FeatureValue, on_delete=models.CASCADE, related_name='feature_of_value', verbose_name='Feature Value')
@@ -109,6 +115,7 @@ class ProductFeature(models.Model):
 class Gallery(models.Model):
     PRODUCT_IMAGE = FileUpload('products','images','gallery')
     
+    id = models.BigAutoField(primary_key=True)
     product_gallery = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='product_gallery', verbose_name='Product Gallery')
     image_name = models.ImageField(upload_to=PRODUCT_IMAGE.dir_upload, validators=[validate_image_or_video_file, validate_no_executable_file, validate_image_size], verbose_name='Product Picture')
     

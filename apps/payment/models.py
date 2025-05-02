@@ -18,6 +18,7 @@ CustomUser = get_user_model()
 
 # PRICING MODEL --------------------------------------------------------------
 class Pricing(models.Model):
+    id = models.BigAutoField(primary_key=True)
     pricing_type = models.CharField(max_length=20, choices=PRICING_TYPE_CHOICES, verbose_name='Pricing Type')
     duration = models.CharField(max_length=20, choices=DURATION_CHOICES, verbose_name='Duration')
     billing_cycle = models.CharField(max_length=20, choices=BILLING_CYCLE_CHOICES, verbose_name='Billing Cycle')
@@ -36,6 +37,7 @@ class Pricing(models.Model):
 
 # PAYMENT MODEL ------------------------------------------------------------------------------------------
 class Payment(models.Model):
+    id = models.BigAutoField(primary_key=True)
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='payments', verbose_name='User')
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, null=True, blank=True, related_name='payments', verbose_name='Organization')
     amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name='Amount')
@@ -121,6 +123,7 @@ class PaymentShoppingCart(Payment):
 
 # PAYMENT INVOICE MODEL ------------------------------------------------------------------------------
 class PaymentInvoice(models.Model):
+    id = models.BigAutoField(primary_key=True)
     payment = models.OneToOneField(Payment, on_delete=models.CASCADE, related_name='invoice', verbose_name='Payment')
     invoice_number = models.CharField(max_length=30, unique=True, editable=False, verbose_name='Invoice Number')
     issued_date = models.DateTimeField(default=timezone.now, verbose_name='Issued Date')

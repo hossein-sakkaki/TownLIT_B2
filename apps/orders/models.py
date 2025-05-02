@@ -15,6 +15,7 @@ from apps.config.orders_constants import (
 
 # ORDER Model ---------------------------------------------------------------
 class Order(models.Model):
+    id = models.BigAutoField(primary_key=True)
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name='orders', verbose_name='Customer')
     store = models.ForeignKey(Store, on_delete=models.CASCADE, related_name='orders', verbose_name='Store')
     order_date = models.DateTimeField(default=timezone.now, verbose_name='Order Date')
@@ -36,6 +37,7 @@ class Order(models.Model):
 
 # ORDER ITEM Model ------------------------------------------------------------
 class OrderItem(models.Model):
+    id = models.BigAutoField(primary_key=True)
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='items', verbose_name='Order')
     product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name='order_items', verbose_name='Product')
     quantity = models.PositiveIntegerField(default=1, verbose_name='Quantity')
@@ -50,6 +52,7 @@ class OrderItem(models.Model):
 
 # ORDER STATUS HISTORY Model ------------------------------------------------------------
 class OrderStatusHistory(models.Model):
+    id = models.BigAutoField(primary_key=True)
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='status_history', verbose_name='Order')
     status = models.CharField(max_length=20, choices=ORDER_STATUS_CHOICES, verbose_name='Order Status')
     change_date = models.DateTimeField(default=timezone.now, verbose_name='Change Date')
@@ -65,6 +68,7 @@ class OrderStatusHistory(models.Model):
 
 # DELIVERY INFORMATION Model ------------------------------------------------------------
 class DeliveryInformation(models.Model):
+    id = models.BigAutoField(primary_key=True)
     order = models.OneToOneField(Order, on_delete=models.CASCADE, related_name='delivery_info', verbose_name='Order')
     carrier = models.CharField(max_length=100, verbose_name='Delivery Carrier')
     tracking_number = models.CharField(max_length=100, null=True, blank=True, verbose_name='Tracking Number')
@@ -83,6 +87,7 @@ class DeliveryInformation(models.Model):
 
 # RETURN REQUEST Model ------------------------------------------------------------
 class ReturnRequest(models.Model):
+    id = models.BigAutoField(primary_key=True)
     order_item = models.ForeignKey(OrderItem, on_delete=models.CASCADE, related_name='return_requests', verbose_name='Order Item')
     request_date = models.DateTimeField(default=timezone.now, verbose_name='Request Date')
     reason = models.TextField(verbose_name='Reason for Return')
@@ -112,6 +117,7 @@ class ShoppingCart(models.Model):
 
 # SHOPPING CART ITEM Model ------------------------------------------------------------
 class ShoppingCartItem(models.Model):
+    id = models.BigAutoField(primary_key=True)
     cart = models.ForeignKey(ShoppingCart, on_delete=models.CASCADE, related_name='items', verbose_name='Shopping Cart')
     product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name='shopping_cart_items', verbose_name='Product')
     quantity = models.PositiveIntegerField(default=1, verbose_name='Quantity')

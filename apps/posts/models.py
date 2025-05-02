@@ -42,6 +42,7 @@ CustomUser = get_user_model()
     
 # Reaction Models ---------------------------------------------------------------------------------
 class Reaction(models.Model):
+    id = models.BigAutoField(primary_key=True)
     name = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='user_reactions', verbose_name='Name')
     reaction_type = models.CharField(max_length=20, choices=REACTION_TYPE_CHOICES, verbose_name='Reaction Type')
     message = models.CharField(max_length=80, blank=True, null=True, verbose_name='Reaction Message')
@@ -62,6 +63,7 @@ class Reaction(models.Model):
     
 # Comment Models ------------------------------------------------------------------------------------------------------------
 class Comment(models.Model):
+    id = models.BigAutoField(primary_key=True)
     name = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='user_comments', verbose_name='Name')
     comment = models.TextField(blank=True, null=True, verbose_name='Comment')
     
@@ -190,6 +192,7 @@ class ServiceEvent(SlugMixin):
 
 # Testimony Models ------------------------------------------------------------------------------------------------------
 class Testimony(SlugMixin):
+    id = models.BigAutoField(primary_key=True)
     THUMBNAIL = FileUpload('posts', 'photos', 'testimony')
     AUDIO = FileUpload('posts', 'audios', 'testimony')
     VIDEO = FileUpload('posts', 'videos', 'testimony')
@@ -237,6 +240,7 @@ class Testimony(SlugMixin):
 
 # Witness Models -----------------------------------------------------------------------------------------------------------
 class Witness(SlugMixin):
+    id = models.BigAutoField(primary_key=True)
     title = models.CharField(max_length=50, null=True, blank=True, verbose_name='Title')
     testimony = models.ManyToManyField(Testimony, related_name='testimony_of_member', verbose_name='Testimony of Witness')
     re_published_at = models.DateTimeField(default=timezone.now, verbose_name='Republished Date')
@@ -265,6 +269,7 @@ class Witness(SlugMixin):
 class Moment(SlugMixin):
     IMAGE_OR_VIDEO = FileUpload('posts','moment_files','moment')
     
+    id = models.BigAutoField(primary_key=True)
     content = models.TextField(null=True, blank=True, verbose_name='Moment Content')
     moment_file = models.FileField(upload_to=IMAGE_OR_VIDEO.dir_upload, blank=True, null=True, validators=[validate_pdf_file, validate_no_executable_file], verbose_name='Image/Video')
 
@@ -305,6 +310,7 @@ class Moment(SlugMixin):
 class Pray(SlugMixin):
     IMAGE = FileUpload('posts','photos','pray')
 
+    id = models.BigAutoField(primary_key=True)  
     title = models.CharField(max_length=50, verbose_name='Pray Title')
     content = models.TextField(verbose_name='Pray Content')
     image = models.ImageField(upload_to=IMAGE.dir_upload, validators=[validate_image_or_video_file], null=True, blank=True, verbose_name='Pray Image')
@@ -346,6 +352,7 @@ class Pray(SlugMixin):
 class Announcement(SlugMixin):
     IMAGE = FileUpload('posts','photos','announcement')
     
+    id = models.BigAutoField(primary_key=True)
     title = models.CharField(max_length=50, verbose_name='Title')
     description = models.CharField(max_length=500, verbose_name='Description')
     image = models.ImageField(upload_to=IMAGE.dir_upload, validators=[validate_image_or_video_file], null=True, blank=True, verbose_name='Announcement Image')
@@ -390,6 +397,7 @@ class Lesson(SlugMixin):
     AUDIO = FileUpload('posts', 'audios', 'lesson')
     VIDEO = FileUpload('posts', 'videos', 'lesson')
     
+    id = models.BigAutoField(primary_key=True)
     title = models.CharField(max_length=50, verbose_name='Title')
     season = models.IntegerField(null=True, blank=True, verbose_name='Season')
     episode = models.IntegerField(null=True, blank=True, verbose_name='Episode')
@@ -435,6 +443,7 @@ class Preach(SlugMixin):
     IMAGE = FileUpload('posts','photos','preach')
     VIDEO = FileUpload('posts', 'videos', 'preach')
     
+    id = models.BigAutoField(primary_key=True)
     title = models.CharField(max_length=50, verbose_name='Preach Title')    
     in_town_preacher = models.ForeignKey('profiles.Member', on_delete=models.CASCADE, null=True, blank=True, db_index=True, verbose_name='Preacher In TownLIT')
     out_town_preacher = models.CharField(max_length=200, null=True, blank=True, db_index=True, verbose_name='Preacher out TownLIT')
@@ -474,6 +483,7 @@ class Worship(SlugMixin):
     AUDIO = FileUpload('posts', 'audios', 'worship')
     VIDEO = FileUpload('posts', 'videos', 'worship')
 
+    id = models.BigAutoField(primary_key=True)
     title = models.CharField(max_length=50, verbose_name='Worship Title')
     season = models.IntegerField(null=True, blank=True, verbose_name='Season')
     episode = models.IntegerField(null=True, blank=True, verbose_name='Episode')
@@ -520,6 +530,7 @@ class Worship(SlugMixin):
 class MediaContent(SlugMixin):
     FILE = FileUpload('posts','media_file','media_content')
     
+    id = models.BigAutoField(primary_key=True)
     content_type = models.CharField(max_length=20, choices=MEDIA_CONTENT_CHOICES, verbose_name='Content Type')
     title = models.CharField(max_length=50, verbose_name='Title')
     description = models.TextField(null=True, blank=True, verbose_name='Description')
@@ -556,6 +567,7 @@ class Library(SlugMixin):
     FILE = FileUpload('posts', 'pdf', 'library')
     COPY_RIGHT = FileUpload('posts', 'documents', 'library')
 
+    id = models.BigAutoField(primary_key=True)
     book_name = models.CharField(max_length=100, db_index=True, verbose_name='Name of Book')
     author = models.CharField(max_length=100, db_index=True, verbose_name='Name of Author')
     publisher_name = models.CharField(max_length=255, null=True, blank=True, verbose_name='Publisher Name')
@@ -604,6 +616,7 @@ class Library(SlugMixin):
 class Mission(SlugMixin):
     IMAGE_OR_VIDEO = FileUpload('posts','image_or_video','mission')
     
+    id = models.BigAutoField(primary_key=True)
     image_or_video = models.FileField(upload_to=IMAGE_OR_VIDEO.dir_upload, null=True, blank=True, validators=[validate_image_or_video_file, validate_no_executable_file], verbose_name='Mission Image/Video')
     mission_name = models.CharField(max_length=255, verbose_name='Mission Name')
     description = models.TextField(null=True, blank=True, verbose_name='Mission Description')
@@ -649,6 +662,7 @@ class Mission(SlugMixin):
 
 # Conferences Models ------------------------------------------------------------------------------------------------------
 class Conference(SlugMixin):
+    id = models.BigAutoField(primary_key=True)
     conference_name = models.CharField(max_length=255, verbose_name='Conference Name')
     workshops = models.ManyToManyField(Lesson, blank=True, related_name='conference_workshops', verbose_name='Workshops')
     conference_resources = models.ManyToManyField(Resource, blank=True, related_name='conference_resources', verbose_name='Conference Resources')
@@ -683,6 +697,7 @@ class Conference(SlugMixin):
 
 # Conferences Future Models --------------------------------------------------------------------------------------------------
 class FutureConference(SlugMixin):
+    id = models.BigAutoField(primary_key=True)
     conference_name = models.CharField(max_length=255, verbose_name='Future Conference Name')
     registration_required = models.BooleanField(default=False, verbose_name='Registration Required')
     delivery_type = models.CharField(max_length=10, choices=DELIVERY_METHOD_CHOICES, default='IN_PERSON', verbose_name='Meeting Type')

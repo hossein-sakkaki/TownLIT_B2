@@ -53,6 +53,7 @@ NOTIFICATION_TYPES = [
     
 # User Notification Preference models ---------------------------------------------------------------------
 class UserNotificationPreference(models.Model):
+    id = models.BigAutoField(primary_key=True)
     user = models.ForeignKey(CustomUser, related_name='notification_preferences', on_delete=models.CASCADE, verbose_name="User")
     notification_type = models.CharField(max_length=50, choices=NOTIFICATION_TYPES, verbose_name="Notification Type")
     enabled = models.BooleanField(default=True, verbose_name="Is Enabled")
@@ -67,6 +68,7 @@ class UserNotificationPreference(models.Model):
     
 # Notification models ------------------------------------------------------------------------------------
 class Notification(models.Model):
+    id = models.BigAutoField(primary_key=True)
     user = models.ForeignKey(CustomUser, related_name='notifications', on_delete=models.CASCADE, verbose_name="User")
     message = models.TextField(verbose_name="Message")
     notification_type = models.CharField(max_length=50, choices=NOTIFICATION_TYPES, verbose_name="Notification Type")
@@ -87,6 +89,7 @@ class Notification(models.Model):
     
 
 class NotificationLog(models.Model):
+    id = models.BigAutoField(primary_key=True)
     notification = models.ForeignKey(Notification, on_delete=models.CASCADE)
     recipient = models.ForeignKey(CustomUser, on_delete=models.CASCADE)
     read_at = models.DateTimeField(null=True, blank=True)

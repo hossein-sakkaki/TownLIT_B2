@@ -25,6 +25,7 @@ CustomUser = get_user_model()
 
 # FRIENDSHIP Manager -----------------------------------------------------------------------------------
 class Friendship(models.Model):
+    id = models.BigAutoField(primary_key=True)
     from_user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, db_index=True, related_name='friendships_initiated', verbose_name="Initiator")
     to_user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, db_index=True, related_name='friendships_received', verbose_name="Friend")
     status = models.CharField(max_length=20, choices=FRIENDSHIP_STATUS_CHOICES, default='pending', verbose_name='Status')
@@ -52,6 +53,7 @@ class Friendship(models.Model):
     
 # FELLOWSHIP Manager -----------------------------------------------------------------------------------    
 class Fellowship(models.Model):
+    id = models.BigAutoField(primary_key=True)
     from_user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='fellowship_sent', verbose_name=_('From User'))
     to_user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='fellowship_received', verbose_name=_('To User'))
     fellowship_type = models.CharField(max_length=20, choices=FELLOWSHIP_RELATIONSHIP_CHOICES, verbose_name=_('Fellowship Type'))
@@ -80,7 +82,8 @@ class Fellowship(models.Model):
 # ACADEMIC RECORD Manager --------------------------------------------------------------------------------
 class AcademicRecord(models.Model):
     DOCUMENT = FileUpload('profiles', 'documents', 'academic_record')
-       
+
+    id = models.BigAutoField(primary_key=True)
     education_document_type = models.CharField(max_length=50, choices=EDUCATION_DOCUMENT_TYPE_CHOICES, verbose_name='Education Document Type')
     education_degree = models.CharField(max_length=100, choices=EDUCATION_DEGREE_CHOICES, verbose_name='Education Degree')  
     school = models.CharField(max_length=100, verbose_name='School')
@@ -104,6 +107,7 @@ class AcademicRecord(models.Model):
 
 # Migration History --------------------------------------------------------------------------------------
 class MigrationHistory(models.Model):
+    id = models.BigAutoField(primary_key=True)
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='migration_history')
     migration_type = models.CharField(max_length=20, choices=MIGRATION_CHOICES)
     migration_date = models.DateTimeField(default=timezone.now)
@@ -120,6 +124,7 @@ class MigrationHistory(models.Model):
 class MemberServiceType(models.Model):
     DOCUMENT = FileUpload('profiles', 'documents', 'member_service_type')
     
+    id = models.BigAutoField(primary_key=True)
     service = models.ForeignKey(SpiritualService, on_delete=models.CASCADE, related_name='service_instances', verbose_name='Service Name')
     history = models.CharField(max_length=500, null=True, blank=True, verbose_name='History')
     document = models.FileField(upload_to=DOCUMENT.dir_upload, blank=True, null=True, validators=[validate_pdf_file, validate_no_executable_file], verbose_name='Documents')
@@ -215,6 +220,7 @@ class GuestUser(SlugMixin):
 class ClientRequest(models.Model):
     DOCUMENT = FileUpload('profiles', 'documents', 'client_request')
 
+    id = models.BigAutoField(primary_key=True)
     request = models.CharField(max_length=50, verbose_name='Request')
     description = models.CharField(max_length=500, verbose_name='Description')
     document_1 = models.FileField(upload_to=DOCUMENT.dir_upload, null=True, blank=True, validators=[validate_pdf_file, validate_no_executable_file], verbose_name='Document 1')
@@ -321,6 +327,7 @@ class SpiritualGiftSurveyQuestion(models.Model):
 
 # Sprituual Gifts Survey Response -----------------------------------------------------------------------
 class SpiritualGiftSurveyResponse(models.Model):
+    id = models.BigAutoField(primary_key=True)
     member = models.ForeignKey(Member, on_delete=models.CASCADE, verbose_name=_("Member"))
     question = models.ForeignKey(SpiritualGiftSurveyQuestion, on_delete=models.CASCADE, verbose_name=_("Question"))
     question_number = models.IntegerField(verbose_name=_("Question Number"))
@@ -336,6 +343,7 @@ class SpiritualGiftSurveyResponse(models.Model):
 
 # Member Survey Progress ---------------------------------------------------------------------------------
 class MemberSurveyProgress(models.Model):
+    id = models.BigAutoField(primary_key=True)
     member = models.OneToOneField(Member, on_delete=models.CASCADE, verbose_name=_("Member"))
     current_question = models.IntegerField(default=1, verbose_name=_("Current Question"))
     answered_questions = models.JSONField(default=list, verbose_name=_("Answered Questions"))
@@ -351,6 +359,7 @@ class MemberSurveyProgress(models.Model):
 
 # Member Sprituual Gifts ----------------------------------------------------------------------------------
 class MemberSpiritualGifts(models.Model):
+    id = models.BigAutoField(primary_key=True)
     member = models.OneToOneField(Member, on_delete=models.CASCADE, verbose_name=_("Member"))
     gifts = models.ManyToManyField(SpiritualGift, verbose_name=_("Spiritual Gifts"))
     survey_results = models.JSONField(verbose_name=_("Survey Results"))

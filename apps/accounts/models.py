@@ -179,6 +179,7 @@ class CustomUserManager(BaseUserManager):
 
 # ADDRESS Manager ---------------------------------------------
 class Address(models.Model):
+    id = models.BigAutoField(primary_key=True)
     street_number = models.CharField(max_length=100, blank=True, verbose_name='Streen Number')
     route = models.CharField(max_length=100, blank=True, verbose_name='Route')
     locality = models.CharField(max_length=100, blank=True, verbose_name='Locality')
@@ -227,6 +228,7 @@ class SocialMediaType(models.Model):
         return self.name
     
 class SocialMediaLink(models.Model):
+    id = models.BigAutoField(primary_key=True)
     social_media_type = models.ForeignKey(SocialMediaType, on_delete=models.PROTECT, related_name='url_links', verbose_name='Social Media Type')
     link = models.URLField(max_length=500, verbose_name='URL Link')
     is_active = models.BooleanField(default=True, verbose_name='Is Active')
@@ -273,7 +275,8 @@ class SpiritualService(models.Model):
 # CUSTOMUSER Manager ----------------------------------------------
 class CustomUser(AbstractBaseUser, PermissionsMixin):
     IMAGE = FileUpload('accounts', 'photos', 'custom_user')
-
+    
+    id = models.BigAutoField(primary_key=True)
     email = models.EmailField(max_length=254, unique=True, verbose_name='Email')
     last_email_change = models.DateTimeField(null=True, blank=True, verbose_name='Last Email Change')
     email_change_tokens = models.JSONField(null=True, blank=True, verbose_name='Email Change Tokens', help_text='Stores tokens for email change verification.')
@@ -411,6 +414,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     
 
 class UserDeviceKey(models.Model):
+    id = models.BigAutoField(primary_key=True)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='device_keys')
     device_id = models.CharField(max_length=100, verbose_name="Device ID")  # از کلاینت میاد
     public_key = models.TextField(verbose_name="Public Key (PEM)")

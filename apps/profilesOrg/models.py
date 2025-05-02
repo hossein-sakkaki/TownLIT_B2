@@ -4,9 +4,7 @@ from django.utils import timezone
 from uuid import uuid4
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
-from apps.accounts.models import (
-                            Address, SocialMediaLink,
-                        )
+from apps.accounts.models import Address, SocialMediaLink
 from apps.profiles.models import Member
 from apps.accounts.models import OrganizationService
 from apps.posts.models import Testimony
@@ -43,6 +41,7 @@ class EducationProgram(models.Model):
     
 # ORGANIZATION ADMINS Manager -----------------------------------------------------------------------------
 class OrganizationManager(models.Model):
+    id = models.BigAutoField(primary_key=True)
     organization = models.ForeignKey('Organization', on_delete=models.CASCADE, db_index=True, related_name='admin_relationships', verbose_name='Organization')
     member = models.ForeignKey(Member, on_delete=models.CASCADE, db_index=True, related_name='organization_adminships', verbose_name='Member')
     is_approved = models.BooleanField(default=False, verbose_name='Is Approved')
@@ -61,6 +60,7 @@ class OrganizationManager(models.Model):
     
  # ORGANIZATION VOTING HISTORY Model ----------------------------------------------------------------------   
 class VotingHistory(models.Model):
+    id = models.BigAutoField(primary_key=True)
     organization = models.ForeignKey('Organization', on_delete=models.CASCADE, related_name='voting_histories', verbose_name="Organization")
     voting_type = models.CharField(max_length=50, choices=VOTING_TYPE_CHOICES, verbose_name="Voting Type")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Created At")
@@ -88,6 +88,7 @@ class Organization(SlugMixin):
     LICENSE = FileUpload('profiles_org', 'documents', 'organizations')
     LOGO = FileUpload('profiles_org', 'logos', 'organizations')
 
+    id = models.BigAutoField(primary_key=True)
     org_owners = models.ManyToManyField(Member, related_name='organization_owners', verbose_name='Organization Owner/Owners')
     org_name = models.CharField(max_length=100, db_index=True, verbose_name='Organization Name')
 
@@ -153,6 +154,7 @@ class Organization(SlugMixin):
     
 # CHURCH(ORG) Manager --------------------------------------------------------------------------------------------------
 class Church(SlugMixin):
+    id = models.BigAutoField(primary_key=True)
     organization = models.OneToOneField(Organization, on_delete=models.CASCADE, db_index=True, related_name='church_details', verbose_name='Church Detail')
     custom_service_name = models.CharField(max_length=100, null=True, blank=True, verbose_name='Custom Service Name')
     senior_pastors = models.ForeignKey(Member, on_delete=models.CASCADE, null=True, blank=True, related_name='church_senior_pastors', verbose_name='Church Senior Pastors')
@@ -181,6 +183,7 @@ class Church(SlugMixin):
 
 # MISSION ORGANIZATION(ORG) Manager ---------------------------------------------------------------------------------------
 class MissionOrganization(SlugMixin):
+    id = models.BigAutoField(primary_key=True)
     organization = models.OneToOneField(Organization, on_delete=models.CASCADE, db_index=True, related_name='mission_organization_details', verbose_name='Mission Organization Detail')
     custom_service_name = models.CharField(max_length=100, null=True, blank=True, verbose_name='Custom Service Name')
     mission_focus_areas = models.TextField(null=True, blank=True, verbose_name='Mission Focus Areas')
@@ -204,6 +207,7 @@ class MissionOrganization(SlugMixin):
 
 # CHRISTIAN PUBLISHING HOUSE(ORG) Manager -----------------------------------------------------------------------------------
 class ChristianPublishingHouse(SlugMixin):
+    id = models.BigAutoField(primary_key=True)
     organization = models.OneToOneField(Organization, on_delete=models.CASCADE, db_index=True, related_name='christian_publishing_house_details', verbose_name='Christian Publishing House Detail')
     custom_service_name = models.CharField(max_length=100, null=True, blank=True, verbose_name='Custom Service Name')
     authors = models.ManyToManyField(CustomUser, blank=True, related_name='publishing_house_authors', verbose_name='Publishing House Authors')
@@ -227,6 +231,7 @@ class ChristianPublishingHouse(SlugMixin):
 
 # CHRISTIAN COUNSELING CENTER(ORG) Manager -----------------------------------------------------------------------------------
 class ChristianCounselingCenter(SlugMixin):
+    id = models.BigAutoField(primary_key=True)
     organization = models.OneToOneField(Organization, on_delete=models.CASCADE, db_index=True, related_name='christian_counseling_center_details', verbose_name='Christian Counseling Center Detail')
     custom_service_name = models.CharField(max_length=100, null=True, blank=True, verbose_name='Custom Service Name')
     counseling_services = models.ManyToManyField('CounselingService', blank=True, related_name='counseling_services', verbose_name='Counseling Services')
@@ -254,6 +259,7 @@ class ChristianCounselingCenter(SlugMixin):
     
 # Counseling Service
 class CounselingService(models.Model):
+    id = models.BigAutoField(primary_key=True)
     service_name = models.CharField(max_length=50, choices=COUNSELING_SERVICE_CHOICES, verbose_name='Service Name')
     description = models.CharField(max_length= 500, null=True, blank=True, verbose_name='Description')
     duration = models.DurationField(null=True, blank=True, verbose_name='Session Duration')
@@ -283,6 +289,7 @@ class WorshipStyle(models.Model):
 
 # Christian Worship Ministry
 class ChristianWorshipMinistry(SlugMixin):
+    id = models.BigAutoField(primary_key=True)
     organization = models.OneToOneField(Organization, on_delete=models.CASCADE, db_index=True, related_name='christian_worship_ministry_details', verbose_name='Christian Worship Ministry Detail')
     custom_service_name = models.CharField(max_length=100, null=True, blank=True, verbose_name='Custom Service Name')
     worship_leaders = models.ManyToManyField(Member, blank=True, related_name='organization_worship_leaders', verbose_name='Worship Leaders')
@@ -308,6 +315,7 @@ class ChristianWorshipMinistry(SlugMixin):
 
 # CHRISTIAN CONFERENCE CENTER(ORG) Manager ---------------------------------------------------------------------------
 class ChristianConferenceCenter(SlugMixin):
+    id = models.BigAutoField(primary_key=True)
     organization = models.OneToOneField(Organization, on_delete=models.CASCADE, db_index=True, related_name='christian_conference_center_details', verbose_name='Christian Conference Center Detail')
     custom_service_name = models.CharField(max_length=100, null=True, blank=True, verbose_name='Custom Service Name')
     partner_organizations = models.ManyToManyField(Organization, blank=True, related_name='partners_with_christian_conference_center', verbose_name='Partner Organizations')
@@ -330,6 +338,7 @@ class ChristianConferenceCenter(SlugMixin):
     
 # CHRISTIAN EDUCATIONAL IINSTITUTION(ORG) Manager ---------------------------------------------------------------------------
 class ChristianEducationalInstitution(SlugMixin):
+    id = models.BigAutoField(primary_key=True)
     organization = models.OneToOneField(Organization, on_delete=models.CASCADE, db_index=True, related_name='christian_educational_institution_details', verbose_name='Christian Educational Institution Detail')
     custom_service_name = models.CharField(max_length=100, null=True, blank=True, verbose_name='Custom Service Name')
     institution_type = models.CharField(max_length=50, choices=INSTITUTION_TYPE_CHOICES, verbose_name='Institution Type')
@@ -362,6 +371,7 @@ class ChristianEducationalInstitution(SlugMixin):
 
 # CHRISTIAN CHILDREN ORGANIZATION(ORG) Manager ---------------------------------------------------------------------------
 class ChristianChildrenOrganization(SlugMixin):
+    id = models.BigAutoField(primary_key=True)
     organization = models.OneToOneField(Organization, on_delete=models.CASCADE, db_index=True, related_name='christian_children_organization_details', verbose_name='Christian Children Organization Detail')
     custom_service_name = models.CharField(max_length=100, null=True, blank=True, verbose_name='Custom Service Name')
     service_delivery_method = models.CharField(max_length=10, blank=True, null=True, choices=DELIVERY_METHOD_CHOICES, verbose_name='Service Delivery Method')
@@ -389,6 +399,7 @@ class ChristianChildrenOrganization(SlugMixin):
 
 # CHRISTIAN YOUTH ORGANIZATION(ORG) Manager ---------------------------------------------------------------------------
 class ChristianYouthOrganization(SlugMixin):
+    id = models.BigAutoField(primary_key=True)
     organization = models.OneToOneField(Organization, on_delete=models.CASCADE, db_index=True, related_name='christian_youth_organization_details', verbose_name='Christian Youth Organization Detail')
     custom_service_name = models.CharField(max_length=100, null=True, blank=True, verbose_name='Custom Service Name')
     service_delivery_method = models.CharField(max_length=10, blank=True, null=True, choices=DELIVERY_METHOD_CHOICES, verbose_name='Service Delivery Method')
@@ -419,6 +430,7 @@ class ChristianYouthOrganization(SlugMixin):
 
 # CHRISTIAN WOMENS ORGANIZATION(ORG) Manager ---------------------------------------------------------------------------
 class ChristianWomensOrganization(SlugMixin):
+    id = models.BigAutoField(primary_key=True)
     organization = models.OneToOneField(Organization, on_delete=models.CASCADE, db_index=True, related_name='christian_womens_organization_details', verbose_name='Christian Womens Organization Detail')
     custom_service_name = models.CharField(max_length=100, null=True, blank=True, verbose_name='Custom Service Name')
     service_delivery_method = models.CharField(max_length=10, blank=True, null=True, choices=DELIVERY_METHOD_CHOICES, verbose_name='Service Delivery Method')
@@ -449,6 +461,7 @@ class ChristianWomensOrganization(SlugMixin):
 
 # CHRISTIAN MENS ORGANIZATION(ORG) Manager ---------------------------------------------------------------------------
 class ChristianMensOrganization(SlugMixin):
+    id = models.BigAutoField(primary_key=True)
     organization = models.OneToOneField(Organization, on_delete=models.CASCADE, db_index=True, related_name='christian_mens_organization_details', verbose_name='Christian Mens Organization Detail')
     custom_service_name = models.CharField(max_length=100, null=True, blank=True, verbose_name='Custom Service Name')
     service_delivery_method = models.CharField(max_length=10, blank=True, null=True, choices=DELIVERY_METHOD_CHOICES, verbose_name='Service Delivery Method')
@@ -479,6 +492,7 @@ class ChristianMensOrganization(SlugMixin):
  
 # SERVICE ORGANIZATION Manager ---------------------------------------------------------------------------
 class Service(models.Model):
+    id = models.BigAutoField(primary_key=True)
     organizations = models.ManyToManyField(Organization, related_name='service_relations', verbose_name='Organizations')
     service_type = models.CharField(max_length=50, choices=ORGANIZATION_TYPE_CHOICES, verbose_name='Service Type')
     content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
@@ -486,7 +500,7 @@ class Service(models.Model):
     specific_service = GenericForeignKey('content_type', 'object_id')
 
     def __str__(self):
-        return f"{self.get_service_type_display()} for {self.organization.org_name}"
+        return f"{self.get_service_type_display()} for {self.organizations.first().org_name if self.organizations.exists() else 'No Org'}"
 
     class Meta:
         verbose_name = "Service"

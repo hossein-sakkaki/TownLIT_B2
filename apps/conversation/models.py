@@ -1,16 +1,16 @@
 from django.db import models
 from datetime import timedelta
 from django.utils import timezone
+
 from django.conf import settings
-from django.utils.text import slugify
 
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives import hashes
 import os
 import uuid
+from django.utils.crypto import get_random_string
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from utils.common import utils
 from apps.config.conversation_constants import (
     DELETE_POLICY_CHOICES, MESSAGE_POLICY_CHOICES, KEEP, 
     GROUP_ROLE_CHOICES, PARTICIPANT, SYSTEM_MESSAGE_EVENT_CHOICES,
@@ -28,6 +28,7 @@ def get_upload_path(category, file_type, sub_folder):
 
 # DIALOGUE Model -------------------------------------------------------------------------
 class Dialogue(models.Model):
+    id = models.BigAutoField(primary_key=True)
     name = models.CharField(max_length=255, blank=True, null=True, verbose_name="Group Name")
     group_image = models.ImageField(upload_to=get_upload_path('conversation', 'cover', 'group'), validators=[validate_image_or_video_file, validate_no_executable_file], blank=True, null=True, verbose_name="Group Image")
 
@@ -40,14 +41,12 @@ class Dialogue(models.Model):
     
     slug = models.SlugField(max_length=255, unique=True, blank=True, null=True, verbose_name="Slug")
     
+    @staticmethod
     def generate_dialogue_slug(usernames: list[str], group_name: str | None = None) -> str:
-        if group_name:
-            base_slug = slugify(group_name)
-        else:
-            sorted_usernames = sorted(usernames)
-            base_slug = slugify(f"{sorted_usernames[0]}--{sorted_usernames[1]}")
-        
-        return utils.generate_unique_slug(base_slug)
+        random_part = get_random_string(length=10)
+        timestamp = timezone.now().strftime("%Y%m%d%H%M%S")
+        return f"d-{timestamp}-{random_part}"
+
 
     # ✅ بررسی اینکه آیا کاربر نقش خاصی دارد
     def has_role(self, user, role: str) -> bool:
@@ -101,6 +100,7 @@ class Dialogue(models.Model):
 
 # DIALOGUE PARTICIPANT Model -------------------------------------------------------------------------
 class DialogueParticipant(models.Model):
+    id = models.BigAutoField(primary_key=True)
     dialogue = models.ForeignKey(Dialogue, on_delete=models.CASCADE, related_name="participants_roles", verbose_name="Dialogue")
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, verbose_name="User")
     role = models.CharField(max_length=20, choices=GROUP_ROLE_CHOICES, default=PARTICIPANT, verbose_name="Role")
@@ -115,6 +115,7 @@ class DialogueParticipant(models.Model):
 
 # MESSAGE Model -------------------------------------------------------------------------
 class Message(models.Model):
+    id = models.BigAutoField(primary_key=True)
     dialogue = models.ForeignKey(Dialogue, on_delete=models.CASCADE, related_name="messages")
     sender = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="sent_messages")
     timestamp = models.DateTimeField(auto_now_add=True, verbose_name="Timestamp")
@@ -287,6 +288,7 @@ class Message(models.Model):
     
 
 class MessageEncryption(models.Model):
+    id = models.BigAutoField(primary_key=True)
     message = models.ForeignKey('Message', on_delete=models.CASCADE, related_name='encryptions')
     device_id = models.CharField(max_length=255)
     encrypted_content = models.TextField()
@@ -295,6 +297,7 @@ class MessageEncryption(models.Model):
 
 # USER DIALOGUE MARKER Model -------------------------------------------------------------------------
 class UserDialogueMarker(models.Model):
+    id = models.BigAutoField(primary_key=True)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="marked_dialogues")
     dialogue = models.ForeignKey(Dialogue, on_delete=models.CASCADE, related_name="marked_users")
 

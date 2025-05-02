@@ -112,13 +112,16 @@ class DialogueViewSet(viewsets.ModelViewSet):
         # ایجاد دیالوگ جدید
         dialogue = Dialogue.objects.create(is_group=False)
         dialogue.participants.add(request.user, recipient)
+        
+        # ✅ ساخت slug
+        usernames = sorted([request.user.username, recipient.username])
+        dialogue.slug = Dialogue.generate_dialogue_slug(usernames)
+        dialogue.save()
 
         # اضافه کردن نقش‌ها
         DialogueParticipant.objects.create(dialogue=dialogue, user=request.user, role='participant')
-        DialogueParticipant.objects.create(dialogue=dialogue, user=recipient, role='participant')
-
-        # سریال‌سازی و پاسخ کامل        
-        dialogue = Dialogue.objects.prefetch_related('participants').get(pk=dialogue.pk)
+        DialogueParticipant.objects.create(dialogue=dialogue, user=recipient, role='participant')        
+        
         serializer = DialogueSerializer(dialogue, context={"request": request})
         return Response({
             'dialogue': serializer.data,
@@ -136,13 +139,23 @@ class DialogueViewSet(viewsets.ModelViewSet):
         if not group_name:
             return Response({'error': 'Group name is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        # ✅ ایجاد دیالوگ اولیه (بدون slug)
         dialogue = Dialogue.objects.create(
             is_group=True,
             name=group_name,
-            group_image=group_image
+            group_image=group_image,
         )
+
+        # ✅ اضافه کردن موسس به لیست شرکت‌کنندگان
         dialogue.participants.add(request.user)
         DialogueParticipant.objects.create(dialogue=dialogue, user=request.user, role='founder')
+
+        # ✅ ساخت slug با استفاده از نام گروه و نام موسس
+        usernames = list(dialogue.participants.values_list("username", flat=True))
+        dialogue.slug = Dialogue.generate_dialogue_slug(usernames, group_name)
+        dialogue.save(update_fields=["slug"])
+
+        # ✅ سریال‌سازی و پاسخ
         serializer = DialogueSerializer(dialogue, context={"request": request})
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
@@ -647,13 +660,7 @@ class MessageViewSet(viewsets.ModelViewSet):
             'has_more': has_more
         }, status=status.HTTP_200_OK)
 
-    @action(
-        detail=False,
-        methods=['post'],
-        url_path='send-message',
-        permission_classes=[IsAuthenticated],
-        parser_classes=[JSONParser]
-    )
+    @action( detail=False, methods=['post'], url_path='send-message', permission_classes=[IsAuthenticated], parser_classes=[JSONParser] )
     def send_message(self, request):
         user = request.user
         dialogue_slug = request.data.get('dialogue_slug')
@@ -717,13 +724,7 @@ class MessageViewSet(viewsets.ModelViewSet):
         }, status=201)
 
     
-    @action(
-        detail=False,
-        methods=['post'],
-        url_path='upload-file',
-        permission_classes=[IsAuthenticated],
-        parser_classes=[MultiPartParser, FormParser]
-    )
+    @action(detail=False, methods=['post'], url_path='upload-file', permission_classes=[IsAuthenticated], parser_classes=[MultiPartParser, FormParser])
     def upload_file(self, request):
         dialogue_slug = request.data.get("dialogue_slug")
         uploaded_file = request.FILES.get("file")

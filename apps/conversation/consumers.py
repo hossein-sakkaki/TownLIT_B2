@@ -38,6 +38,7 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
     async def connect(self):
         self.connected = True
         self.user = self.scope["user"]
+        self.slug = self.scope['url_route']['kwargs'].get('slug')
 
         # 🔐 Extract device_id from query string
         query_string = self.scope.get("query_string", b"").decode()
@@ -60,9 +61,18 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
         await self.channel_layer.group_add(f"user_{self.user.id}", self.channel_name)
         await self.channel_layer.group_add(f"device_{self.device_id}", self.channel_name)
 
-        # ✅ Join all dialogue groups using slug instead of id
-        dialogues = await sync_to_async(list)(Dialogue.objects.filter(participants=self.user))
-        self.dialogue_map = {f"dialogue_{d.slug}": d.id for d in dialogues}
+        if self.slug:
+            try:
+                dialogue = await sync_to_async(Dialogue.objects.get)(slug=self.slug, participants=self.user)
+                self.dialogue_map = {f"dialogue_{dialogue.slug}": dialogue.id}
+                dialogues = [dialogue]
+            except Dialogue.DoesNotExist:
+                await self.close()
+                return
+        else:   
+            dialogues = await sync_to_async(list)(Dialogue.objects.filter(participants=self.user))
+            self.dialogue_map = {f"dialogue_{d.slug}": d.id for d in dialogues}
+            
         self.group_names = set(self.dialogue_map.keys())
 
         for group in self.group_names:

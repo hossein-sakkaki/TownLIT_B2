@@ -11,6 +11,7 @@ CustomUser = get_user_model()
 
 # WAREHOUSE Model ------------------------------------------------------------------
 class Warehouse(models.Model):
+    id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=100, verbose_name='Warehouse Name')
     location = models.CharField(max_length=255, verbose_name='Location')
     warehouse_address = models.ForeignKey(Address, on_delete=models.PROTECT, null=True, blank=True, related_name='warehouse_address', verbose_name='Warehouse Address')
@@ -30,6 +31,7 @@ class Warehouse(models.Model):
 
 # WAREHOUSE INVENTORY Model ---------------------------------------------------------
 class WarehouseInventory(models.Model):
+    id = models.AutoField(primary_key=True)
     warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE, related_name='inventory', verbose_name='Warehouse')
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='warehouse_inventory', verbose_name='Product')
     quantity = models.PositiveIntegerField(default=0, verbose_name='Quantity')
@@ -48,6 +50,7 @@ class WarehouseInventory(models.Model):
 
 # STOCK MOVEMENT Model --------------------------------------------------------------
 class StockMovement(models.Model):
+    id = models.AutoField(primary_key=True)
     warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE, related_name='stock_movements', verbose_name='Warehouse')
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='stock_movements', verbose_name='Product')
     quantity = models.IntegerField(verbose_name='Quantity')  # Can be positive (inflow) or negative (outflow)
@@ -65,6 +68,7 @@ class StockMovement(models.Model):
 
 # TEMPORARY RESERVATION Model --------------------------------------------------------------
 class TemporaryReservation(models.Model):
+    id = models.AutoField(primary_key=True)
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='temporary_reservations', verbose_name="Product")
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='temporary_reservations', verbose_name="User")
     reserved_quantity = models.PositiveIntegerField(verbose_name="Reserved Quantity")
