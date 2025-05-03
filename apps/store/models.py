@@ -20,6 +20,7 @@ CustomUser = get_user_model()
 
 # SERVICE CATEGORY Manager ---------------------------------------------------------
 class ServiceCategory(models.Model):
+    id = models.AutoField(primary_key=True)
     category_name = models.CharField(max_length=50, choices=STORE_PRODUCT_CATEGORY_CHOICES, unique=True, verbose_name='Service Category')
     description = models.CharField(max_length=300, null=True, blank=True, verbose_name='Description')
 
@@ -28,6 +29,7 @@ class ServiceCategory(models.Model):
 
 # STORE Manager --------------------------------------------------------------------
 class Store(SlugMixin):
+    id = models.AutoField(primary_key=True)
     LICENSE_UPLOAD = FileUpload('stores', 'files', 'store')
     LOGO_UPLOAD = FileUpload('stores', 'logo', 'store')
 

@@ -5,7 +5,8 @@ from .models import (
                 Address, CustomLabel, SocialMediaType, SocialMediaLink,
                 OrganizationService, 
                 SpiritualService,
-                UserDeviceKey
+                UserDeviceKey,
+                InviteCode
             )
 from apps.profilesOrg.models import Organization
 from common.validators import validate_email_field, validate_password_field
@@ -25,10 +26,11 @@ class LoginSerializer(serializers.Serializer):
 # REGISTER USER Serializer ---------------------------------------------------------------
 class RegisterUserSerializer(serializers.ModelSerializer):
     agree_to_terms = serializers.BooleanField(write_only=True)
+    invite_code = serializers.CharField(write_only=True, required=False)
 
     class Meta:
         model = CustomUser
-        fields = ['email', 'password', 'agree_to_terms']
+        fields = ['email', 'password', 'agree_to_terms', 'invite_code']
         extra_kwargs = {
             'password': {'write_only': True}
         }
@@ -36,11 +38,31 @@ class RegisterUserSerializer(serializers.ModelSerializer):
     def validate(self, data):
         if not data.get('agree_to_terms'):
             raise serializers.ValidationError("You must agree to the terms and conditions.")
+
+        if getattr(settings, 'USE_INVITE_CODE', False):
+            invite_code = data.get('invite_code')
+            if not invite_code:
+                raise serializers.ValidationError({"invite_code": "An invite code is required."})
+            try:
+                invite = InviteCode.objects.get(code=invite_code)
+            except InviteCode.DoesNotExist:
+                raise serializers.ValidationError({"invite_code": "Invalid invite code."})
+
+            if invite.is_used:
+                raise serializers.ValidationError({"invite_code": "This invite code has already been used."})
+
+            email = data.get('email')
+            if invite.email and invite.email.lower() != email.lower():
+                raise serializers.ValidationError({"invite_code": "This invite code is not valid for this email address."})
+
+            self.invite = invite
+
         return data
 
     def create(self, validated_data):
-        # Remove `agree_to_terms` before creating the user
         validated_data.pop('agree_to_terms')
+        invite_code = validated_data.pop('invite_code', None)
+
         user = CustomUser.objects.create_user(
             email=validated_data['email']
         )
@@ -49,7 +71,40 @@ class RegisterUserSerializer(serializers.ModelSerializer):
 
         user.set_password(validated_data['password'])
         user.save()
+
+        # اگر invite تعریف شده بود، آن را استفاده‌شده علامت بزن
+        if getattr(settings, 'USE_INVITE_CODE', False):
+            self.invite.mark_as_used(user)
+
         return user
+    
+# class RegisterUserSerializer(serializers.ModelSerializer):
+#     agree_to_terms = serializers.BooleanField(write_only=True)
+
+#     class Meta:
+#         model = CustomUser
+#         fields = ['email', 'password', 'agree_to_terms']
+#         extra_kwargs = {
+#             'password': {'write_only': True}
+#         }
+
+#     def validate(self, data):
+#         if not data.get('agree_to_terms'):
+#             raise serializers.ValidationError("You must agree to the terms and conditions.")
+#         return data
+
+#     def create(self, validated_data):
+#         # Remove `agree_to_terms` before creating the user
+#         validated_data.pop('agree_to_terms')
+#         user = CustomUser.objects.create_user(
+#             email=validated_data['email']
+#         )
+#         if not user.image_name:
+#             user.image_name = settings.DEFAULT_PROFILE_IMAGE
+
+#         user.set_password(validated_data['password'])
+#         user.save()
+#         return user
 
 
 # VERIFY NEWBORN CODE Serializer -------------------------------------------------------------

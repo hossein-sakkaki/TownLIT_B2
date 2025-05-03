@@ -9,7 +9,8 @@ from .forms import UserCreationForm, UserChangeForm
 from .models import (
                 Address, CustomLabel, SocialMediaType, SocialMediaLink,
                 OrganizationService, 
-                SpiritualService
+                SpiritualService,
+                InviteCode
             )
 from apps.profiles.models import Friendship
 from django.contrib.auth import get_user_model
@@ -131,3 +132,11 @@ class CustomUserAdmin(UserAdmin):
         return ''
     
     profile_image_thumbnail.short_description = 'Profile Image'
+    
+
+# Invite Code Admin ---------------------------------------------------------------------
+@admin.register(InviteCode)
+class InviteCodeAdmin(admin.ModelAdmin):
+    list_display = ['code', 'email', 'is_used', 'used_by', 'created_at', 'used_at', 'invite_email_sent', 'invite_email_sent_at']
+    search_fields = ['code', 'email']
+    list_filter = ['is_used']

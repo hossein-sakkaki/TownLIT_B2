@@ -413,6 +413,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
         return f"/{self.username}"
     
 
+# User Device Key Model -----------------------------------------------------
 class UserDeviceKey(models.Model):
     id = models.BigAutoField(primary_key=True)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='device_keys')
@@ -429,3 +430,31 @@ class UserDeviceKey(models.Model):
     class Meta:
         unique_together = ('user', 'device_id')
 
+
+# Invite Code Model -----------------------------------------------------
+class InviteCode(models.Model):
+    code = models.CharField(max_length=20, unique=True)
+    email = models.EmailField(null=True, blank=True, help_text="Optional: restrict to specific email")
+    is_used = models.BooleanField(default=False)
+    
+    used_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='used_invite_code'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    used_at = models.DateTimeField(null=True, blank=True)
+
+    invite_email_sent = models.BooleanField(default=False)
+    invite_email_sent_at = models.DateTimeField(null=True, blank=True)
+    
+    def mark_as_used(self, user):
+        self.is_used = True
+        self.used_by = user
+        self.used_at = timezone.now()
+        self.save()
+
+    def __str__(self):
+        return f"{self.code} ({'USED' if self.is_used else 'UNUSED'})"

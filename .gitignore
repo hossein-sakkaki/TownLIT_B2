@@ -23,3 +23,6 @@ Thumbs.db
 
 # Ignore env vars or local config
 .env
+
+# Ignore User Information
+accounts/scripts/data/*.json
