@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
 from django.utils.html import escape
-from accounts.models import InviteCode
-from accounts.scripts.utils.code_tools import generate_invite_code
+from apps.accounts.models import InviteCode
+from apps.accounts.scripts.utils.code_tools import generate_invite_code
 
 BASE_DIR = Path(__file__).resolve().parent
 JSON_PATH = BASE_DIR / "data/invite_users_data.json"
@@ -28,10 +28,21 @@ def assign_codes_to_emails():
             continue
 
         code = generate_invite_code()
-        InviteCode.objects.create(code=code, email=email)
+        first_name = escape(user_data.get('name', '').strip().title())
+        last_name = escape(user_data.get('family', '').strip().title())
+
+        InviteCode.objects.create(
+            code=code,
+            email=email,
+            first_name=first_name,
+            last_name=last_name
+        )
         created_count += 1
         print(f"✅ Code assigned for: {email}")
 
     print(f"\n📌 Summary:")
     print(f"  ✅ New invite codes created: {created_count}")
     print(f"  ⏩ Emails already in DB: {skipped_count}")
+
+
+# python manage.py assign_invite_codes 

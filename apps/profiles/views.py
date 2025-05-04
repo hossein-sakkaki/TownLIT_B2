@@ -37,7 +37,8 @@ from apps.accounts.serializers import SimpleCustomUserSerializer
 
 from common.validators import validate_phone_number
 from django.core.exceptions import ValidationError
-from utils.common.utils import create_veriff_session, get_veriff_status, send_email, create_active_code
+from utils.common.utils import create_veriff_session, get_veriff_status, create_active_code
+from utils.email.email_tools import send_custom_email
 from django.template.loader import render_to_string
 from services.friendship_suggestions import suggest_friends_for_friends_tab, suggest_friends_for_requests_tab
 import logging
@@ -254,20 +255,41 @@ class MemberViewSet(viewsets.ModelViewSet):
             user.save()
 
             # Send email to the current email address
-            subject_old = "Email Change Request - Confirm with Current Email"
-            email_body_old = render_to_string("emails/email_change_old.html", {
+            subject = "Email Change Request - Confirm with Current Email"
+            context = {
                 "username": user.username,
                 "code": old_email_code,
-            })
-            send_email(subject_old, '', email_body_old, [user.email])
+            }
+
+            success = send_custom_email(
+                to=user.email,
+                subject=subject,
+                template_path="emails/account/email_change_old.html",
+                context=context,
+                text_template_path=None
+            )
+
+            if not success:
+                # این قسمت به تناسب کد شما ممکن است متفاوت باشد
+                print("❌ Failed to send email change confirmation to current email.")
 
             # Send email to the new email address
-            subject_new = "Verify Your New Email"
-            email_body_new = render_to_string("emails/email_change_new.html", {
+            subject = "Verify Your New Email"
+            context = {
                 "username": user.username,
                 "code": new_email_code,
-            })
-            send_email(subject_new, '', email_body_new, [new_email])
+            }
+
+            success = send_custom_email(
+                to=new_email,
+                subject=subject,
+                template_path="emails/account/email_change_new.html",
+                context=context,
+                text_template_path=None
+            )
+
+            if not success:
+                print("❌ Failed to send verification email to the new address.")
 
             return Response({"message": "Verification codes have been sent to your current and new email addresses."}, status=status.HTTP_200_OK)
         except Exception as e:
@@ -300,12 +322,24 @@ class MemberViewSet(viewsets.ModelViewSet):
 
             # Notify the user about the successful email change
             subject = "Your Email Has Been Successfully Changed"
-            email_body = render_to_string("emails/email_change_notification.html", {
+            context = {
                 "username": user.username,
                 "new_email": user.email,
-            })
-            send_email(subject, '', email_body, [user.email])
+            }
+
+            success = send_custom_email(
+                to=user.email,
+                subject=subject,
+                template_path="emails/account/email_change_notification.html",
+                context=context,
+                text_template_path=None
+            )
+
+            if not success:
+                return Response({"error": "Failed to send email change notification."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
             return Response({"message": "Email has been successfully updated."}, status=status.HTTP_200_OK)
+                    
         except Exception as e:
             return Response({"error": "An unexpected error occurred.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 

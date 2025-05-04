@@ -1,0 +1,34 @@
+{% extends "base_email.html" %}
+
+{% block subject %}Welcome to TownLIT - Activate Your Account!{% endblock %}
+
+{% block content %}
+  <h2 style="color: #0F52BA;">Hello {{ first_name|default:"Friend" }} 👋</h2>
+
+  <p style="font-size: 1.1rem; line-height: 1.6;">
+    We're excited to have you join <strong>TownLIT</strong>, a Christ-centered network with a heart for embracing community spirit.
+  </p>
+
+  <p style="font-size: 1rem; margin-top: 1.5rem;">
+    To activate your account, please use the code below:
+  </p>
+
+  <div style="text-align: center; margin: 2rem 0;">
+    <span style="font-size: 2rem; color: #F20519; background-color: #F8F6F0; padding: 12px 24px; border: 2px dashed #F20519; border-radius: 8px; display: inline-block;">
+      {{ activation_code }}
+    </span>
+  </div>
+
+  <p style="font-size: 0.95rem; color: #555; line-height: 1.6;">
+    This code is valid for one-time use and will expire shortly for security reasons. Please activate your account as soon as possible.
+  </p>
+
+  <p style="font-size: 0.95rem; color: #555; line-height: 1.6;">
+    If you didn't request this email, you can safely ignore it.
+  </p>
+
+  <p style="margin-top: 2rem; font-size: 1rem;">
+    With blessings,<br />
+    <span style="color:#FFD700; font-weight: bold;">The TownLIT Team</span>
+  </p>
+{% endblock %}

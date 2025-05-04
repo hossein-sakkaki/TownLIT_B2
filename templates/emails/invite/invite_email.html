@@ -1,18 +1,34 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>Welcome to TownLIT</title>
-</head>
-<body style="font-family: sans-serif; color: #333;">
-  <h2>Shalom {{ full_name|default:"Friend" }} 👋</h2>
-  <p>You're warmly invited to join <strong>TownLIT</strong> — a space of faith, community, and purpose.</p>
-  <p>Your personal invite code is:</p>
-  <h3 style="color: #0F52BA; background: #f1f1f1; padding: 10px; display: inline-block;">{{ invite_code }}</h3>
-  <p>Please use this code during your registration at:</p>
-  <p><a href="https://townlit.org/register" style="color:#0F52BA;">https://townlit.org/register</a></p>
-  <br>
-  <p style="font-size: small;">If you did not request this, please ignore this message.</p>
-  <p>With blessings,<br>The TownLIT Team</p>
-</body>
-</html>
+{% extends "base_email.html" %}
+
+{% block subject %}You're Invited to Join TownLIT{% endblock %}
+
+{% block content %}
+  <h2 style="color:#353839; margin-top: 0;">Grace and Peace, {{ first_name|default:"Friend" }}</h2>
+
+  <p style="font-size: 1.1rem; line-height: 1.6;">
+    You've been personally invited to join <strong>TownLIT</strong> — a Christ-centered network where faith meets community and purpose.
+  </p>
+
+  <!-- Invite Code -->
+  <p style="font-size: 1rem; margin-top: 1.5rem;">Here is your unique invite code:</p>
+  <div style="background: #FFD700; color: #353839; font-weight: bold; padding: 12px 20px; display: inline-block; border-radius: 8px; font-size: 1.3rem; letter-spacing: 1px;">
+    {{ invite_code }}
+  </div>
+
+  <!-- Call to Action -->
+  <p style="margin-top: 2rem; font-size: 1.1rem;">
+    Use this code to join us and begin your journey:
+  </p>
+  <p style="margin-top: 0.8rem;">
+    <a href="https://townlit.com/register"
+       style="background: #0F52BA; color: #F8F6F0; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: bold; display: inline-block;">
+        Join TownLIT Now
+    </a>
+  </p>
+
+  <!-- Blessing -->
+  <p style="margin-top: 2rem; color: #353839; font-size: 1rem;">
+    With blessings,<br />
+    <span style="font-weight: bold;">TownLIT</span>
+  </p>
+{% endblock %}

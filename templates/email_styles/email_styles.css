@@ -1,0 +1,55 @@
+.email-body {
+    margin: 0;
+    padding: 2rem;
+    background-color: #F8F6F0;
+    font-family: 'Lato', 'Noto Sans', sans-serif;
+    color: #353839;
+  }
+  
+  .email-header {
+    text-align: center;
+    margin-bottom: 1rem;
+  }
+  
+  .logo {
+    width: 180px;
+    height: auto;
+    margin-bottom: 0.5rem;
+    display: inline-block;
+  }
+  
+  .logo-text {
+    width: 150px;
+    height: auto;
+  }
+  
+  .tagline {
+    font-size: 1rem;
+    color: #353839;
+    font-weight: bold;
+    margin-top: 0.5rem;
+    margin-bottom: 1rem;
+  }
+  
+  .email-content {
+    max-width: 600px;
+    margin: 0 auto;
+  }
+  
+  .email-footer {
+    text-align: center;
+    margin-top: 2rem;
+    font-size: 0.9rem;
+    color: #353839;
+  }
+  
+  @keyframes heartbeat {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+  }
+  
+  .heartbeat {
+    animation: heartbeat 2.5s ease-in-out infinite;
+  }
+
+  

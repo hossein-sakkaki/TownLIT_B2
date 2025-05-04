@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>{% block subject %}TownLIT Email{% endblock %}</title>
+
+  <style>
+    {% include "email_styles/email_styles.css" %}
+  </style>
+</head>
+<body class="email-body">
+
+  <!-- Header -->
+  <div class="email-header">
+    <img src="{{ site_domain }}/static/logo/TownLITLogo.jpg" alt="TownLIT Logo" class="logo heartbeat" />
+    <div>
+      <img src="{{ site_domain }}/static/logo/TownLIT.png" alt="TownLIT" class="logo-text" />
+    </div>
+    <p class="tagline">Where the Lord Is There</p>
+  </div>
+
+  <!-- Main content block -->
+  <div class="email-content">
+    {% block content %}
+    <!-- Default content -->
+    {% endblock %}
+  </div>
+
+  <!-- Footer -->
+  <div class="email-footer">
+    <p>If you didn’t request this email, feel free to ignore it.</p>
+    <p>&copy; 2022–25 TownLIT. All rights reserved.</p>
+  </div>
+
+</body>
+</html>

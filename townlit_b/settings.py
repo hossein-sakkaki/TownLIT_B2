@@ -45,6 +45,9 @@ REDIS_URL = os.getenv('REDIS_URL', 'redis://127.0.0.1:6379/0')
 SITE_URL = os.getenv("SITE_URL", "https://www.townlit.com")
 
 
+USE_INVITE_CODE = True  # Set to False to disable invite code requirement
+
+
 # Application definition
 
 INSTALLED_APPS = [
@@ -199,7 +202,6 @@ USE_I18N = True
 
 USE_TZ = True
 
-USE_INVITE_CODE = True  # Set to False to disable invite code requirement
 
 
 # Static files (CSS, JavaScript, Images)

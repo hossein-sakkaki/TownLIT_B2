@@ -1,10 +1,8 @@
 # utils/security/dialogue_cleanup.py
 
-from django.utils import timezone
 from apps.conversation.models import Dialogue, Message, UserDialogueMarker, DialogueParticipant
 from apps.profiles.models import Fellowship
-from django.core.mail import send_mail
-from django.template.loader import render_to_string
+from utils.email.email_tools import send_custom_email
 
 
 def handle_sensitive_dialogue_cleanup(user):
@@ -80,12 +78,24 @@ def notify_confidants_of_delete_pin(user):
     confidants = Fellowship.objects.filter(from_user=user, fellowship_type="Confidant", status="Accepted")
     for confidant in confidants:
         confidant_user = confidant.to_user
+        
+        # Alert Email to confidant
         subject = "Security Alert: Destructive PIN Used"
-        email_body = render_to_string('emails/security_alert.html', {
+        context = {
             'username': user.username,
-            'profile_link': f'/profiles/{user.id}/'
-        })
-        send_mail(subject, "", "", [confidant_user.email], html_message=email_body)
+            'profile_link': f'/profiles/{user.id}/',
+        }
+
+        success = send_custom_email(
+            to=confidant_user.email,
+            subject=subject,
+            template_path='emails/alert/security_alert.html',
+            context=context,
+            text_template_path=None
+        )
+
+        if not success:
+            print(f"❌ Failed to send security alert to: {confidant_user.email}")
         
         
 def find_new_founder(dialogue, current_user):
