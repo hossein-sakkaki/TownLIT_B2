@@ -383,3 +383,14 @@ LOG_ACTION_CHOICES = [
     (EDIT, 'Edit'),
     (DELETE, 'Delete'),
 ]
+
+# USER FEEDBACK STATUS Choices -----------------------------------------------------------
+NEW = 'new'
+REVIEWED = 'reviewed'
+RESOLVED = 'resolved'
+USER_FEEDBACK_STATUS_CHOICES = [
+    (NEW, 'New'),
+    (REVIEWED, 'Reviewed'),
+    (RESOLVED, 'Resolved'),
+]
+

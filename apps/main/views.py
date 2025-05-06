@@ -7,12 +7,28 @@ import os
 from django.conf import settings
 from django.http import FileResponse
 
-from .models import TermsAndPolicy, FAQ, SiteAnnouncement, UserFeedback, UserActionLog
-from .serializers import TermsAndPolicySerializer, FAQSerializer, SiteAnnouncementSerializer, UserFeedbackSerializer, UserActionLogSerializer
+from django.utils import timezone
+from django.db.models import F
+from datetime import timedelta
+
+from .models import (
+        TermsAndPolicy, FAQ, SiteAnnouncement, UserFeedback, UserActionLog,
+        VideoCategory, VideoSeries, OfficialVideo, VideoViewLog
+    )
+from .serializers import (
+        TermsAndPolicySerializer, FAQSerializer, SiteAnnouncementSerializer,
+        UserFeedbackSerializer, UserActionLogSerializer,
+        VideoCategorySerializer, VideoSeriesSerializer, OfficialVideoSerializer,
+        OfficialVideoCreateUpdateSerializer, VideoViewLogSerializer
+    )
+from utils.common.ip import get_client_ip
+
+
 from apps.config.choicemap import CHOICES_MAP
+from utils.email.email_tools import send_custom_email
+import logging
 
-
-
+logger = logging.getLogger(__name__)
 
 # TERMS AND POLICY ViewSet --------------------------------------------------------------------------------
 class TermsAndPolicyViewSet(viewsets.ReadOnlyModelViewSet):
@@ -67,20 +83,59 @@ class SiteAnnouncementViewSet(viewsets.ReadOnlyModelViewSet):
 
 # USER FEEDBACK ViewSet -----------------------------------------------------------------------------------
 class UserFeedbackViewSet(viewsets.ModelViewSet):
-    queryset = UserFeedback.objects.all()
     serializer_class = UserFeedbackSerializer
-    permission_classes = [IsAdminUser]
 
     def get_permissions(self):
-        
-        if self.action in ['list', 'retrieve', 'create']:
-            # Allow read-only access and create for all users
-            permission_classes = [AllowAny]
-        else:
-            # Restrict update and delete operations to admin users only
-            permission_classes = [IsAdminUser]
-        return [permission() for permission in permission_classes]
+        if self.action in ['submit_feedback']:
+            return [IsAuthenticated()]
+        if self.action in ['list', 'retrieve', 'update', 'partial_update', 'destroy']:
+            return [IsAdminUser()]
+        return [IsAdminUser()]
 
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_staff:
+            return UserFeedback.objects.all()
+        return UserFeedback.objects.filter(user=user)
+
+    @action(detail=False, methods=['post'], url_path='submit-feedback', permission_classes=[AllowAny])
+    def submit_feedback(self, request):
+        serializer = self.get_serializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {"error": serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        feedback = serializer.save(user=request.user)
+
+        # Send confirmation email
+        subject = "We've received your feedback – Thank you!"
+        context = {
+            'name': request.user.name or "Friend",
+        }
+
+        success = send_custom_email(
+            to=request.user.email,
+            subject=subject,
+            template_path='emails/feedback/feedback_received_email.html',
+            context=context,
+            text_template_path=None
+        )
+
+        if success:
+            logger.info(f"[UserFeedback] Confirmation email sent to {request.user.email} for feedback ID {feedback.id}")
+            return Response(
+                {"message": "Feedback submitted successfully. Confirmation email sent."},
+                status=status.HTTP_201_CREATED
+            )
+        else:
+            logger.warning(f"[UserFeedback] Feedback saved, but failed to send email to {request.user.email} for feedback ID {feedback.id}")
+            return Response(
+                {"message": "Feedback submitted successfully, but failed to send confirmation email."},
+                status=status.HTTP_201_CREATED
+            )
+                
 
 # USER ACTION LOG ViewSet ---------------------------------------------------------------------------------
 class UserActionLogViewSet(viewsets.ReadOnlyModelViewSet):
@@ -147,3 +202,51 @@ class StaticChoiceViewSet(viewsets.ViewSet):
         if choices is None:
             return Response({"error": f"Choice '{choice_name}' not found."}, status=404)
         return Response(choices)
+
+
+class VideoCategoryViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = VideoCategory.objects.filter(is_active=True)
+    serializer_class = VideoCategorySerializer
+    permission_classes = [AllowAny]
+    
+    
+class VideoSeriesViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = VideoSeries.objects.filter(is_active=True)
+    serializer_class = VideoSeriesSerializer
+    permission_classes = [AllowAny]
+    
+
+class OfficialVideoViewSet(viewsets.ModelViewSet):
+    queryset = OfficialVideo.objects.filter(is_active=True, publish_date__lte=timezone.now())
+    serializer_class = OfficialVideoSerializer
+    permission_classes = [AllowAny]
+
+    def get_serializer_class(self):
+        if self.action in ['create', 'update', 'partial_update']:
+            return OfficialVideoCreateUpdateSerializer
+        return OfficialVideoSerializer
+
+    @action(detail=True, methods=["post"], permission_classes=[AllowAny])
+    def track_view(self, request, pk=None):
+        video = self.get_object()
+        ip = get_client_ip(request)
+        user_agent = request.META.get("HTTP_USER_AGENT", "")[:255]  # Optional limit
+
+        # فقط اگر در 6 ساعت گذشته همین IP این ویدیو را ندیده باشد
+        recent_time = timezone.now() - timedelta(hours=6)
+        if not VideoViewLog.objects.filter(video=video, ip_address=ip, viewed_at__gte=recent_time).exists():
+            video.view_count = F("view_count") + 1
+            video.save(update_fields=["view_count"])
+            VideoViewLog.objects.create(
+                video=video,
+                ip_address=ip,
+                user_agent=user_agent
+            )
+
+        return Response({"message": "View registered"}, status=status.HTTP_200_OK)
+    
+
+class VideoViewLogViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = VideoViewLog.objects.all()
+    serializer_class = VideoViewLogSerializer
+    permission_classes = [IsAdminUser]

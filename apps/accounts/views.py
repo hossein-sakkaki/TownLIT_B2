@@ -88,7 +88,7 @@ class AuthViewSet(viewsets.ViewSet):
                 context = {
                     'activation_code': active_code,
                     'user': user,
-                    'site_domain': settings.SITE_URL,  # اگر در قالب از آن استفاده می‌شود
+                    'site_domain': settings.SITE_URL, 
                 }
 
                 success = send_custom_email(
@@ -96,7 +96,7 @@ class AuthViewSet(viewsets.ViewSet):
                     subject=subject,
                     template_path='emails/account/activation_email.html',
                     context=context,
-                    text_template_path=None  # اگر متن ساده نداری
+                    text_template_path=None  
                 )
 
                 if not success:

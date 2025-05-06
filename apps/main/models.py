@@ -4,7 +4,16 @@ from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from django.utils.text import slugify
 
-from apps.config.constants import TERMS_AND_POLICIES_CHOICES, LOG_ACTION_CHOICES, POLICY_DISPLAY_LOCATION_CHOICES, DISPLAY_IN_OFFICIAL
+from utils.common.utils import FileUpload
+from common.validators import (
+                            validate_image_or_video_file,
+                            validate_no_executable_file
+                        )
+from apps.config.constants import (
+                            TERMS_AND_POLICIES_CHOICES, LOG_ACTION_CHOICES, 
+                            POLICY_DISPLAY_LOCATION_CHOICES, DISPLAY_IN_OFFICIAL,
+                            USER_FEEDBACK_STATUS_CHOICES
+                        )
 from django.contrib.auth import get_user_model
 
 CustomUser = get_user_model()
@@ -94,24 +103,25 @@ class FAQ(models.Model):
         return self.question
 
 
-# USER FEEDBACK Model -------------------------------------------------------------------------------------------
+# USER FEEDBACK Model -------------------------------------------------------------------------------------------    
 class UserFeedback(models.Model):
+    IMAGE = FileUpload('main', 'image', 'feedback_screenshots')
+    
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='feedbacks', verbose_name='User')
     title = models.CharField(max_length=255, verbose_name='Title')
     content = RichTextUploadingField(config_name='default', verbose_name='Content')
+    screenshot = models.ImageField(upload_to=IMAGE.dir_upload, blank=True, null=True, validators=[validate_image_or_video_file, validate_no_executable_file], verbose_name='Document')
+    status = models.CharField(max_length=20, choices=USER_FEEDBACK_STATUS_CHOICES, default='new', verbose_name='Status')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Created At')
-
-    # Fields for GenericForeignKey
-    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE, null=True, blank=True)
-    object_id = models.PositiveIntegerField(null=True, blank=True)
-    feedback_object = GenericForeignKey('content_type', 'object_id')
 
     class Meta:
         verbose_name = 'User Feedback'
         verbose_name_plural = 'User Feedbacks'
+        ordering = ['-created_at']
 
     def __str__(self):
-        return f"Feedback from {self.user.username}"
+        return f"Feedback from {self.user.username} - {self.title}"
+
     
 
 # SITE ANNOUNCEMENT Model -------------------------------------------------------------------------------------------
@@ -147,3 +157,85 @@ class UserActionLog(models.Model):
 
     def __str__(self):
         return f"{self.user.username} performed {self.get_action_type_display()} on {self.content_type} (ID: {self.object_id})"
+    
+
+class VideoCategory(models.Model):
+    name = models.CharField(max_length=100, unique=True, verbose_name="Category Name")
+    description = models.TextField(blank=True, verbose_name="Description")
+    is_active = models.BooleanField(default=True, verbose_name="Active")
+
+    class Meta:
+        verbose_name = "Video Category"
+        verbose_name_plural = "Video Categories"
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+
+class VideoSeries(models.Model):
+    title = models.CharField(max_length=200, verbose_name="Series Title")
+    description = models.TextField(blank=True, verbose_name="Series Description")
+    language = models.CharField(max_length=10, default="en", verbose_name="Language")
+    is_active = models.BooleanField(default=True, verbose_name="Active")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Created At")
+    slug = models.SlugField(max_length=255, unique=True, blank=True, verbose_name="Slug")
+    class Meta:
+        verbose_name = "Video Series"
+        verbose_name_plural = "Video Series"
+        ordering = ["-created_at"]
+        
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = slugify(self.title)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.title
+
+
+class OfficialVideo(models.Model):
+    VIDEO = FileUpload('main', 'video', 'official_videos')
+    THUMBNAIL = FileUpload('main', 'image', 'official_thumbnails')
+
+    title = models.CharField(max_length=200, verbose_name="Title")
+    description = models.TextField(blank=True, verbose_name="Description")
+    language = models.CharField(max_length=10, default="en", verbose_name="Language")
+    category = models.ForeignKey(VideoCategory, on_delete=models.SET_NULL, null=True, blank=True, related_name="videos", verbose_name="Category")
+    series = models.ForeignKey(VideoSeries, on_delete=models.SET_NULL, null=True, blank=True, related_name="videos", verbose_name="Series")
+    episode_number = models.PositiveIntegerField(null=True, blank=True, verbose_name="Episode Number")
+    view_count = models.PositiveIntegerField(default=0, verbose_name="View Count")
+    
+    video_file = models.FileField( upload_to=VIDEO.dir_upload, validators=[validate_image_or_video_file, validate_no_executable_file], verbose_name="Video File" )
+    thumbnail = models.ImageField(upload_to=THUMBNAIL.dir_upload, validators=[validate_image_or_video_file, validate_no_executable_file], verbose_name="Thumbnail / Poster")
+
+    is_active = models.BooleanField(default=True, verbose_name="Active")
+    publish_date = models.DateTimeField(verbose_name="Publish Date")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Created At")
+    slug = models.SlugField(max_length=255, unique=True, blank=True, verbose_name="Slug")
+
+    class Meta:
+        verbose_name = "Official Video"
+        verbose_name_plural = "Official Videos"
+        ordering = ['-publish_date', 'episode_number']
+        
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = slugify(self.title)
+        super().save(*args, **kwargs)
+
+
+    def __str__(self):
+        return self.title
+
+
+class VideoViewLog(models.Model):
+    video = models.ForeignKey(OfficialVideo, on_delete=models.CASCADE, related_name="view_logs")
+    ip_address = models.GenericIPAddressField()
+    user_agent = models.TextField(blank=True)
+    viewed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Video View Log"
+        verbose_name_plural = "Video View Logs"
+        ordering = ['-viewed_at']

@@ -1,0 +1,25 @@
+{% extends "base_email.html" %}
+
+{% block subject %}We've received your feedback – Thank you!{% endblock %}
+
+{% block content %}
+  <h2 style="color:#353839; margin-top: 0;">Grace and Peace, {{ name|default:"Friend" }}</h2>
+
+  <p style="font-size: 1.1rem; line-height: 1.6;">
+    Thank you for sharing your feedback with us on <strong>TownLIT</strong>.
+  </p>
+
+  <p style="font-size: 1.1rem; line-height: 1.6;">
+    We’ve received your message and our team will carefully review it. If necessary, we may follow up with you directly.
+  </p>
+
+  <!-- Optional encouragement -->
+  <p style="font-size: 1rem; line-height: 1.6;">
+    Your feedback helps us grow, improve, and serve the community better — we’re grateful for your voice.
+  </p>
+
+  <p style="margin-top: 2rem; color: #353839; font-size: 1rem;">
+    With gratitude,<br />
+    <span style="font-weight: bold;">The TownLIT Team</span>
+  </p>
+{% endblock %}

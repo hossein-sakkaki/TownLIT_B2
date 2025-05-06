@@ -11,7 +11,10 @@ from .views import (
                 UserActionLogViewSet,
                 DesignTokensViewSet,
                 IconViewSet,
-                StaticChoiceViewSet
+                StaticChoiceViewSet,
+                VideoCategoryViewSet, 
+                VideoSeriesViewSet, 
+                OfficialVideoViewSet
             )
 from apps.profiles.views import (
                 MemberViewSet, GuestUserViewSet, ProfileMigrationViewSet, 
@@ -86,8 +89,14 @@ router.register(r'static-choice', StaticChoiceViewSet, basename='static-choice')
 router.register(r'terms-and-policies', TermsAndPolicyViewSet, basename='terms-and-policies')
 router.register(r'faqs', FAQViewSet, basename='faqs')
 router.register(r'site-announcements', SiteAnnouncementViewSet, basename='site-announcements')
-router.register(r'user-feedback', UserFeedbackViewSet, basename='user-feedback')
+router.register(r'user-feedbacks', UserFeedbackViewSet, basename='user-feedback')
 router.register(r'user-action-logs', UserActionLogViewSet, basename='user-action-logs')
+
+# Official Section Routers -------------------------------------------------------------------
+router.register(r'video-categories', VideoCategoryViewSet, basename='video-category')
+router.register(r'video-series', VideoSeriesViewSet, basename='video-series')
+router.register(r'official-videos', OfficialVideoViewSet, basename='official-video')   
+
 
 # Sanctuary Router for requests, outcomes, reviews
 router.register(r'sanctuary-requests', SanctuaryRequestViewSet, basename='sanctuary-request')

@@ -1,6 +1,10 @@
 from django.contrib import admin
-from .models import TermsAndPolicy, FAQ, SiteAnnouncement, UserFeedback, UserActionLog
+from django.utils.html import format_html
 
+from .models import (
+    TermsAndPolicy, FAQ, SiteAnnouncement, UserFeedback, UserActionLog,
+    VideoCategory, VideoSeries, OfficialVideo, VideoViewLog
+)
 
 
 # TERMS AND POLICY Admin -----------------------------------------------------------------------------------------
@@ -34,16 +38,126 @@ class SiteAnnouncementAdmin(admin.ModelAdmin):
 # USER FEEDBACK Admin ---------------------------------------------------------------------------------------------
 @admin.register(UserFeedback)
 class UserFeedbackAdmin(admin.ModelAdmin):
-    list_display = ('user', 'title', 'created_at')
-    search_fields = ('user__username', 'title')
-    list_filter = ('created_at',)
-    ordering = ('-created_at',)
+    list_display = ['id', 'user', 'title', 'status', 'created_at', 'has_screenshot']
+    list_filter = ['status', 'created_at']
+    search_fields = ['user__username', 'title', 'content']
+    readonly_fields = ['user', 'title', 'content', 'screenshot_preview', 'created_at']
+    list_per_page = 25
+    ordering = ['-created_at']
+    actions = ['mark_as_reviewed', 'mark_as_resolved']
+
+    def has_screenshot(self, obj):
+        return bool(obj.screenshot)
+    has_screenshot.boolean = True
+    has_screenshot.short_description = 'Screenshot?'
+
+    def screenshot_preview(self, obj):
+        if obj.screenshot:
+            return format_html(
+                '<a href="{url}" target="_blank">'
+                '<img src="{url}" width="200" style="border:1px solid #ccc; border-radius:6px;" />'
+                '</a>',
+                url=obj.screenshot.url
+            )
+        return "No screenshot"
+    screenshot_preview.short_description = "Screenshot Preview"
+
+    def mark_as_reviewed(self, request, queryset):
+        updated = queryset.update(status='reviewed')
+        self.message_user(request, f"{updated} feedback(s) marked as reviewed.")
+    mark_as_reviewed.short_description = "Mark selected as Reviewed"
+
+    def mark_as_resolved(self, request, queryset):
+        updated = queryset.update(status='resolved')
+        self.message_user(request, f"{updated} feedback(s) marked as resolved.")
+    mark_as_resolved.short_description = "Mark selected as Resolved"
+
 
 
 # USER ACTION LOG Admin --------------------------------------------------------------------------------------------
+
+@admin.action(description="Mark selected videos as Active")
+def make_active(self, request, queryset):
+    queryset.update(is_active=True)
+
+@admin.action(description="Mark selected videos as Inactive")
+def make_inactive(self, request, queryset):
+    queryset.update(is_active=False)
+    
+class OfficialVideoInline(admin.TabularInline):
+    model = OfficialVideo
+    fields = ("thumbnail", "title", "language", "episode_number", "is_active")
+    readonly_fields = ("thumbnail",)
+    extra = 5
+
+    def thumbnail(self, obj):
+        if obj.thumbnail:
+            return format_html('<img src="{}" width="80" height="auto" style="border-radius:4px;" />', obj.thumbnail.url)
+        return "-"
+    thumbnail.short_description = "Thumbnail"
+    
+    
 @admin.register(UserActionLog)
 class UserActionLogAdmin(admin.ModelAdmin):
     list_display = ('user', 'action_type', 'content_type', 'object_id', 'action_timestamp')
     search_fields = ('user__username', 'action_type')
     list_filter = ('action_type', 'action_timestamp')
     ordering = ('-action_timestamp',)
+    
+    
+
+@admin.register(VideoCategory)
+class VideoCategoryAdmin(admin.ModelAdmin):
+    list_display = ("name", "is_active")
+    list_filter = ("is_active",)
+    search_fields = ("name",)
+    ordering = ("name",)
+
+
+@admin.register(VideoSeries)
+class VideoSeriesAdmin(admin.ModelAdmin):
+    list_display = ("title", "language", "is_active", "created_at")
+    list_filter = ("language", "is_active")
+    search_fields = ("title", "description")
+    ordering = ("-created_at",)
+    inlines = [OfficialVideoInline]
+
+
+
+        
+@admin.register(OfficialVideo)
+class OfficialVideoAdmin(admin.ModelAdmin):
+    list_display = (
+        "thumbnail_preview", "view_link",
+        "title", "language", "category", "series",
+        "episode_number", "view_count", "is_active", "publish_date"
+    )
+    list_editable = ("is_active", "episode_number")
+    list_filter = ("language", "category", "series", "is_active")
+    search_fields = ("title", "description", "slug")
+    ordering = ("-publish_date", "episode_number")
+    readonly_fields = ("view_count", "created_at")
+    autocomplete_fields = ("category", "series")
+    prepopulated_fields = {"slug": ("title",)}
+    actions = ['make_active', 'make_inactive']
+    
+    def thumbnail_preview(self, obj):
+        if obj.thumbnail:
+            return format_html('<img src="{}" width="100" height="auto" style="border-radius:6px;" />', obj.thumbnail.url)
+        return "-"
+    thumbnail_preview.short_description = "Thumbnail"
+
+    def view_link(self, obj):
+        if obj.slug:
+            return format_html('<a href="/official/videos/{}/" target="_blank">View</a>', obj.slug)
+        return "-"
+    view_link.short_description = "View"
+
+
+
+@admin.register(VideoViewLog)
+class VideoViewLogAdmin(admin.ModelAdmin):
+    list_display = ("video", "ip_address", "user_agent", "viewed_at")
+    list_filter = ("viewed_at",)
+    search_fields = ("video__title", "ip_address", "user_agent")
+    ordering = ("-viewed_at",)

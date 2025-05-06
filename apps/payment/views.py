@@ -135,3 +135,6 @@ class PaymentInvoiceViewSet(viewsets.ModelViewSet):
         if self.action in ['update', 'partial_update', 'destroy']:
             return [IsFullAccessAdmin()]
         return super().get_permissions()
+    
+    
+    
