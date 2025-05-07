@@ -38,10 +38,13 @@ class Pricing(models.Model):
 # PAYMENT MODEL ------------------------------------------------------------------------------------------
 class Payment(models.Model):
     id = models.BigAutoField(primary_key=True)
-    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='payments', verbose_name='User')
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, null=True, blank=True, related_name='payments', verbose_name='User')
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, null=True, blank=True, related_name='payments', verbose_name='Organization')
+    
     amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name='Amount')
     payment_status = models.CharField(max_length=10, choices=PAYMENT_STATUS_CHOICES, default=PENDING, verbose_name='Payment Status')
+    is_anonymous_donor = models.BooleanField(default=False, verbose_name='Anonymous Donor')
+
     created_at = models.DateTimeField(default=timezone.now, verbose_name='Created At')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Updated At')
     description = models.TextField(null=True, blank=True, verbose_name='Description')
@@ -98,8 +101,9 @@ class PaymentDonation(Payment):
         verbose_name_plural = "Payment Donations"
 
     def __str__(self):
-        return f"{self.user.username} - Donation - {self.amount}"
-    
+        username = self.user.username if self.user else "Anonymous"
+        return f"{username} - Donation - {self.amount}"
+
 
 # PAYMENT SHOPPING CART MODEL -------------------------------------------------------------------------
 class PaymentShoppingCart(Payment):

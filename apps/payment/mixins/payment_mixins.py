@@ -37,31 +37,30 @@ class PaymentMixin:
         """
         pass
 
-    
-    @action(detail=True, methods=['post'], permission_classes=None)
+
+    @action(detail=True, methods=['post'], url_path='start-payment', permission_classes=[AllowAny])
     def start_payment(self, request, pk=None):
         self.configure_paypal()
         payment_instance = self.get_object()
 
-        # Step 1: Check if user is authenticated
-        if isinstance(request.user, AnonymousUser):
-            email = request.data.get('email')
-            password = request.data.get('password')
-            if not email or not password:
-                return Response({'error': 'Email and password are required for payment.'}, status=status.HTTP_400_BAD_REQUEST)
-            user = CustomUser.objects.create_user(email=email, password=password)
-            login(request, user)
-            payment_instance.user = user
-            payment_instance.save()
-        self.configure_paypal()
-        payment_instance = self.get_object()
+        # Step 1: Validate user binding
+        if payment_instance.user_id is None:
+            if payment_instance.is_anonymous_donor:
+                # Anonymous donation - allow to proceed
+                pass
+            elif request.user.is_authenticated:
+                payment_instance.user = request.user
+                payment_instance.save()
+            else:
+                return Response(
+                    {'error': 'User must be authenticated or donation must be marked as anonymous.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
-        # Step 1: Create PayPal payment
-        payment = paypalrestsdk.Payment({
+        # Step 2: Create PayPal payment
+        paypal_payment = paypalrestsdk.Payment({
             "intent": "sale",
-            "payer": {
-                "payment_method": "paypal"
-            },
+            "payer": {"payment_method": "paypal"},
             "redirect_urls": {
                 "return_url": request.build_absolute_uri(reverse('payment:confirm_payment', args=[payment_instance.pk])),
                 "cancel_url": request.build_absolute_uri(reverse('payment:cancel_payment', args=[payment_instance.pk])),
@@ -74,15 +73,17 @@ class PaymentMixin:
                 "description": "Payment for TownLIT mission."
             }]
         })
-        if payment.create():
-            # Get approval URL to redirect user to PayPal
-            for link in payment.links:
+
+        if paypal_payment.create():
+            for link in paypal_payment.links:
                 if link.rel == "approval_url":
                     return Response({'approval_url': link.href}, status=status.HTTP_200_OK)
         else:
-            return Response({'error': payment.error}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': paypal_payment.error}, status=status.HTTP_400_BAD_REQUEST)
 
-    @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
+
+
+    @action(detail=True, methods=['get'], url_path='confirm-payment',permission_classes=[IsAuthenticated])
     def confirm_payment(self, request, pk=None):
         self.configure_paypal()
         payment_instance = self.get_object()
@@ -121,7 +122,7 @@ class PaymentMixin:
             return Response({'error': payment.error}, status=status.HTTP_400_BAD_REQUEST)
 
 
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    @action(detail=True, methods=['post'], url_path='reject-payment', permission_classes=[IsAuthenticated])
     def reject_payment(self, request, pk=None):
         payment_instance = self.get_object()
 

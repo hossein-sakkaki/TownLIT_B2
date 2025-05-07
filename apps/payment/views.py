@@ -53,11 +53,33 @@ class PaymentDonationViewSet(viewsets.ModelViewSet, PaymentMixin):
             return self.queryset
         return self.queryset.filter(user=self.request.user)
 
-    def perform_create(self, serializer):
-        # Automatically set the user field to the currently logged-in user
-        serializer.save(user=self.request.user)
+    @action(detail=False, methods=["post"], url_path='create-donation', permission_classes=[AllowAny])
+    def create_donation(self, request):
+        data = request.data.copy()
 
-    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
+        # If user is authenticated, bind the donation to their account
+        if request.user.is_authenticated:
+            data["user"] = request.user.pk
+
+        # If user is anonymous but didn't declare it, block it
+        elif not data.get("is_anonymous_donor"):
+            return Response(
+                {"error": "Unauthenticated users must explicitly set 'is_anonymous_donor' to true."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Now we validate and save the donation (user could be null here)
+        serializer = self.get_serializer(data=data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+
+
+
+    @action(detail=False, methods=['get'], url_path='my-donations', permission_classes=[IsAuthenticated])
     def my_donations(self, request):
         # Endpoint for users to get their own donations
         donations = self.get_queryset().filter(user=request.user)
@@ -118,8 +140,6 @@ class PaymentShoppingCartViewSet(viewsets.ModelViewSet, PaymentMixin):
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def reject_payment(self, request, pk=None):
         return super().reject_payment(request, pk)
-
-
 
 
 

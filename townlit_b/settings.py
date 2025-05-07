@@ -429,13 +429,14 @@ if not MASTER_KEY:
     raise ValueError("MASTER_KEY is not set in the environment")
 
 
-# settings.py configuration for PayPal -------------------------------------------------
+# Configuration for PayPal ------------------------------------------------------------
+PAYPAL_MODE = os.getenv('PAYPAL_MODE', 'sandbox')
 PAYPAL_CLIENT_ID = os.getenv('PAYPAL_CLIENT_ID')
 PAYPAL_SECRET_KEY = os.getenv('PAYPAL_SECRET_KEY')
-PAYPAL_API_BASE_URL = 'https://api.sandbox.paypal.com'  # Use 'https://api.paypal.com' for live
+PAYPAL_API_BASE_URL = 'https://api.paypal.com' 
 
 
-# For Translate Languages -------------------------------------------------------------------
+# For Translate Languages --------------------------------------------------------------
 from apps.config.gift_constants import GIFT_LANGUAGE_CHOICES
 
 LANGUAGES = GIFT_LANGUAGE_CHOICES 
