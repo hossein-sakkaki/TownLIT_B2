@@ -44,6 +44,10 @@ CSRF_TRUSTED_ORIGINS = ['http://localhost:8000', 'https://townlit.com']
 REDIS_URL = os.getenv('REDIS_URL', 'redis://127.0.0.1:6379/0')
 SITE_URL = os.getenv("SITE_URL", "https://www.townlit.com")
 
+# BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", SITE_URL).rstrip("/")
+
+
+
 
 USE_INVITE_CODE = True  # Set to False to disable invite code requirement
 
@@ -117,6 +121,7 @@ ASGI_APPLICATION = 'townlit_b.asgi.application'
 
 
 CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:3000').split(',')
+FRONTEND_BASE_URL = CORS_ALLOWED_ORIGINS[0]
 CORS_ALLOW_CREDENTIALS = os.getenv('CORS_ALLOW_CREDENTIALS', 'True').lower() in ('true', '1', 't')
 CORS_ALLOW_ALL_ORIGINS = True
 
@@ -434,6 +439,9 @@ PAYPAL_MODE = os.getenv('PAYPAL_MODE', 'sandbox')
 PAYPAL_CLIENT_ID = os.getenv('PAYPAL_CLIENT_ID')
 PAYPAL_SECRET_KEY = os.getenv('PAYPAL_SECRET_KEY')
 PAYPAL_API_BASE_URL = 'https://api.paypal.com' 
+TOWNLIT_PAYMENT_CONFIRM_TOKEN_EXPIRATION_MINUTES = 10
+TOWNLIT_PAYMENT_CANCEL_TOKEN_EXPIRATION_MINUTES = 15
+
 
 
 # For Translate Languages --------------------------------------------------------------

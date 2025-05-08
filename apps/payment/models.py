@@ -1,7 +1,8 @@
 from django.db import models
 from django.utils import timezone
+from datetime import timedelta
 from uuid import uuid4
-
+from django.conf import settings
 
 from apps.profilesOrg.models import Organization
 from apps.orders.models import ShoppingCart, Order
@@ -44,11 +45,52 @@ class Payment(models.Model):
     amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name='Amount')
     payment_status = models.CharField(max_length=10, choices=PAYMENT_STATUS_CHOICES, default=PENDING, verbose_name='Payment Status')
     is_anonymous_donor = models.BooleanField(default=False, verbose_name='Anonymous Donor')
+    email = models.EmailField(null=True, blank=True, verbose_name='Guest Email')
 
     created_at = models.DateTimeField(default=timezone.now, verbose_name='Created At')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Updated At')
     description = models.TextField(null=True, blank=True, verbose_name='Description')
     reference_number = models.CharField(max_length=30, unique=True, editable=False, verbose_name='Reference Number')
+    
+    cancel_token = models.CharField(max_length=64, null=True, blank=True, unique=True)
+    cancel_token_created_at = models.DateTimeField(null=True, blank=True)
+    confirm_token = models.CharField(max_length=64, null=True, blank=True, unique=True)
+    confirm_token_created_at = models.DateTimeField(null=True, blank=True)
+
+    def is_valid_cancel_token(self, token: str) -> bool:
+        if not self.cancel_token or not self.cancel_token_created_at:
+            return False
+
+        if self.cancel_token != token:
+            return False
+
+        expiration_minutes = getattr(
+            settings,
+            'TOWNLIT_PAYMENT_CANCEL_TOKEN_EXPIRATION_MINUTES',
+            15
+        )
+        expiration_time = self.cancel_token_created_at + timedelta(minutes=expiration_minutes)
+
+        return timezone.now() <= expiration_time
+
+    def is_valid_confirm_token(self, token: str) -> bool:
+        """
+        Validates the provided token against stored confirm_token and checks expiration.
+        """
+        if not self.confirm_token or not self.confirm_token_created_at:
+            return False
+
+        if self.confirm_token != token:
+            return False
+
+        expiration_minutes = getattr(
+            settings,
+            'TOWNLIT_PAYMENT_CONFIRM_TOKEN_EXPIRATION_MINUTES',
+            10
+        )
+        expiration_time = self.confirm_token_created_at + timedelta(minutes=expiration_minutes)
+
+        return timezone.now() <= expiration_time
 
     def save(self, *args, **kwargs):
         if not self.reference_number:
@@ -60,7 +102,22 @@ class Payment(models.Model):
         verbose_name_plural = "Payments"
 
     def __str__(self):
-        return f"{self.user.username} - {self.amount}"
+        user_display = self.user.username if self.user else "Anonymous"
+        return f"{user_display} - ${self.amount}"
+
+
+
+# PAYMENT DONATION MODEL ------------------------------------------------------------------------------
+class PaymentDonation(Payment):
+    message = models.TextField(null=True, blank=True, verbose_name='Message')
+
+    class Meta:
+        verbose_name = "Payment Donation"
+        verbose_name_plural = "Payment Donations"
+
+    def __str__(self):
+        username = self.user.username if self.user else "Anonymous"
+        return f"{username} - Donation - {self.amount}"
 
 
 # PAYMENT SUBSCRIPTION MODEL -----------------------------------------------------------------------------
@@ -91,18 +148,6 @@ class PaymentAdvertisement(Payment):
     def __str__(self):
         return f"{self.user.username} - {self.advertisement_pricing.advertisement_type} Advertisement"
     
-
-# PAYMENT DONATION MODEL ------------------------------------------------------------------------------
-class PaymentDonation(Payment):
-    message = models.TextField(null=True, blank=True, verbose_name='Message')
-
-    class Meta:
-        verbose_name = "Payment Donation"
-        verbose_name_plural = "Payment Donations"
-
-    def __str__(self):
-        username = self.user.username if self.user else "Anonymous"
-        return f"{username} - Donation - {self.amount}"
 
 
 # PAYMENT SHOPPING CART MODEL -------------------------------------------------------------------------

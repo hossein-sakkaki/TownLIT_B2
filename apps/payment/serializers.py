@@ -45,9 +45,27 @@ class PaymentDonationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = PaymentDonation
-        fields = ['id', 'user', 'organization', 'amount', 'payment_status', 'is_anonymous_donor', 'created_at', 'updated_at', 'description',
-                  'reference_number', 'message']
+        fields = [
+            'id', 'user', 'organization', 'amount', 'payment_status',
+            'is_anonymous_donor', 'email',
+            'created_at', 'updated_at', 'description',      
+            'reference_number', 'message'
+        ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'reference_number']
+
+    def validate(self, attrs):
+        request = self.context.get('request')
+        if request and request.user and request.user.is_authenticated:
+            attrs.pop('email', None)
+        return attrs
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get('request')
+        if request and request.user and request.user.is_authenticated:
+            data.pop('email', None)
+        return data
+
 
 
 # PAYMENT SHOPPING CART SERIALIZER ---------------------------------------------------------

@@ -42,9 +42,20 @@ class PaymentAdvertisementAdmin(admin.ModelAdmin):
 # PAYMENT DONATION Admin ----------------------------------------------------------
 @admin.register(PaymentDonation)
 class PaymentDonationAdmin(admin.ModelAdmin):
-    list_display = ('user', 'amount', 'created_at', 'message')
-    list_filter = ('created_at',)
-    search_fields = ('user__username', 'message')
+    list_display = (
+        'id', 'get_username_or_email', 'amount', 'payment_status',
+        'is_anonymous_donor', 'created_at'
+    )
+    list_filter = ('payment_status', 'is_anonymous_donor', 'created_at')
+    search_fields = ('user__username', 'email', 'reference_number')
+    readonly_fields = ('reference_number', 'created_at', 'updated_at')
+    ordering = ('-created_at',)
+
+    def get_username_or_email(self, obj):
+        if obj.user:
+            return obj.user.username
+        return obj.email or "Anonymous"
+    get_username_or_email.short_description = "Donor"
 
 
 # PAYMENT SHOPPING CART Admin -----------------------------------------------------

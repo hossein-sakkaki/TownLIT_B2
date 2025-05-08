@@ -41,23 +41,48 @@ class PaymentAdvertisementViewSet(viewsets.ModelViewSet):
 
 
 # PAYMENT DONATION VIEWSET ----------------------------------------------------------------
-class PaymentDonationViewSet(viewsets.ModelViewSet, PaymentMixin):
+class PaymentDonationViewSet(PaymentMixin, viewsets.ModelViewSet):
     queryset = PaymentDonation.objects.all()
     serializer_class = PaymentDonationSerializer
     permission_classes = [AllowAny]
     allow_any_permission = True
-
+    
     def get_queryset(self):
-        # Users can only see their own donations, while admins can see all
-        if self.request.user.is_staff:
+        """
+        Allows:
+        - staff to see all
+        - authenticated users to see their own donations
+        - anonymous users to see anonymous donations
+        - ✅ cancel_token-based access (reject-payment) via custom logic in view
+        """
+        user = self.request.user
+
+        # Staff sees all
+        if user.is_staff:
             return self.queryset
-        return self.queryset.filter(user=self.request.user)
+
+        # ✅ Special case: cancel_token-based access — reject_payment handles security
+        if self.action in ("reject_payment", "confirm_payment"):
+            return self.queryset
+
+        # Authenticated user sees their own donations
+        if user.is_authenticated:
+            return self.queryset.filter(user=user)
+
+        # Anonymous user sees only anonymous donations
+        return self.queryset.filter(user__isnull=True, is_anonymous_donor=True)
+
+        
 
     @action(detail=False, methods=["post"], url_path='create-donation', permission_classes=[AllowAny])
     def create_donation(self, request):
-        data = request.data.copy()
-
-        # If user is authenticated, bind the donation to their account
+        data = request.data.copy()     
+        
+        print('--------------------------------------')   
+        print(f"Request user: {request.user} | Authenticated: {request.user.is_authenticated}")
+        print(f"Data: {data}")
+        print('--------------------------------------')   
+        
         if request.user.is_authenticated:
             data["user"] = request.user.pk
 
@@ -76,9 +101,6 @@ class PaymentDonationViewSet(viewsets.ModelViewSet, PaymentMixin):
         headers = self.get_success_headers(serializer.data)
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
 
-
-
-
     @action(detail=False, methods=['get'], url_path='my-donations', permission_classes=[IsAuthenticated])
     def my_donations(self, request):
         # Endpoint for users to get their own donations
@@ -92,7 +114,7 @@ class PaymentDonationViewSet(viewsets.ModelViewSet, PaymentMixin):
     
 
 # PAYMENT SHOPPING CART VIEWSET ----------------------------------------------------------------
-class PaymentShoppingCartViewSet(viewsets.ModelViewSet, PaymentMixin):
+class PaymentShoppingCartViewSet(PaymentMixin, viewsets.ModelViewSet):
     queryset = PaymentShoppingCart.objects.all()
     serializer_class = PaymentShoppingCartSerializer
     permission_classes = [IsAuthenticated]
