@@ -427,7 +427,7 @@ class AuthViewSet(viewsets.ViewSet):
                     subject=subject,
                     template_path='emails/account/forget_password_email.html',
                     context=context,
-                    text_template_path=None  # در صورت وجود، مسیر قالب متنی جداگانه قرار بگیرد
+                    text_template_path=None 
                 )
                 if success:
                     return Response({"message": "Password reset email sent successfully.", "reset_token": reset_token}, status=status.HTTP_200_OK)

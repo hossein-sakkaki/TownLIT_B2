@@ -4,14 +4,10 @@ from celery import Celery
 from celery.schedules import crontab
 
 
-
-
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'townlit_b.settings')
 app = Celery('townlit_b')
 app.config_from_object('django.conf:settings', namespace='CELERY')
 app.autodiscover_tasks()
-
-
 
 
 
@@ -75,6 +71,13 @@ app.conf.beat_schedule = {
     'retry-undelivered-messages-every-5-minutes': {
         'task': 'apps.conversation.tasks.deliver_offline_message',
         'schedule': crontab(minute='*/5'),
+    },
+    
+    # ✅ Expire Old Pending Payments
+    'expire-old-pending-payments-every-6-hours': {
+        'task': 'apps.payment.tasks.expire_old_pending_payments',
+        'schedule': crontab(minute=0, hour='*/6'),  # هر ۶ ساعت
+        # 'schedule': crontab(hour=0, minute=0),  # daily at midnight
     },
 
 }

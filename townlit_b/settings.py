@@ -17,12 +17,10 @@ from cryptography.fernet import Fernet
 from corsheaders.defaults import default_headers
 
 
-
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# load_dotenv(os.path.join(BASE_DIR, '.env'))
-load_dotenv(Path(__file__).resolve().parent / '.env')
+load_dotenv(Path(__file__).resolve().parent / '.env', override=True)
 
 
 ADMIN_E2E_DEBUG_PASSWORD = "testpassword"
@@ -441,6 +439,12 @@ PAYPAL_SECRET_KEY = os.getenv('PAYPAL_SECRET_KEY')
 PAYPAL_API_BASE_URL = 'https://api.paypal.com' 
 TOWNLIT_PAYMENT_CONFIRM_TOKEN_EXPIRATION_MINUTES = 10
 TOWNLIT_PAYMENT_CANCEL_TOKEN_EXPIRATION_MINUTES = 15
+
+# Configuration for Stripe ------------------------------------------------------------
+STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY')
+STRIPE_PUBLISHABLE_KEY = os.getenv('STRIPE_PUBLISHABLE_KEY')
+STRIPE_WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET')
+STRIPE_CURRENCY = os.getenv('STRIPE_CURRENCY', 'CAD')
 
 
 

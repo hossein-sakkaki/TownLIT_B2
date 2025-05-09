@@ -41,7 +41,8 @@ class Payment(models.Model):
     id = models.BigAutoField(primary_key=True)
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, null=True, blank=True, related_name='payments', verbose_name='User')
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, null=True, blank=True, related_name='payments', verbose_name='Organization')
-    
+    stripe_payment_intent_id = models.CharField(max_length=255, blank=True, null=True)
+
     amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name='Amount')
     payment_status = models.CharField(max_length=10, choices=PAYMENT_STATUS_CHOICES, default=PENDING, verbose_name='Payment Status')
     is_anonymous_donor = models.BooleanField(default=False, verbose_name='Anonymous Donor')

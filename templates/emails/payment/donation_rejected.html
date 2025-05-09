@@ -1,0 +1,20 @@
+{% extends "base_email.html" %}
+
+{% block subject %}Your Donation Was Not Completed{% endblock %}
+
+{% block content %}
+  <h2 style="color:#353839; margin-top: 0;">Dear {{ name|default:"Friend" }},</h2>
+
+  <p style="font-size: 1.1rem; line-height: 1.6;">
+    It looks like your recent donation attempt to <strong>TownLIT</strong> was not completed or was canceled.
+  </p>
+
+  <p style="font-size: 1.1rem; line-height: 1.6;">
+    If this was unintentional or you'd still like to support our mission, you can try again at any time through our donation page.
+  </p>
+
+  <p style="margin-top: 2rem; color: #353839; font-size: 1rem;">
+    Grace and blessings,<br />
+    <span style="font-weight: bold;">The TownLIT Team</span>
+  </p>
+{% endblock %}

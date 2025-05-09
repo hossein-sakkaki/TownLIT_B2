@@ -10,9 +10,9 @@ from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, AllowAny
 
-from apps.payment.models import PaymentInvoice
-from django.contrib.auth.models import AnonymousUser
+from apps.payment.models import PaymentInvoice, PaymentDonation, PaymentSubscription, PaymentAdvertisement, PaymentShoppingCart
 from django.contrib.auth import get_user_model, login
+from apps.payment.stripe_utils import create_stripe_payment_intent
 
 CustomUser = get_user_model()
 
@@ -38,6 +38,18 @@ class PaymentMixin:
             status (str): Either 'confirmed' or 'rejected'.
         """
         pass
+
+    def get_payment_type_param(self, payment_instance) -> str:
+        if isinstance(payment_instance, PaymentDonation):
+            return "donation"
+        elif isinstance(payment_instance, PaymentSubscription):
+            return "subscription"
+        elif isinstance(payment_instance, PaymentAdvertisement):
+            return "ads"
+        elif isinstance(payment_instance, PaymentShoppingCart):
+            return "shop"
+        return "unknown"
+
 
     # -------------------- START ----------------------
     @action(detail=True, methods=['post'], url_path='start-payment', permission_classes=[AllowAny])
@@ -106,7 +118,10 @@ class PaymentMixin:
 
         # If already confirmed, no need to process again
         if payment_instance.payment_status == 'confirmed':
-            return HttpResponseRedirect(f"{settings.FRONTEND_BASE_URL}/townlit-official/donate/confirm")
+            type_param = self.get_payment_type_param(payment_instance)
+            return HttpResponseRedirect(
+                f"{settings.FRONTEND_BASE_URL}/payment/result?status=success&type={type_param}&ref={payment_instance.reference_number}"
+            )    
 
         # ✅ Validate confirm token (not user session)
         confirm_token = request.query_params.get("confirm_token")
@@ -140,16 +155,18 @@ class PaymentMixin:
                     issued_date=timezone.now(),
                     is_paid=True
                 )
+
                 self.post_payment_action(payment_instance, status='confirmed')
 
-                return HttpResponseRedirect(f"{settings.FRONTEND_BASE_URL}/townlit-official/donate/confirm")
+                type_param = self.get_payment_type_param(payment_instance)
+                return HttpResponseRedirect(
+                    f"{settings.FRONTEND_BASE_URL}/payment/result?status=success&type={type_param}&ref={payment_instance.reference_number}"
+                )
+            
             else:
                 return Response({'error': payment.error}, status=status.HTTP_400_BAD_REQUEST)
         except paypalrestsdk.ResourceNotFound as e:
             return Response({'error': str(e)}, status=status.HTTP_404_NOT_FOUND)
-
-
-
 
 
     # -------------------- REJECT ----------------------
@@ -159,7 +176,10 @@ class PaymentMixin:
 
         # Prevent re-rejection if already confirmed
         if payment_instance.payment_status == 'confirmed':
-            return HttpResponseRedirect(f"{settings.FRONTEND_BASE_URL}/townlit-official/donate/reject")
+            type_param = self.get_payment_type_param(payment_instance)
+            return HttpResponseRedirect(
+                f"{settings.FRONTEND_BASE_URL}/payment/result?status=success&type={type_param}&ref={payment_instance.reference_number}"
+            )
 
         # Validate cancel token
         token = request.query_params.get("cancel_token")
@@ -176,4 +196,70 @@ class PaymentMixin:
         payment_instance.save()
         self.post_payment_action(payment_instance, status='rejected')
 
-        return HttpResponseRedirect(f"{settings.FRONTEND_BASE_URL}/townlit-official/donate/reject")
+        type_param = self.get_payment_type_param(payment_instance)
+        return HttpResponseRedirect(
+            f"{settings.FRONTEND_BASE_URL}/payment/result?status=cancel&type={type_param}&ref={payment_instance.reference_number}"
+        )
+
+
+
+    # -------------------- START STRIPE PAYMENT ----------------------
+    @action(detail=True, methods=['post'], url_path='start-stripe-payment', permission_classes=[AllowAny])
+    def start_stripe_payment(self, request, pk=None):
+        payment_instance = self.get_object()
+
+        # 1. تعیین کاربر
+        if payment_instance.user_id is None:
+            if payment_instance.is_anonymous_donor:
+                pass  # قابل قبول است
+            elif request.user.is_authenticated:
+                payment_instance.user = request.user
+            else:
+                return Response(
+                    {'error': 'User must be authenticated or donation must be marked as anonymous.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        if not payment_instance.cancel_token:
+            payment_instance.cancel_token = uuid4().hex
+            payment_instance.cancel_token_created_at = timezone.now()
+
+        if not payment_instance.confirm_token:
+            payment_instance.confirm_token = uuid4().hex
+            payment_instance.confirm_token_created_at = timezone.now()
+
+        payment_instance.save()
+
+        # 3. ساخت PaymentIntent از طریق Stripe
+        try:
+            client_secret = create_stripe_payment_intent(payment_instance)
+            type_param = self.get_payment_type_param(payment_instance)
+            return Response({
+                "client_secret": client_secret,
+                "payment_id": payment_instance.id,
+                "reference_number": payment_instance.reference_number,
+                "type": type_param,
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+
+    # ----------------------- CANCEL PAYMENT ------------------------
+    @action(detail=True, methods=["post"], url_path="cancel-payment", permission_classes=[AllowAny])
+    def cancel_payment(self, request, pk=None):
+        payment_instance = self.get_object()
+
+        # Only allow canceling pending or expired (not finalized)
+        if payment_instance.payment_status in ["confirmed", "rejected", "canceled"]:
+            return Response(
+                {"error": "This payment is already finalized and cannot be canceled."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        payment_instance.payment_status = "canceled"
+        payment_instance.save(update_fields=["payment_status"])
+
+        # Optional: Post-cancel hook if needed in subclasses
+        self.post_payment_action(payment_instance, status="canceled")
+
+        return Response({"message": "Payment canceled successfully."}, status=status.HTTP_200_OK)

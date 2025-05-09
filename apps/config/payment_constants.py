@@ -1,11 +1,15 @@
 # PAYMENT STATUS Choices -------------------------------------------------------------
 PENDING = 'pending'
-SUCCESS = 'success'
-FAILED = 'failed'
+CONFIRMED = 'confirmed'
+REJECTED = 'rejected'
+EXPIRED = 'expired'
+CANCELED = 'canceled'
 PAYMENT_STATUS_CHOICES = [
     (PENDING, 'Pending'),
-    (SUCCESS, 'Success'),
-    (FAILED, 'Failed'),
+    (CONFIRMED, 'Confirmed'),
+    (REJECTED, 'Rejected'),
+    (EXPIRED, 'Expired'),
+    (CANCELED, 'Canceled'), 
 ]
 
 
