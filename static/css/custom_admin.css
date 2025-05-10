@@ -1,0 +1,20 @@
+/* Hide insecure CKEditor notification */
+.cke_notification_message,
+.cke_notification_close,
+.cke_notification,
+.cke_notification_warning {
+    display: none !important;
+}
+
+/* برجسته‌سازی فیلد ignore_unsubscribe */
+fieldset .form-row.field-ignore_unsubscribe {
+    background-color: #fff3cd;  /* رنگ زرد کم‌رنگ */
+    border: 1px solid #ffeeba;
+    padding: 10px;
+    border-radius: 4px;
+}
+
+fieldset .form-row.field-ignore_unsubscribe label {
+    font-weight: bold;
+    color: #856404;
+}

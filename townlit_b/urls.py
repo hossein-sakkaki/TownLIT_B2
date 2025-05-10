@@ -12,6 +12,8 @@ urlpatterns = [
     path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     
+
+    
     path('', include('apps.main.urls')),
     path('accounts/', include('apps.accounts.urls', namespace='accounts')),
     path('profiles/', include('apps.profiles.urls', namespace='profiles')),
@@ -19,12 +21,12 @@ urlpatterns = [
     path('posts/', include('apps.posts.urls', namespace='posts')),
     path('sanctuary/', include('apps.sanctuary.urls', namespace='sanctuary')),
     path('conversations/', include('apps.conversation.urls')),
+    path('communication/', include('apps.communication.urls')),
 
     path('store/', include('apps.store.urls', namespace='store')),
     path('products/', include('apps.products.urls', namespace='products')),
     path('orders/', include('apps.orders.urls', namespace='orders')),
     path('payment/', include('apps.payment.urls', namespace='payment')),
     path('warehouse/', include('apps.warehouse.urls', namespace='warehouse')),
-    
     
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

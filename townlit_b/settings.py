@@ -42,7 +42,6 @@ CSRF_TRUSTED_ORIGINS = ['http://localhost:8000', 'https://townlit.com']
 REDIS_URL = os.getenv('REDIS_URL', 'redis://127.0.0.1:6379/0')
 SITE_URL = os.getenv("SITE_URL", "https://www.townlit.com")
 
-# BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", SITE_URL).rstrip("/")
 
 
 
@@ -87,6 +86,7 @@ INSTALLED_APPS = [
     'apps.sanctuary.apps.SanctuaryConfig',
     'apps.notifications.apps.NotificationsConfig',
     'apps.conversation.apps.ConversationConfig',
+    'apps.communication.apps.CommunicationConfig',
     'apps.store.apps.StoreConfig',
     'apps.products.apps.ProductsConfig',
     'apps.orders.apps.OrdersConfig',
@@ -329,7 +329,6 @@ CKEDITOR_STORAGE_BACKEND = 'django.core.files.storage.FileSystemStorage'
 CKEDITOR_CONFIGS = {
     'default': {
         'skin': 'moono',
-        # 'skin': 'office2013',
         'toolbar_Basic': [
             ['Source', '-', 'Bold', 'Italic']
         ],

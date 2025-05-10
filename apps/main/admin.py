@@ -10,6 +10,10 @@ from .models import (
 # TERMS AND POLICY Admin -----------------------------------------------------------------------------------------
 @admin.register(TermsAndPolicy)
 class TermsAndPolicyAdmin(admin.ModelAdmin):
+    class Media:
+        css = {
+            'all': ('css/custom_admin.css',)
+        }
     list_display = ('title', 'policy_type', 'slug', 'last_updated', 'is_active')
     search_fields = ('title', 'policy_type', 'slug')
     list_filter = ('is_active', 'last_updated')
@@ -20,6 +24,11 @@ class TermsAndPolicyAdmin(admin.ModelAdmin):
 # FAQ Admin ------------------------------------------------------------------------------------------------------
 @admin.register(FAQ)
 class FAQAdmin(admin.ModelAdmin):
+    class Media:
+        css = {
+            'all': ('css/custom_admin.css',)
+        }
+        
     list_display = ('question', 'last_updated', 'is_active')
     search_fields = ('question',)
     list_filter = ('is_active', 'last_updated')
@@ -29,6 +38,11 @@ class FAQAdmin(admin.ModelAdmin):
 # SITE ANNOUNCEMENT Admin -----------------------------------------------------------------------------------------
 @admin.register(SiteAnnouncement)
 class SiteAnnouncementAdmin(admin.ModelAdmin):
+    class Media:
+        css = {
+            'all': ('css/custom_admin.css',)
+        }
+        
     list_display = ('title', 'publish_date', 'is_active')
     search_fields = ('title',)
     list_filter = ('is_active', 'publish_date')
@@ -38,6 +52,11 @@ class SiteAnnouncementAdmin(admin.ModelAdmin):
 # USER FEEDBACK Admin ---------------------------------------------------------------------------------------------
 @admin.register(UserFeedback)
 class UserFeedbackAdmin(admin.ModelAdmin):
+    class Media:
+        css = {
+            'all': ('css/custom_admin.css',)
+        }
+        
     list_display = ['id', 'user', 'title', 'status', 'created_at', 'has_screenshot']
     list_filter = ['status', 'created_at']
     search_fields = ['user__username', 'title', 'content']

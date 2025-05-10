@@ -79,6 +79,11 @@ class ProductFeatureInline(admin.TabularInline):
 
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
+    class Media:
+        css = {
+            'all': ('css/custom_admin.css',)
+        }
+        
     list_display = ['product_name', 'price', 'published_date', 'is_active', 'dis_product_groups']
     search_fields = ['product_name', 'price']
     ordering = ['is_active']

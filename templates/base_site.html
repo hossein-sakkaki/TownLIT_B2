@@ -1,0 +1,30 @@
+{% load static %}
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>{% block title %}TownLIT{% endblock %}</title>
+
+  <link rel="stylesheet" href="{% static 'css/base_site_styles.css' %}">
+</head>
+<body>
+  <div class="page-container">
+    <!-- Header -->
+    <div class="site-header">
+      <img src="{{ site_domain }}/static/logo/TownLITLogo.jpg" alt="TownLIT Logo" class="logo" />
+      <p class="tagline">Where the Lord Is There</p>
+    </div>
+
+    <!-- Main content -->
+    <div class="site-content">
+      {% block content %}{% endblock %}
+    </div>
+
+    <!-- Footer -->
+    <div class="site-footer">
+      <p>&copy; 2022–25 TownLIT. All rights reserved.</p>
+    </div>
+  </div>
+</body>
+</html>
