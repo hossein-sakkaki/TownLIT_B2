@@ -72,6 +72,13 @@ app.conf.beat_schedule = {
         'task': 'apps.conversation.tasks.deliver_offline_message',
         'schedule': crontab(minute='*/5'),
     },
+
+    
+    'retry-undelivered-messages-every-5-minutes': {
+        'task': 'apps.conversation.tasks.retry_undelivered_messages',
+        'schedule': crontab(minute='*/5'),  # هر ۵ دقیقه
+    },
+
     
     # ✅ Expire Old Pending Payments
     'expire-old-pending-payments-every-6-hours': {
@@ -79,6 +86,12 @@ app.conf.beat_schedule = {
         'schedule': crontab(minute=0, hour='*/6'),  # هر ۶ ساعت
         # 'schedule': crontab(hour=0, minute=0),  # daily at midnight
     },
+    
+    'run_scheduled_emails_every_2_minutes': {
+        'task': 'apps.communication.tasks.run_scheduled_emails',
+        'schedule': crontab(minute='*/2'),  # هر ۲ دقیقه
+    },
+
 
 }
 

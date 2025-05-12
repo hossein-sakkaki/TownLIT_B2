@@ -3,7 +3,9 @@ from django.conf import settings
 from ckeditor_uploader.fields import RichTextUploadingField
 
 from apps.config.communication_constants import TARGET_GROUP_CHOICES, STATUS_CHOICES, DRAFT, ALL
+from django.contrib.auth import get_user_model
 
+CustomUser = get_user_model()
 
 # EMAIL TEMPLATE Model ----------------------------------------------------------------
 class EmailTemplate(models.Model):
@@ -20,7 +22,7 @@ class EmailTemplate(models.Model):
 class EmailCampaign(models.Model):
     title = models.CharField(max_length=255)
     recipients = models.ManyToManyField(
-        settings.AUTH_USER_MODEL,
+        CustomUser,
         blank=True,
         related_name='manual_campaigns',
         verbose_name='Specific Recipients',
@@ -37,7 +39,7 @@ class EmailCampaign(models.Model):
     target_group = models.CharField(max_length=20, choices=TARGET_GROUP_CHOICES, default=ALL)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=DRAFT)
     scheduled_time = models.DateTimeField(null=True, blank=True)
-    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
+    created_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     sent_at = models.DateTimeField(null=True, blank=True)
 
@@ -48,7 +50,7 @@ class EmailCampaign(models.Model):
 # EMAIL LOG Model ----------------------------------------------------------------------
 class EmailLog(models.Model):
     campaign = models.ForeignKey(EmailCampaign, on_delete=models.CASCADE, related_name="logs")
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE)
     email = models.EmailField()
     sent_at = models.DateTimeField(auto_now_add=True)
     opened = models.BooleanField(default=False)
@@ -64,6 +66,7 @@ class ScheduledEmail(models.Model):
     campaign = models.ForeignKey(EmailCampaign, on_delete=models.CASCADE)
     run_at = models.DateTimeField()
     created_at = models.DateTimeField(auto_now_add=True)
+    executed_at = models.DateTimeField(null=True, blank=True)
     is_sent = models.BooleanField(default=False)
 
     def __str__(self):
@@ -72,7 +75,7 @@ class ScheduledEmail(models.Model):
 
 # UNSUBSCRIBE USER  Model -------------------------------------------------------------
 class UnsubscribedUser(models.Model):
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, unique=True)
+    user = models.OneToOneField(CustomUser, on_delete=models.CASCADE)
     unsubscribed_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

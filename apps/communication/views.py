@@ -2,10 +2,6 @@
 from rest_framework.views import APIView
 from django.views import View
 from django.shortcuts import get_object_or_404, render
-from rest_framework import viewsets, status
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from django.utils.timezone import now
 from django.conf import settings
 
 

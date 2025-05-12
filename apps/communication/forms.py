@@ -14,6 +14,10 @@ class EmailCampaignAdminForm(forms.ModelForm):
                 "⚠️ Use this ONLY for legal, safety, or system-wide messages "
                 "that MUST be delivered even to unsubscribed users. Do not use this for general newsletters."
             ),
+            'custom_html': mark_safe(
+                "You can use the following variables:<br>" +
+                ", ".join(f"<code>{{{{ {var} }}}}</code>" for var in ALLOWED_TEMPLATE_VARIABLES)
+            )
         }
         
 

@@ -395,6 +395,8 @@ CELERY_TASK_TIME_LIMIT = 30 * 60
 CELERY_TASK_ALWAYS_EAGER = False
 CELERY_ACKS_LATE = True
 
+broker_connection_retry_on_startup = True
+
 # FCM KEY for push Notifications ------------------------------------------------------
 FCM_PRIVATE_KEY_ID = os.getenv('FCM_PRIVATE_KEY_ID')
 FCM_API_KEY = os.getenv('FCM_API_KEY')
