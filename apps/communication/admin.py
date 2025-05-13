@@ -5,15 +5,18 @@ from django.conf import settings
 from django.utils.timezone import now
 from datetime import timedelta
 from django.contrib import messages
+from django.db.models import Count, Q
 
 from .models import (
     EmailTemplate, EmailCampaign, EmailLog, 
-    ScheduledEmail, UnsubscribedUser, DraftCampaign
+    ScheduledEmail, UnsubscribedUser, DraftCampaign,
+    ExternalEmailCampaign, ExternalContact
 )
-from .services import send_campaign_email_batch
+from .services import send_campaign_email_batch, send_external_email_campaign
 from .forms import EmailCampaignAdminForm, EmailTemplateAdminForm
 
 
+# EMAIL TEMPLATE Admin ----------------------------------------------------------------
 @admin.register(EmailTemplate)
 class EmailTemplateAdmin(admin.ModelAdmin):
     form = EmailTemplateAdminForm
@@ -34,12 +37,20 @@ class EmailTemplateAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
+    exclude = ['created_by']
+    
+    def save_model(self, request, obj, form, change):
+        if not obj.pk:
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
 
     def preview_link(self, obj):
         url = reverse('communication:email-template-preview', args=[obj.pk])
         return format_html('<a href="{}" target="_blank">Preview</a>', url)
     preview_link.short_description = "Preview"
 
+
+# EMAIL CAMPAIGN Admin ----------------------------------------------------------------
 @admin.register(EmailCampaign)
 class EmailCampaignAdmin(admin.ModelAdmin):
     form = EmailCampaignAdminForm
@@ -50,13 +61,21 @@ class EmailCampaignAdmin(admin.ModelAdmin):
         
     list_display = [
             'title', 'status', 'target_group', 'scheduled_time', 'sent_at', 'created_by',
-            'preview_link', 'ignore_unsubscribe', 'draft_note', 'edit_draft_link',
+            'preview_link', 'ignore_unsubscribe', 
+            'draft_note', 'edit_draft_link',
+            'open_rate', 'click_rate'
         ]
     list_filter = ['status', 'target_group', 'created_by']
     search_fields = ['title', 'subject']
     readonly_fields = ['sent_at', 'created_at']
     filter_horizontal = ['recipients']
     actions = ['send_campaign_now']
+    exclude = ['created_by']
+    
+    def save_model(self, request, obj, form, change):
+        if not obj.pk:
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
 
 
     def send_campaign_now(self, request, queryset):
@@ -86,22 +105,36 @@ class EmailCampaignAdmin(admin.ModelAdmin):
         return "-"
     edit_draft_link.short_description = "Draft"
 
+    def open_rate(self, obj):
+        total = obj.email_logs.count()
+        opened = obj.email_logs.filter(opened=True).count()
+        if total == 0:
+            return "—"
+        return f"{(opened / total) * 100:.1f}%"
+    open_rate.short_description = "📬 Open Rate"
+
+    def click_rate(self, obj):
+        total = obj.email_logs.count()
+        clicked = obj.email_logs.filter(clicked=True).count()
+        if total == 0:
+            return "—"
+        return f"{(clicked / total) * 100:.1f}%"
+    click_rate.short_description = "🔗 Click Rate"
 
 
-
-@admin.register(EmailLog)
-class EmailLogAdmin(admin.ModelAdmin):
-    list_display = ['campaign', 'user', 'email', 'sent_at', 'opened', 'clicked']
-    list_filter = ['campaign', 'opened', 'clicked']
-    search_fields = ['email']
-
-
+# SCHEDULE EMAIL Admin ----------------------------------------------------------------
 @admin.register(ScheduledEmail)
 class ScheduledEmailAdmin(admin.ModelAdmin):
     list_display = ['campaign_title', 'run_at', 'is_sent', 'executed_at', 'time_until_send', 'created_at']
     list_filter = ['is_sent']
     readonly_fields = ['created_at', 'executed_at']
     ordering = ['-run_at']
+    exclude = ['created_by']
+    
+    def save_model(self, request, obj, form, change):
+        if not obj.pk:
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
 
     def campaign_title(self, obj):
         return obj.campaign.title
@@ -143,14 +176,16 @@ class ScheduledEmailAdmin(admin.ModelAdmin):
         else:
             self.message_user(request, "ℹ️ No eligible scheduled emails were resent.", level=messages.INFO)
 
+    def render_change_form(self, request, context, add=False, change=False, form_url='', obj=None):
+        server_time = now().strftime("%Y-%m-%d %H:%M:%S %Z")
+        context['adminform'].form.fields['run_at'].help_text = format_html(
+            '<div style="margin-top:8px;"><strong>🕒 Server Time (UTC):</strong> <code>{}</code></div>'
+            '<div style="margin-top:4px; color:#999;">Use this to adjust your scheduled time.</div>', server_time
+        )
+        return super().render_change_form(request, context, add, change, form_url, obj)
 
 
-@admin.register(UnsubscribedUser)
-class UnsubscribedUserAdmin(admin.ModelAdmin):
-    list_display = ['user', 'unsubscribed_at']
-    search_fields = ['user__email']
-
-
+# DRAFT CAMPAIGN Admin ----------------------------------------------------------------
 @admin.register(DraftCampaign)
 class DraftCampaignAdmin(admin.ModelAdmin):
     list_display = ['campaign_title', 'short_note', 'last_edited', 'convert_to_campaign_link']
@@ -182,3 +217,92 @@ class DraftCampaignAdmin(admin.ModelAdmin):
         url = reverse('admin:communication_emailcampaign_change', args=[obj.campaign.id])
         return format_html('<a href="{}" class="button">Open Campaign</a>', url)
     convert_to_campaign_link.short_description = "Open Campaign"
+
+
+@admin.register(UnsubscribedUser)
+class UnsubscribedUserAdmin(admin.ModelAdmin):
+    list_display = ['user', 'unsubscribed_at']
+    search_fields = ['user__email']
+    list_filter = ['unsubscribed_at']
+    readonly_fields = ['unsubscribed_at']
+    
+
+# EMAIL LOG Admin ----------------------------------------------------------------------
+@admin.register(EmailLog)
+class EmailLogAdmin(admin.ModelAdmin):
+    list_display = ['campaign_link', 'user', 'email', 'sent_at', 'opened', 'clicked']
+
+    list_filter = ['campaign', 'opened', 'clicked']
+    search_fields = ['email']
+    list_filter += ['sent_at']
+    search_fields = ['email', 'user__username']
+    
+    def campaign_link(self, obj):
+        url = reverse('admin:communication_emailcampaign_change', args=[obj.campaign.id])
+        return format_html('<a href="{}">{}</a>', url, obj.campaign.title)
+    campaign_link.short_description = "Campaign"
+
+
+# EXTERNAL EMAIL CAMPAIGN Admin -------------------------------------------------------
+@admin.register(ExternalEmailCampaign)
+class ExternalEmailCampaignAdmin(admin.ModelAdmin):
+    class Media:
+        css = {
+            'all': ('css/custom_admin.css',)
+        }
+        
+    list_display = ['title', 'created_by', 'created_at', 'is_sent', 'sent_at', 'preview_link']
+    readonly_fields = ['created_at', 'sent_at', 'is_sent']
+    actions = ['send_external_campaign']
+    exclude = ['created_by']
+    
+    def save_model(self, request, obj, form, change):
+        if not obj.pk:
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
+        
+    def preview_link(self, obj):
+        url = reverse('communication:external-campaign-preview', args=[obj.pk])
+        return format_html('<a href="{}" target="_blank">🔍 Preview</a>', url)
+    preview_link.short_description = "Preview"
+
+    def send_external_campaign(self, request, queryset):
+        count = 0
+        summary = []
+        for campaign in queryset:
+            if campaign.is_sent:
+                continue
+            try:
+                result = send_external_email_campaign(campaign)
+                count += 1
+                summary.append(
+                    f"<strong>{campaign.title}</strong>: "
+                    f"✅ Sent: <b>{result['sent']}</b>, "
+                    f"⚠️ Skipped: <b>{result['skipped_duplicates']}</b>, "
+                    f"❌ Failed Saves: <b>{result['failed_saves']}</b>"
+                )
+            except Exception as e:
+                self.message_user(request, f"❌ Failed to send {campaign.title}: {e}", level=messages.ERROR)
+
+        if summary:
+            self.message_user(
+                request,
+                format_html("<br>".join(summary)),
+                level=messages.INFO
+            )
+
+
+# EXTERNAL CONTACT Admin ------------------------------------------------------------
+@admin.register(ExternalContact)
+class ExternalContactAdmin(admin.ModelAdmin):
+    list_display = [
+        'email', 'name', 'family', 'nation', 'country', 'phone',
+        'source_campaign', 'is_unsubscribed', 'became_user', 'deleted_after_signup', 'created_at'
+    ]
+    search_fields = ['email', 'name', 'family', 'phone']
+    list_filter = [
+        'nation', 'country', 'gender', 'source_campaign',
+        'is_unsubscribed', 'became_user', 'deleted_after_signup'
+    ]
+    readonly_fields = ['created_at']
+    ordering = ['-created_at']

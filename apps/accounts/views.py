@@ -34,6 +34,7 @@ from .models import CustomLabel, SocialMediaLink, SocialMediaType
 from apps.profilesOrg.models import Organization
 from apps.profiles.models import Member, GuestUser
 from apps.main.models import TermsAndPolicy, UserAgreement
+from apps.communication.models import ExternalContact
 from utils.common.utils import create_active_code, MAIN_URL
 from utils.email.email_tools import send_custom_email
 from utils.security.dialogue_cleanup import handle_sensitive_dialogue_cleanup
@@ -203,6 +204,13 @@ class AuthViewSet(viewsets.ViewSet):
             user.is_member = True
         try:
             user.save()
+            external_contact = ExternalContact.objects.filter(email__iexact=user.email).first()
+            if external_contact:
+                external_contact.became_user = True
+                external_contact.became_user_at = timezone.now()
+                external_contact.deleted_after_signup = False
+                external_contact.save()
+            
         except Exception as e:
             return Response({
                 "error": "Unable to save user data. Please try again.",
@@ -729,6 +737,13 @@ class AuthViewSet(viewsets.ViewSet):
             user.user_active_code = None  # Clear the active code
             user.user_active_code_expiry = None
             user.save()
+            
+            external_contact = ExternalContact.objects.filter(email__iexact=user.email).first()
+            if external_contact:
+                external_contact.deleted_after_signup = True
+                external_contact.deleted_after_signup_at = timezone.now()
+                external_contact.became_user = False
+                external_contact.save()
 
             return Response({"message": "Account deletion requested successfully. You can reactivate your account within 1 year."}, status=status.HTTP_200_OK)
         except Exception as e:
@@ -821,6 +836,12 @@ class AuthViewSet(viewsets.ViewSet):
             user.user_active_code_expiry = None
             user.reactivated_at = timezone.now()
             user.save()
+            external_contact = ExternalContact.objects.filter(email__iexact=user.email).first()
+            if external_contact:
+                external_contact.became_user = True
+                external_contact.became_user_at = timezone.now()
+                external_contact.deleted_after_signup = False
+                external_contact.save()
                         
             # subject = "Welcome Back to TownLIT!"
             # context = {

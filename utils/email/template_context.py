@@ -1,16 +1,16 @@
 import re
 
-
-
-
+# Connstants Allow Template Variabales For Email System -------------------------------------
 ALLOWED_TEMPLATE_VARIABLES = {
     "first_name",
     "username",
     "email",
     "site_domain",
     "unsubscribe_url",
+    "resubscribe_url",
 }
 
+# Extract Template For Email System ---------------------------------------------------------
 
 def extract_template_variables(template_str):
     """
@@ -18,7 +18,7 @@ def extract_template_variables(template_str):
     """
     return set(re.findall(r'{{\s*(\w+)\s*}}', template_str))
 
-
+# Validate Template For Email System ---------------------------------------------------------
 def validate_template_variables(template_str):
     """
     Validates that all template variables are from the allowed list.

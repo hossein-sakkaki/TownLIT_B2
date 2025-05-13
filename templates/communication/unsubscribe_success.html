@@ -3,6 +3,7 @@
 {% block title %}Unsubscribed - TownLIT{% endblock %}
 
 {% block content %}
+  <p>Hi {{ user.name|default:user.username }},
   <h2>You have been unsubscribed.</h2>
   <p>You will no longer receive non-essential emails from TownLIT.</p>
 

@@ -4,8 +4,6 @@ from celery import shared_task
 from django.utils.timezone import now
 from .models import ScheduledEmail
 from .services import send_campaign_email_batch
-
-
     
 
 @shared_task
