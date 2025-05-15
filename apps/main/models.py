@@ -11,7 +11,7 @@ from common.validators import (
                         )
 from apps.config.constants import (
                             TERMS_AND_POLICIES_CHOICES, LOG_ACTION_CHOICES, 
-                            POLICY_DISPLAY_LOCATION_CHOICES, DISPLAY_IN_OFFICIAL,
+                            POLICY_DISPLAY_LOCATION_CHOICES, FOOTER_COLUMN_CHOICES, DISPLAY_IN_OFFICIAL,
                             USER_FEEDBACK_STATUS_CHOICES
                         )
 from django.contrib.auth import get_user_model
@@ -23,6 +23,7 @@ CustomUser = get_user_model()
 class TermsAndPolicy(models.Model):
     policy_type = models.CharField(max_length=50, choices=TERMS_AND_POLICIES_CHOICES, verbose_name='Policy Type')
     display_location = models.CharField(max_length=20, choices=POLICY_DISPLAY_LOCATION_CHOICES, default=DISPLAY_IN_OFFICIAL, verbose_name='Display Location')
+    footer_column = models.CharField(max_length=10, choices=FOOTER_COLUMN_CHOICES, blank=True, null=True, verbose_name="Footer Column (optional)", help_text="Optional. Only applies if display location is Footer or Both.")
     title = models.CharField(max_length=255, verbose_name='Title')
     content = RichTextUploadingField(config_name='default', verbose_name='Content')
     last_updated = models.DateTimeField(auto_now=True, verbose_name='Last Updated')
@@ -159,6 +160,30 @@ class UserActionLog(models.Model):
         return f"{self.user.username} performed {self.get_action_type_display()} on {self.content_type} (ID: {self.object_id})"
     
 
+# PRAYER Model -----------------------------------------------------------------------------------------------
+class Prayer(models.Model):
+    user = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='prayers')
+    full_name = models.CharField(max_length=100, blank=True)
+    email = models.EmailField(blank=True)
+    content = models.TextField(verbose_name="Prayer Request")
+    allow_display = models.BooleanField(default=False, help_text="User consent to show this prayer")
+    
+    admin_response = models.TextField(blank=True, null=True)
+    responded_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='prayer_responses')
+    responded_at = models.DateTimeField(null=True, blank=True)
+
+    is_active = models.BooleanField(default=True)
+    submitted_at = models.DateTimeField(auto_now_add=True)
+
+    def has_response(self):
+        return bool(self.admin_response and self.responded_by)
+
+    def __str__(self):
+        name = self.user or self.full_name or "Guest"
+        return f"Prayer by {name} at {self.submitted_at:%Y-%m-%d}"
+    
+    
+# VIDEO CATEGORY Model -----------------------------------------------------------------------------------------
 class VideoCategory(models.Model):
     name = models.CharField(max_length=100, unique=True, verbose_name="Category Name")
     description = models.TextField(blank=True, verbose_name="Description")
@@ -206,7 +231,7 @@ class OfficialVideo(models.Model):
     episode_number = models.PositiveIntegerField(null=True, blank=True, verbose_name="Episode Number")
     view_count = models.PositiveIntegerField(default=0, verbose_name="View Count")
     
-    video_file = models.FileField( upload_to=VIDEO.dir_upload, validators=[validate_image_or_video_file, validate_no_executable_file], verbose_name="Video File" )
+    video_file = models.FileField( upload_to=VIDEO.dir_upload, validators=[validate_no_executable_file], verbose_name="Video File" )
     thumbnail = models.ImageField(upload_to=THUMBNAIL.dir_upload, validators=[validate_image_or_video_file, validate_no_executable_file], verbose_name="Thumbnail / Poster")
 
     is_active = models.BooleanField(default=True, verbose_name="Active")

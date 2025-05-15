@@ -374,6 +374,16 @@ POLICY_DISPLAY_LOCATION_CHOICES = [
     (DISPLAY_IN_BOTH, 'Both'),
 ]
 
+
+# DISPLAY LOCATIONS for Terms and Policies (Left or Right) -----------------------------
+FOOTER_LEFT = 'left'
+FOOTER_RIGHT = 'right'
+FOOTER_COLUMN_CHOICES = [
+    (FOOTER_LEFT, 'Left Column'),
+    (FOOTER_RIGHT, 'Right Column'),
+]
+
+
 # LOG ACTION Choices ---------------------------------------------------------------------
 VIEW = 'view'
 EDIT = 'edit'

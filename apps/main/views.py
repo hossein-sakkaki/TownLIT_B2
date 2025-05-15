@@ -2,6 +2,8 @@ from rest_framework import viewsets, status
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny, IsAdminUser
 from rest_framework.decorators import action
+from rest_framework.pagination import PageNumberPagination
+
 import json
 import os
 from django.conf import settings
@@ -12,12 +14,12 @@ from django.db.models import F
 from datetime import timedelta
 
 from .models import (
-        TermsAndPolicy, FAQ, SiteAnnouncement, UserFeedback, UserActionLog,
+        TermsAndPolicy, FAQ, SiteAnnouncement, UserFeedback, UserActionLog, Prayer,
         VideoCategory, VideoSeries, OfficialVideo, VideoViewLog
     )
 from .serializers import (
         TermsAndPolicySerializer, FAQSerializer, SiteAnnouncementSerializer,
-        UserFeedbackSerializer, UserActionLogSerializer,
+        UserFeedbackSerializer, UserActionLogSerializer, PrayerSerializer,
         VideoCategorySerializer, VideoSeriesSerializer, OfficialVideoSerializer,
         OfficialVideoCreateUpdateSerializer, VideoViewLogSerializer
     )
@@ -204,6 +206,56 @@ class StaticChoiceViewSet(viewsets.ViewSet):
         return Response(choices)
 
 
+class PrayerPagination(PageNumberPagination):
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+    
+# PRAYER View -----------------------------------------------------------------------------------------------
+class PrayerViewSet(viewsets.ModelViewSet):
+    queryset = Prayer.objects.all().order_by('-submitted_at')
+    serializer_class = PrayerSerializer
+    pagination_class = PrayerPagination
+
+    def get_permissions(self):
+        if self.action == 'respond':
+            return [IsAdminUser()]
+        elif self.action in ['list']:
+            return [AllowAny()]
+        return [AllowAny()]  # create allowed for everyone
+
+    def get_queryset(self):
+        if self.action == 'list':
+            return Prayer.objects.filter(is_active=True, allow_display=True).order_by('-submitted_at')
+        return super().get_queryset()
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAdminUser])
+    def respond(self, request, pk=None):
+        prayer = self.get_object()
+        response_text = request.data.get("admin_response")
+        
+        print('------------------------')
+        print(request.data)
+        print('------------------------')
+
+        if not response_text:
+            return Response({"detail": "Response text is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        prayer.admin_response = response_text
+        prayer.responded_by = request.user
+        prayer.responded_at = timezone.now()
+        prayer.save()
+
+        return Response({"detail": "Response saved successfully."}, status=status.HTTP_200_OK)
+
+
+
+
+
+
+
+
+# VIDEO CATEGORY View -----------------------------------------------------------------------------------------
 class VideoCategoryViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = VideoCategory.objects.filter(is_active=True)
     serializer_class = VideoCategorySerializer

@@ -1,8 +1,9 @@
 from django.contrib import admin
 from django.utils.html import format_html
+from django.utils import timezone
 
 from .models import (
-    TermsAndPolicy, FAQ, SiteAnnouncement, UserFeedback, UserActionLog,
+    TermsAndPolicy, FAQ, SiteAnnouncement, UserFeedback, UserActionLog, Prayer,
     VideoCategory, VideoSeries, OfficialVideo, VideoViewLog
 )
 
@@ -14,10 +15,11 @@ class TermsAndPolicyAdmin(admin.ModelAdmin):
         css = {
             'all': ('css/custom_admin.css',)
         }
-    list_display = ('title', 'policy_type', 'slug', 'last_updated', 'is_active')
-    search_fields = ('title', 'policy_type', 'slug')
-    list_filter = ('is_active', 'last_updated')
-    ordering = ('-last_updated',)
+    list_display = ['title', 'display_location', 'footer_column', 'slug', 'last_updated', 'is_active']
+    search_fields = ['title', 'policy_type', 'slug']
+    list_filter = ['is_active', 'last_updated']
+    ordering = ['-last_updated']
+    list_editable = ['display_location', 'footer_column', 'is_active']
 
 
 
@@ -124,7 +126,38 @@ class UserActionLogAdmin(admin.ModelAdmin):
     ordering = ('-action_timestamp',)
     
     
+# PRAYER Admin -----------------------------------------------------------------------------------------------
+@admin.register(Prayer)
+class PrayerAdmin(admin.ModelAdmin):
+    list_display = ('id', 'display_name', 'submitted_at', 'allow_display', 'is_active', 'has_response')
+    list_filter = ('is_active', 'allow_display', 'responded_by')
+    search_fields = ('full_name', 'email', 'content', 'admin_response')
 
+    readonly_fields = ('user', 'responded_by', 'responded_at', 'submitted_at')
+
+    fieldsets = (
+        (None, {
+            'fields': ('user', 'full_name', 'email', 'content', 'allow_display', 'is_active', 'submitted_at')
+        }),
+        ("Admin Response", {
+            'fields': ('admin_response', 'responded_by', 'responded_at'),
+        }),
+    )
+
+    def display_name(self, obj):
+        if obj.user:
+            return f"{obj.user.name} {obj.user.family}".strip() or obj.user.username
+        return obj.full_name or "Guest"
+
+
+    def save_model(self, request, obj, form, change):
+        if obj.admin_response and not obj.responded_by:
+            obj.responded_by = request.user
+            obj.responded_at = timezone.now()
+        super().save_model(request, obj, form, change)
+
+
+# Video Category Admin --------------------------------------------------------------------------------------------
 @admin.register(VideoCategory)
 class VideoCategoryAdmin(admin.ModelAdmin):
     list_display = ("name", "is_active")

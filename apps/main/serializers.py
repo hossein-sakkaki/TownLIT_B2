@@ -5,6 +5,7 @@ from django.utils import timezone
 from .models import (
     TermsAndPolicy, UserAgreement, PolicyChangeHistory, 
     FAQ, UserFeedback, SiteAnnouncement, UserActionLog,
+    Prayer,
     VideoCategory, VideoSeries, OfficialVideo, VideoViewLog
     )
 
@@ -64,7 +65,34 @@ class UserActionLogSerializer(serializers.ModelSerializer):
         fields = '__all__'
         
 
+# PRAYER Serializer -----------------------------------------------------------------------------------------------
+class PrayerSerializer(serializers.ModelSerializer):
+    display_name = serializers.SerializerMethodField(read_only=True)
 
+    class Meta:
+        model = Prayer
+        fields = [
+            'id', 'user',  'full_name', 'email',  'content', 'allow_display',
+            'admin_response',  'responded_by', 'responded_at',  'is_active',  'submitted_at', 'display_name'
+        ]
+        read_only_fields = [
+            'user', 'admin_response',  'responded_by', 'responded_at',
+            'is_active', 'submitted_at', 'display_name'
+        ]
+
+    def get_display_name(self, obj):
+        if obj.user:
+            return f"{obj.user.name} {obj.user.family}".strip() or obj.user.username
+        return obj.full_name or "Guest"
+
+    def create(self, validated_data):
+        user = self.context['request'].user
+        if user.is_authenticated:
+            validated_data['user'] = user
+        return super().create(validated_data)
+
+
+# VIDEO CATEGORY Serializer -----------------------------------------------------------------------------------------
 class VideoCategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = VideoCategory

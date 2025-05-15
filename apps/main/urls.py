@@ -14,7 +14,8 @@ from .views import (
                 StaticChoiceViewSet,
                 VideoCategoryViewSet, 
                 VideoSeriesViewSet, 
-                OfficialVideoViewSet
+                OfficialVideoViewSet,
+                PrayerViewSet
             )
 from apps.profiles.views import (
                 MemberViewSet, GuestUserViewSet, ProfileMigrationViewSet, 
@@ -91,6 +92,7 @@ router.register(r'faqs', FAQViewSet, basename='faqs')
 router.register(r'site-announcements', SiteAnnouncementViewSet, basename='site-announcements')
 router.register(r'user-feedbacks', UserFeedbackViewSet, basename='user-feedback')
 router.register(r'user-action-logs', UserActionLogViewSet, basename='user-action-logs')
+router.register(r'prayers', PrayerViewSet, basename='prayer')
 
 # Official Section Routers -------------------------------------------------------------------
 router.register(r'video-categories', VideoCategoryViewSet, basename='video-category')

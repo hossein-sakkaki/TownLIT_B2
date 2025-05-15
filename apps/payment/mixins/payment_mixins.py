@@ -9,8 +9,9 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, AllowAny
+from django.shortcuts import get_object_or_404
 
-from apps.payment.models import PaymentInvoice, PaymentDonation, PaymentSubscription, PaymentAdvertisement, PaymentShoppingCart
+from apps.payment.models import PaymentInvoice, PaymentDonation, PaymentSubscription, PaymentAdvertisement, PaymentShoppingCart, Payment
 from django.contrib.auth import get_user_model, login
 from apps.payment.stripe_utils import create_stripe_payment_intent
 
@@ -201,7 +202,60 @@ class PaymentMixin:
             f"{settings.FRONTEND_BASE_URL}/payment/result?status=cancel&type={type_param}&ref={payment_instance.reference_number}"
         )
 
+    # -------------------- RETRY ----------------------
+    @action(detail=True, methods=['post'], url_path='retry-payment', permission_classes=[AllowAny])
+    def retry_payment(self, request, pk=None):
+        payment_instance = self.get_object()
 
+        if payment_instance.payment_status not in ['rejected', 'failed']:
+            return Response(
+                {"error": "Payment is not in a retryable state."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Reset status and regenerate tokens
+        payment_instance.payment_status = 'pending'
+        payment_instance.cancel_token = uuid4().hex
+        payment_instance.cancel_token_created_at = timezone.now()
+        payment_instance.confirm_token = uuid4().hex
+        payment_instance.confirm_token_created_at = timezone.now()
+        payment_instance.save()
+
+        return Response({
+            "id": payment_instance.id,
+            "reference_number": payment_instance.reference_number,
+            "type": self.get_payment_type_param(payment_instance),
+            "status": payment_instance.payment_status,
+        }, status=status.HTTP_200_OK)
+
+
+    # -------------------- RETRY BY REF ----------------------
+    @action(detail=False, methods=['post'], url_path='by-ref/(?P<ref>[\\w-]+)/retry-payment', permission_classes=[AllowAny])
+    def retry_by_reference(self, request, ref=None):
+        payment = get_object_or_404(Payment, reference_number=ref)
+
+        # فقط اگر وضعیت فعلی قابل بازگشت است
+        if payment.payment_status not in ['rejected', 'failed', 'expired']:
+            return Response(
+                {"error": "This payment is not eligible for retry."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # بازگردانی وضعیت و بازسازی توکن‌ها
+        payment.payment_status = 'pending'
+        payment.cancel_token = uuid4().hex
+        payment.cancel_token_created_at = timezone.now()
+        payment.confirm_token = uuid4().hex
+        payment.confirm_token_created_at = timezone.now()
+        payment.save()
+
+        return Response({
+            "id": payment.id,
+            "reference_number": payment.reference_number,
+            "type": self.get_payment_type_param(payment),
+            "status": payment.payment_status,
+        }, status=status.HTTP_200_OK)
+        
 
     # -------------------- START STRIPE PAYMENT ----------------------
     @action(detail=True, methods=['post'], url_path='start-stripe-payment', permission_classes=[AllowAny])
