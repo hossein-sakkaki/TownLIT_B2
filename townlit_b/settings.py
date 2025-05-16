@@ -87,6 +87,7 @@ INSTALLED_APPS = [
     'apps.notifications.apps.NotificationsConfig',
     'apps.conversation.apps.ConversationConfig',
     'apps.communication.apps.CommunicationConfig',
+    'apps.moderation.apps.ModerationConfig',
     'apps.store.apps.StoreConfig',
     'apps.products.apps.ProductsConfig',
     'apps.orders.apps.OrdersConfig',

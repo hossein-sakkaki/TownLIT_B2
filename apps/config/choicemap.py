@@ -18,6 +18,10 @@ from apps.config.constants import (
     LOG_ACTION_CHOICES,
 )
 
+from apps.moderation.constants import (
+    COLLABORATION_TYPE_CHOICES, COLLABORATION_MODE_CHOICES, COLLABORATION_AVAILABILITY_CHOICES
+)
+
 from apps.config.conversation_constants import (
     MESSAGE_POLICY_CHOICES,
     DELETE_POLICY_CHOICES,
@@ -130,6 +134,11 @@ CHOICES_MAP = {
     'spiritual_ministry': SPIRITUAL_MINISTRY_CHOICES,
     'terms_and_policies': TERMS_AND_POLICIES_CHOICES,
     'log_action': LOG_ACTION_CHOICES,
+    
+    # Moderation
+    'collaboration_type' :COLLABORATION_TYPE_CHOICES, 
+    'collaboration_mode' :COLLABORATION_MODE_CHOICES,
+    'collaboration_availability': COLLABORATION_AVAILABILITY_CHOICES,
     
     # Account constants
     'social_media': SOCIAL_MEDIA_CHOICES,

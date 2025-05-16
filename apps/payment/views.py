@@ -2,6 +2,9 @@ from rest_framework import viewsets, status
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework.decorators import action
+
+from django.utils.decorators import method_decorator
+from django_ratelimit.decorators import ratelimit
 from .models import (
                 PaymentSubscription, PaymentDonation, PaymentAdvertisement, PaymentShoppingCart,
                 PaymentInvoice
@@ -74,31 +77,46 @@ class PaymentDonationViewSet(PaymentMixin, viewsets.ModelViewSet):
         donor = instance.user.name if instance.user else (instance.email or "Anonymous")
         instance.description = f"Donation by {donor} - Ref: {instance.reference_number}"
         instance.save(update_fields=["description"])
-
-
         
-
+    @method_decorator(ratelimit(key='user_or_ip', rate='5/m', method='POST', block=True))
     @action(detail=False, methods=["post"], url_path='create-donation', permission_classes=[AllowAny])
     def create_donation(self, request):
-        data = request.data.copy()     
-        
+        data = request.data.copy()
+
+        # Honeypot: Block spam bots that fill all fields
+        if data.get("company_name", "").strip():
+            return Response(
+                {"error": "Spam detected. Submission was blocked."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Authenticated user
         if request.user.is_authenticated:
             data["user"] = request.user.pk
 
-        # If user is anonymous but didn't declare it, block it
-        elif not data.get("is_anonymous_donor"):
+        # Anonymous users must explicitly allow anonymity
+        elif not data.get("is_anonymous_donor", False):
             return Response(
                 {"error": "Unauthenticated users must explicitly set 'is_anonymous_donor' to true."},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Now we validate and save the donation (user could be null here)
+        # Validate and create
         serializer = self.get_serializer(data=data)
         serializer.is_valid(raise_exception=True)
         self.perform_create(serializer)
 
         headers = self.get_success_headers(serializer.data)
-        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+        return Response(
+            {
+                "message": "Your donation has been saved. You'll be redirected to the payment page shortly.",
+                "donation": serializer.data
+            },
+            status=status.HTTP_201_CREATED,
+            headers=headers
+        )
+
 
 
     @action(detail=False, methods=['get'], url_path='my-donations', permission_classes=[IsAuthenticated])

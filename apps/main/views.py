@@ -3,6 +3,10 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny, IsAdminUser
 from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
+from rest_framework.exceptions import ValidationError
+
+from django.utils.decorators import method_decorator
+from django_ratelimit.decorators import ratelimit
 
 import json
 import os
@@ -87,6 +91,9 @@ class SiteAnnouncementViewSet(viewsets.ReadOnlyModelViewSet):
 class UserFeedbackViewSet(viewsets.ModelViewSet):
     serializer_class = UserFeedbackSerializer
 
+    def create(self, request, *args, **kwargs):
+        return super().create(request, *args, **kwargs)
+
     def get_permissions(self):
         if self.action in ['submit_feedback']:
             return [IsAuthenticated()]
@@ -100,7 +107,7 @@ class UserFeedbackViewSet(viewsets.ModelViewSet):
             return UserFeedback.objects.all()
         return UserFeedback.objects.filter(user=user)
 
-    @action(detail=False, methods=['post'], url_path='submit-feedback', permission_classes=[AllowAny])
+    @action(detail=False, methods=['post'], url_path='submit-feedback', permission_classes=[IsAuthenticated])
     def submit_feedback(self, request):
         serializer = self.get_serializer(data=request.data)
         if not serializer.is_valid():
@@ -228,31 +235,54 @@ class PrayerViewSet(viewsets.ModelViewSet):
         if self.action == 'list':
             return Prayer.objects.filter(is_active=True, allow_display=True).order_by('-submitted_at')
         return super().get_queryset()
+    
+    @method_decorator(ratelimit(key='user_or_ip', rate='5/m', method='POST', block=True))
+    def create(self, request, *args, **kwargs):
+        # Honeypot field check
+        if request.data.get("company_name", "").strip():
+            raise ValidationError({"non_field_errors": ["Spam detected."]})
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+
+        return Response(
+            {
+                "message": "Your response has been saved and added beneath the prayer. Thank you for ministering in grace.",
+                "prayer": serializer.data
+            },
+            status=status.HTTP_201_CREATED,
+            headers=headers
+        )
 
     @action(detail=True, methods=['post'], permission_classes=[IsAdminUser])
     def respond(self, request, pk=None):
         prayer = self.get_object()
         response_text = request.data.get("admin_response")
-        
-        print('------------------------')
-        print(request.data)
-        print('------------------------')
-
         if not response_text:
-            return Response({"detail": "Response text is required."}, status=status.HTTP_400_BAD_REQUEST)
-
+            return Response(
+                {"error": "Please provide a message to include in your response."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         prayer.admin_response = response_text
         prayer.responded_by = request.user
         prayer.responded_at = timezone.now()
         prayer.save()
-
-        return Response({"detail": "Response saved successfully."}, status=status.HTTP_200_OK)
-
-
-
-
-
-
+        return Response(
+            {
+                "message": "Your response has been saved and added beneath the prayer. Thank you for ministering in grace.",
+                "prayer_id": prayer.id
+            },
+            status=status.HTTP_200_OK
+        )
+    
+    
+    @action(detail=False, methods=["get"], url_path="total-count")
+    def total_count(self, request):
+        total = Prayer.objects.filter(is_active=True).count()
+        return Response({"total": total})
 
 
 # VIDEO CATEGORY View -----------------------------------------------------------------------------------------

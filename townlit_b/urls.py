@@ -12,8 +12,6 @@ urlpatterns = [
     path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     
-
-    
     path('', include('apps.main.urls')),
     path('accounts/', include('apps.accounts.urls', namespace='accounts')),
     path('profiles/', include('apps.profiles.urls', namespace='profiles')),
@@ -22,6 +20,7 @@ urlpatterns = [
     path('sanctuary/', include('apps.sanctuary.urls', namespace='sanctuary')),
     path('conversations/', include('apps.conversation.urls')),
     path('communication/', include('apps.communication.urls')),
+    path('moderation/', include('apps.moderation.urls')),
 
     path('store/', include('apps.store.urls', namespace='store')),
     path('products/', include('apps.products.urls', namespace='products')),

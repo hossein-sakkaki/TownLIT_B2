@@ -68,12 +68,14 @@ class UserActionLogSerializer(serializers.ModelSerializer):
 # PRAYER Serializer -----------------------------------------------------------------------------------------------
 class PrayerSerializer(serializers.ModelSerializer):
     display_name = serializers.SerializerMethodField(read_only=True)
+    company_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
 
     class Meta:
         model = Prayer
         fields = [
             'id', 'user',  'full_name', 'email',  'content', 'allow_display',
-            'admin_response',  'responded_by', 'responded_at',  'is_active',  'submitted_at', 'display_name'
+            'admin_response',  'responded_by', 'responded_at',  'is_active',  'submitted_at', 'display_name',
+            "company_name",
         ]
         read_only_fields = [
             'user', 'admin_response',  'responded_by', 'responded_at',
@@ -86,6 +88,8 @@ class PrayerSerializer(serializers.ModelSerializer):
         return obj.full_name or "Guest"
 
     def create(self, validated_data):
+        validated_data.pop('company_name', None)
+        
         user = self.context['request'].user
         if user.is_authenticated:
             validated_data['user'] = user

@@ -42,6 +42,7 @@ class PaymentAdvertisementSerializer(serializers.ModelSerializer):
 class PaymentDonationSerializer(serializers.ModelSerializer):
     user = SimpleCustomUserSerializer(read_only=True)
     organization = SimpleOrganizationSerializer(read_only=True)
+    company_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
 
     class Meta:
         model = PaymentDonation
@@ -49,7 +50,8 @@ class PaymentDonationSerializer(serializers.ModelSerializer):
             'id', 'user', 'organization', 'amount', 'payment_status',
             'is_anonymous_donor', 'email',
             'created_at', 'updated_at', 'description',      
-            'reference_number', 'message'
+            'reference_number', 'message',
+            'company_name',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'reference_number']
 
@@ -57,6 +59,8 @@ class PaymentDonationSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if request and request.user and request.user.is_authenticated:
             attrs.pop('email', None)
+            
+        attrs.pop('company_name', None)
         return attrs
 
     def to_representation(self, instance):
