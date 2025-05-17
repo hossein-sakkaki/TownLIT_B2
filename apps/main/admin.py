@@ -3,7 +3,7 @@ from django.utils.html import format_html
 from django.utils import timezone
 
 from .models import (
-    TermsAndPolicy, FAQ, SiteAnnouncement, UserFeedback, UserActionLog, Prayer,
+    TermsAndPolicy, PolicyChangeHistory, FAQ, SiteAnnouncement, UserFeedback, UserActionLog, Prayer,
     VideoCategory, VideoSeries, OfficialVideo, VideoViewLog
 )
 
@@ -15,12 +15,53 @@ class TermsAndPolicyAdmin(admin.ModelAdmin):
         css = {
             'all': ('css/custom_admin.css',)
         }
-    list_display = ['title', 'display_location', 'footer_column', 'slug', 'last_updated', 'is_active']
-    search_fields = ['title', 'policy_type', 'slug']
-    list_filter = ['is_active', 'last_updated']
-    ordering = ['-last_updated']
-    list_editable = ['display_location', 'footer_column', 'is_active']
 
+    list_display = [
+        'title', 'policy_type', 'language', 'version_number', 
+        'display_location', 'footer_column', 'requires_acceptance', 
+        'slug', 'last_updated', 'is_active'
+    ]
+
+    list_editable = [
+        'language', 'version_number', 'display_location',
+        'footer_column', 'requires_acceptance', 'is_active'
+    ]
+
+    list_filter = [
+        'is_active', 'display_location', 'requires_acceptance',
+        'language', 'last_updated'
+    ]
+
+    search_fields = ['title', 'policy_type', 'slug', 'version_number']
+    ordering = ['-last_updated']
+    readonly_fields = ['last_updated', 'slug']
+
+    fieldsets = (
+        ("Basic Info", {
+            'fields': ('title', 'policy_type', 'slug', 'version_number', 'language')
+        }),
+        ("Display Settings", {
+            'fields': ('display_location', 'footer_column', 'requires_acceptance', 'is_active')
+        }),
+        ("Content", {
+            'fields': ('content',)
+        }),
+        ("Metadata", {
+            'fields': ('last_updated',)
+        }),
+    )
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related()
+
+
+# Policy Change History Admin Admin -----------------------------------------------------------------------------
+@admin.register(PolicyChangeHistory)
+class PolicyChangeHistoryAdmin(admin.ModelAdmin):
+    list_display = ['policy', 'changed_at']
+    list_filter = ['changed_at']
+    search_fields = ['policy__title']
+    readonly_fields = ['policy', 'old_content', 'changed_at']
 
 
 # FAQ Admin ------------------------------------------------------------------------------------------------------
@@ -95,29 +136,7 @@ class UserFeedbackAdmin(admin.ModelAdmin):
 
 
 
-# USER ACTION LOG Admin --------------------------------------------------------------------------------------------
-
-@admin.action(description="Mark selected videos as Active")
-def make_active(self, request, queryset):
-    queryset.update(is_active=True)
-
-@admin.action(description="Mark selected videos as Inactive")
-def make_inactive(self, request, queryset):
-    queryset.update(is_active=False)
-    
-class OfficialVideoInline(admin.TabularInline):
-    model = OfficialVideo
-    fields = ("thumbnail", "title", "language", "episode_number", "is_active")
-    readonly_fields = ("thumbnail",)
-    extra = 5
-
-    def thumbnail(self, obj):
-        if obj.thumbnail:
-            return format_html('<img src="{}" width="80" height="auto" style="border-radius:4px;" />', obj.thumbnail.url)
-        return "-"
-    thumbnail.short_description = "Thumbnail"
-    
-    
+# USER ACTION LOG Admin --------------------------------------------------------------------------------------------    
 @admin.register(UserActionLog)
 class UserActionLogAdmin(admin.ModelAdmin):
     list_display = ('user', 'action_type', 'content_type', 'object_id', 'action_timestamp')
@@ -158,6 +177,26 @@ class PrayerAdmin(admin.ModelAdmin):
 
 
 # Video Category Admin --------------------------------------------------------------------------------------------
+@admin.action(description="Mark selected videos as Active")
+def make_active(self, request, queryset):
+    queryset.update(is_active=True)
+
+@admin.action(description="Mark selected videos as Inactive")
+def make_inactive(self, request, queryset):
+    queryset.update(is_active=False)
+    
+class OfficialVideoInline(admin.TabularInline):
+    model = OfficialVideo
+    fields = ("thumbnail", "title", "language", "episode_number", "is_active")
+    readonly_fields = ("thumbnail",)
+    extra = 5
+
+    def thumbnail(self, obj):
+        if obj.thumbnail:
+            return format_html('<img src="{}" width="80" height="auto" style="border-radius:4px;" />', obj.thumbnail.url)
+        return "-"
+    thumbnail.short_description = "Thumbnail"
+    
 @admin.register(VideoCategory)
 class VideoCategoryAdmin(admin.ModelAdmin):
     list_display = ("name", "is_active")
@@ -173,6 +212,7 @@ class VideoSeriesAdmin(admin.ModelAdmin):
     search_fields = ("title", "description")
     ordering = ("-created_at",)
     inlines = [OfficialVideoInline]
+    autocomplete_fields = ["intro_video"]
 
 
 

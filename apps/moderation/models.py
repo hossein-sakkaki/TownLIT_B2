@@ -1,6 +1,8 @@
 from django.db import models
 from django.conf import settings
 from django.contrib.contenttypes.fields import GenericRelation
+from django.contrib.contenttypes.models import ContentType
+from django.contrib.contenttypes.fields import GenericForeignKey
 from .constants import (
     COLLABORATION_TYPE_CHOICES,
     COLLABORATION_MODE_CHOICES,
@@ -17,7 +19,7 @@ CustomUser = get_user_model()
 
 
 
-
+# Collaboration Request Model --------------------------------------------------------------------
 class CollaborationRequest(models.Model):
     user = models.ForeignKey(CustomUser, null=True, blank=True, on_delete=models.SET_NULL)
 
@@ -53,6 +55,7 @@ class CollaborationRequest(models.Model):
         return f"{self.full_name} ({self.collaboration_type})"
 
 
+# Job Application Model -------------------------------------------------------------------------
 class JobApplication(models.Model):
     user = models.ForeignKey(CustomUser, null=True, blank=True, on_delete=models.SET_NULL)
 
@@ -82,13 +85,10 @@ class JobApplication(models.Model):
         return f"{self.full_name} - {self.position}"
 
 
-# Review log: shared across all moderateable models
-from django.contrib.contenttypes.models import ContentType
-from django.contrib.contenttypes.fields import GenericForeignKey
-
+# Review Log Model --------------------------------------------------------------------------
 class ReviewLog(models.Model):
     admin = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, related_name="review_logs")
-    action = models.CharField(max_length=100)
+    action = models.CharField(max_length=255)
     comment = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

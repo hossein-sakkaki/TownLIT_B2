@@ -345,7 +345,7 @@ DISPUTE_RESOLUTION = 'dispute_resolution'
 VISION_AND_MISSION = 'vision_and_mission'
 TOWNLIT_HISTORY = 'townlit_history'
 TOWNLIT_BELIEFS = 'townlit_beliefs'
-TERMS_AND_CONDITIONS = 'terms_and_conditions'
+TERMS_AND_CONDITIONS = 'terms_and_conditions'   
 COOKIE_POLICY = 'cookie_policy'
 TERMS_AND_POLICIES_CHOICES = [
     (PRIVACY_POLICY, 'Privacy Policy'),

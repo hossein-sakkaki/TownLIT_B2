@@ -14,6 +14,7 @@ from apps.config.constants import (
                             POLICY_DISPLAY_LOCATION_CHOICES, FOOTER_COLUMN_CHOICES, DISPLAY_IN_OFFICIAL,
                             USER_FEEDBACK_STATUS_CHOICES
                         )
+from .constants import LANGUAGE_CHOICES
 from django.contrib.auth import get_user_model
 
 CustomUser = get_user_model()
@@ -24,18 +25,24 @@ class TermsAndPolicy(models.Model):
     policy_type = models.CharField(max_length=50, choices=TERMS_AND_POLICIES_CHOICES, verbose_name='Policy Type')
     display_location = models.CharField(max_length=20, choices=POLICY_DISPLAY_LOCATION_CHOICES, default=DISPLAY_IN_OFFICIAL, verbose_name='Display Location')
     footer_column = models.CharField(max_length=10, choices=FOOTER_COLUMN_CHOICES, blank=True, null=True, verbose_name="Footer Column (optional)", help_text="Optional. Only applies if display location is Footer or Both.")
+    
     title = models.CharField(max_length=255, verbose_name='Title')
+    slug = models.SlugField(max_length=255, unique=True, blank=True, verbose_name='Slug')
     content = RichTextUploadingField(config_name='default', verbose_name='Content')
+
+    language = models.CharField(max_length=10, choices=LANGUAGE_CHOICES, default='en', verbose_name='Language')
+    version_number = models.CharField(max_length=20, default='1.0', verbose_name='Version Number')
+    requires_acceptance = models.BooleanField(default=False, verbose_name='Requires Acceptance')
+
     last_updated = models.DateTimeField(auto_now=True, verbose_name='Last Updated')
     is_active = models.BooleanField(default=True, verbose_name='Active')
-    slug = models.SlugField(max_length=255, unique=True, blank=True, verbose_name='Slug')
 
     class Meta:
         verbose_name = 'Terms and Policy'
         verbose_name_plural = 'Terms and Policies'
 
     def __str__(self):
-        return self.title
+        return f"{self.title} ({self.language}) v{self.version_number}"
 
     def save(self, *args, **kwargs):
         # If the content has changed, save the previous version to history
@@ -199,6 +206,7 @@ class VideoCategory(models.Model):
 
 
 class VideoSeries(models.Model):
+    intro_video = models.OneToOneField("OfficialVideo", null=True, blank=True, on_delete=models.SET_NULL, related_name="intro_for_series", verbose_name="Introductory Video")
     title = models.CharField(max_length=200, verbose_name="Series Title")
     description = models.TextField(blank=True, verbose_name="Series Description")
     language = models.CharField(max_length=10, default="en", verbose_name="Language")

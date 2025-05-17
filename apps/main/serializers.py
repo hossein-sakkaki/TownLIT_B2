@@ -103,9 +103,16 @@ class VideoCategorySerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'description', 'is_active']
         
 class VideoSeriesSerializer(serializers.ModelSerializer):
+    intro_video_id = serializers.PrimaryKeyRelatedField(
+        source="intro_video", queryset=OfficialVideo.objects.all(), required=False, allow_null=True
+    )
+
     class Meta:
         model = VideoSeries
-        fields = ['id', 'title', 'description', 'language', 'is_active', 'created_at', 'slug']
+        fields = [
+            "id", "title", "description", "language",
+            "is_active", "created_at", "slug", "intro_video_id"
+        ]
         
 class OfficialVideoSerializer(serializers.ModelSerializer):
     category = VideoCategorySerializer(read_only=True)
