@@ -1,6 +1,8 @@
 from django.contrib import admin
+from django.db import models
 from django.utils.html import format_html
 from django.utils import timezone
+from django.contrib.admin import SimpleListFilter
 
 from .models import (
     TermsAndPolicy, PolicyChangeHistory, FAQ, SiteAnnouncement, UserFeedback, UserActionLog, Prayer,
@@ -216,20 +218,57 @@ class VideoSeriesAdmin(admin.ModelAdmin):
 
 
 
+class VideoRoleFilter(SimpleListFilter):
+    title = 'Video Role'
+    parameter_name = 'video_role'
+
+    def lookups(self, request, model_admin):
+        return [
+            ('intro', 'Intro'),
+            ('parent', 'Parent'),
+            ('child', 'Child'),
+            ('standalone', 'Standalone'),
+        ]
+
+    def queryset(self, request, queryset):
+        value = self.value()
+
+        if value == 'intro':
+            # ویدیوهایی که intro هستند
+            return queryset.filter(intro_for_series__isnull=False)
+
+        elif value == 'parent':
+            # ویدیوهایی که فرزند دارند
+            return queryset.annotate(child_count=models.Count('children')).filter(child_count__gt=0)
+
+        elif value == 'child':
+            # ویدیوهایی که parent دارند
+            return queryset.filter(parent__isnull=False)
+
+        elif value == 'standalone':
+            # هیچ‌کدام از موارد بالا
+            return queryset.filter(
+                intro_for_series__isnull=True,
+                parent__isnull=True
+            ).annotate(child_count=models.Count('children')).filter(child_count=0)
+
+        return queryset
+
+
         
 @admin.register(OfficialVideo)
 class OfficialVideoAdmin(admin.ModelAdmin):
     list_display = (
-        "thumbnail_preview", "view_link",
-        "title", "language", "category", "series",
-        "episode_number", "view_count", "is_active", "publish_date"
+        "thumbnail_preview", "view_link", "video_role",
+        "title", "language", "category", "series", "parent",
+        "episode_number", "view_count", "is_active", "publish_date",
     )
     list_editable = ("is_active", "episode_number")
-    list_filter = ("language", "category", "series", "is_active")
+    list_filter = ("language", "category", "series", "is_active", VideoRoleFilter)
     search_fields = ("title", "description", "slug")
     ordering = ("-publish_date", "episode_number")
     readonly_fields = ("view_count", "created_at")
-    autocomplete_fields = ("category", "series")
+    autocomplete_fields = ("category", "series", "parent")
     prepopulated_fields = {"slug": ("title",)}
     actions = ['make_active', 'make_inactive']
     
@@ -245,6 +284,22 @@ class OfficialVideoAdmin(admin.ModelAdmin):
         return "-"
     view_link.short_description = "View"
 
+    def video_role(self, obj):
+        # Intro: اگر این ویدیو به عنوان intro در یک سری استفاده شده
+        if hasattr(obj, 'intro_for_series'):
+            return format_html('<span style="color:#0F52BA;">Intro</span>')
+
+        # Parent: اگر این ویدیو دارای children باشد
+        if obj.children.exists():
+            return format_html('<span style="color:#3BAA75;">Parent</span>')
+
+        # Child: اگر خودش parent داشته باشد
+        if obj.parent:
+            return format_html('<span style="color:#F4A429;">Child</span>')
+
+        # Otherwise: مستقل
+        return format_html('<span style="color:#999;">Standalone</span>')
+    video_role.short_description = "Role"
 
 
 @admin.register(VideoViewLog)

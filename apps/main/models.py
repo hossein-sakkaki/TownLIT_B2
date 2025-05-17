@@ -236,6 +236,9 @@ class OfficialVideo(models.Model):
     language = models.CharField(max_length=10, default="en", verbose_name="Language")
     category = models.ForeignKey(VideoCategory, on_delete=models.SET_NULL, null=True, blank=True, related_name="videos", verbose_name="Category")
     series = models.ForeignKey(VideoSeries, on_delete=models.SET_NULL, null=True, blank=True, related_name="videos", verbose_name="Series")
+    
+    parent = models.ForeignKey( "self", on_delete=models.SET_NULL, null=True, blank=True, related_name="children", verbose_name="Parent Video (if part of a folder/season)")
+    
     episode_number = models.PositiveIntegerField(null=True, blank=True, verbose_name="Episode Number")
     view_count = models.PositiveIntegerField(default=0, verbose_name="View Count")
     

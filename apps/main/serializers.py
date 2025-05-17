@@ -118,7 +118,10 @@ class OfficialVideoSerializer(serializers.ModelSerializer):
     category = VideoCategorySerializer(read_only=True)
     series = VideoSeriesSerializer(read_only=True)
     time_since_publish = serializers.SerializerMethodField()
-
+    parent_id = serializers.PrimaryKeyRelatedField(
+        source="parent", queryset=OfficialVideo.objects.all(), required=False, allow_null=True
+    )
+    children_count = serializers.SerializerMethodField()
     class Meta:
         model = OfficialVideo
         fields = [
@@ -126,18 +129,24 @@ class OfficialVideoSerializer(serializers.ModelSerializer):
             'category', 'series', 'episode_number',
             'video_file', 'thumbnail', 'view_count',
             'is_active', 'publish_date', 'created_at', 'slug',
-            'time_since_publish'
+            'time_since_publish',
+            'parent_id', 'children_count'
         ]
 
     def get_time_since_publish(self, obj):
         return timesince(obj.publish_date, timezone.now()) if obj.publish_date else None
 
+    def get_children_count(self, obj):
+        return obj.children.count()
+
 class OfficialVideoCreateUpdateSerializer(serializers.ModelSerializer):
+    parent = serializers.PrimaryKeyRelatedField(queryset=OfficialVideo.objects.all(), required=False, allow_null=True)
+
     class Meta:
         model = OfficialVideo
         fields = [
             'title', 'description', 'language', 'category',
-            'series', 'episode_number', 'video_file',
+            'series', 'parent', 'episode_number', 'video_file',
             'thumbnail', 'is_active', 'publish_date'
         ]
 

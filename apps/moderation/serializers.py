@@ -3,7 +3,7 @@ from .models import CollaborationRequest, JobApplication, ReviewLog
 
 
 
-# CollaborationRequestSerializer ----------------------------------------------------------
+# Collaboration Request Serializer ----------------------------------------------------------
 class CollaborationRequestSerializer(serializers.ModelSerializer):
     user = serializers.HiddenField(default=serializers.CurrentUserDefault())
     last_reviewed_by = serializers.ReadOnlyField(source="last_reviewed_by.username")
@@ -39,7 +39,7 @@ class CollaborationRequestSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
 
-# JobApplicationSerializer ----------------------------------------------------------
+# Job Application Serializer ----------------------------------------------------------
 class JobApplicationSerializer(serializers.ModelSerializer):
     user = serializers.HiddenField(default=serializers.CurrentUserDefault())
     last_reviewed_by = serializers.ReadOnlyField(source="last_reviewed_by.username")
