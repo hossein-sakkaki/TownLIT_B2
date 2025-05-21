@@ -31,6 +31,15 @@ class FileUpload:
         )
     
 
+# FILE DIRECTION Handler For Converted Files --------------------
+def get_converted_path(instance, original_path: str, fileupload, extension: str) -> tuple[str, str]:
+    today = datetime.datetime.now().strftime("%Y/%m/%d")
+    unique_filename = f'{uuid4()}{extension}'
+    relative_path = f'{fileupload.app_name}/{fileupload.direction}/{fileupload.folder}/{today}/{unique_filename}'
+    absolute_path = os.path.join(settings.MEDIA_ROOT, relative_path)
+    return absolute_path, relative_path
+
+
 # CREATE RANDOM Code ------------------------------------------
 def create_active_code(count):
     import random

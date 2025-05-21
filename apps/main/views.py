@@ -5,6 +5,9 @@ from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.exceptions import ValidationError
 
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import SearchFilter, OrderingFilter
+
 from django.utils.decorators import method_decorator
 from django_ratelimit.decorators import ratelimit
 
@@ -303,6 +306,13 @@ class OfficialVideoViewSet(viewsets.ModelViewSet):
     serializer_class = OfficialVideoSerializer
     permission_classes = [AllowAny]
 
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['language', 'category', 'series', 'parent']
+    search_fields = ['title', 'description']
+    ordering_fields = ['publish_date', 'view_count', 'episode_number', 'created_at']
+    ordering = ['-publish_date']
+
+
     def get_serializer_class(self):
         if self.action in ['create', 'update', 'partial_update']:
             return OfficialVideoCreateUpdateSerializer
@@ -312,7 +322,7 @@ class OfficialVideoViewSet(viewsets.ModelViewSet):
     def track_view(self, request, pk=None):
         video = self.get_object()
         ip = get_client_ip(request)
-        user_agent = request.META.get("HTTP_USER_AGENT", "")[:255]  # Optional limit
+        user_agent = request.META.get("HTTP_USER_AGENT", "")[:255]
 
         # فقط اگر در 6 ساعت گذشته همین IP این ویدیو را ندیده باشد
         recent_time = timezone.now() - timedelta(hours=6)

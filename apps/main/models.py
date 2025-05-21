@@ -1,3 +1,5 @@
+import os
+from django.conf import settings
 from django.db import models
 from ckeditor_uploader.fields import RichTextUploadingField
 from django.contrib.contenttypes.fields import GenericForeignKey
@@ -5,20 +7,28 @@ from django.contrib.contenttypes.models import ContentType
 from django.utils.text import slugify
 
 from utils.common.utils import FileUpload
-from common.validators import (
-                            validate_image_or_video_file,
-                            validate_no_executable_file
-                        )
+
+from validators.mediaValidators.video_validators import validate_video_file
+from validators.mediaValidators.image_validators import validate_image_file, validate_image_size
+from validators.security_validators import validate_no_executable_file
+from utils.storage.image_conversion_storage import HEICToJPEGStorage
+
 from apps.config.constants import (
                             TERMS_AND_POLICIES_CHOICES, LOG_ACTION_CHOICES, 
                             POLICY_DISPLAY_LOCATION_CHOICES, FOOTER_COLUMN_CHOICES, DISPLAY_IN_OFFICIAL,
                             USER_FEEDBACK_STATUS_CHOICES
                         )
 from .constants import LANGUAGE_CHOICES
+
+from utils.common.video_utils import convert_video_to_mp4
+from utils.common.image_utils import convert_image_to_jpg
+from validators.mime_type_validator import validate_file_type
+import mimetypes
+        
+        
 from django.contrib.auth import get_user_model
 
 CustomUser = get_user_model()
-
 
 # TERMS AND POLICY Model ---------------------------------------------------------------------------------------
 class TermsAndPolicy(models.Model):
@@ -113,12 +123,17 @@ class FAQ(models.Model):
 
 # USER FEEDBACK Model -------------------------------------------------------------------------------------------    
 class UserFeedback(models.Model):
-    IMAGE = FileUpload('main', 'image', 'feedback_screenshots')
+    SCREENSHOT = FileUpload('main', 'screenshot', 'feedback_screenshots')
     
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='feedbacks', verbose_name='User')
     title = models.CharField(max_length=255, verbose_name='Title')
     content = RichTextUploadingField(config_name='default', verbose_name='Content')
-    screenshot = models.ImageField(upload_to=IMAGE.dir_upload, blank=True, null=True, validators=[validate_image_or_video_file, validate_no_executable_file], verbose_name='Document')
+    screenshot = models.ImageField(
+        upload_to=SCREENSHOT.dir_upload, 
+        blank=True, null=True, 
+        validators=[validate_image_file, validate_image_size, validate_no_executable_file], 
+        storage=HEICToJPEGStorage(SCREENSHOT),
+        verbose_name='Document')
     status = models.CharField(max_length=20, choices=USER_FEEDBACK_STATUS_CHOICES, default='new', verbose_name='Status')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Created At')
 
@@ -242,8 +257,12 @@ class OfficialVideo(models.Model):
     episode_number = models.PositiveIntegerField(null=True, blank=True, verbose_name="Episode Number")
     view_count = models.PositiveIntegerField(default=0, verbose_name="View Count")
     
-    video_file = models.FileField( upload_to=VIDEO.dir_upload, validators=[validate_no_executable_file], verbose_name="Video File" )
-    thumbnail = models.ImageField(upload_to=THUMBNAIL.dir_upload, validators=[validate_image_or_video_file, validate_no_executable_file], verbose_name="Thumbnail / Poster")
+    video_file = models.FileField(upload_to=VIDEO.dir_upload, validators=[validate_video_file, validate_no_executable_file], verbose_name="Video File" )
+    thumbnail = models.FileField(
+        upload_to=THUMBNAIL.dir_upload, 
+        validators=[validate_image_file, validate_image_size, validate_no_executable_file], 
+        storage=HEICToJPEGStorage(THUMBNAIL),
+        verbose_name="Thumbnail / Poster")
 
     is_active = models.BooleanField(default=True, verbose_name="Active")
     publish_date = models.DateTimeField(verbose_name="Publish Date")
@@ -258,7 +277,49 @@ class OfficialVideo(models.Model):
     def save(self, *args, **kwargs):
         if not self.slug:
             self.slug = slugify(self.title)
+
+        is_new = self._state.adding or kwargs.get("force_insert", False)
         super().save(*args, **kwargs)
+
+        updated_fields = []
+
+        # 🎥 تبدیل ویدیو
+        if self.video_file:
+            mime_type, _ = mimetypes.guess_type(self.video_file.name)
+            file_type = validate_file_type(self.video_file.name, mime_type)
+            ext = os.path.splitext(self.video_file.name)[1].lower()
+
+            if file_type == "video" and ext != ".mp4":
+                try:
+                    original_path = self.video_file.path
+                    relative_path = convert_video_to_mp4(original_path, self, self.VIDEO)
+                    self.video_file.name = relative_path
+                    updated_fields.append("video_file")
+
+                    converted_abs_path = os.path.join(settings.MEDIA_ROOT, relative_path)
+                    if os.path.exists(original_path) and original_path != converted_abs_path:
+                        os.remove(original_path)
+
+                except Exception as e:
+                    print("❌ Video conversion failed:", e)
+
+        if self.thumbnail:
+            ext = os.path.splitext(self.thumbnail.name)[1].lower()
+            if ext not in [".jpg", ".jpeg", ".png"]:
+                try:
+                    original_path = self.thumbnail.path
+                    relative_path = convert_image_to_jpg(original_path, self, self.THUMBNAIL)
+                    self.thumbnail.name = relative_path
+                    updated_fields.append("thumbnail")
+
+                    if os.path.exists(original_path) and original_path != os.path.join(settings.MEDIA_ROOT, relative_path):
+                        os.remove(original_path)
+                except Exception as e:
+                    print("❌ Thumbnail conversion failed:", e)
+
+        if updated_fields:
+            self.save(update_fields=updated_fields)
+
 
 
     def __str__(self):

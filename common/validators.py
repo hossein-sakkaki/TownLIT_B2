@@ -6,6 +6,7 @@ import fitz  # PyMuPDF
 import re
 import os
 from django.core.validators import validate_email
+from .mime_type_validator import validate_file_type
 
 
 
@@ -21,33 +22,28 @@ IMAGE_MAX_SIZE = 5 * 1024 * 1024  # 5MB
 # IMAGE & VIDEO Validator ------------------------------------------------------------------------------------------
 def validate_image_or_video_file(value):
     mime_type, _ = mimetypes.guess_type(value.name)
-    
-    if mime_type is None:
-        raise ValidationError("Could not determine the file type. Please upload a valid image or video.")
-    
-    if mime_type.startswith('image/'):
+
+    file_type = validate_file_type(value.name, mime_type)
+
+    if file_type == "image":
         try:
             img = Image.open(value)
             img.verify()
         except Exception:
-            raise ValidationError("This file is not a valid image. Please upload a valid image file (JPEG, PNG, etc.).")
-    elif mime_type.startswith('video/'):
+            raise ValidationError("This file is not a valid image.")
+    elif file_type == "video":
         try:
             probe = ffmpeg.probe(value.temporary_file_path())
             video_stream = next((stream for stream in probe['streams'] if stream['codec_type'] == 'video'), None)
-            if video_stream is None:
-                raise ValidationError("No valid video stream found. Please upload a valid video file.")
-            
+            if not video_stream:
+                raise ValidationError("No valid video stream found.")
             frame_rate = eval(video_stream['r_frame_rate'])
             if frame_rate < 24 or frame_rate > 60:
-                raise ValidationError(f"Frame rate {frame_rate} is not within the acceptable range (24-60 fps).")
-            
-        except ffmpeg.Error as e:
-            raise ValidationError(f"Error processing video file: {str(e)}")
+                raise ValidationError(f"Frame rate {frame_rate} is not supported.")
         except Exception as e:
-            raise ValidationError(f"An error occurred while validating the video: {str(e)}")
+            raise ValidationError(f"Video validation error: {str(e)}")
     else:
-        raise ValidationError("This file must be an image or a video.")
+        raise ValidationError("Unsupported file type. Only images and videos are allowed.")
 
 
 # IMAGE SIZE Validator ---------------------------------------------------------------------------------------------------
@@ -58,20 +54,29 @@ def validate_image_size(image):
     
 # AUDIO Validator ---------------------------------------------------------------------------------------------------
 def validate_audio_file(value):
+    mime_type, _ = mimetypes.guess_type(value.name)
+    file_type = validate_file_type(value.name, mime_type)
+    if file_type != "audio":
+        raise ValidationError("Only audio files are allowed.")
+
     try:
         probe = ffmpeg.probe(value.temporary_file_path())
         audio_streams = [stream for stream in probe['streams'] if stream['codec_type'] == 'audio']
-        
+
         if not audio_streams:
-            raise ValidationError("No audio streams found. Please upload a valid audio file.")
+            raise ValidationError("No audio streams found.")
 
         audio_codec = audio_streams[0].get('codec_name')
         if audio_codec not in ALLOWED_AUDIO_CODECS:
-            raise ValidationError(f"Unsupported audio codec: {audio_codec}. Supported codecs are: {', '.join(ALLOWED_AUDIO_CODECS)}")
+            raise ValidationError(
+                f"Unsupported audio codec: {audio_codec}. Supported codecs: {', '.join(ALLOWED_AUDIO_CODECS)}"
+            )
 
         bitrate = int(audio_streams[0].get('bit_rate', 0))
         if bitrate < MIN_BITRATE or bitrate > MAX_BITRATE:
-            raise ValidationError(f"Audio bitrate {bitrate} bps is not supported. Allowed bitrates are between {MIN_BITRATE / 1000} kbps and {MAX_BITRATE / 1000} kbps.")
+            raise ValidationError(
+                f"Bitrate {bitrate} not supported. Allowed: {MIN_BITRATE // 1000}–{MAX_BITRATE // 1000} kbps."
+            )
 
     except ffmpeg.Error as e:
         raise ValidationError(f"Error processing audio file: {str(e)}")
@@ -79,29 +84,31 @@ def validate_audio_file(value):
         raise ValidationError(f"Invalid audio file: {str(e)}")
 
 
+
 # PDF Validator -------------------------------------------------------------------------------------------------------
 def validate_pdf_file(value):
+    mime_type, _ = mimetypes.guess_type(value.name)
+    file_type = validate_file_type(value.name, mime_type)
+
+    if file_type != "file":
+        raise ValidationError("Only PDF files are allowed.")
+
     max_file_size_mb = 10
-    max_file_size = max_file_size_mb * 1024 * 1024
-    
-    if value.size > max_file_size:
-        raise ValidationError(f"File size exceeds the limit of {max_file_size_mb} MB.")
-    
+    if value.size > max_file_size_mb * 1024 * 1024:
+        raise ValidationError(f"File exceeds {max_file_size_mb}MB.")
+
     try:
         pdf_document = fitz.open(stream=value.read(), filetype="pdf")
     except Exception as e:
-        raise ValidationError(f"File is not a valid PDF. Error: {str(e)}")    
-    
-    if pdf_document.pdf_version < '1.4':
-        raise ValidationError("The PDF version is too old. Minimum version 1.4 is required.")    
-    
+        raise ValidationError(f"Invalid PDF file: {str(e)}")
+
     if pdf_document.page_count == 0:
-        raise ValidationError("The PDF file is empty.")
-    
+        raise ValidationError("PDF file is empty.")
     if pdf_document.is_encrypted:
-        raise ValidationError("The PDF file is encrypted and cannot be processed.")
-    
-    return value
+        raise ValidationError("Encrypted PDFs are not allowed.")
+    if pdf_document.pdf_version < '1.4':
+        raise ValidationError("Minimum supported PDF version is 1.4.")
+
 
 
 # ENTENTIONS Validator -------------------------------------------------------------------------------------------------

@@ -507,3 +507,6 @@ USE_I18N = True
 
 # python3 manage.py runserver 8000 & daphne -b 0.0.0.0 -p 8001 townlit_b.asgi:application
 # kill -9 $(lsof -t -i :8000)
+
+
+# git config --global http.postBuffer 524288000

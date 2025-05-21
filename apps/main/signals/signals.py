@@ -17,3 +17,5 @@ def log_terms_and_policy_update(sender, instance, created, **kwargs):
                 target_model='TermsAndPolicy',
                 target_instance_id=instance.id
             )
+            
+ 
