@@ -255,11 +255,11 @@ class VideoRoleFilter(SimpleListFilter):
         return queryset
 
 
-        
+# Official Video Admin --------------------------------------------------------------------------------------
 @admin.register(OfficialVideo)
 class OfficialVideoAdmin(admin.ModelAdmin):
     list_display = (
-        "thumbnail_preview", "view_link", "video_role",
+        "thumbnail_preview", "view_link", "video_role", "conversion_status",
         "title", "language", "category", "series", "parent",
         "episode_number", "view_count", "is_active", "publish_date",
     )
@@ -267,10 +267,20 @@ class OfficialVideoAdmin(admin.ModelAdmin):
     list_filter = ("language", "category", "series", "is_active", VideoRoleFilter)
     search_fields = ("title", "description", "slug")
     ordering = ("-publish_date", "episode_number")
-    readonly_fields = ("view_count", "created_at")
+    readonly_fields = ("view_count", "created_at", "is_converted")
     autocomplete_fields = ("category", "series", "parent")
     prepopulated_fields = {"slug": ("title",)}
     actions = ['make_active', 'make_inactive']
+
+    def get_search_results(self, request, queryset, search_term):
+        if request.GET.get("field_name") == "parent":
+            queryset = queryset.filter(
+                parent__isnull=True,
+                intro_for_series__isnull=True,
+                is_active=True
+            )
+        return super().get_search_results(request, queryset, search_term)
+
     
     def thumbnail_preview(self, obj):
         if obj.thumbnail:
@@ -279,29 +289,32 @@ class OfficialVideoAdmin(admin.ModelAdmin):
     thumbnail_preview.short_description = "Thumbnail"
 
     def view_link(self, obj):
-        if obj.slug:
+        if obj.slug and obj.is_converted:
             return format_html('<a href="/official/videos/{}/" target="_blank">View</a>', obj.slug)
+        elif not obj.is_converted:
+            return format_html('<span style="color:red;">⏳ Converting...</span>')
         return "-"
     view_link.short_description = "View"
 
     def video_role(self, obj):
-        # Intro: اگر این ویدیو به عنوان intro در یک سری استفاده شده
         if hasattr(obj, 'intro_for_series'):
             return format_html('<span style="color:#0F52BA;">Intro</span>')
-
-        # Parent: اگر این ویدیو دارای children باشد
         if obj.children.exists():
             return format_html('<span style="color:#3BAA75;">Parent</span>')
-
-        # Child: اگر خودش parent داشته باشد
         if obj.parent:
             return format_html('<span style="color:#F4A429;">Child</span>')
-
-        # Otherwise: مستقل
         return format_html('<span style="color:#999;">Standalone</span>')
     video_role.short_description = "Role"
 
+    def conversion_status(self, obj):
+        if obj.is_converted:
+            return format_html('<span style="color:green;">✔️ Converted</span>')
+        return format_html('<span style="color:orange;">⏳ Pending</span>')
+    conversion_status.short_description = "Status"
+    
 
+    
+# Video View Log Admin ----------------------------------------------------------------------------------
 @admin.register(VideoViewLog)
 class VideoViewLogAdmin(admin.ModelAdmin):
     list_display = ("video", "ip_address", "user_agent", "viewed_at")

@@ -94,9 +94,6 @@ class SiteAnnouncementViewSet(viewsets.ReadOnlyModelViewSet):
 class UserFeedbackViewSet(viewsets.ModelViewSet):
     serializer_class = UserFeedbackSerializer
 
-    def create(self, request, *args, **kwargs):
-        return super().create(request, *args, **kwargs)
-
     def get_permissions(self):
         if self.action in ['submit_feedback']:
             return [IsAuthenticated()]
@@ -120,8 +117,7 @@ class UserFeedbackViewSet(viewsets.ModelViewSet):
             )
 
         feedback = serializer.save(user=request.user)
-
-        # Send confirmation email
+        feedback.convert_uploaded_media_async()
         subject = "We've received your feedback – Thank you!"
         context = {
             'name': request.user.name or "Friend",
@@ -132,7 +128,6 @@ class UserFeedbackViewSet(viewsets.ModelViewSet):
             subject=subject,
             template_path='emails/feedback/feedback_received_email.html',
             context=context,
-            text_template_path=None
         )
 
         if success:
@@ -147,7 +142,7 @@ class UserFeedbackViewSet(viewsets.ModelViewSet):
                 {"message": "Feedback submitted successfully, but failed to send confirmation email."},
                 status=status.HTTP_201_CREATED
             )
-                
+            
 
 # USER ACTION LOG ViewSet ---------------------------------------------------------------------------------
 class UserActionLogViewSet(viewsets.ReadOnlyModelViewSet):

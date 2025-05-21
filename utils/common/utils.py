@@ -10,18 +10,25 @@ MAIN_URL = 'http://localhost:3000'
 import os
 from uuid import uuid4
 import datetime
+
 class FileUpload:
     def __init__(self, app_name, direction, folder):
         self.app_name = app_name
         self.direction = direction
         self.folder = folder
-        
+
     def dir_upload(self, instanse, filename):
-        prefix, suffix = os.path.splitext(filename)    
+        prefix, suffix = os.path.splitext(filename)
         unique_filename = f'{uuid4()}{suffix}'
         today = datetime.datetime.now().strftime("%Y/%m/%d")
-        file_path = f'{self.app_name}/{self.direction}/{self.folder}/{today}/{unique_filename}'
-        return file_path
+        return f'{self.app_name}/{self.direction}/{self.folder}/{today}/{unique_filename}'
+
+    def to_dict(self):
+        return {
+            "app_name": self.app_name,
+            "direction": self.direction,
+            "folder": self.folder,
+        }
 
     def deconstruct(self):
         return (
@@ -29,7 +36,7 @@ class FileUpload:
             [self.app_name, self.direction, self.folder],
             {}
         )
-    
+
 
 # FILE DIRECTION Handler For Converted Files --------------------
 def get_converted_path(instance, original_path: str, fileupload, extension: str) -> tuple[str, str]:

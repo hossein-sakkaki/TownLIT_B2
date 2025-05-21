@@ -7,25 +7,17 @@ from django.contrib.contenttypes.models import ContentType
 from django.utils.text import slugify
 
 from utils.common.utils import FileUpload
-
+from utils.mixins.media_conversion import MediaConversionMixin
 from validators.mediaValidators.video_validators import validate_video_file
 from validators.mediaValidators.image_validators import validate_image_file, validate_image_size
 from validators.security_validators import validate_no_executable_file
-from utils.storage.image_conversion_storage import HEICToJPEGStorage
 
 from apps.config.constants import (
                             TERMS_AND_POLICIES_CHOICES, LOG_ACTION_CHOICES, 
                             POLICY_DISPLAY_LOCATION_CHOICES, FOOTER_COLUMN_CHOICES, DISPLAY_IN_OFFICIAL,
                             USER_FEEDBACK_STATUS_CHOICES
                         )
-from .constants import LANGUAGE_CHOICES
-
-from utils.common.video_utils import convert_video_to_mp4
-from utils.common.image_utils import convert_image_to_jpg
-from validators.mime_type_validator import validate_file_type
-import mimetypes
-        
-        
+from .constants import LANGUAGE_CHOICES        
 from django.contrib.auth import get_user_model
 
 CustomUser = get_user_model()
@@ -122,25 +114,36 @@ class FAQ(models.Model):
 
 
 # USER FEEDBACK Model -------------------------------------------------------------------------------------------    
-class UserFeedback(models.Model):
+class UserFeedback(MediaConversionMixin, models.Model):
     SCREENSHOT = FileUpload('main', 'screenshot', 'feedback_screenshots')
     
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='feedbacks', verbose_name='User')
     title = models.CharField(max_length=255, verbose_name='Title')
     content = RichTextUploadingField(config_name='default', verbose_name='Content')
-    screenshot = models.ImageField(
+    screenshot = models.FileField(
         upload_to=SCREENSHOT.dir_upload, 
         blank=True, null=True, 
         validators=[validate_image_file, validate_image_size, validate_no_executable_file], 
-        storage=HEICToJPEGStorage(SCREENSHOT),
         verbose_name='Document')
     status = models.CharField(max_length=20, choices=USER_FEEDBACK_STATUS_CHOICES, default='new', verbose_name='Status')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Created At')
+    is_converted = models.BooleanField(default=False)
 
+    media_conversion_config = {
+        "screenshot": SCREENSHOT,
+    }
+    
     class Meta:
         verbose_name = 'User Feedback'
         verbose_name_plural = 'User Feedbacks'
         ordering = ['-created_at']
+            
+    def save(self, *args, **kwargs):
+        is_new = self._state.adding or kwargs.get("force_insert", False)
+        super().save(*args, **kwargs)
+
+        if is_new and not getattr(self, "is_converted", False):
+            self.convert_uploaded_media_async()
 
     def __str__(self):
         return f"Feedback from {self.user.username} - {self.title}"
@@ -242,7 +245,7 @@ class VideoSeries(models.Model):
         return self.title
 
 
-class OfficialVideo(models.Model):
+class OfficialVideo(MediaConversionMixin, models.Model):
     VIDEO = FileUpload('main', 'video', 'official_videos')
     THUMBNAIL = FileUpload('main', 'image', 'official_thumbnails')
 
@@ -261,14 +264,20 @@ class OfficialVideo(models.Model):
     thumbnail = models.FileField(
         upload_to=THUMBNAIL.dir_upload, 
         validators=[validate_image_file, validate_image_size, validate_no_executable_file], 
-        storage=HEICToJPEGStorage(THUMBNAIL),
         verbose_name="Thumbnail / Poster")
 
     is_active = models.BooleanField(default=True, verbose_name="Active")
     publish_date = models.DateTimeField(verbose_name="Publish Date")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Created At")
     slug = models.SlugField(max_length=255, unique=True, blank=True, verbose_name="Slug")
+    is_converted = models.BooleanField(default=False)
 
+    # ✅ تنظیم مسیرهای تبدیل برای فایل‌ها
+    media_conversion_config = {
+        "video_file": VIDEO,
+        "thumbnail": THUMBNAIL,
+    }
+    
     class Meta:
         verbose_name = "Official Video"
         verbose_name_plural = "Official Videos"
@@ -281,46 +290,8 @@ class OfficialVideo(models.Model):
         is_new = self._state.adding or kwargs.get("force_insert", False)
         super().save(*args, **kwargs)
 
-        updated_fields = []
-
-        # 🎥 تبدیل ویدیو
-        if self.video_file:
-            mime_type, _ = mimetypes.guess_type(self.video_file.name)
-            file_type = validate_file_type(self.video_file.name, mime_type)
-            ext = os.path.splitext(self.video_file.name)[1].lower()
-
-            if file_type == "video" and ext != ".mp4":
-                try:
-                    original_path = self.video_file.path
-                    relative_path = convert_video_to_mp4(original_path, self, self.VIDEO)
-                    self.video_file.name = relative_path
-                    updated_fields.append("video_file")
-
-                    converted_abs_path = os.path.join(settings.MEDIA_ROOT, relative_path)
-                    if os.path.exists(original_path) and original_path != converted_abs_path:
-                        os.remove(original_path)
-
-                except Exception as e:
-                    print("❌ Video conversion failed:", e)
-
-        if self.thumbnail:
-            ext = os.path.splitext(self.thumbnail.name)[1].lower()
-            if ext not in [".jpg", ".jpeg", ".png"]:
-                try:
-                    original_path = self.thumbnail.path
-                    relative_path = convert_image_to_jpg(original_path, self, self.THUMBNAIL)
-                    self.thumbnail.name = relative_path
-                    updated_fields.append("thumbnail")
-
-                    if os.path.exists(original_path) and original_path != os.path.join(settings.MEDIA_ROOT, relative_path):
-                        os.remove(original_path)
-                except Exception as e:
-                    print("❌ Thumbnail conversion failed:", e)
-
-        if updated_fields:
-            self.save(update_fields=updated_fields)
-
-
+        if is_new and not getattr(self, "is_converted", False):
+            self.convert_uploaded_media_async()
 
     def __str__(self):
         return self.title
