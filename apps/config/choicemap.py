@@ -19,7 +19,8 @@ from apps.config.constants import (
 )
 
 from apps.moderation.constants import (
-    COLLABORATION_TYPE_CHOICES, COLLABORATION_MODE_CHOICES, COLLABORATION_AVAILABILITY_CHOICES
+    COLLABORATION_TYPE_CHOICES, COLLABORATION_MODE_CHOICES,
+    COLLABORATION_AVAILABILITY_CHOICES, HEAR_ABOUT_US_CHOICES
 )
 
 from apps.config.conversation_constants import (
@@ -139,6 +140,7 @@ CHOICES_MAP = {
     'collaboration_type' :COLLABORATION_TYPE_CHOICES, 
     'collaboration_mode' :COLLABORATION_MODE_CHOICES,
     'collaboration_availability': COLLABORATION_AVAILABILITY_CHOICES,
+    'how_found_us': HEAR_ABOUT_US_CHOICES,
     
     # Account constants
     'social_media': SOCIAL_MEDIA_CHOICES,

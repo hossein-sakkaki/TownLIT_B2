@@ -1,5 +1,5 @@
 from django.db import models
-from django.conf import settings
+from django.utils import timezone
 from django.contrib.contenttypes.fields import GenericRelation
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
@@ -11,7 +11,10 @@ from .constants import (
     JOB_STATUS_CHOICES,
     JOB_STATUS_NEW,
     COLLABORATION_AVAILABILITY_CHOICES,
-    AVAILABILITY_5
+    AVAILABILITY_5,
+    ACCESS_STATUS_CHOICES,
+    ACCESS_STATUS_NEW,
+    HEAR_ABOUT_US_CHOICES,
 )
 from django.contrib.auth import get_user_model
 
@@ -49,7 +52,7 @@ class CollaborationRequest(models.Model):
     review_logs = GenericRelation("moderation.ReviewLog")
 
     is_active = models.BooleanField(default=True)
-    submitted_at = models.DateTimeField(auto_now_add=True)
+    submitted_at = models.DateTimeField(default=timezone.now)
 
     def __str__(self):
         return f"{self.full_name} ({self.collaboration_type})"
@@ -79,10 +82,32 @@ class JobApplication(models.Model):
     review_logs = GenericRelation("moderation.ReviewLog")
 
     is_active = models.BooleanField(default=True)
-    submitted_at = models.DateTimeField(auto_now_add=True)
+    submitted_at = models.DateTimeField(default=timezone.now)
 
     def __str__(self):
         return f"{self.full_name} - {self.position}"
+    
+
+# Access Request Model -------------------------------------------------------------------------
+class AccessRequest(models.Model):
+    first_name = models.CharField(max_length=100, verbose_name="First Name")
+    last_name = models.CharField(max_length=100, verbose_name="Last Name")
+    email = models.EmailField(verbose_name="Email Address")
+    country = models.CharField(max_length=100, blank=True, verbose_name="Country")
+    how_found_us = models.CharField(max_length=30, choices=HEAR_ABOUT_US_CHOICES, blank=True, verbose_name="How did you hear about us?")
+    message = models.TextField(blank=True, verbose_name="Message (optional)")
+    status = models.CharField(max_length=20, choices=ACCESS_STATUS_CHOICES, default=ACCESS_STATUS_NEW, verbose_name="Request Status")
+    invite_code_sent = models.BooleanField(default=False, verbose_name="Invite Code Sent?")
+    is_active = models.BooleanField(default=True, verbose_name="Is Active?")
+    submitted_at = models.DateTimeField(default=timezone.now, verbose_name="Submitted At")
+
+    class Meta:
+        verbose_name = "Access Request"
+        verbose_name_plural = "Access Requests"
+        ordering = ["-submitted_at"]
+
+    def __str__(self):
+        return f"{self.first_name} {self.last_name} - {self.email}"
 
 
 # Review Log Model --------------------------------------------------------------------------
@@ -90,7 +115,7 @@ class ReviewLog(models.Model):
     admin = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, related_name="review_logs")
     action = models.CharField(max_length=255)
     comment = models.TextField(blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(default=timezone.now)
 
     # Generic FK
     content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)

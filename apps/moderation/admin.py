@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.utils.html import format_html
 
-from .models import CollaborationRequest, JobApplication, ReviewLog
+from .models import CollaborationRequest, JobApplication, AccessRequest, ReviewLog
 from .utils import create_review_log
 
 
@@ -141,6 +141,32 @@ class JobApplicationAdmin(admin.ModelAdmin):
                 )
 
 
+# Access Request Admin ---------------------------------------------------------------
+@admin.register(AccessRequest)
+class AccessRequestAdmin(admin.ModelAdmin):
+    list_display = (
+        "first_name", "last_name", "email",
+        "country", "how_found_us",
+        "status", "invite_code_sent", "is_active", "submitted_at"
+    )
+    list_filter = ("status", "invite_code_sent", "how_found_us", "is_active", "submitted_at")
+    search_fields = ("first_name", "last_name", "email", "country", "message")
+    readonly_fields = ("submitted_at",)
+    ordering = ("-submitted_at",)
+
+    fieldsets = (
+        ("Applicant Info", {
+            "fields": ("first_name", "last_name", "email", "country", "how_found_us")
+        }),
+        ("Message", {
+            "fields": ("message",)
+        }),
+        ("Moderation", {
+            "fields": ("status", "invite_code_sent", "is_active", "submitted_at")
+        }),
+    )
+    
+    
 # ReviewLog Admin (Read-only) ----------------------------------------------------------
 @admin.register(ReviewLog)
 class ReviewLogAdmin(admin.ModelAdmin):

@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import CollaborationRequest, JobApplication, ReviewLog
+from .models import CollaborationRequest, JobApplication, AccessRequest, ReviewLog
 
 
 
@@ -73,7 +73,20 @@ class JobApplicationSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
 
-# ReviewLogSerializer ----------------------------------------------------------------------
+# Access Request Serializer ------------------------------------------------------------------
+class AccessRequestSerializer(serializers.ModelSerializer):
+    submitted_at = serializers.DateTimeField(read_only=True)
+
+    class Meta:
+        model = AccessRequest
+        fields = [
+            "id",  "first_name", "last_name", "email",
+            "country", "how_found_us", "message",
+            "status", "invite_code_sent", "is_active", "submitted_at",
+        ]
+        read_only_fields = ["status", "invite_code_sent", "submitted_at", "is_active"]
+
+# Review Log Serializer ----------------------------------------------------------------------
 class ReviewLogSerializer(serializers.ModelSerializer):
     admin_name = serializers.ReadOnlyField(source="admin.username")
     target_repr = serializers.SerializerMethodField()

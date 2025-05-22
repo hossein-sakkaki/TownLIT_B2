@@ -5,12 +5,13 @@ from rest_framework.exceptions import ValidationError
 from django.utils.decorators import method_decorator
 from django_ratelimit.decorators import ratelimit
 
-from .models import CollaborationRequest, JobApplication, ReviewLog
+from .models import CollaborationRequest, JobApplication, AccessRequest, ReviewLog
 from .utils import create_review_log
 from .serializers import (
     CollaborationRequestSerializer,
     JobApplicationSerializer,
     ReviewLogSerializer,
+    AccessRequestSerializer
 )
 from common.permissions import IsAdminOrReadOnly
 
@@ -111,7 +112,20 @@ class JobApplicationViewSet(viewsets.ModelViewSet):
                 comment=instance.admin_comment or instance.admin_note or ""
             )
 
+# Access Request ViewSet ---------------------------------------------------------------
+class AccessRequestViewSet(viewsets.ModelViewSet):
+    queryset = AccessRequest.objects.all().order_by("-submitted_at")
+    serializer_class = AccessRequestSerializer
+    permission_classes = [IsAdminOrReadOnly]
 
+    def get_queryset(self):
+        if self.request.user.is_staff:
+            return super().get_queryset()
+        return AccessRequest.objects.none()
+
+    def perform_create(self, serializer):
+        serializer.save()
+        
 
 # ReviewLog Read-only ViewSet ----------------------------------------------------------
 class ReviewLogViewSet(viewsets.ReadOnlyModelViewSet):
