@@ -2,7 +2,10 @@ from django.db import models
 from django.conf import settings
 from ckeditor_uploader.fields import RichTextUploadingField
 
-from apps.config.communication_constants import TARGET_GROUP_CHOICES, STATUS_CHOICES, DRAFT, ALL_ACTIVE
+from .constants import (
+                        TARGET_GROUP_CHOICES, STATUS_CHOICES, DRAFT, ALL_ACTIVE,
+                        EMAIL_LAYOUT_CHOICES, LAYOUT_BASE_SITE
+                    )
 from django.contrib.auth import get_user_model
 
 CustomUser = get_user_model()
@@ -10,6 +13,13 @@ CustomUser = get_user_model()
 # EMAIL TEMPLATE Model ----------------------------------------------------------------
 class EmailTemplate(models.Model):
     name = models.CharField(max_length=100, unique=True, verbose_name="Template Name")
+    layout = models.CharField(
+        max_length=30,
+        choices=EMAIL_LAYOUT_CHOICES,
+        default=LAYOUT_BASE_SITE,
+        verbose_name="Layout Template",
+        help_text="Choose the layout this template will use when rendered in emails."
+    )
     subject_template = models.CharField(max_length=255, verbose_name="Subject")
     body_template = RichTextUploadingField(verbose_name="HTML Body")
     created_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True)

@@ -1,9 +1,52 @@
-<div class="content">
-    <p>Dear Friend,</p>
-    <p><strong>{{ username }}</strong> has activated their <strong>Destructive PIN</strong>. This could indicate they are in a dangerous or distressing situation.</p>
-    <p>Please check on them immediately. If you believe they are at risk, consider taking necessary actions to ensure their safety.</p>
-        
-    <a href="{{ profile_link }}" class="button">View Profile</a>
-    <p>If you have any questions or need further assistance, please contact our support team.</p>
+{% extends "base_email.html" %}
+
+{% block subject %}
+Urgent Safety Alert – TownLIT
+{% endblock %}
+
+{% block content %}
+
+<!-- جعبه هشدار -->
+<div class="alert-box">
+  <h1 style="color: #C40233; margin-top: 0;">Emergency PIN Triggered</h1>
+
+  <p style="font-size: 16px; color: #2B2C30;">
+    Dear {{ confidant_user.name|default:"Friend" }},
+  </p>
+
+  <p style="font-size: 16px;">
+    <strong>{{ user.name }}</strong> has used their private emergency PIN (also known as <em>Destructive PIN</em>) on TownLIT. This feature is designed for times when someone might be facing serious distress or danger.
+  </p>
+
+  <p style="font-size: 16px;">
+    As someone they trust and have listed as a confidant, you’re receiving this alert because your presence may make a difference.
+  </p>
+
+  <div class="email-button-container" style="margin: 28px 0;">
+    <a href="{{ profile_link }}" class="email-button warning-button">View Their Profile</a>
+  </div>
+
+  <p style="font-size: 14px; color: #555;">
+    This doesn't always mean something is wrong — but it could. A kind check-in, a message, or even a prayer may be exactly what they need right now.
+  </p>
 </div>
 
+<!-- باکس راهنما -->
+<div class="info-box">
+  <h3 style="color: #F4A429;">What Can I Do?</h3>
+  <ul style="padding-left: 20px; color: #2B2C30; font-size: 15px;">
+    <li>Sometimes a quiet prayer or your silent presence in their life can be powerful.</li>
+    <li>Reach out to others who may be close to them and check in gently through trusted connections.</li>
+    <li>Avoid direct contact if you suspect it could put either of you at risk — safety comes first.</li>
+    <li>If you’re seriously concerned, you have the option to temporarily limit access to their profile through your TownLIT settings as a protective measure.</li>
+    <li>Consider seeking wisdom or support from a trusted spiritual leader or counselor who can help guide next steps.</li>
+  </ul>
+</div>
+
+<p class="email-reflection">
+  When someone cries for help in silence, love listens loudest. Thank you for being that love in action.
+</p>
+
+<p class="email-signature">With care,<br />TownLIT</p>
+
+{% endblock %}

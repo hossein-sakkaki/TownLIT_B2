@@ -1,0 +1,29 @@
+{% extends "base_email.html" %}
+
+{% block subject %}
+Confirm to Disable Two-Factor Authentication – TownLIT
+{% endblock %}
+
+{% block content %}
+
+<h1>Do You Want to Turn Off 2FA?</h1>
+
+<p>Hey {{ user.name|default:"there" }},</p>
+
+<p>We’ve received a request to disable two-factor authentication (2FA) for your TownLIT account. To confirm this action, please enter the code below:</p>
+
+<div class="email-button-container">
+  <div class="code-box">{{ otp_code }}</div>
+</div>
+
+<p>This code is valid for {{ expiration_minutes }} minutes. If you don’t enter it, 2FA will remain enabled and your account will stay protected with an extra layer of security.</p>
+
+<p>If you didn’t make this request, don’t worry — no changes will be made. But if you suspect unauthorized activity, we recommend changing your password immediately.</p>
+
+<p class="email-reflection">
+  Security isn’t just a setting — it’s a shared trust. We’re here to help you protect what matters most.
+</p>
+
+<p class="email-signature">With care,<br />TownLIT</p>
+
+{% endblock %}

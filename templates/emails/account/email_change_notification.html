@@ -1,6 +1,25 @@
-<div>
-    <h1>Your Email Has Been Updated</h1>
-    <p>Hello {{ username }},</p>
-    <p>Your email has been successfully updated to: {{ new_email }}.</p>
-    <p>If this was not you, please contact support immediately.</p>
-</div>
+{% extends "base_email.html" %}
+
+{% block subject %}
+Your Email Has Been Successfully Updated – TownLIT
+{% endblock %}
+
+{% block content %}
+
+<h1>Email Updated Successfully</h1>
+
+<p>Hey {{ user.name|default:"there" }},</p>
+
+<p>Your email address has just been successfully updated to <strong>{{ new_email }}</strong>.</p>
+
+<p>From now on, all messages and updates from TownLIT will be sent to this new address.</p>
+
+<p>If you didn’t authorize this change, please contact our support team immediately at <a href="mailto:support@townlit.com">support@townlit.com</a>.</p>
+
+<p class="email-reflection">
+  We're honored to walk this journey with you — and we’re committed to keeping your account safe, connected, and truly yours.
+</p>
+
+<p class="email-signature">With warmth,<br />TownLIT</p>
+
+{% endblock %}

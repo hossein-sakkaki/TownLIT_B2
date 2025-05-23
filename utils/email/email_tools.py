@@ -6,17 +6,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 def send_custom_email(to, subject, template_path, context=None, text_template_path=None):
-    """
-    رندر و ارسال یک ایمیل HTML (و اختیاری: متن ساده) به کاربر یا کاربران.
-
-    :param to: آدرس ایمیل گیرنده (str یا list)
-    :param subject: موضوع ایمیل
-    :param template_path: مسیر قالب HTML برای رندر (مثال: 'emails/account/verify.html')
-    :param context: دیکشنری اطلاعات مورد نیاز قالب
-    :param text_template_path: (اختیاری) مسیر قالب متن ساده، در صورت نیاز
-    :return: True در صورت موفقیت، False در صورت خطا
-    """
-
     context = context or {}
 
     try:

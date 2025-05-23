@@ -5,7 +5,6 @@ from django.conf import settings
 from django.utils.timezone import now
 from datetime import timedelta
 from django.contrib import messages
-from django.db.models import Count, Q
 
 from .models import (
     EmailTemplate, EmailCampaign, EmailLog, 
@@ -30,7 +29,7 @@ class EmailTemplateAdmin(admin.ModelAdmin):
     readonly_fields = ['created_at']
     fieldsets = (
         (None, {
-            'fields': ('name', 'subject_template', 'body_template')
+            'fields': ('name', 'subject_template', 'body_template', 'layout')
         }),
         ('Metadata', {
             'fields': ('created_at',),

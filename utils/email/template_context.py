@@ -3,11 +3,13 @@ import re
 # Connstants Allow Template Variabales For Email System -------------------------------------
 ALLOWED_TEMPLATE_VARIABLES = {
     "first_name",
+    "user",
     "username",
     "email",
     "site_domain",
     "unsubscribe_url",
     "resubscribe_url",
+    "current_year",
 }
 
 # Extract Template For Email System ---------------------------------------------------------

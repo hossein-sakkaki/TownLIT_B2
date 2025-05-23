@@ -344,15 +344,19 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
         token = str(create_active_code(6))
         hashed_token = bcrypt.hashpw(token.encode('utf-8'), bcrypt.gensalt())
         self.two_factor_token = hashed_token.decode('utf-8')
-        self.two_factor_token_expiry = timezone.now() + timedelta(minutes=15)
+        self.two_factor_token_expiry = timezone.now() + timedelta(minutes=settings.EMAIL_CODE_EXPIRATION_MINUTES)
         self.save()
         return token
 
-    # Method to validate the entered OTP by comparing it with the stored hash
     def validate_two_factor_token(self, entered_token):
+        if not self.two_factor_token or not self.two_factor_token_expiry:
+            return "no_token"
         if self.two_factor_token_expiry < timezone.now():
-            return False
-        return bcrypt.checkpw(entered_token.encode('utf-8'), self.two_factor_token.encode('utf-8'))
+            return "expired"
+        if bcrypt.checkpw(entered_token.encode('utf-8'), self.two_factor_token.encode('utf-8')):
+            return "valid"
+        return "invalid"
+
 
     # Access and Delete pin ----------------------------------------------------
     pin_security_enabled = models.BooleanField(default=False, verbose_name="Pin Security Status")

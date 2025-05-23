@@ -3,6 +3,9 @@
 from apps.conversation.models import Dialogue, Message, UserDialogueMarker, DialogueParticipant
 from apps.profiles.models import Fellowship
 from utils.email.email_tools import send_custom_email
+from django.utils import timezone
+from django.conf import settings
+
 
 
 def handle_sensitive_dialogue_cleanup(user):
@@ -82,8 +85,12 @@ def notify_confidants_of_delete_pin(user):
         # Alert Email to confidant
         subject = "Security Alert: Destructive PIN Used"
         context = {
-            'username': user.username,
-            'profile_link': f'/profiles/{user.id}/',
+            'confidant_user': confidant_user,
+            'user': user,
+            'profile_link': f'{settings.SITE_URL}/{user.username}/',
+            "site_domain": settings.SITE_URL,
+            "logo_base_url": settings.EMAIL_LOGO_URL,
+            "current_year": timezone.now().year,
         }
 
         success = send_custom_email(

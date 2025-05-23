@@ -3,12 +3,14 @@ from django.views import View
 from django.shortcuts import get_object_or_404, render
 from django.conf import settings
 from django.template import Template, Context
+from django.utils import timezone
 
 from .models import UnsubscribedUser, EmailTemplate, ExternalEmailCampaign, EmailCampaign
 from utils.email.token_generator import validate_email_opt_token, validate_external_email_token
 from django.contrib.auth import get_user_model
 from utils.common.file_reader import read_csv_or_json
 from .models import ExternalEmailCampaign
+from .constants import LAYOUT_BASE_SITE
 
 CustomUser = get_user_model()
 
@@ -17,21 +19,25 @@ CustomUser = get_user_model()
 class EmailTemplatePreviewView(View):
     def get(self, request, pk):
         template = get_object_or_404(EmailTemplate, pk=pk)
+        layout = template.layout or LAYOUT_BASE_SITE
+        
         context = {
             'subject': template.subject_template,
             'content': template.body_template,
             'site_domain': settings.SITE_URL,
             'unsubscribe_url': '#'
         }
-        return render(request, 'emails/newsletter/base_newsletter.html', context)
+        return render(request, f'{layout}.html', context)
     
 
 # Email Campaign Preview View --------------------------------------------------------
 class EmailCampaignPreviewView(APIView):
     def get(self, request, pk):
         campaign = get_object_or_404(EmailCampaign, pk=pk)
+        template = campaign.template
 
         content = campaign.custom_html or (campaign.template.body_template if campaign.template else "")
+        layout = template.layout if template else LAYOUT_BASE_SITE
         context = {
             "subject": campaign.subject,
             "content": content,
@@ -39,7 +45,7 @@ class EmailCampaignPreviewView(APIView):
             "unsubscribe_url": "#"
         }
 
-        return render(request, "emails/newsletter/base_newsletter.html", context)
+        return render(request, f'{layout}.html', context)
     
 
 # External Email Campaign Preview View ------------------------------------------------
@@ -126,3 +132,15 @@ class ExternalUnsubscribeView(View):
             return render(request, "communication/unsubscribe_failed.html", {
                 "profile_url": settings.SITE_URL
             }, status=400)
+            
+            
+
+# ٍEmail Preview -----------------------------------------------------------------
+def preview_reset_password(request):
+    context = {
+        "name": "Gabby",
+        "site_domain": settings.SITE_URL,
+        "logo_base_url": settings.EMAIL_LOGO_URL,
+        # "current_year": timezone.now().year,
+    }
+    return render(request, "emails/feedback/feedback_received_email.html", context)

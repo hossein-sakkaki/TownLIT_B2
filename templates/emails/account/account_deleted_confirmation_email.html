@@ -1,0 +1,28 @@
+{% extends "base_email.html" %}
+
+{% block subject %}
+Your Account Deletion Request Has Been Confirmed – TownLIT
+{% endblock %}
+
+{% block content %}
+
+<h1>Your Account Has Been Deactivated</h1>
+
+<p>Hey {{ user.name|default:"there" }},</p>
+
+<p>We’ve successfully processed your request to deactivate your TownLIT account associated with <strong>{{ email }}</strong>.</p>
+
+<p>Your account has now been deactivated, and all of your personal data is securely locked away for your protection.</p>
+
+<p>While your profile is no longer visible or accessible to anyone — including other users — rest assured that nothing has been lost. Should you choose to return within the next year, you can simply log in with your email and password to begin the reactivation process.</p>
+
+<p>This secure approach ensures that your data stays private, untouched, and protected — just as you'd expect from a trusted platform.</p>
+
+<p class="email-reflection">
+  Sometimes, taking a step away can lead us right back to where we truly belong. And if that place is TownLIT, we’ll be ready to welcome you with open arms.
+</p>
+
+
+<p class="email-signature">With love and light,<br />TownLIT</p>
+
+{% endblock %}

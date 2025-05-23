@@ -36,3 +36,13 @@ TARGET_GROUP_CHOICES = [
     (UNVERIFIED_IDENTITY, 'Members with Unverified Identity'),
     (RE_ENGAGEMENT, 'Previously Unsubscribed Users (Re-engagement Campaign)'),
 ]
+
+
+
+# Email Template Layout Types --------------------------------------------
+LAYOUT_BASE_EMAIL = 'base_email'
+LAYOUT_BASE_SITE = 'base_site'
+EMAIL_LAYOUT_CHOICES = [
+    (LAYOUT_BASE_EMAIL, 'System Email (Security, Activation, etc.)'),
+    (LAYOUT_BASE_SITE, 'Campaign/Newsletter (Invitation, Updates)'),
+]

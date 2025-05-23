@@ -120,7 +120,11 @@ class UserFeedbackViewSet(viewsets.ModelViewSet):
         feedback.convert_uploaded_media_async()
         subject = "We've received your feedback – Thank you!"
         context = {
-            'name': request.user.name or "Friend",
+            'user': request.user,
+            
+            "site_domain": settings.SITE_URL,
+            "logo_base_url": settings.EMAIL_LOGO_URL,
+            "current_year": timezone.now().year,
         }
 
         success = send_custom_email(

@@ -1,7 +1,29 @@
-<div>
-    <h1>Verify Your New Email</h1>
-    <p>Hello {{ username }},</p>
-    <p>To complete the process of changing your email, please confirm your new email address with the following code:</p>
-    <h2>{{ code }}</h2>
-    <p>If you did not request this, please contact support immediately.</p>
+{% extends "base_email.html" %}
+
+{% block subject %}
+Verify Your New Email Address – TownLIT
+{% endblock %}
+
+{% block content %}
+
+<h1>Almost There!</h1>
+
+<p>Hey {{ user.name|default:"there" }},</p>
+
+<p>You're updating your TownLIT account to use this email address. To confirm it's really yours, please enter the code below:</p>
+
+<div class="email-button-container">
+  <div class="code-box">{{ code }}</div>
 </div>
+
+<p>This code is valid for {{ expiration_minutes }} minutes. Once confirmed, all future communications will be sent to this address.</p>
+
+<p>If this wasn’t you, you can safely ignore this email. No changes will be made without full confirmation.</p>
+
+<p class="email-reflection">
+  At TownLIT, your identity and your inbox are both treated with honor and care.
+</p>
+
+<p class="email-signature">With love and light,<br />TownLIT</p>
+
+{% endblock %}

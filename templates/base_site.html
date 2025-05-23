@@ -5,25 +5,37 @@
 <head>
   <meta charset="UTF-8">
   <title>{% block title %}TownLIT{% endblock %}</title>
-
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="stylesheet" href="{% static 'css/base_site_styles.css' %}">
 </head>
 <body>
-  <div class="page-container">
-    <!-- Header -->
-    <div class="site-header">
-      <img src="{{ site_domain }}/static/logo/TownLITLogo.jpg" alt="TownLIT Logo" class="logo" />
-      <p class="tagline">Where the Lord Is There</p>
-    </div>
+  <div class="email-wrapper">
+    <div class="email-container">
 
-    <!-- Main content -->
-    <div class="site-content">
-      {% block content %}{% endblock %}
-    </div>
+      <!-- Header -->
+      <div class="email-header">
+        <img src="{{ logo_base_url }}/static/logo/TownLITLogo.png" alt="TownLIT Logo" />
+        <p class="tagline">Where the Lord Is There</p>
+      </div>
 
-    <!-- Footer -->
-    <div class="site-footer">
-      <p>&copy; 2022–25 TownLIT. All rights reserved.</p>
+      <!-- Content -->
+      <div class="email-content">
+        {% block content %}
+          {{ content|safe }}
+        {% endblock %}
+      </div>
+
+      <!-- Footer -->
+      <p class="email-signature">
+        With love and light,<br />
+        TownLIT
+      </p>
+
+      <div class="email-footer">
+        <p>&copy; 2022–{{ current_year }} TownLIT</p>
+        <p><a href="{{ site_domain }}/townlit-official/foundation/vision_and_mission">Our Mission</a> | 
+        <a href="{{ site_domain }}/townlit-official/foundation/townlit_beliefs">Our Beliefs</a></p>
+      </div>
     </div>
   </div>
 </body>

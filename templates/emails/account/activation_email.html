@@ -1,34 +1,29 @@
 {% extends "base_email.html" %}
 
-{% block subject %}Welcome to TownLIT - Activate Your Account!{% endblock %}
+{% block subject %}
+Welcome to TownLIT – Activate Your Account!
+{% endblock %}
 
 {% block content %}
-  <h2 style="color: #0F52BA;">Hello {{ first_name|default:"Friend" }} 👋</h2>
 
-  <p style="font-size: 1.1rem; line-height: 1.6;">
-    We're excited to have you join <strong>TownLIT</strong>, a Christ-centered network with a heart for embracing community spirit.
-  </p>
+<h1>Welcome to TownLIT!</h1>
 
-  <p style="font-size: 1rem; margin-top: 1.5rem;">
-    To activate your account, please use the code below:
-  </p>
+<p>Hello there,</p>
 
-  <div style="text-align: center; margin: 2rem 0;">
-    <span style="font-size: 2rem; color: #F20519; background-color: #F8F6F0; padding: 12px 24px; border: 2px dashed #F20519; border-radius: 8px; display: inline-block;">
-      {{ activation_code }}
-    </span>
-  </div>
+<p>You're signing up with <strong>{{ email }}</strong>. Let’s get your account activated!</p>
 
-  <p style="font-size: 0.95rem; color: #555; line-height: 1.6;">
-    This code is valid for one-time use and will expire shortly for security reasons. Please activate your account as soon as possible.
-  </p>
+<p>We're excited to see you here! Your journey with <strong>TownLIT</strong> is just beginning — a place where faith and community meet.</p>
 
-  <p style="font-size: 0.95rem; color: #555; line-height: 1.6;">
-    If you didn't request this email, you can safely ignore it.
-  </p>
+<p>To activate your account, please use the following code:</p>
 
-  <p style="margin-top: 2rem; font-size: 1rem;">
-    With blessings,<br />
-    <span style="color:#FFD700; font-weight: bold;">The TownLIT Team</span>
-  </p>
+<div class="email-button-container">
+  <div class="code-box">{{ activation_code }}</div>
+</div>
+
+<p>This code is valid for {{ expiration_minutes }} minutes. You’ll be asked to enter it in the app or website to verify your account.</p>
+
+<p>If you didn’t sign up for TownLIT, you can safely ignore this email.</p>
+
+<p class="email-signature">With love and light,<br />TownLIT</p>
+
 {% endblock %}

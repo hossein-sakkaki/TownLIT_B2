@@ -120,6 +120,7 @@ def send_campaign_email_batch(campaign_id):
 
         context = {
             'email': email,
+            'user': user,
             'first_name': user.name,
             'username': user.username,
             'site_domain': settings.SITE_URL,
@@ -139,11 +140,19 @@ def send_campaign_email_batch(campaign_id):
         subject_raw = campaign.subject or (campaign.template.subject_template if campaign.template else '')
         subject_template = Template(subject_raw)
         rendered_subject = subject_template.render(Context(context))
+        
+
+        if campaign.template and hasattr(campaign.template, 'layout'):
+            layout = campaign.template.layout  # مقدار مثل 'base_site' یا 'base_email'
+        else:
+            layout = 'base_site'  # مقدار پیش‌فرض
+
+        template_path = f'{layout}.html'
 
         success = send_custom_email(
             to=email,
             subject=rendered_subject,
-            template_path='emails/newsletter/base_newsletter.html',
+            template_path=template_path,
             context=context
         )
 
@@ -254,11 +263,13 @@ def send_external_email_campaign(campaign):
             if ExternalContact.objects.filter(email=email, is_unsubscribed=True) \
                 | ExternalContact.objects.filter(email=email, became_user=True):
                 continue
+            
+            template_path = 'base_site.html'
 
             success = send_custom_email(
                 to=email,
                 subject=rendered_subject,
-                template_path='emails/newsletter/base_newsletter.html',
+                template_path=template_path,
                 context=context
             )
 

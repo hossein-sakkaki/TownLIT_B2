@@ -76,9 +76,11 @@ class AuthViewSet(viewsets.ViewSet):
                         status=status.HTTP_400_BAD_REQUEST
                     )           
                 active_code = create_active_code(5)
+                expiration_minutes = settings.EMAIL_CODE_EXPIRATION_MINUTES                         
+                expiration_time = timezone.now() + datetime.timedelta(minutes=expiration_minutes)
                 encrypted_active_code = cipher_suite.encrypt(str(active_code).encode())
                 user.user_active_code = encrypted_active_code
-                user.user_active_code_expiry = timezone.now() + timedelta(minutes=10)
+                user.user_active_code_expiry = expiration_time
                 user.save()
 
                 print('------------------')
@@ -90,6 +92,10 @@ class AuthViewSet(viewsets.ViewSet):
                     'activation_code': active_code,
                     'user': user,
                     'site_domain': settings.SITE_URL, 
+                    "logo_base_url": settings.EMAIL_LOGO_URL,
+                    "expiration_minutes": expiration_minutes,
+                    'email': user.email,
+                    "current_year": timezone.now().year,
                 }
 
                 success = send_custom_email(
@@ -283,40 +289,42 @@ class AuthViewSet(viewsets.ViewSet):
                     "is_deleted": True,
                     "deletion_requested_at": user.deletion_requested_at,
                     "email": user.email,
-                    "user_id": user.id,  # ارسال user_id برای تأیید هویت
+                    "user_id": user.id,
                     "refresh": str(refresh),
                     "access": str(access),
                     'user': user_data,
                 }, status=status.HTTP_202_ACCEPTED)
             
-            # بررسی اینکه آیا حساب کاربری فعال است یا نه
             if not user.is_active:
                 return Response({
                     "message": "User account is not active. Please verify your email or contact support."
                 }, status=status.HTTP_403_FORBIDDEN)
 
-            # بررسی Two-Factor Authentication
             if user.two_factor_enabled:
                 otp_code = user.generate_two_factor_token()
+                expiration_minutes = settings.EMAIL_CODE_EXPIRATION_MINUTES
 
                 # ارسال ایمیل با کد OTP
-                # subject = "Two-Factor Authentication - Your OTP Code"
-                # context = {
-                #     'otp_code': otp_code,
-                #     'user': user,
-                #     'site_domain': settings.SITE_URL,  # اگر در قالب نیاز باشد
-                # }
+                subject = "Two-Factor Authentication - Your OTP Code"
+                context = {
+                    'otp_code': otp_code,
+                    'user': user,
+                    'site_domain': settings.SITE_URL,  
+                    "logo_base_url": settings.EMAIL_LOGO_URL,
+                    "current_year": timezone.now().year,
+                    "expiration_minutes": expiration_minutes,
+                }
 
-                # success = send_custom_email(
-                #     to=user.email,
-                #     subject=subject,
-                #     template_path='emails/account/login_by_2fa_email.html',
-                #     context=context,
-                #     text_template_path=None  # اگر نسخه متن ساده نداری
-                # )
+                success = send_custom_email(
+                    to=user.email,
+                    subject=subject,
+                    template_path='emails/account/login_by_2fa_email.html',
+                    context=context,
+                    text_template_path=None 
+                )
 
-                # if not success:
-                #     return Response({"error": "Failed to send OTP email. Please try again later."}, status=500)
+                if not success:
+                    return Response({"error": "Failed to send OTP email. Please try again later."}, status=500)
                                 
                 print('------------------------')
                 print(otp_code)
@@ -418,7 +426,8 @@ class AuthViewSet(viewsets.ViewSet):
             try:
                 user = CustomUser.objects.get(email=ser_data.validated_data['email'])  
                 reset_token = cipher_suite.encrypt(user.email.encode()).decode()
-                expiration_time = timezone.now() + datetime.timedelta(minutes=30)
+                expiration_minutes = settings.RESET_LINK_EXPIRATION_MINUTES
+                expiration_time = timezone.now() + datetime.timedelta(minutes=expiration_minutes)
                 user.reset_token = reset_token
                 user.reset_token_expiration = expiration_time
                 user.save()
@@ -429,6 +438,10 @@ class AuthViewSet(viewsets.ViewSet):
                 context = {
                     'name': user.name or "User",
                     'reset_link': reset_link,
+                    "expiration_minutes": expiration_minutes,
+                    "site_domain": settings.SITE_URL,
+                    "logo_base_url": settings.EMAIL_LOGO_URL,
+                    "current_year": timezone.now().year,
                 }
                 success = send_custom_email(
                     to=user.email,
@@ -478,25 +491,29 @@ class AuthViewSet(viewsets.ViewSet):
             if user.two_factor_enabled:
                 return Response({"message": "Two-factor authentication is already enabled."}, status=status.HTTP_400_BAD_REQUEST)
             otp_code = user.generate_two_factor_token()
-
+            expiration_minutes = settings.EMAIL_CODE_EXPIRATION_MINUTES
+            
             # Send Email to User
-            # subject = "Activate Two-Factor Authentication (2FA)"
-            # context = {
-            #     'otp_code': otp_code,
-            #     'user': user,
-            #     'site_domain': settings.SITE_URL,  # اگر در قالب استفاده شود
-            # }
+            subject = "Activate Two-Factor Authentication (2FA)"
+            context = {
+                'otp_code': otp_code,
+                'user': user,
+                'site_domain': settings.SITE_URL,
+                "logo_base_url": settings.EMAIL_LOGO_URL,
+                "expiration_minutes": expiration_minutes,
+                "current_year": timezone.now().year,
+            }
 
-            # success = send_custom_email(
-            #     to=user.email,
-            #     subject=subject,
-            #     template_path='emails/account/enable_2fa_email.html',
-            #     context=context,
-            #     text_template_path=None  # اگر نسخه‌ی متنی ساده ندارید
-            # )
+            success = send_custom_email(
+                to=user.email,
+                subject=subject,
+                template_path='emails/account/2fa_enable_email.html',
+                context=context,
+                text_template_path=None
+            )
 
-            # if not success:
-            #     return Response({"error": "Failed to send OTP email. Please try again later."}, status=500)
+            if not success:
+                return Response({"error": "Failed to send OTP email. Please try again later."}, status=500)
                         
             print('----------------------------------------')
             print(otp_code)
@@ -513,16 +530,51 @@ class AuthViewSet(viewsets.ViewSet):
         user = request.user
         try:
             otp_code = request.data.get("otp_code")
-            if user.validate_two_factor_token(otp_code):
+
+            if not otp_code:
+                return Response({"error": "Verification code is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            result = user.validate_two_factor_token(otp_code)
+            if result == "valid":
                 user.two_factor_enabled = True
+                user.two_factor_token = None
+                user.two_factor_token_expiry = None
                 user.save()
+
+                subject = "Two-Factor Authentication Activated"
+                context = {
+                    "user": user,
+                    "site_domain": settings.SITE_URL,
+                    "logo_base_url": settings.EMAIL_LOGO_URL,
+                    "current_year": timezone.now().year,
+                }
+                send_custom_email(
+                    to=user.email,
+                    subject=subject,
+                    template_path='emails/account/2fa_enabled_notification.html',
+                    context=context,
+                    text_template_path=None
+                )
+
                 return Response({"message": "Two-factor authentication enabled successfully."}, status=status.HTTP_200_OK)
-            else:
-                return Response({"error": "Invalid OTP code."}, status=status.HTTP_400_BAD_REQUEST)
+
+            elif result == "expired":
+                return Response({"error": "The verification code has expired. Please request a new one."}, status=status.HTTP_400_BAD_REQUEST)
+
+            elif result == "invalid":
+                return Response({"error": "Invalid verification code."}, status=status.HTTP_400_BAD_REQUEST)
+
+            elif result == "no_token":
+                return Response({"error": "No verification code found. Please request 2FA setup again."}, status=status.HTTP_400_BAD_REQUEST)
+
+            return Response({"error": "Unexpected verification result."}, status=status.HTTP_400_BAD_REQUEST)
+
         except Exception as e:
+            logger.error(f"Error in verify_2fa_token: {str(e)}")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    # Disable 2FA
+
+    # Disable 2FA -------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='disable-2fa', permission_classes=[IsAuthenticated])
     def disable_2fa(self, request):
         user = request.user
@@ -530,21 +582,26 @@ class AuthViewSet(viewsets.ViewSet):
             if not user.two_factor_enabled:
                 return Response({"error": "Two-factor authentication is not enabled."}, status=status.HTTP_400_BAD_REQUEST)
             otp_code = user.generate_two_factor_token()
+            
+            expiration_minutes = settings.EMAIL_CODE_EXPIRATION_MINUTES
 
             # Send Email to User
             subject = "Disable Two-Factor Authentication (2FA)"
             context = {
                 'otp_code': otp_code,
                 'user': user,
-                'site_domain': settings.SITE_URL,  # اگر در قالب استفاده شود
+                'site_domain': settings.SITE_URL,
+                "logo_base_url": settings.EMAIL_LOGO_URL,
+                "expiration_minutes": expiration_minutes,
+                "current_year": timezone.now().year,
             }
 
             success = send_custom_email(
                 to=user.email,
                 subject=subject,
-                template_path='emails/account/disable_2fa_email.html',
+                template_path='emails/account/2fa_disable_email.html',
                 context=context,
-                text_template_path=None  # اگر نسخه متنی نداری
+                text_template_path=None
             )
 
             if not success:
@@ -564,15 +621,55 @@ class AuthViewSet(viewsets.ViewSet):
         user = request.user
         try:
             otp_code = request.data.get("otp_code")
-            if user.validate_two_factor_token(otp_code):
+
+            if not otp_code:
+                return Response({"error": "Verification code is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            result = user.validate_two_factor_token(otp_code)
+
+            if result == "valid":
                 user.two_factor_enabled = False
+                user.two_factor_token = None
+                user.two_factor_token_expiry = None
                 user.save()
+
+                # حذف دستگاه TOTP (اگر استفاده می‌شود)
                 TOTPDevice.objects.filter(user=user).delete()
+
+                # ✅ ارسال ایمیل تایید غیرفعال‌سازی 2FA
+                subject = "Two-Factor Authentication Disabled"
+                context = {
+                    "user": user,
+                    "site_domain": settings.SITE_URL,
+                    "logo_base_url": settings.EMAIL_LOGO_URL,
+                    "current_year": timezone.now().year,
+                }
+
+                send_custom_email(
+                    to=user.email,
+                    subject=subject,
+                    template_path='emails/account/2fa_disabled_notification.html',
+                    context=context,
+                    text_template_path=None
+                )
+
                 return Response({"message": "Two-factor authentication disabled successfully."}, status=status.HTTP_200_OK)
-            else:
-                return Response({"error": "Invalid OTP code."}, status=status.HTTP_400_BAD_REQUEST)
+
+            elif result == "expired":
+                return Response({"error": "The verification code has expired. Please request a new one."}, status=status.HTTP_400_BAD_REQUEST)
+
+            elif result == "invalid":
+                return Response({"error": "Invalid verification code."}, status=status.HTTP_400_BAD_REQUEST)
+
+            elif result == "no_token":
+                return Response({"error": "No verification code found. Please request the disable 2FA process again."}, status=status.HTTP_400_BAD_REQUEST)
+
+            return Response({"error": "Unexpected verification result."}, status=status.HTTP_400_BAD_REQUEST)
+
         except Exception as e:
+            logger.error(f"Error in verify_disable_2fa_token: {str(e)}")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
     # Change Password In Account -----------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='change-password', permission_classes=[IsAuthenticated])
@@ -670,10 +767,13 @@ class AuthViewSet(viewsets.ViewSet):
                 return Response({"error": "Your account is already marked for deletion."}, status=status.HTTP_400_BAD_REQUEST)
 
             # Generate and encrypt activation code
-            active_code = create_active_code(5)
+            active_code = create_active_code(5)            
+            expiration_minutes = settings.EMAIL_CODE_EXPIRATION_MINUTES                      
+            expiration_time = timezone.now() + datetime.timedelta(minutes=expiration_minutes)
+            
             encrypted_active_code = cipher_suite.encrypt(str(active_code).encode())
             user.user_active_code = encrypted_active_code.decode()  # Save as string
-            user.user_active_code_expiry = timezone.now() + timedelta(minutes=10)
+            user.user_active_code_expiry = expiration_time
             user.save()
             
             print('------------------------------')
@@ -681,23 +781,26 @@ class AuthViewSet(viewsets.ViewSet):
             print('------------------------------')
 
             # Send email
-            # subject = "Confirm Account Deletion - TownLIT"
-            # context = {
-            #     'activation_code': active_code,
-            #     'user': user,
-            #     'site_domain': settings.SITE_URL,  # اختیاری در صورت نیاز در قالب
-            # }
+            subject = "Confirm Account Deletion - TownLIT"
+            context = {
+                'activation_code': active_code,
+                'user': user,
+                'site_domain': settings.SITE_URL,
+                "logo_base_url": settings.EMAIL_LOGO_URL,
+                "expiration_minutes": expiration_minutes,
+                "current_year": timezone.now().year,
+            }
 
-            # success = send_custom_email(
-            #     to=user.email,
-            #     subject=subject,
-            #     template_path='emails/account/delete_confirmation_email.html',
-            #     context=context,
-            #     text_template_path=None  # اگر نسخه plain-text هم داشته باشی اینجا اضافه می‌شود
-            # )
+            success = send_custom_email(
+                to=user.email,
+                subject=subject,
+                template_path='emails/account/delete_confirmation_email.html',
+                context=context,
+                text_template_path=None
+            )
 
-            # if not success:
-            #     return Response({"error": "Failed to send confirmation email. Please try again later."}, status=500)
+            if not success:
+                return Response({"error": "Failed to send confirmation email. Please try again later."}, status=500)
 
             return Response({"message": "A confirmation email has been sent. Please check your inbox."}, status=status.HTTP_200_OK)
         except Exception as e:
@@ -745,7 +848,28 @@ class AuthViewSet(viewsets.ViewSet):
                 external_contact.became_user = False
                 external_contact.save()
 
-            return Response({"message": "Account deletion requested successfully. You can reactivate your account within 1 year."}, status=status.HTTP_200_OK)
+            subject = "Your Account Has Been Deactivated – TownLIT"
+            context = {
+                "user": user,
+                "email": user.email,
+                "logo_base_url": settings.EMAIL_LOGO_URL,
+                "site_domain": settings.SITE_URL,
+                "current_year": timezone.now().year,
+            }
+
+            success = send_custom_email(
+                to=user.email,
+                subject=subject,
+                template_path='emails/account/account_deleted_confirmation_email.html',
+                context=context,
+                text_template_path=None
+            )
+
+            if not success:
+                logger.warning(f"Account deleted but confirmation email failed to send for user {user.email}")
+            return Response({
+                "message": "Account deletion confirmed. A confirmation email has been sent. You can reactivate your account within 1 year."
+            }, status=status.HTTP_200_OK)
         except Exception as e:
             logger.error(f"Error in confirm_delete_account: {str(e)}")
             return Response({"error": f"An error occurred: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -759,10 +883,13 @@ class AuthViewSet(viewsets.ViewSet):
                 return Response({"error": "Your account is not marked for deletion."}, status=status.HTTP_400_BAD_REQUEST)
 
             # Generate and encrypt activation code
-            active_code = create_active_code(5)
+            active_code = create_active_code(5) 
+            expiration_minutes = settings.EMAIL_CODE_EXPIRATION_MINUTES                      
+            expiration_time = timezone.now() + datetime.timedelta(minutes=expiration_minutes)
+            
             encrypted_active_code = cipher_suite.encrypt(str(active_code).encode())
             user.user_active_code = encrypted_active_code.decode()  # Save as string
-            user.user_active_code_expiry = timezone.now() + timedelta(minutes=10)
+            user.user_active_code_expiry = expiration_time
             user.save()
             
             print('+++++++++++++++++++')
@@ -770,23 +897,26 @@ class AuthViewSet(viewsets.ViewSet):
             print('+++++++++++++++++++')
 
             # Send email
-            # subject = "Reactivate Your Account - TownLIT"
-            # context = {
-            #     'activation_code': active_code,
-            #     'user': user,  # اختیاری، در صورت نیاز در قالب
-            #     'site_domain': settings.SITE_URL,  # اگر در قالب استفاده شود
-            # }
+            subject = "Reactivate Your Account - TownLIT"
+            context = {
+                'activation_code': active_code,
+                'user': user,
+                'site_domain': settings.SITE_URL,
+                "logo_base_url": settings.EMAIL_LOGO_URL,
+                "expiration_minutes": expiration_minutes,
+                "current_year": timezone.now().year,
+            }
 
-            # success = send_custom_email(
-            #     to=user.email,
-            #     subject=subject,
-            #     template_path='emails/account/reactivate_account_email.html',
-            #     context=context,
-            #     text_template_path=None  # اگر متن ساده هم بخواهی، می‌توان اضافه کرد
-            # )
+            success = send_custom_email(
+                to=user.email,
+                subject=subject,
+                template_path='emails/account/reactivate_account_email.html',
+                context=context,
+                text_template_path=None  # اگر متن ساده هم بخواهی، می‌توان اضافه کرد
+            )
 
-            # if not success:
-            #     return Response({"error": "Failed to send reactivation code. Please try again later."}, status=500)
+            if not success:
+                return Response({"error": "Failed to send reactivation code. Please try again later."}, status=500)
 
             return Response({"message": "A reactivation code has been sent to your email. Please check your inbox."}, status=status.HTTP_200_OK)
         except Exception as e:
@@ -843,26 +973,28 @@ class AuthViewSet(viewsets.ViewSet):
                 external_contact.deleted_after_signup = False
                 external_contact.save()
                         
-            # subject = "Welcome Back to TownLIT!"
-            # context = {
-            #     "user": user,
-            #     "reactivated_at": user.reactivated_at.strftime("%Y-%m-%d %H:%M:%S"),
-            #     "site_url": settings.SITE_URL,
-            # }
+            subject = "Welcome Back to TownLIT!"
+            context = {
+                "user": user,
+                "reactivated_at": user.reactivated_at.strftime("%Y-%m-%d %H:%M:%S"),
+                "site_domain": settings.SITE_URL,
+                "logo_base_url": settings.EMAIL_LOGO_URL,
+                "current_year": timezone.now().year,
+            }
 
-            # success = send_custom_email(
-            #     to=user.email,
-            #     subject=subject,
-            #     template_path="emails/account/reactivation_success_email.html",
-            #     context=context,
-            #     text_template_path=None  # اگر متن ساده نداری
-            # )
+            success = send_custom_email(
+                to=user.email,
+                subject=subject,
+                template_path="emails/account/reactivation_success_email.html",
+                context=context,
+                text_template_path=None
+            )
 
-            # if not success:
-            #     return Response(
-            #         {"error": "Failed to send reactivation email."},
-            #         status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            #     )      
+            if not success:
+                return Response(
+                    {"error": "Failed to send reactivation email."},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )      
 
             return Response({"message": "Your account has been successfully reactivated."}, status=status.HTTP_200_OK)
         except Exception as e:

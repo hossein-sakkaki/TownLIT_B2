@@ -1,0 +1,25 @@
+{% extends "base_email.html" %}
+
+{% block subject %}
+Two-Factor Authentication Activated – TownLIT
+{% endblock %}
+
+{% block content %}
+
+<h1>Two-Factor Authentication Successfully Enabled</h1>
+
+<p>Hey {{ user.name|default:"there" }},</p>
+
+<p>We’ve successfully activated two-factor authentication (2FA) on your TownLIT account.</p>
+
+<p>From now on, whenever you log in, you’ll be asked to enter a secure verification code to help keep your account protected.</p>
+
+<p>If you didn’t request this, don’t worry — your account is still safe. For extra peace of mind, you might consider updating your password.</p>
+
+<p class="email-reflection">
+  Your security is a shared responsibility. At TownLIT, we’re committed to guarding what matters most — your presence, your peace, and your voice in this community.
+</p>
+
+<p class="email-signature">With care,<br />TownLIT</p>
+
+{% endblock %}

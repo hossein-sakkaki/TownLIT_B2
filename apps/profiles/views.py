@@ -228,7 +228,7 @@ class MemberViewSet(viewsets.ModelViewSet):
 
 
 
-    # Email Actions -------------------------------------------------------------------------------------------------
+    # Request Email Actions -------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='request-email-change', permission_classes=[IsAuthenticated])
     def request_email_change(self, request):
         try:
@@ -247,6 +247,10 @@ class MemberViewSet(viewsets.ModelViewSet):
                 )
             old_email_code = create_active_code(5)
             new_email_code = create_active_code(5)
+            expiration_minutes = settings.EMAIL_CODE_EXPIRATION_MINUTES                      
+            expiration_time = timezone.now() + timedelta(minutes=expiration_minutes)
+            
+            user.user_active_code_expiry = expiration_time
             user.email_change_tokens = {
                 "old_email_code": old_email_code,
                 "new_email_code": new_email_code,
@@ -257,8 +261,12 @@ class MemberViewSet(viewsets.ModelViewSet):
             # Send email to the current email address
             subject = "Email Change Request - Confirm with Current Email"
             context = {
-                "username": user.username,
+                "user": user,
                 "code": old_email_code,
+                "site_domain": settings.SITE_URL,
+                "logo_base_url": settings.EMAIL_LOGO_URL,
+                "expiration_minutes": expiration_minutes,
+                "current_year": timezone.now().year,
             }
 
             success = send_custom_email(
@@ -276,8 +284,12 @@ class MemberViewSet(viewsets.ModelViewSet):
             # Send email to the new email address
             subject = "Verify Your New Email"
             context = {
-                "username": user.username,
+                "user": user,
                 "code": new_email_code,
+                "site_domain": settings.SITE_URL,
+                "logo_base_url": settings.EMAIL_LOGO_URL,
+                "expiration_minutes": expiration_minutes,
+                "current_year": timezone.now().year,
             }
 
             success = send_custom_email(
@@ -315,16 +327,24 @@ class MemberViewSet(viewsets.ModelViewSet):
                 str(user.email_change_tokens.get("new_email_code")) != str(new_email_code)
             ):
                 return Response({"error": "Invalid verification codes."}, status=status.HTTP_400_BAD_REQUEST)
+            
+            if user.user_active_code_expiry and timezone.now() > user.user_active_code_expiry:
+                return Response({"error": "The verification codes have expired. Please request a new email change."}, status=status.HTTP_400_BAD_REQUEST)
+            
             user.email = user.email_change_tokens.get("new_email")
             user.last_email_change = timezone.now()
             user.email_change_tokens = None
+            user.user_active_code_expiry = None
             user.save()
 
             # Notify the user about the successful email change
             subject = "Your Email Has Been Successfully Changed"
             context = {
-                "username": user.username,
+                "user": user,
                 "new_email": user.email,
+                "site_domain": settings.SITE_URL,
+                "logo_base_url": settings.EMAIL_LOGO_URL,
+                "current_year": timezone.now().year,
             }
 
             success = send_custom_email(

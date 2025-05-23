@@ -1,0 +1,23 @@
+{% extends "base_email.html" %}
+
+{% block subject %}
+Two-Factor Authentication Disabled – TownLIT
+{% endblock %}
+
+{% block content %}
+
+<h1>Two-Factor Authentication Has Been Turned Off</h1>
+
+<p>Hey {{ user.name|default:"there" }},</p>
+
+<p>We’ve successfully disabled two-factor authentication on your TownLIT account.</p>
+
+<p>From now on, your login will only require your account password. If this change wasn’t made by you, we encourage you to check your account activity and update your credentials for added safety.</p>
+
+<p class="email-reflection">
+  We understand that security looks different for everyone. Whether you choose to keep it simple or add extra protection, we’re always here to help you stay safe and connected.
+</p>
+
+<p class="email-signature">With care,<br />TownLIT</p>
+
+{% endblock %}
