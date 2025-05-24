@@ -1,10 +1,17 @@
-{% extends "base_site.html" %}
+{% extends "base_email.html" %}
 
-{% block title %}Unsubscribe Failed{% endblock %}
+{% block subject %}
+We’re sorry — something went wrong
+{% endblock %}
 
 {% block content %}
-    <h2>Oops! This link is invalid or expired.</h2>
-    <p>Please try again or contact support if the issue persists.</p>
+<h1>We’re sorry — something went wrong</h1>
 
-  <a href="{{ profile_url }}" class="btn">Go to your profile</a>
+<p>It looks like the unsubscribe link you used is invalid or has expired. This can happen if the link was already used or too much time has passed.</p>
+
+<p class="email-reflection">
+  If you’re still receiving unwanted emails or need help updating your preferences, feel free to reach out. We’re here to assist with care and respect.
+</p>
+
+<p class="email-signature">With kindness,<br />TownLIT</p>
 {% endblock %}

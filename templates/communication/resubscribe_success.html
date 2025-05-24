@@ -1,7 +1,23 @@
-{% extends "base_site.html" %}
+{% extends "base_email.html" %}
+
+{% block subject %}
+You’ve Been Resubscribed to TownLIT
+{% endblock %}
 
 {% block content %}
-  <h2>You're back! 🎉</h2>
-  <p>Thanks {{ user.name|default:user.username }}, you’ll now receive updates from TownLIT again.</p>
-  <a href="{{ profile_url }}" class="btn">Go to your profile</a>
+<h1>Welcome back, {{ first_name|default:"Friend" }}!</h1>
+
+<p>You’ve successfully resubscribed to receive updates and inspiration from <strong>TownLIT</strong>.</p>
+
+<p class="email-reflection">
+  Your place in the community never vanished — and we’re honored to stay in touch again.
+</p>
+
+<p>You can unsubscribe again at any time, using the link below:</p>
+
+<div class="email-button-container">
+  <a href="{{ unsubscribe_url }}" class="email-button warning-button">Unsubscribe Again</a>
+</div>
+
+<p class="email-signature">With joy and light,<br />TownLIT</p>
 {% endblock %}

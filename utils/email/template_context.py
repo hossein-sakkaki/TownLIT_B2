@@ -7,6 +7,7 @@ ALLOWED_TEMPLATE_VARIABLES = {
     "username",
     "email",
     "site_domain",
+    "logo_base_url",
     "unsubscribe_url",
     "resubscribe_url",
     "current_year",

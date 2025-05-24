@@ -1,6 +1,17 @@
-{% extends "base_site.html" %}
+{% extends "base_email.html" %}
+
+{% block subject %}
+We couldn’t complete your request
+{% endblock %}
 
 {% block content %}
-  <h2>Oops!</h2>
-  <p>This link is invalid or has expired. If you believe this is a mistake, please contact support.</p>
+<h1>We couldn’t complete your request</h1>
+
+<p>It seems your resubscribe link is no longer valid or has already been used. These links are time-sensitive and may only be used once.</p>
+
+<p class="email-reflection">
+  If you’d still like to stay connected with the TownLIT community, we’re just a message away. We’ll gladly help you find your way back.
+</p>
+
+<p class="email-signature">With grace,<br />TownLIT</p>
 {% endblock %}

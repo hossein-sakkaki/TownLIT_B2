@@ -1,7 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 
-from .views import PaymentDonationViewSet, PaymentShoppingCartViewSet
+from .views import PaymentDonationViewSet, PaymentShoppingCartViewSet, PaymentProcessViewSet
 from .views_stripe import stripe_webhook_view
 
 
@@ -9,6 +9,7 @@ from .views_stripe import stripe_webhook_view
 router = DefaultRouter()
 router.register(r'donations', PaymentDonationViewSet, basename='paymentdonation')
 router.register(r'shopping-cart-payments', PaymentShoppingCartViewSet, basename='paymentshoppingcart')
+router.register(r'process', PaymentProcessViewSet, basename='payment-process')
 
 
 app_name = 'payment'

@@ -1,11 +1,25 @@
-{% extends "base_site.html" %}
+{% extends "base_email.html" %}
 
-{% block title %}Unsubscribed - TownLIT{% endblock %}
+{% block subject %}
+You’ve been unsubscribed from TownLIT updates
+{% endblock %}
 
 {% block content %}
-  <p>Hi {{ user.name|default:user.username }},
-  <h2>You have been unsubscribed.</h2>
-  <p>You will no longer receive non-essential emails from TownLIT.</p>
+<h1>We’ve honored your request, {{ name.name|default:"there" }}.</h1>
 
-  <a href="{{ profile_url }}" class="btn">Go to your profile</a>
+<p>You’ve been successfully unsubscribed from future TownLIT email updates.</p>
+
+<p class="email-reflection">
+  We understand. Seasons change — and we respect your journey. But if the time comes and you’d like to reconnect, we’ll be here — just as you left us.
+</p>
+
+<div class="email-button-container">
+  <a href="{{ resubscribe_url }}" class="email-button">Resubscribe Anytime</a>
+</div>
+
+<p style="margin-top: 24px;">
+  Thank you for walking with us — even for a while.
+</p>
+
+<p class="email-signature">With blessings,<br />TownLIT</p>
 {% endblock %}

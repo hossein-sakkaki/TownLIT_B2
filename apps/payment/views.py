@@ -2,17 +2,19 @@ from rest_framework import viewsets, status
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework.decorators import action
+from django.shortcuts import get_object_or_404
+from rest_framework.viewsets import GenericViewSet
 
 from django.utils.decorators import method_decorator
 from django_ratelimit.decorators import ratelimit
 from .models import (
                 PaymentSubscription, PaymentDonation, PaymentAdvertisement, PaymentShoppingCart,
-                PaymentInvoice
+                Payment, PaymentInvoice
             )
 from .serializers import (
                 PaymentSubscriptionSerializer, PaymentAdvertisementSerializer, 
                 PaymentDonationSerializer, PaymentShoppingCartSerializer,
-                PaymentInvoiceSerializer
+                PaymentSerializer, PaymentInvoiceSerializer
             )
 from apps.main.permissions import IsFullAccessAdmin
 from apps.payment.mixins.payment_mixins import PaymentMixin
@@ -44,7 +46,7 @@ class PaymentAdvertisementViewSet(viewsets.ModelViewSet):
 
 
 # PAYMENT DONATION VIEWSET ----------------------------------------------------------------
-class PaymentDonationViewSet(PaymentMixin, viewsets.ModelViewSet):
+class PaymentDonationViewSet(viewsets.ModelViewSet):
     queryset = PaymentDonation.objects.all()
     serializer_class = PaymentDonationSerializer
     permission_classes = [AllowAny]
@@ -132,7 +134,7 @@ class PaymentDonationViewSet(PaymentMixin, viewsets.ModelViewSet):
     
 
 # PAYMENT SHOPPING CART VIEWSET ----------------------------------------------------------------
-class PaymentShoppingCartViewSet(PaymentMixin, viewsets.ModelViewSet):
+class PaymentShoppingCartViewSet(viewsets.ModelViewSet):
     queryset = PaymentShoppingCart.objects.all()
     serializer_class = PaymentShoppingCartSerializer
     permission_classes = [IsAuthenticated]
@@ -184,6 +186,40 @@ class PaymentShoppingCartViewSet(PaymentMixin, viewsets.ModelViewSet):
 
 
 
+class PaymentProcessViewSet(PaymentMixin, GenericViewSet):
+    queryset = Payment.objects.all()
+    permission_classes = [AllowAny]
+    allow_any_permission = True
+
+    @action(detail=True, methods=["get"], url_path="details")
+    def get_payment_details(self, request, pk=None):
+        payment = get_object_or_404(Payment, pk=pk)
+
+        # --- Access Control ---
+        if request.user.is_authenticated:
+            if payment.user and payment.user != request.user:
+                return Response({'detail': 'Not authorized to view this payment.'}, status=status.HTTP_403_FORBIDDEN)
+
+        elif payment.user_id is not None:
+            return Response({'detail': 'Authentication required.'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        elif not payment.is_anonymous_donor:
+            return Response({'detail': 'Unauthorized access to this payment.'}, status=status.HTTP_403_FORBIDDEN)
+
+        # --- Choose Serializer ---
+        if hasattr(payment, 'paymentdonation'):
+            serializer = PaymentDonationSerializer(payment.paymentdonation, context={'request': request})
+        elif hasattr(payment, 'paymentsubscription'):
+            serializer = PaymentSerializer(payment)
+        elif hasattr(payment, 'paymentadvertisement'):
+            serializer = PaymentSerializer(payment)
+        elif hasattr(payment, 'paymentshoppingcart'):
+            serializer = PaymentSerializer(payment)
+        else:
+            serializer = PaymentSerializer(payment)
+
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
 
 # PAYMENT INVOICE VIEWSET -----------------------------------------------------------------
 class PaymentInvoiceViewSet(viewsets.ModelViewSet):
@@ -195,6 +231,5 @@ class PaymentInvoiceViewSet(viewsets.ModelViewSet):
         if self.action in ['update', 'partial_update', 'destroy']:
             return [IsFullAccessAdmin()]
         return super().get_permissions()
-    
     
     

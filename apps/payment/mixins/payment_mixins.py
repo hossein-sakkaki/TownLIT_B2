@@ -87,10 +87,10 @@ class PaymentMixin:
             "payer": {"payment_method": "paypal"},
             "redirect_urls": {
                 "return_url": request.build_absolute_uri(
-                    f"/payment/donations/{payment_instance.pk}/confirm-payment/?confirm_token={confirm_token}"
+                    f"/payment/process/{payment_instance.pk}/confirm-payment/?confirm_token={confirm_token}"
                 ),
                 "cancel_url": request.build_absolute_uri(
-                    f"/payment/donations/{payment_instance.pk}/reject-payment/?cancel_token={cancel_token}"
+                    f"/payment/process/{payment_instance.pk}/reject-payment/?cancel_token={cancel_token}"
                 ),
 
             },
@@ -191,6 +191,7 @@ class PaymentMixin:
             )
 
         # Proceed with rejection
+        print('------------------------------------------------------------------  1')
         payment_instance.payment_status = 'rejected'
         payment_instance.cancel_token = None  # ❌ Invalidate token after use
         payment_instance.cancel_token_created_at = None
@@ -207,6 +208,7 @@ class PaymentMixin:
     def retry_payment(self, request, pk=None):
         payment_instance = self.get_object()
 
+        print('------------------------------------------------------------------  2')
         if payment_instance.payment_status not in ['rejected', 'failed']:
             return Response(
                 {"error": "Payment is not in a retryable state."},
@@ -235,6 +237,7 @@ class PaymentMixin:
         payment = get_object_or_404(Payment, reference_number=ref)
 
         # فقط اگر وضعیت فعلی قابل بازگشت است
+        print('------------------------------------------------------------------  3')
         if payment.payment_status not in ['rejected', 'failed', 'expired']:
             return Response(
                 {"error": "This payment is not eligible for retry."},
@@ -303,6 +306,7 @@ class PaymentMixin:
     def cancel_payment(self, request, pk=None):
         payment_instance = self.get_object()
 
+        print('------------------------------------------------------------------  1')
         # Only allow canceling pending or expired (not finalized)
         if payment_instance.payment_status in ["confirmed", "rejected", "canceled"]:
             return Response(

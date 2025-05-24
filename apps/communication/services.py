@@ -4,6 +4,8 @@ from django.utils.timezone import now
 from django.contrib.auth import get_user_model
 from django.template import Template, Context
 from datetime import datetime
+from django.utils import timezone
+
 
 from .models import EmailCampaign, EmailLog, UnsubscribedUser, ExternalContact
 from utils.email.email_tools import send_custom_email
@@ -124,9 +126,11 @@ def send_campaign_email_batch(campaign_id):
             'first_name': user.name,
             'username': user.username,
             'site_domain': settings.SITE_URL,
+            "logo_base_url": settings.EMAIL_LOGO_URL,
+            "current_year": timezone.now().year,
             'unsubscribe_url': f"{settings.SITE_URL}/communication/unsubscribe/{token}/",
         }
-
+        
         # ✅ Add resubscribe link only for reengagement campaigns
         if campaign.target_group == 'reengagement':
             context['resubscribe_url'] = f"{settings.SITE_URL}/communication/resubscribe/{token}/"
@@ -249,6 +253,8 @@ def send_external_email_campaign(campaign):
             'first_name': row.get("name", "Friend"),
             'username': row.get("name", "guest_user"),
             'site_domain': settings.SITE_URL,
+            "logo_base_url": settings.EMAIL_LOGO_URL,
+            "current_year": timezone.now().year,
             'unsubscribe_url': unsubscribe_url,
         }
 

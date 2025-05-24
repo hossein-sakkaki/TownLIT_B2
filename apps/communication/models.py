@@ -10,6 +10,14 @@ from django.contrib.auth import get_user_model
 
 CustomUser = get_user_model()
 
+
+class LongRichTextUploadingField(RichTextUploadingField):
+    def db_type(self, connection):
+        if connection.vendor == 'mysql':
+            return 'LONGTEXT'
+        return super().db_type(connection)
+    
+
 # EMAIL TEMPLATE Model ----------------------------------------------------------------
 class EmailTemplate(models.Model):
     name = models.CharField(max_length=100, unique=True, verbose_name="Template Name")
@@ -21,7 +29,7 @@ class EmailTemplate(models.Model):
         help_text="Choose the layout this template will use when rendered in emails."
     )
     subject_template = models.CharField(max_length=255, verbose_name="Subject")
-    body_template = RichTextUploadingField(verbose_name="HTML Body")
+    body_template = LongRichTextUploadingField(verbose_name="HTML Body")
     created_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -45,7 +53,7 @@ class EmailCampaign(models.Model):
         help_text="If enabled, email will be sent even to users who unsubscribed."
     )
     template = models.ForeignKey(EmailTemplate, on_delete=models.SET_NULL, null=True, blank=True)
-    custom_html = RichTextUploadingField(blank=True, verbose_name="Custom Email Body (Optional)")
+    custom_html = LongRichTextUploadingField(blank=True, verbose_name="Custom Email Body (Optional)")
     subject = models.CharField(max_length=255)
     target_group = models.CharField(max_length=50, choices=TARGET_GROUP_CHOICES, default=ALL_ACTIVE)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=DRAFT)
@@ -109,7 +117,8 @@ class DraftCampaign(models.Model):
 class ExternalEmailCampaign(models.Model):
     title = models.CharField(max_length=255, verbose_name="Campaign Title")
     subject = models.CharField(max_length=255, verbose_name="Email Subject")
-    html_body = RichTextUploadingField(verbose_name="Custom Email Body (Optional)")
+    template = models.ForeignKey(EmailTemplate, on_delete=models.SET_NULL, null=True, blank=True)
+    html_body = LongRichTextUploadingField(verbose_name="Custom Email Body (Optional)")
     csv_file = models.FileField(upload_to='external_campaigns/', verbose_name="CSV File with Emails")
     created_by = models.ForeignKey(
         CustomUser,

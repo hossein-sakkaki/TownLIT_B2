@@ -6,7 +6,11 @@ from django.template import Template, Context
 from django.utils import timezone
 
 from .models import UnsubscribedUser, EmailTemplate, ExternalEmailCampaign, EmailCampaign
-from utils.email.token_generator import validate_email_opt_token, validate_external_email_token
+from utils.email.token_generator import (
+    validate_email_opt_token, validate_external_email_token,
+    generate_email_opt_token
+)
+
 from django.contrib.auth import get_user_model
 from utils.common.file_reader import read_csv_or_json
 from .models import ExternalEmailCampaign
@@ -52,6 +56,8 @@ class EmailCampaignPreviewView(APIView):
 class ExternalCampaignPreviewView(View):
     def get(self, request, pk):
         campaign = get_object_or_404(ExternalEmailCampaign, pk=pk)
+        template = campaign.template
+        layout = template.layout if template else LAYOUT_BASE_SITE
 
         try:
             with campaign.csv_file.open('rb') as f:
@@ -60,7 +66,7 @@ class ExternalCampaignPreviewView(View):
                 raise ValueError("No data found in uploaded file.")
             first_row = rows[0]
         except Exception as e:
-            return render(request, "emails/newsletter/base_newsletter.html", {
+            return render(request, f'{layout}.html', {
                 "subject": "Error",
                 "content": f"<p>❌ Failed to load sample data: {e}</p>",
                 "site_domain": settings.SITE_URL,
@@ -81,7 +87,7 @@ class ExternalCampaignPreviewView(View):
             **first_row
         }
 
-        return render(request, "emails/newsletter/base_newsletter.html", context)
+        return render(request, f'{layout}.html', context)
 
 
 # Unsubscribe HTML View -----------------------------------------------------------------
@@ -89,33 +95,64 @@ class UnsubscribeHTMLView(View):
     def get(self, request, token):
         try:
             user = validate_email_opt_token(token)
-            user = get_object_or_404(CustomUser, user=user)
             if not user:
                 return render(request, "communication/unsubscribe_failed.html", status=400)
 
             UnsubscribedUser.objects.get_or_create(user=user)
-            profile_url = f"{settings.FRONTEND_BASE_URL}/"
-            return render(request, "communication/unsubscribe_success.html", {
-                "profile_url": profile_url
-            })
+            resubscribe_token = generate_email_opt_token(user.id)
+            context = {
+                "profile_url": f"{settings.FRONTEND_BASE_URL}/",
+                "user": user,
+                "site_domain": settings.SITE_URL,
+                "logo_base_url": settings.EMAIL_LOGO_URL,
+                "current_year": timezone.now().year,
+                "resubscribe_url": f"{settings.SITE_URL}/communication/resubscribe/{resubscribe_token}/",
+            }
+            return render(request, "communication/unsubscribe_success.html", context)
 
-        except Exception:
-            return render(request, "communication/unsubscribe_failed.html", status=400)
+        except Exception as e:
+            context = {
+                "site_domain": settings.SITE_URL,
+                "logo_base_url": settings.EMAIL_LOGO_URL,
+                "current_year": timezone.now().year,
+                "support_email": "support@townlit.com",
+            }
+            return render(request, "communication/unsubscribe_failed.html", context, status=400)
+
         
 
 # Resubscribe HTML View -----------------------------------------------------------------
 class ResubscribeView(APIView):
     def get(self, request, token):
-        user = validate_email_opt_token(token)
-        if user:
+        try:
+            user = validate_email_opt_token(token)
+            if not user:
+                raise ValueError("Invalid or expired token.")
 
-            profile_url = f"{settings.FRONTEND_BASE_URL}/"
             UnsubscribedUser.objects.filter(user=user).delete()
-            return render(request, "communication/resubscribe_success.html", {
+            new_token = generate_email_opt_token(user.id)
+
+            context = {
+                "profile_url": f"{settings.FRONTEND_BASE_URL}/",
                 "user": user,
-                "profile_url": profile_url
-            })
-        return render(request, "communication/resubscribe_failed.html", status=400)
+                "first_name": getattr(user, "name", "Friend"),
+                "username": getattr(user, "username", ""),
+                "site_domain": settings.SITE_URL,
+                "logo_base_url": settings.EMAIL_LOGO_URL,
+                "current_year": timezone.now().year,
+                "unsubscribe_url": f"{settings.SITE_URL}/communication/unsubscribe/{new_token}/",
+            }
+            return render(request, "communication/resubscribe_success.html", context)
+
+        except Exception:
+            context = {
+                "site_domain": settings.SITE_URL,
+                "logo_base_url": settings.EMAIL_LOGO_URL,
+                "current_year": timezone.now().year,
+                "support_email": "support@townlit.com"
+            }
+            return render(request, "communication/resubscribe_failed.html", context, status=400)
+
     
     
 # External Unsubscribe View -----------------------------------------------------------------

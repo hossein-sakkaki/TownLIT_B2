@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import PaymentSubscription, PaymentDonation, PaymentAdvertisement, PaymentInvoice, PaymentShoppingCart, Pricing
+from .models import PaymentSubscription, PaymentDonation, PaymentAdvertisement, PaymentInvoice, PaymentShoppingCart, Pricing, Payment
 from apps.posts.serializers import SimpleOrganizationSerializer, SimpleCustomUserSerializer
 
 
@@ -87,6 +87,15 @@ class PaymentShoppingCartSerializer(serializers.ModelSerializer):
         return data
         
         
+        
+# PAYMENT  Serializer ------------------------------------------------------------------------------
+class PaymentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Payment
+        fields = '__all__'
+
+
+
 # PAYMENT INVOICE Serializer ------------------------------------------------------------------------
 class PaymentInvoiceSerializer(serializers.ModelSerializer):
     payment = serializers.PrimaryKeyRelatedField(queryset=PaymentSubscription.objects.all())
