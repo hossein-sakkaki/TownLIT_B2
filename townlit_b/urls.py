@@ -13,19 +13,22 @@ urlpatterns = [
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     
     path('', include('apps.main.urls')),
-    path('accounts/', include('apps.accounts.urls', namespace='accounts')),
-    path('profiles/', include('apps.profiles.urls', namespace='profiles')),
-    path('profiles_org/', include('apps.profilesOrg.urls', namespace='profiles_org')),
-    path('posts/', include('apps.posts.urls', namespace='posts')),
-    path('sanctuary/', include('apps.sanctuary.urls', namespace='sanctuary')),
+    
+    path('accounts/', include('apps.accounts.urls')),
+    path('profiles/', include('apps.profiles.urls')),
+    path('profiles_org/', include('apps.profilesOrg.urls')),
+    path('posts/', include('apps.posts.urls')),
+    path('sanctuary/', include('apps.sanctuary.urls')),
     path('conversations/', include('apps.conversation.urls')),
     path('communication/', include('apps.communication.urls')),
     path('moderation/', include('apps.moderation.urls')),
 
-    path('store/', include('apps.store.urls', namespace='store')),
-    path('products/', include('apps.products.urls', namespace='products')),
-    path('orders/', include('apps.orders.urls', namespace='orders')),
-    path('payment/', include('apps.payment.urls', namespace='payment')),
-    path('warehouse/', include('apps.warehouse.urls', namespace='warehouse')),
+    path('store/', include('apps.store.urls')),
+    path('products/', include('apps.products.urls')),
+    path('orders/', include('apps.orders.urls')),
+    path('payment/', include('apps.payment.urls')),
+    path('warehouse/', include('apps.warehouse.urls')),
+    
+    path('api/v1/', include('api.v1.api_urls')),
     
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

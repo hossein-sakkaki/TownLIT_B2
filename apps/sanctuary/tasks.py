@@ -4,7 +4,7 @@ from datetime import timedelta
 from .models import SanctuaryReview, SanctuaryRequest, SanctuaryOutcome
 from apps.sanctuary.signals.signals import distribute_to_verified_members, finalize_sanctuary_outcome
 from apps.notifications.models import Notification
-from apps.config.sanctuary_constants import PENDING
+from apps.sanctuary.constants import PENDING
 import logging
 from django.contrib.auth import get_user_model
 

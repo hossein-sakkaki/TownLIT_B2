@@ -8,6 +8,7 @@ from .models import (
                 Church, MissionOrganization, ChristianPublishingHouse, ChristianCounselingCenter, CounselingService,  
                 WorshipStyle, ChristianWorshipMinistry, ChristianConferenceCenter, ChristianEducationalInstitution,  
                 ChristianChildrenOrganization, ChristianYouthOrganization, ChristianWomensOrganization, ChristianMensOrganization, Service,
+                OrganizationService
             )
 # from .forms import OrganizationManagerForm
 from apps.profiles.models import Member
@@ -79,6 +80,15 @@ class VotingHistoryAdmin(admin.ModelAdmin):
         request._obj_ = obj
         return super().get_form(request, obj, **kwargs)
 
+
+# ORGANIZATION SERVICE CATEGORY Admin ---------------------------------------------------
+@admin.register(OrganizationService)
+class OrganizationServiceAdmin(admin.ModelAdmin):
+    list_display = ['name', 'description', 'is_active']
+    search_fields = ['name', 'description']
+    list_editable = ['is_active']
+    list_filter = ['is_active']
+    
 
 # ORGANIZATION Admin ----------------------------------------------------------------------------------------
 @admin.register(Organization)

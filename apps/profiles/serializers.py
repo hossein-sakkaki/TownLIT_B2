@@ -6,16 +6,16 @@ from .models import (
                 Friendship, Fellowship, MemberServiceType,AcademicRecord,
                 Member, GuestUser,
                 ClientRequest, Client, Customer, MigrationHistory,
-                SpiritualGift, SpiritualGiftSurveyQuestion, SpiritualGiftSurveyResponse, MemberSpiritualGifts
+                SpiritualGift, SpiritualGiftSurveyQuestion, SpiritualGiftSurveyResponse, MemberSpiritualGifts,
+                SpiritualService
             )
 from apps.profilesOrg.serializers import OrganizationSerializer
 from apps.posts.serializers import SimpleOrganizationSerializer, SimpleCustomUserSerializer
 from apps.accounts.serializers import (
-                                AddressSerializer, SpiritualServiceSerializer,
+                                AddressSerializer, SimpleCustomUserSerializer,
                                 CustomUserSerializer, PublicCustomUserSerializer, LimitedCustomUserSerializer, 
-                                SimpleCustomUserSerializer, SpiritualServiceSerializer
                             )
-from apps.config.profiles_constants import FRIENDSHIP_STATUS_CHOICES, FELLOWSHIP_RELATIONSHIP_CHOICES, RECIPROCAL_FELLOWSHIP_CHOICES, RECIPROCAL_FELLOWSHIP_MAP
+from apps.profiles.constants import FRIENDSHIP_STATUS_CHOICES, FELLOWSHIP_RELATIONSHIP_CHOICES, RECIPROCAL_FELLOWSHIP_CHOICES, RECIPROCAL_FELLOWSHIP_MAP
 from django.contrib.auth import get_user_model
 
 CustomUser = get_user_model()
@@ -177,6 +177,15 @@ class MigrationHistorySerializer(serializers.ModelSerializer):
         fields = ['user', 'migration_type', 'migration_date']
 
 
+
+# MEMBER SERVICE TYPE Serializers -------------------------------------------------------------
+class SpiritualServiceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SpiritualService
+        fields = '__all__'
+        read_only_fields = ['id','is_active']
+        
+        
 # MEMBER SERVICE Serializer -----------------------------------------------------------------------------------
 class MemberServiceTypeSerializer(serializers.ModelSerializer):
     service = SpiritualServiceSerializer(read_only=True)

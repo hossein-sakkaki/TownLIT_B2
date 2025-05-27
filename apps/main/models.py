@@ -12,7 +12,7 @@ from validators.mediaValidators.video_validators import validate_video_file
 from validators.mediaValidators.image_validators import validate_image_file, validate_image_size
 from validators.security_validators import validate_no_executable_file
 
-from apps.config.constants import (
+from .constants import (
                             TERMS_AND_POLICIES_CHOICES, LOG_ACTION_CHOICES, 
                             POLICY_DISPLAY_LOCATION_CHOICES, FOOTER_COLUMN_CHOICES, DISPLAY_IN_OFFICIAL,
                             USER_FEEDBACK_STATUS_CHOICES

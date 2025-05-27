@@ -9,7 +9,7 @@ from .models import (
                 ChristianCounselingCenter, CounselingService, WorshipStyle, ChristianWorshipMinistry,
                 ChristianConferenceCenter, ChristianEducationalInstitution,
                 ChristianChildrenOrganization, ChristianYouthOrganization, ChristianWomensOrganization, ChristianMensOrganization,
-                Service
+                Service, OrganizationService
             )
 from apps.posts.serializers import SimpleOrganizationSerializer, SimpleMemberSerializer
 from apps.accounts.serializers import AddressSerializer, SocialMediaLinkSerializer
@@ -58,6 +58,15 @@ class VotingHistorySerializer(serializers.ModelSerializer):
             'total_votes', 'votes_required',  'voted_users',  'non_voted_users', 'description'
         ]
         read_only_fields = ['id', 'created_at', 'total_votes']
+
+
+
+# ORGANIZATION SERVICE CATEGORY Serializers ---------------------------------------------------
+class OrganizationServiceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OrganizationService
+        fields = '__all__'
+        read_only_fields = ['id','is_active']
 
 
 # ORGANIZATION Serializer -------------------------------------------------------------------------

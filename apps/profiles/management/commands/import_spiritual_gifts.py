@@ -1,6 +1,6 @@
 from django.core.management.base import BaseCommand
 from apps.profiles.models import SpiritualGift
-from apps.config.gift_constants import GIFT_CHOICES, GIFT_DESCRIPTIONS
+from apps.profiles.gift_constants import GIFT_CHOICES, GIFT_DESCRIPTIONS
 from django.utils.translation import gettext as _
 
 

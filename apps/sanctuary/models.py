@@ -1,7 +1,7 @@
 from django.db import models
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
-from apps.config.sanctuary_constants import (
+from apps.sanctuary.constants import (
                                         POST_REPORT_CHOICES, ACCOUNT_REPORT_CHOICES,
                                         REQUEST_TYPE_CHOICES, REQUEST_STATUS_CHOICES,
                                         POST_REQUEST, ACCOUNT_REQUEST, PENDING,

@@ -8,8 +8,8 @@ from rest_framework.permissions import IsAuthenticated, IsAdminUser
 
 from .models import SanctuaryRequest, SanctuaryOutcome, SanctuaryReview
 from .serializers import SanctuaryRequestSerializer, SanctuaryOutcomeSerializer, SanctuaryReviewSerializer
-from apps.config.sanctuary_constants import SENSITIVE_CATEGORIES
-from apps.main.permissions import IsSanctuaryVerifiedMember
+from apps.sanctuary.constants import SENSITIVE_CATEGORIES
+from common.permissions import IsSanctuaryVerifiedMember
 
 
 from .signals.signals import (

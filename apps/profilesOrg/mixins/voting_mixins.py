@@ -8,7 +8,7 @@ from rest_framework import status
 
 from apps.profiles.models import Member
 from apps.profilesOrg.models import OrganizationManager, VotingHistory
-from apps.main.permissions import IsFullAccessAdmin
+from common.permissions import IsFullAccessAdmin
 
 import logging
 logger = logging.getLogger(__name__)

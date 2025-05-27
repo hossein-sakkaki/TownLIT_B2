@@ -7,7 +7,7 @@ from django.conf import settings
 from apps.profilesOrg.models import Organization
 from apps.orders.models import ShoppingCart, Order
 from apps.accounts.models import Address
-from apps.config.payment_constants import (
+from apps.payment.constants import (
                                     PAYMENT_STATUS_CHOICES, PENDING,
                                     PRICING_TYPE_CHOICES, DURATION_CHOICES, BILLING_CYCLE_CHOICES
                                 )

@@ -8,8 +8,6 @@ from django.utils.html import format_html
 from .forms import UserCreationForm, UserChangeForm
 from .models import (
                 Address, CustomLabel, SocialMediaType, SocialMediaLink,
-                OrganizationService, 
-                SpiritualService,
                 InviteCode
             )
 from apps.profiles.models import Friendship
@@ -55,22 +53,6 @@ class SocialMediaTypeAdmin(admin.ModelAdmin):
 #     list_filter = ['social_media_type', 'is_active']
 #     autocomplete_fields = ['social_media_type']
 
-# ORGANIZATION SERVICE CATEGORY Admin ---------------------------------------------------
-@admin.register(OrganizationService)
-class OrganizationServiceAdmin(admin.ModelAdmin):
-    list_display = ['name', 'description', 'is_active']
-    search_fields = ['name', 'description']
-    list_editable = ['is_active']
-    list_filter = ['is_active']
-
-# SPIRITUAL SERVICE Admin ---------------------------------------------------------------
-@admin.register(SpiritualService)
-class SpiritualServiceAdmin(admin.ModelAdmin):
-    list_display = ['name', 'color', 'description', 'is_active']
-    search_fields = ['name', 'description']
-    list_editable = ['is_active']
-    list_filter = ['is_active']
-    list_display_links = ['name']
 
 # Friendship Inline Admin -------------------------------------------------------------    
 class FriendshipInline(admin.TabularInline):

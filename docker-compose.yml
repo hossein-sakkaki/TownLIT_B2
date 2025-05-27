@@ -1,0 +1,77 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: townlit_backend
+    restart: always
+    env_file:
+      - .env.production
+    ports:
+      - "8000:8000"
+    depends_on:
+      - mysql
+      - redis
+    volumes:
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    entrypoint: /entrypoint_backend.sh
+    command: []
+
+  mysql:
+    image: mysql:8
+    container_name: townlit_mysql
+    restart: always
+    env_file:
+      - .env.production
+    environment:
+      MYSQL_DATABASE: ${DATABASE_NAME}
+      MYSQL_USER: ${DATABASE_USER}
+      MYSQL_PASSWORD: ${DATABASE_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "3307:3306"
+
+  redis:
+    image: redis:7
+    container_name: townlit_redis
+    restart: always
+
+  celery:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: townlit_celery
+    entrypoint: /entrypoint_worker.sh
+    command: celery -A townlit_b worker -l info
+    depends_on:
+      - backend
+      - redis
+    env_file:
+      - .env.production
+    volumes:
+      - media_volume:/app/media
+
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: townlit_celery_beat
+    entrypoint: /entrypoint_worker.sh
+    command: celery -A townlit_b beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    depends_on:
+      - backend
+      - redis
+    env_file:
+      - .env.production
+    volumes:
+      - media_volume:/app/media
+
+volumes:
+  static_volume:
+  media_volume:
+  mysql_data:

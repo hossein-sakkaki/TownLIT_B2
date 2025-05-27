@@ -23,6 +23,11 @@ Thumbs.db
 
 # Ignore env vars or local config
 .env
+.env.example
 
 # Ignore User Information
 accounts/scripts/data/*.json
+
+# Prevent secrets from being tracked by Git
+.env.production
+

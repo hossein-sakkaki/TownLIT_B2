@@ -5,7 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
 from .models import Warehouse, WarehouseInventory, StockMovement
 from .serializers import WarehouseSerializer, WarehouseInventorySerializer, StockMovementSerializer
-from apps.main.permissions import IsFullAccessAdmin, IsLimitedAccessAdmin
+from common.permissions import IsFullAccessAdmin, IsLimitedAccessAdmin
 
 
 # WAREHOUSE ViewSet ---------------------------------------------------------------------

@@ -1,7 +1,6 @@
 from django.contrib import admin
 from django.utils.html import format_html
 from django.utils.translation import gettext as _
-from django.utils import timezone
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.admin import GenericTabularInline
 
@@ -14,7 +13,8 @@ from .models import (
                 Client, ClientRequest,
                 Customer,
                 SpiritualGift, SpiritualGiftSurveyQuestion,
-                SpiritualGiftSurveyResponse, MemberSpiritualGifts
+                SpiritualGiftSurveyResponse, MemberSpiritualGifts,
+                SpiritualService
             )
 from apps.profilesOrg.models import OrganizationManager
 
@@ -77,6 +77,15 @@ admin.site.register(MigrationHistory, MigrationHistoryAdmin)
 
 
 # MEMBER ADMIN Manager ----------------------------------------------------------- 
+# SPIRITUAL SERVICE Admin
+@admin.register(SpiritualService)
+class SpiritualServiceAdmin(admin.ModelAdmin):
+    list_display = ['name', 'color', 'description', 'is_active']
+    search_fields = ['name', 'description']
+    list_editable = ['is_active']
+    list_filter = ['is_active']
+    list_display_links = ['name']
+    
 # Member Service
 @admin.register(MemberServiceType)
 class MemberServiceTypeAdmin(admin.ModelAdmin):

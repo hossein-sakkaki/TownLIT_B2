@@ -2,6 +2,13 @@
 """Django's command-line utility for administrative tasks."""
 import os
 import sys
+from dotenv import load_dotenv
+from pathlib import Path
+
+
+# ✅ Load .env.production file manually when running locally
+env_path = Path(__file__).resolve().parent / '.env.production'
+load_dotenv(dotenv_path=env_path)
 
 
 def main():

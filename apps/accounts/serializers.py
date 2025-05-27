@@ -3,13 +3,12 @@ from django.contrib.contenttypes.models import ContentType
 from django.conf import settings
 from .models import (
                 Address, CustomLabel, SocialMediaType, SocialMediaLink,
-                OrganizationService, 
-                SpiritualService,
                 UserDeviceKey,
                 InviteCode
             )
 from apps.profilesOrg.models import Organization
-from common.validators import validate_email_field, validate_password_field
+from validators.user_validators import validate_email_field, validate_password_field
+
 import logging
 from django.contrib.auth import get_user_model
 
@@ -282,22 +281,6 @@ class SocialMediaLinkReadOnlySerializer(serializers.ModelSerializer):
         elif obj.content_object == self.context['request'].user:
             return {"type": "user", "username": obj.content_object.username}
         return None
-
-
-# ORGANIZATION SERVICE CATEGORY Serializers ---------------------------------------------------
-class OrganizationServiceSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = OrganizationService
-        fields = '__all__'
-        read_only_fields = ['id','is_active']
-
-
-# MEMBER SERVICE TYPE Serializers -------------------------------------------------------------
-class SpiritualServiceSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = SpiritualService
-        fields = '__all__'
-        read_only_fields = ['id','is_active']
 
 
 # CustomUser Serializers -----------------------------------------------------------------------

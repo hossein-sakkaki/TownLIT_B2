@@ -8,7 +8,7 @@ from apps.sanctuary.models import SanctuaryRequest, SanctuaryReview, SanctuaryOu
 from apps.posts.models import Moment, Testimony, Pray, Announcement, Lesson, Preach, Worship, Witness, Library
 from apps.profiles.models import Member
 from apps.profilesOrg.models import Organization
-from apps.config.sanctuary_constants import SENSITIVE_CATEGORIES
+from apps.sanctuary.constants import SENSITIVE_CATEGORIES
 from apps.notifications.models import Notification
 from django.contrib.auth import get_user_model
 

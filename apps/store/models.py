@@ -5,13 +5,12 @@ from apps.accounts.models import Address
 from utils.common.utils import FileUpload, SlugMixin
 from apps.profilesOrg.models import Organization
 from apps.products.models import Product
-from common.validators import (
-                            validate_image_or_video_file,
-                            validate_pdf_file,
-                            validate_no_executable_file,
-                            validate_phone_number
-                        )
-from apps.config.store_constants import STORE_PRODUCT_CATEGORY_CHOICES, CURRENCY_CHOICES, USD
+from validators.user_validators import validate_phone_number
+from validators.mediaValidators.pdf_validators import validate_pdf_file
+from validators.mediaValidators.image_validators import validate_image_file, validate_image_size
+from validators.security_validators import validate_no_executable_file
+
+from apps.store.store_constants import STORE_PRODUCT_CATEGORY_CHOICES, CURRENCY_CHOICES, USD
 from django.contrib.auth import get_user_model
 
 CustomUser = get_user_model()
@@ -36,7 +35,7 @@ class Store(SlugMixin):
     organization = models.OneToOneField(Organization, on_delete=models.CASCADE, db_index=True, related_name='store_details', verbose_name='Store Detail')
     custom_service_name = models.CharField(max_length=100, null=True, blank=True, verbose_name='Custom Service Name')
     description = models.TextField(null=True, blank=True, verbose_name='Store Description')
-    store_logo = models.ImageField(upload_to=LOGO_UPLOAD.dir_upload, null=True, blank=True, validators=[validate_image_or_video_file, validate_no_executable_file], verbose_name='Store Logo')
+    store_logo = models.ImageField(upload_to=LOGO_UPLOAD.dir_upload, null=True, blank=True, validators=[validate_image_file, validate_image_size, validate_no_executable_file], verbose_name='Store Logo')
     store_phone_number = models.CharField(max_length=20, null=True, blank=True, validators=[validate_phone_number], verbose_name='Store Contact Number')
     store_address = models.ForeignKey(Address, on_delete=models.SET_NULL, null=True, related_name='store_address', verbose_name='Store Address')
 

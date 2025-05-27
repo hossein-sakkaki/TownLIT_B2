@@ -5,7 +5,7 @@ from apps.store.models import Store
 from apps.accounts.models import CustomUser
 from apps.profiles.models import Customer, Address
 
-from apps.config.orders_constants import (
+from apps.orders.constants import (
                                 ORDER_STATUS_CHOICES,
                                 DELIVERY_ORDER_STATUS_CHOICES, DELIVERY_IN_PAYMENT,
                                 RETURN_ORDER_STATUS_CHOICES, PENDING

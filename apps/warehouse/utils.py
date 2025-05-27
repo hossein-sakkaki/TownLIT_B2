@@ -2,7 +2,7 @@
 from django.utils import timezone
 from apps.orders.models import OrderItem
 from .models import TemporaryReservation
-from apps.config.warehouse_constans import TEMPORARY_RESERVATION_DURATION
+from apps.warehouse.constans import TEMPORARY_RESERVATION_DURATION
 
 
 

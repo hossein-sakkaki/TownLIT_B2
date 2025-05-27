@@ -1,6 +1,6 @@
 from django.core.management.base import BaseCommand
 from apps.accounts.models import SocialMediaType
-from apps.config.accounts_constants import SOCIAL_MEDIA_DATA
+from apps.accounts.constants import SOCIAL_MEDIA_DATA
 
 class Command(BaseCommand):
     help = "Seed the SocialMediaType table with predefined data"

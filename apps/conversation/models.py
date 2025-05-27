@@ -11,14 +11,12 @@ import uuid
 from django.utils.crypto import get_random_string
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from apps.config.conversation_constants import (
+from apps.conversation.constants import (
     DELETE_POLICY_CHOICES, MESSAGE_POLICY_CHOICES, KEEP, 
     GROUP_ROLE_CHOICES, PARTICIPANT, SYSTEM_MESSAGE_EVENT_CHOICES,
 )
-from common.validators import (
-                                validate_image_or_video_file,
-                                validate_no_executable_file,
-                            )
+from validators.mediaValidators.image_validators import validate_image_file, validate_image_size
+from validators.security_validators import validate_no_executable_file
 
 def get_upload_path(category, file_type, sub_folder):
     """ Import FileUpload dynamically to avoid circular import issues. """
@@ -30,7 +28,7 @@ def get_upload_path(category, file_type, sub_folder):
 class Dialogue(models.Model):
     id = models.BigAutoField(primary_key=True)
     name = models.CharField(max_length=255, blank=True, null=True, verbose_name="Group Name")
-    group_image = models.ImageField(upload_to=get_upload_path('conversation', 'cover', 'group'), validators=[validate_image_or_video_file, validate_no_executable_file], blank=True, null=True, verbose_name="Group Image")
+    group_image = models.ImageField(upload_to=get_upload_path('conversation', 'cover', 'group'), validators=[validate_image_file, validate_image_size, validate_no_executable_file], blank=True, null=True, verbose_name="Group Image")
 
     participants = models.ManyToManyField(settings.AUTH_USER_MODEL, related_name="dialogues")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Created At")

@@ -4,26 +4,26 @@ from django.utils import timezone
 from uuid import uuid4
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
-from apps.accounts.models import Address, SocialMediaLink
+from apps.accounts.models import Address
 from apps.profiles.models import Member
-from apps.accounts.models import OrganizationService
 from apps.posts.models import Testimony
-from apps.config.profiles_constants import EDUCATION_DEGREE_CHOICES
-from apps.config.constants import (
-                            DELIVERY_METHOD_CHOICES, TIMEZONE_CHOICES, 
-                            CHURCH_DENOMINATIONS_CHOICES,
-                        )
-from apps.config.organization_constants import (
+
+from apps.profiles.constants import EDUCATION_DEGREE_CHOICES
+from apps.profilesOrg.constants import (
                             LANGUAGE_CHOICES, ENGLISH, PROGRAM_NAME_CHOICES, ACCESS_LEVEL_CHOICES,
                             ORGANIZATION_TYPE_CHOICES, COUNSELING_SERVICE_CHOICES, PRICE_TYPE_CHOICES,
-                            WORSHIP_STYLE_CHOICES, INSTITUTION_TYPE_CHOICES, VOTING_TYPE_CHOICES, VOTING_RESULT_CHOICES
+                            WORSHIP_STYLE_CHOICES, INSTITUTION_TYPE_CHOICES, VOTING_TYPE_CHOICES, VOTING_RESULT_CHOICES,
+                            TIMEZONE_CHOICES, 
+                            CHURCH_DENOMINATIONS_CHOICES,
+                            ORGANIZATION_SERVICE_CATEGORY_CHOICES,
+                            DELIVERY_METHOD_CHOICES
                         )
-from common.validators import (
-                            validate_pdf_file,
-                            validate_no_executable_file,
-                            validate_phone_number,
-                            validate_image_or_video_file
-                        )
+
+from validators.user_validators import validate_phone_number
+from validators.mediaValidators.pdf_validators import validate_pdf_file
+from validators.mediaValidators.image_validators import validate_image_file, validate_image_size
+from validators.security_validators import validate_no_executable_file
+
 from utils.common.utils import FileUpload, SlugMixin
 from django.contrib.auth import get_user_model
 
@@ -81,6 +81,20 @@ class VotingHistory(models.Model):
 
     def __str__(self):
         return f"{self.get_voting_type_display()} - {self.organization.org_name}"
+    
+
+# ORGANIZATION SERVICE CATEGORY Manager ---------------------------------------------------------
+class OrganizationService(models.Model):
+    name = models.CharField(max_length=50, choices=ORGANIZATION_SERVICE_CATEGORY_CHOICES, unique=True, verbose_name='Organization Service')
+    description = models.CharField(max_length=500, null=True, blank=True, verbose_name='Description')
+    is_active = models.BooleanField(default=True, verbose_name='Is Active')
+
+    class Meta:
+        verbose_name = "Organization Service Category"
+        verbose_name_plural = "Organization Service Categories"
+
+    def __str__(self):
+        return self.name
 
 
 # ORGANIZATION Manager ------------------------------------------------------------------------------------
@@ -117,7 +131,7 @@ class Organization(SlugMixin):
     
     license_document = models.FileField(upload_to=LICENSE.dir_upload, blank=True, null=True, validators=[validate_pdf_file, validate_no_executable_file], verbose_name='License Document')
     license_expiry_date = models.DateField(blank=True, null=True, verbose_name='License Expiry Date')
-    logo = models.ImageField(upload_to=LOGO.dir_upload, default='media/sample/logo.png', validators=[validate_image_or_video_file, validate_no_executable_file], verbose_name='Logo')
+    logo = models.ImageField(upload_to=LOGO.dir_upload, default='media/sample/logo.png', validators=[validate_image_file, validate_image_size, validate_no_executable_file], verbose_name='Logo')
 
     # Voting System For Organizations
     voting_history = models.ManyToManyField(VotingHistory, related_name='voted_organizations', blank=True, verbose_name='Voting History')

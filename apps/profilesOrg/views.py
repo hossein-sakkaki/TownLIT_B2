@@ -32,7 +32,7 @@ from apps.profilesOrg.mixins.voting_mixins import (
                 FullAccessAdminMixin, LimitedAccessAdminMixin, VotingStatusMixin
             )
 from apps.notifications.models import Notification
-from apps.main.permissions import IsFullAccessAdmin
+from common.permissions import IsFullAccessAdmin
 import logging
 
 

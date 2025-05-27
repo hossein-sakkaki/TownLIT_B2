@@ -12,28 +12,30 @@ from uuid import uuid4
 
 
 from apps.accounts.models import Address
-from apps.config.constants import (
-                                DAYS_OF_WEEK_CHOICES, FREQUENCY_CHOICES,
-                                DELIVERY_METHOD_CHOICES, COPYRIGHT_CHOICES,
-                                REACTION_TYPE_CHOICES,
-                            )
-from apps.config.post_constants import (
-                                CHILDREN_EVENT_TYPE_CHOICES, YOUTH_EVENT_TYPE_CHOICES, WOMEN_EVENT_TYPE_CHOICES,
-                                MEN_EVENT_TYPE_CHOICES, SERVICE_EVENT_CHOICES, LITERARY_CATEGORY_CHOICES,
-                                MEDIA_CONTENT_CHOICES, RESOURCE_TYPE_CHOICES
-                            )
-from apps.config.organization_constants import (
+from .constants import (
+                    CHILDREN_EVENT_TYPE_CHOICES, YOUTH_EVENT_TYPE_CHOICES, WOMEN_EVENT_TYPE_CHOICES,
+                    MEN_EVENT_TYPE_CHOICES, SERVICE_EVENT_CHOICES, LITERARY_CATEGORY_CHOICES,
+                    MEDIA_CONTENT_CHOICES, RESOURCE_TYPE_CHOICES,
+                    DAYS_OF_WEEK_CHOICES, FREQUENCY_CHOICES, COPYRIGHT_CHOICES, REACTION_TYPE_CHOICES,
+                    DELIVERY_METHOD_CHOICES
+                )
+from apps.profilesOrg.constants import (
                                 PRICE_TYPE_CHOICES, ORGANIZATION_TYPE_CHOICES, CHRISTIAN_YOUTH_ORGANIZATION,
                                 CHRISTIAN_WOMENS_ORGANIZATION, CHRISTIAN_MENS_ORGANIZATION, CHRISTIAN_CHILDRENS_ORGANIZATION,
                             )
 
 from utils.common.utils import FileUpload, SlugMixin
-from common.validators import (
-                                validate_image_or_video_file,
-                                validate_audio_file,
-                                validate_pdf_file,
-                                validate_no_executable_file
-                            )
+
+# from validators.mediaValidators.image_or_video_validators import validate_image_or_video_file # در آینه باید حتما بررسی شود در فیلد به خاطر ویدیو و هم عکس
+
+from validators.mediaValidators.pdf_validators import validate_pdf_file
+from validators.mediaValidators.audio_validators import validate_audio_file
+from validators.mediaValidators.video_validators import validate_video_file
+from validators.mediaValidators.image_validators import validate_image_file, validate_image_size
+from validators.security_validators import validate_no_executable_file
+
+
+
 from django.contrib.auth import get_user_model
 
 CustomUser = get_user_model()
@@ -127,7 +129,7 @@ class ServiceEvent(SlugMixin):
     event_type = models.CharField(max_length=50, verbose_name='Event Type')
     custom_event_type = models.CharField(max_length=100, null=True, blank=True, verbose_name='Custom Event Type Name')
     
-    event_banner = models.ImageField(upload_to=BANNER.dir_upload, null=True, blank=True, validators=[validate_image_or_video_file], verbose_name='Event Banner')
+    event_banner = models.ImageField(upload_to=BANNER.dir_upload, null=True, blank=True, validators=[validate_image_file, validate_image_size, validate_no_executable_file], verbose_name='Event Banner')
     description = models.TextField(null=True, blank=True, verbose_name='Description')
     contact_information = models.CharField(max_length=255, null=True, blank=True, verbose_name='Contact Information')
 
@@ -201,9 +203,9 @@ class Testimony(SlugMixin):
     content = models.TextField(null=True, blank=True, verbose_name='Testimony Content')
     
     audio = models.FileField(upload_to=AUDIO.dir_upload, null=True, blank=True, validators=[validate_audio_file, validate_no_executable_file], verbose_name='Testimony Audio')
-    video = models.FileField(upload_to=VIDEO.dir_upload, null=True, blank=True, validators=[validate_image_or_video_file, validate_no_executable_file], verbose_name='Testimony Video')
-    thumbnail_1 = models.ImageField(upload_to=THUMBNAIL.dir_upload, null=True, blank=True, validators=[validate_image_or_video_file, validate_no_executable_file], verbose_name='Thumbnail 1')    #نیاز به دیفالت دارد 
-    thumbnail_2 = models.ImageField(upload_to=THUMBNAIL.dir_upload, null=True, blank=True, validators=[validate_image_or_video_file, validate_no_executable_file], verbose_name='Thumbnail 2')    #نیاز به دیفالت دارد 
+    video = models.FileField(upload_to=VIDEO.dir_upload, null=True, blank=True, validators=[validate_video_file, validate_no_executable_file], verbose_name='Testimony Video')
+    thumbnail_1 = models.ImageField(upload_to=THUMBNAIL.dir_upload, null=True, blank=True, validators=[validate_image_file, validate_image_size, validate_no_executable_file], verbose_name='Thumbnail 1')    #نیاز به دیفالت دارد 
+    thumbnail_2 = models.ImageField(upload_to=THUMBNAIL.dir_upload, null=True, blank=True, validators=[validate_image_file, validate_image_size, validate_no_executable_file], verbose_name='Thumbnail 2')    #نیاز به دیفالت دارد 
     
     org_tags = models.ManyToManyField('profilesOrg.Organization', blank=True, related_name='tagged_in_testimonies', db_index=True, verbose_name='Organization Tags')
     user_tags = models.ManyToManyField(CustomUser, blank=True, related_name='tagged_in_testimonies', db_index=True, verbose_name='User Tags')
@@ -313,7 +315,7 @@ class Pray(SlugMixin):
     id = models.BigAutoField(primary_key=True)  
     title = models.CharField(max_length=50, verbose_name='Pray Title')
     content = models.TextField(verbose_name='Pray Content')
-    image = models.ImageField(upload_to=IMAGE.dir_upload, validators=[validate_image_or_video_file], null=True, blank=True, verbose_name='Pray Image')
+    image = models.ImageField(upload_to=IMAGE.dir_upload, validators=[validate_image_file, validate_image_size, validate_no_executable_file], null=True, blank=True, verbose_name='Pray Image')
     parent = models.ForeignKey("Pray", on_delete=models.CASCADE, related_name='sub_prays', blank=True, null=True, verbose_name='Sub Pray')
 
     content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
@@ -355,7 +357,7 @@ class Announcement(SlugMixin):
     id = models.BigAutoField(primary_key=True)
     title = models.CharField(max_length=50, verbose_name='Title')
     description = models.CharField(max_length=500, verbose_name='Description')
-    image = models.ImageField(upload_to=IMAGE.dir_upload, validators=[validate_image_or_video_file], null=True, blank=True, verbose_name='Announcement Image')
+    image = models.ImageField(upload_to=IMAGE.dir_upload, validators=[validate_image_file, validate_image_size, validate_no_executable_file], null=True, blank=True, verbose_name='Announcement Image')
     meeting_type = models.CharField(max_length=10,choices=DELIVERY_METHOD_CHOICES, default='IN_PERSON', verbose_name='Meeting Type')
     url_link = models.URLField(max_length=400, null=True, blank=True, verbose_name='Meeting Link')
     link_sticker_text = models.CharField(max_length=50, null=True, blank=True, verbose_name='Link Sticker Text')
@@ -405,9 +407,9 @@ class Lesson(SlugMixin):
     out_town_teachers = models.CharField(max_length=200, null=True, blank=True, db_index=True, verbose_name='Teacher out TownLIT')
     description = models.CharField(max_length=500, null=True, blank=True, verbose_name='Description')
     
-    image = models.ImageField(upload_to=IMAGE.dir_upload, null=True, blank=True, validators=[validate_image_or_video_file], verbose_name='Image Lesson') # Default needed
+    image = models.ImageField(upload_to=IMAGE.dir_upload, null=True, blank=True, validators=[validate_image_file, validate_image_size, validate_no_executable_file], verbose_name='Image Lesson') # Default needed
     audio = models.FileField(upload_to=AUDIO.dir_upload, null=True, blank=True, validators=[validate_audio_file, validate_no_executable_file], verbose_name='Audio Lesson')
-    video = models.FileField(upload_to=VIDEO.dir_upload, null=True, blank=True, validators=[validate_image_or_video_file, validate_no_executable_file], verbose_name='Video Lesson')
+    video = models.FileField(upload_to=VIDEO.dir_upload, null=True, blank=True, validators=[validate_video_file, validate_no_executable_file], verbose_name='Video Lesson')
     parent = models.ForeignKey("Lesson", on_delete=models.CASCADE, related_name='sub_lessons', blank=True, null=True, verbose_name='Sub Lesson')
    
     view = models.PositiveSmallIntegerField(default=0, verbose_name="View Number")
@@ -448,8 +450,8 @@ class Preach(SlugMixin):
     in_town_preacher = models.ForeignKey('profiles.Member', on_delete=models.CASCADE, null=True, blank=True, db_index=True, verbose_name='Preacher In TownLIT')
     out_town_preacher = models.CharField(max_length=200, null=True, blank=True, db_index=True, verbose_name='Preacher out TownLIT')
     
-    image = models.ImageField(upload_to=IMAGE.dir_upload, validators=[validate_image_or_video_file], null=True, blank=True, verbose_name='Lesson Image')
-    video = models.FileField(upload_to=VIDEO.dir_upload, null=True, blank=True, validators=[validate_image_or_video_file, validate_no_executable_file], verbose_name='Lesson Video')
+    image = models.ImageField(upload_to=IMAGE.dir_upload, validators=[validate_image_file, validate_image_size, validate_no_executable_file], null=True, blank=True, verbose_name='Lesson Image')
+    video = models.FileField(upload_to=VIDEO.dir_upload, null=True, blank=True, validators=[validate_video_file, validate_no_executable_file], verbose_name='Lesson Video')
      
     view = models.PositiveSmallIntegerField(default=0, verbose_name="View Number")
     published_at = models.DateTimeField(default=timezone.now, verbose_name='Published Date')
@@ -493,9 +495,9 @@ class Worship(SlugMixin):
     out_town_leaders = models.CharField(max_length=200, null=True, blank=True, db_index=True, verbose_name='Leaders out TownLIT')
     worship_resources = models.ManyToManyField(Resource, blank=True, related_name='worship_resources', verbose_name='Worship Resources')
 
-    image = models.ImageField(upload_to=IMAGE.dir_upload, null=True, blank=True, validators=[validate_image_or_video_file, validate_no_executable_file], verbose_name='Worship Image') # Default Image needed
+    image = models.ImageField(upload_to=IMAGE.dir_upload, null=True, blank=True, validators=[validate_image_file, validate_image_size, validate_no_executable_file], verbose_name='Worship Image') # Default Image needed
     audio = models.FileField(upload_to=AUDIO.dir_upload, null=True, blank=True, validators=[validate_audio_file, validate_no_executable_file], verbose_name='Worship Audio')
-    video = models.FileField(upload_to=VIDEO.dir_upload, null=True, blank=True, validators=[validate_image_or_video_file, validate_no_executable_file], verbose_name='Worship Video')
+    video = models.FileField(upload_to=VIDEO.dir_upload, null=True, blank=True, validators=[validate_video_file, validate_no_executable_file], verbose_name='Worship Video')
     parent = models.ForeignKey("Worship", on_delete=models.CASCADE, related_name='sub_worship', blank=True, null=True, verbose_name='Sub Worship')
 
     view = models.PositiveSmallIntegerField(default=0, verbose_name="View Number")
@@ -576,7 +578,7 @@ class Library(SlugMixin):
     translator = models.CharField(max_length=50, null=True, blank=True, verbose_name='Translator')
     genre_type = models.CharField(max_length=50, choices=LITERARY_CATEGORY_CHOICES, verbose_name='Genre Type')
     
-    image = models.ImageField(upload_to=IMAGE.dir_upload, null=True, blank=True, validators=[validate_image_or_video_file, validate_no_executable_file], verbose_name='Book Image')  
+    image = models.ImageField(upload_to=IMAGE.dir_upload, null=True, blank=True, validators=[validate_image_file, validate_image_size, validate_no_executable_file], verbose_name='Book Image')  
     pdf_file = models.FileField(upload_to=FILE.dir_upload, null=True, blank=True, validators=[validate_pdf_file, validate_no_executable_file], verbose_name='Book File') 
 
     license_type = models.CharField(max_length=20, choices=COPYRIGHT_CHOICES, verbose_name='License Type')
@@ -617,7 +619,7 @@ class Mission(SlugMixin):
     IMAGE_OR_VIDEO = FileUpload('posts','image_or_video','mission')
     
     id = models.BigAutoField(primary_key=True)
-    image_or_video = models.FileField(upload_to=IMAGE_OR_VIDEO.dir_upload, null=True, blank=True, validators=[validate_image_or_video_file, validate_no_executable_file], verbose_name='Mission Image/Video')
+    image_or_video = models.FileField(upload_to=IMAGE_OR_VIDEO.dir_upload, null=True, blank=True, validators=[validate_image_file, validate_image_size, validate_no_executable_file, validate_no_executable_file], verbose_name='Mission Image/Video')
     mission_name = models.CharField(max_length=255, verbose_name='Mission Name')
     description = models.TextField(null=True, blank=True, verbose_name='Mission Description')
     start_date = models.DateField(default=timezone.now, verbose_name='Start Date')

@@ -11,8 +11,6 @@ router.register(r'donations', PaymentDonationViewSet, basename='paymentdonation'
 router.register(r'shopping-cart-payments', PaymentShoppingCartViewSet, basename='paymentshoppingcart')
 router.register(r'process', PaymentProcessViewSet, basename='payment-process')
 
-
-app_name = 'payment'
 urlpatterns = [
     path('', include(router.urls)),
     path('stripe/webhook/', stripe_webhook_view, name='stripe-webhook'),

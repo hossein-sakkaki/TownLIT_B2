@@ -112,6 +112,7 @@ MIDDLEWARE = [
     'django_otp.middleware.OTPMiddleware',  # 2FA
     
     'townlit_b.middleware.media_headers.AddMediaCORSHeadersMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
 
 ]
 
@@ -170,7 +171,8 @@ DATABASES = {
         'NAME': os.getenv('DATABASE_NAME'),
         'USER': os.getenv('DATABASE_USER'),
         'PASSWORD': os.getenv('DATABASE_PASSWORD'),
-        'HOST': os.getenv('DATABASE_HOST', '127.0.0.1'),
+        # 'HOST': os.getenv('DATABASE_HOST', '127.0.0.1'),
+        'HOST': os.getenv('DATABASE_HOST', 'mysql'),
         'PORT': os.getenv('DATABASE_PORT', '3306'),
         'OPTIONS': {
             'charset': 'utf8mb4',
@@ -216,11 +218,19 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/4.1/howto/static-files/
 
 STATIC_URL = '/static/'
-STATICFILES_DIRS = (os.path.join(BASE_DIR, 'static/'),)
+STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static')]
+
+STATIC_ROOT = '/app/staticfiles'
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media/')
 DEFAULT_PROFILE_IMAGE = 'sample/user.png'
+
+
+
+
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.1/ref/settings/#default-auto-field
@@ -295,21 +305,7 @@ if not FERNET_KEY:
 # Google API Key ---------------------------------------------------------------------
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 
-
-# Email Config -----------------------------------------------------------------------
-EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django_smtp_ssl.SSLEmailBackend')
-EMAIL_HOST = os.getenv('EMAIL_HOST', 'mail.sakkaki.com')
-EMAIL_PORT = int(os.getenv('EMAIL_PORT', 465))
-EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER')
-EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
-DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL')
-EMAIL_USE_SSL = os.getenv('EMAIL_USE_SSL', 'True').lower() in ('true', '1', 't')
-EMAIL_TIMEOUT = os.getenv('EMAIL_TIMEOUT', None)
-
-
 # Email Backend
-# EMAIL_BACKEND = 'django_ses.SESBackend'
-
 # AWS SES Configuration ---------------------------------------------------------------
 AWS_SES_ACCESS_KEY_ID = os.getenv('AWS_SES_ACCESS_KEY_ID')
 AWS_SES_SECRET_ACCESS_KEY = os.getenv('AWS_SES_SECRET_ACCESS_KEY')
@@ -455,7 +451,7 @@ STRIPE_CURRENCY = os.getenv('STRIPE_CURRENCY', 'CAD')
 
 
 # For Translate Languages --------------------------------------------------------------
-from apps.config.gift_constants import GIFT_LANGUAGE_CHOICES
+from apps.profiles.gift_constants import GIFT_LANGUAGE_CHOICES
 
 LANGUAGES = GIFT_LANGUAGE_CHOICES 
 

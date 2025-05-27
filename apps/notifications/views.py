@@ -8,8 +8,8 @@ from .serializers import UserNotificationPreferenceSerializer, NotificationSeria
 
 
 
-# MAIN NOTIFICATION Viewset -----------------------------------------------------------------------
-class MainNotificationViewSet(viewsets.ReadOnlyModelViewSet):
+# Notification ViewSet ---------------------------------------------------------------
+class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = NotificationSerializer
     permission_classes = [IsAuthenticated]
 
@@ -26,25 +26,6 @@ class MainNotificationViewSet(viewsets.ReadOnlyModelViewSet):
         self.perform_update(serializer)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
-
-# Notification ViewSet ---------------------------------------------------------------
-class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
-    serializer_class = NotificationSerializer
-    permission_classes = [IsAuthenticated]
-
-    def get_queryset(self):
-        return Notification.objects.filter(user=self.request.user)
-
-    def update(self, request, *args, **kwargs):
-        partial = kwargs.pop('partial', False)
-        instance = self.get_object()
-        data = request.data.copy()
-        
-        data['is_read'] = True
-        serializer = self.get_serializer(instance, data=data, partial=partial)
-        serializer.is_valid(raise_exception=True)
-        self.perform_update(serializer)
-        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 # User Notification Preference ViewSet -----------------------------------------------

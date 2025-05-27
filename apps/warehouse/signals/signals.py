@@ -7,7 +7,7 @@ from django.utils import timezone
 from apps.warehouse.models import WarehouseInventory
 from apps.orders.models import Order
 from apps.notifications.models import Notification
-from apps.config.orders_constants import DELIVERY_AWAITING_HELP
+from apps.orders.constants import DELIVERY_AWAITING_HELP
 
 
 from django.db.models.signals import pre_save, post_save, post_delete

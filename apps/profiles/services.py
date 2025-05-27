@@ -1,13 +1,13 @@
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from apps.config.gift_constants import (
+from apps.profiles.gift_constants import (
                 WISDOM, TONGUES, TEACHING, SHEPHERDING, SERVANTHOOD,
                 PROPHECY, MIRACLES, LEADERSHIP, KNOWLEDGE, INTERPRETATION_OF_TONGUES,
                 HELPING, HEALING, GIVING, FAITH, EXHORTATION,
                 EVANGELISM, DISCERNMENT, COMPASSION, APOSTLESHIP, ADMINISTRATION
             )
-from apps.config.profiles_constants import RECIPROCAL_FELLOWSHIP_CHOICES
+from apps.profiles.constants import RECIPROCAL_FELLOWSHIP_CHOICES
 import logging
 
 logger = logging.getLogger(__name__)

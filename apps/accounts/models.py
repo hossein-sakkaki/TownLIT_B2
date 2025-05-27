@@ -9,20 +9,14 @@ from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.conf import settings
 
-from apps.config.organization_constants import LANGUAGE_CHOICES, ENGLISH, COUNTRY_CHOICES
-from apps.config.accounts_constants import SOCIAL_MEDIA_CHOICES
-from apps.config.constants import (
-                                USER_LABEL_CHOICES,
-                                ORGANIZATION_SERVICE_CATEGORY_CHOICES, 
-                                SPIRITUAL_MINISTRY_CHOICES,
-                                GENDER_CHOICES,
-                                ADDRESS_TYPE_CHOICES, HOME
-                            )
-from common.validators import (
-                                validate_image_or_video_file,
-                                validate_no_executable_file,
-                                validate_phone_number
-                            )
+from apps.profilesOrg.constants import LANGUAGE_CHOICES, ENGLISH, COUNTRY_CHOICES
+from .constants import (
+    SOCIAL_MEDIA_CHOICES,
+    USER_LABEL_CHOICES, GENDER_CHOICES, ADDRESS_TYPE_CHOICES, HOME
+)
+from validators.user_validators import validate_phone_number
+from validators.mediaValidators.image_validators import validate_image_file, validate_image_size
+from validators.security_validators import validate_no_executable_file
 
 from utils.common.utils import FileUpload, create_active_code
 
@@ -244,33 +238,9 @@ class SocialMediaLink(models.Model):
     def __str__(self):
         return self.link
 
-# ORGANIZATION SERVICE CATEGORY Manager ---------------------------------------------------------
-class OrganizationService(models.Model):
-    name = models.CharField(max_length=50, choices=ORGANIZATION_SERVICE_CATEGORY_CHOICES, unique=True, verbose_name='Organization Service')
-    description = models.CharField(max_length=500, null=True, blank=True, verbose_name='Description')
-    is_active = models.BooleanField(default=True, verbose_name='Is Active')
 
-    class Meta:
-        verbose_name = "Organization Service Category"
-        verbose_name_plural = "Organization Service Categories"
 
-    def __str__(self):
-        return self.name
 
-    
-# MEMBER SERVICE TYPE Manager -------------------------------------------------------------
-class SpiritualService(models.Model):
-    name = models.CharField(max_length=40, choices=SPIRITUAL_MINISTRY_CHOICES, unique=True, verbose_name='Name of Service')
-    color = ColorField(null=True, blank=True, verbose_name='Color Code')
-    description = models.CharField(max_length=300, null=True, blank=True, verbose_name='Description')
-    is_active = models.BooleanField(default=True, verbose_name='Is Active')
-
-    class Meta:
-        verbose_name = "Spiritual Service"
-        verbose_name_plural = "Spiritual Services" 
-        
-    def __str__(self):
-        return self.name
     
 # CUSTOMUSER Manager ----------------------------------------------
 class CustomUser(AbstractBaseUser, PermissionsMixin):
@@ -313,7 +283,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     primary_language = models.CharField(max_length=5, choices=LANGUAGE_CHOICES, default=ENGLISH, verbose_name='Primary Language')
     secondary_language = models.CharField(max_length=5, choices=LANGUAGE_CHOICES, null=True, blank=True, verbose_name='Secondary Language')
     
-    image_name = models.ImageField(upload_to=IMAGE.dir_upload, default='media/sample/user.png', null=True, blank=True, validators=[validate_image_or_video_file, validate_no_executable_file], verbose_name='Image')
+    image_name = models.ImageField(upload_to=IMAGE.dir_upload, default='media/sample/user.png', null=True, blank=True, validators=[validate_image_file, validate_image_size, validate_no_executable_file], verbose_name='Image')
     user_active_code = models.CharField(max_length=200, null=True, blank=True)
     user_active_code_expiry = models.DateTimeField(null=True, blank=True)
     register_date = models.DateField(default=timezone.now, verbose_name='Register Date')

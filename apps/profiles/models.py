@@ -2,22 +2,23 @@ from django.db import models
 from django.utils import timezone 
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
-from apps.accounts.models import Address, SpiritualService
+from colorfield.fields import ColorField
+from apps.accounts.models import Address
 from apps.posts.models import Testimony
-from apps.config.constants import CHURCH_DENOMINATIONS_CHOICES
-from apps.config.gift_constants import GIFT_CHOICES, GIFT_DESCRIPTIONS, GIFT_LANGUAGE_CHOICES, ANSWER_CHOICES
-from apps.config.profiles_constants import (
+from apps.profilesOrg.constants import CHURCH_DENOMINATIONS_CHOICES
+from apps.profiles.gift_constants import GIFT_CHOICES, GIFT_DESCRIPTIONS, GIFT_LANGUAGE_CHOICES, ANSWER_CHOICES
+from .constants import (
                             FRIENDSHIP_STATUS_CHOICES, EDUCATION_DOCUMENT_TYPE_CHOICES, 
                             EDUCATION_DEGREE_CHOICES, MIGRATION_CHOICES,
                             IDENTITY_VERIFICATION_STATUS_CHOICES, NOT_SUBMITTED,
                             CUSTOMER_DEACTIVATION_REASON_CHOICES,
-                            FELLOWSHIP_RELATIONSHIP_CHOICES, RECIPROCAL_FELLOWSHIP_CHOICES, FELLOWSHIP_STATUS_CHOICES
+                            FELLOWSHIP_RELATIONSHIP_CHOICES, RECIPROCAL_FELLOWSHIP_CHOICES, FELLOWSHIP_STATUS_CHOICES,
+                            SPIRITUAL_MINISTRY_CHOICES,
                         )
-from common.validators import (
-                            validate_pdf_file,
-                            validate_no_executable_file,
-                            validate_phone_number
-                        )
+from validators.user_validators import validate_phone_number
+from validators.mediaValidators.pdf_validators import validate_pdf_file
+from validators.security_validators import validate_no_executable_file
+
 from utils.common.utils import FileUpload, SlugMixin
 from django.contrib.auth import get_user_model
 
@@ -119,6 +120,21 @@ class MigrationHistory(models.Model):
     def __str__(self):
         return f'{self.user.username} - {self.migration_type} on {self.migration_date}'
 
+
+# MEMBER SERVICE TYPE Manager -------------------------------------------------------------
+class SpiritualService(models.Model):
+    name = models.CharField(max_length=40, choices=SPIRITUAL_MINISTRY_CHOICES, unique=True, verbose_name='Name of Service')
+    color = ColorField(null=True, blank=True, verbose_name='Color Code')
+    description = models.CharField(max_length=300, null=True, blank=True, verbose_name='Description')
+    is_active = models.BooleanField(default=True, verbose_name='Is Active')
+
+    class Meta:
+        verbose_name = "Spiritual Service"
+        verbose_name_plural = "Spiritual Services" 
+        
+    def __str__(self):
+        return self.name
+    
 
 # MEMBER SERVICE Manager -----------------------------------------------------------------------------------
 class MemberServiceType(models.Model):

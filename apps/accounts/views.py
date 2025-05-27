@@ -29,7 +29,7 @@ from .serializers import (
     SocialMediaLinkSerializer, SocialMediaLinkReadOnlySerializer, SocialMediaTypeSerializer,
     UserDeviceKeySerializer
     )
-from apps.config.constants import BELIEVER, SEEKER, PREFER_NOT_TO_SAY
+from .constants import BELIEVER, SEEKER, PREFER_NOT_TO_SAY
 from .models import CustomLabel, SocialMediaLink, SocialMediaType
 from apps.profilesOrg.models import Organization
 from apps.profiles.models import Member, GuestUser

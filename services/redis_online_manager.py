@@ -1,8 +1,10 @@
-import redis.asyncio as redis
-from django.conf import settings
 import time
+import os
+import redis.asyncio as redis
 
-REDIS_URL = getattr(settings, "REDIS_URL", "redis://127.0.0.1:6379/0")
+REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
+
+
 ONLINE_USERS_KEY = "online_users"  
 
 

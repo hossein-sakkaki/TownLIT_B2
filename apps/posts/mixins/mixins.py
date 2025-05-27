@@ -14,7 +14,7 @@ from apps.posts.serializers import (
                     ReactionSerializer, CommentSerializer, ResourceSerializer,
                 )
 from apps.profilesOrg.models import Organization
-from apps.main.permissions import IsFullAccessAdmin, IsLimitedAccessAdmin
+from common.permissions import IsFullAccessAdmin, IsLimitedAccessAdmin
 
 
 

@@ -16,7 +16,7 @@ from .serializers import (
                 PaymentDonationSerializer, PaymentShoppingCartSerializer,
                 PaymentSerializer, PaymentInvoiceSerializer
             )
-from apps.main.permissions import IsFullAccessAdmin
+from common.permissions import IsFullAccessAdmin
 from apps.payment.mixins.payment_mixins import PaymentMixin
 
 

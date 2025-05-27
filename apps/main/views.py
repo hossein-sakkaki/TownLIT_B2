@@ -32,8 +32,7 @@ from .serializers import (
     )
 from utils.common.ip import get_client_ip
 
-
-from apps.config.choicemap import CHOICES_MAP
+from .choicemap import CHOICES_MAP
 from utils.email.email_tools import send_custom_email
 import logging
 

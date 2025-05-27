@@ -8,10 +8,10 @@ from .serializers import (
                     OrderSerializer, OrderItemSerializer, OrderStatusHistorySerializer, 
                     DeliveryInformationSerializer, ReturnRequestSerializer, ShoppingCartSerializer, ShoppingCartItemSerializer
                 )
-from apps.main.permissions import IsFullAccessAdmin, IsLimitedAccessAdmin
+from common.permissions import IsFullAccessAdmin, IsLimitedAccessAdmin
 from apps.payment.views import PaymentShoppingCartViewSet
 from apps.payment.models import PaymentShoppingCart
-from apps.config.orders_constants import DELIVERY_IN_PAYMENT, DELIVERY_PAID, DELIVERY_CANCELLED, DELIVERY_AWAITING_HELP
+from apps.orders.constants import DELIVERY_IN_PAYMENT, DELIVERY_PAID, DELIVERY_CANCELLED, DELIVERY_AWAITING_HELP
 from apps.warehouse.models import TemporaryReservation
 from apps.warehouse.utils import create_temporary_reservation
 from apps.warehouse.signals.signals import clean_expired_reservations

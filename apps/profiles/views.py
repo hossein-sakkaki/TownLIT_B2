@@ -35,7 +35,7 @@ from .serializers import (
                 )
 from apps.accounts.serializers import SimpleCustomUserSerializer
 
-from common.validators import validate_phone_number
+from validators.user_validators import validate_phone_number
 from django.core.exceptions import ValidationError
 from utils.common.utils import create_veriff_session, get_veriff_status, create_active_code
 from utils.email.email_tools import send_custom_email

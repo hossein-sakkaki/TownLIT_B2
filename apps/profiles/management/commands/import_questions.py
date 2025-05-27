@@ -1,6 +1,6 @@
 from django.core.management.base import BaseCommand
 from apps.profiles.models import SpiritualGift, SpiritualGiftSurveyQuestion
-from apps.config.gift_questions_constants import QUESTIONS
+from apps.profiles.gift_questions_constants import QUESTIONS
 from django.db import transaction
 
 
