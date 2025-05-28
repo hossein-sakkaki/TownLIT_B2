@@ -8,6 +8,7 @@ from .models import (
             )
 from apps.profilesOrg.models import Organization
 from validators.user_validators import validate_email_field, validate_password_field
+from common.file_handlers.profile_image import ProfileImageMixin
 
 import logging
 from django.contrib.auth import get_user_model
@@ -76,34 +77,6 @@ class RegisterUserSerializer(serializers.ModelSerializer):
             self.invite.mark_as_used(user)
 
         return user
-    
-# class RegisterUserSerializer(serializers.ModelSerializer):
-#     agree_to_terms = serializers.BooleanField(write_only=True)
-
-#     class Meta:
-#         model = CustomUser
-#         fields = ['email', 'password', 'agree_to_terms']
-#         extra_kwargs = {
-#             'password': {'write_only': True}
-#         }
-
-#     def validate(self, data):
-#         if not data.get('agree_to_terms'):
-#             raise serializers.ValidationError("You must agree to the terms and conditions.")
-#         return data
-
-#     def create(self, validated_data):
-#         # Remove `agree_to_terms` before creating the user
-#         validated_data.pop('agree_to_terms')
-#         user = CustomUser.objects.create_user(
-#             email=validated_data['email']
-#         )
-#         if not user.image_name:
-#             user.image_name = settings.DEFAULT_PROFILE_IMAGE
-
-#         user.set_password(validated_data['password'])
-#         user.save()
-#         return user
 
 
 # VERIFY NEWBORN CODE Serializer -------------------------------------------------------------
@@ -284,7 +257,7 @@ class SocialMediaLinkReadOnlySerializer(serializers.ModelSerializer):
 
 
 # CustomUser Serializers -----------------------------------------------------------------------
-class CustomUserSerializer(serializers.ModelSerializer):
+class CustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
     profile_image_url = serializers.SerializerMethodField()
     label = CustomLabelSerializer(read_only=True)
     country_display = serializers.CharField(source='get_country_display', read_only=True)
@@ -334,12 +307,17 @@ class CustomUserSerializer(serializers.ModelSerializer):
         instance.save()
         return instance
     
-    def get_profile_image_url(self, obj):
-        request = self.context.get('request')
-        if obj.image_name and obj.image_name.url:
-            return request.build_absolute_uri(obj.image_name.url) if request else obj.image_name.url
-        default_image_path = settings.MEDIA_URL + 'sample/user.png'
-        return request.build_absolute_uri(default_image_path) if request else default_image_path
+    # def get_profile_image_url(self, obj):
+    #     request = self.context.get('request')
+    #     if obj.image_name and obj.image_name.url:
+    #         return request.build_absolute_uri(obj.image_name.url) if request else obj.image_name.url
+    #     default_image_path = settings.MEDIA_URL + 'sample/user.png'
+    #     return request.build_absolute_uri(default_image_path) if request else default_image_path
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        rep['profile_image_url'] = rep.get('image_name_url')
+        return rep
+    
     
     def validate_username(self, value):
         # Check if the username is unchanged
@@ -351,7 +329,7 @@ class CustomUserSerializer(serializers.ModelSerializer):
 
     
 # CustomUser Public Serializers -----------------------------------------------------------------------
-class PublicCustomUserSerializer(serializers.ModelSerializer):
+class PublicCustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
     profile_image_url = serializers.SerializerMethodField()
     
     class Meta:
@@ -363,28 +341,32 @@ class PublicCustomUserSerializer(serializers.ModelSerializer):
         ]
 
     def to_representation(self, instance):
-        representation = super().to_representation(instance)
+        rep = super().to_representation(instance)
+
+        # اضافه کردن profile_image_url
+        rep['profile_image_url'] = rep.get('image_name_url')
+
         # حذف مقادیر بر اساس show_* flags
         if not getattr(instance, 'show_email', False):
-            representation.pop('email', None)
+            rep.pop('email', None)
         if not getattr(instance, 'show_phone_number', False):
-            representation.pop('mobile_number', None)
+            rep.pop('mobile_number', None)
         if not getattr(instance, 'show_country', False):
-            representation.pop('country', None)
+            rep.pop('country', None)
         if not getattr(instance, 'show_city', False):
-            representation.pop('city', None)
-        return representation
+            rep.pop('city', None)
+        return rep
 
-    def get_profile_image_url(self, obj):
-        request = self.context.get('request')
-        if obj.image_name and obj.image_name.url:
-            return request.build_absolute_uri(obj.image_name.url) if request else obj.image_name.url
-        default_image_path = settings.MEDIA_URL + 'sample/user.png'
-        return request.build_absolute_uri(default_image_path) if request else default_image_path
+    # def get_profile_image_url(self, obj):
+    #     request = self.context.get('request')
+    #     if obj.image_name and obj.image_name.url:
+    #         return request.build_absolute_uri(obj.image_name.url) if request else obj.image_name.url
+    #     default_image_path = settings.MEDIA_URL + 'sample/user.png'
+    #     return request.build_absolute_uri(default_image_path) if request else default_image_path
 
     
 # LIMITED MEMBER Serializer ------------------------------------------------------------------------------
-class LimitedCustomUserSerializer(serializers.ModelSerializer):
+class LimitedCustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
     profile_image_url = serializers.SerializerMethodField()
 
     class Meta:
@@ -395,16 +377,20 @@ class LimitedCustomUserSerializer(serializers.ModelSerializer):
             'primary_language', 'secondary_language', 'is_member',
         ]
         
-    def get_profile_image_url(self, obj):
-        request = self.context.get('request')
-        if obj.image_name and obj.image_name.url:
-            return request.build_absolute_uri(obj.image_name.url) if request else obj.image_name.url
-        default_image_path = settings.MEDIA_URL + 'sample/user.png'
-        return request.build_absolute_uri(default_image_path) if request else default_image_path
-
+    # def get_profile_image_url(self, obj):
+    #     request = self.context.get('request')
+    #     if obj.image_name and obj.image_name.url:
+    #         return request.build_absolute_uri(obj.image_name.url) if request else obj.image_name.url
+    #     default_image_path = settings.MEDIA_URL + 'sample/user.png'
+    #     return request.build_absolute_uri(default_image_path) if request else default_image_path
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        rep['profile_image_url'] = rep.get('image_name_url')
+        return rep
+    
 
 # Simple CustomUser Serializers For Showing Users ------------------------------------------------
-class SimpleCustomUserSerializer(serializers.ModelSerializer):
+class SimpleCustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
     profile_image = serializers.SerializerMethodField()
     is_friend = serializers.SerializerMethodField()
     profile_url = serializers.SerializerMethodField()
@@ -414,27 +400,52 @@ class SimpleCustomUserSerializer(serializers.ModelSerializer):
         fields = ['id', 'username', 'name', 'family', 'profile_image', 'is_friend', 'profile_url']
         read_only_fields = ['id']
 
-    def get_profile_image(self, obj):             # ------------------- باید حل شود + پایین تر
-        if not isinstance(obj, CustomUser):
-            return None
-        request = self.context.get('request')
-        if obj.image_name:
-            return request.build_absolute_uri(obj.image_name.url) if request else obj.image_name.url
-        return None
+    def get_profile_image(self, obj):
+        # استفاده از image_name_url که mixin ساخته
+        rep = self.to_representation(obj)
+        return rep.get('image_name_url')
 
     def get_is_friend(self, obj):
         if not isinstance(obj, CustomUser):
             return False
         friend_ids = self.context.get('friend_ids', set())
         return obj.id in friend_ids
-    
-    # def get_profile_url(self, obj):
-    #     return obj.get_absolute_url()
-    
-    def get_profile_url(self, obj):              # ------------------- باید حل شود + بالا تر
+
+    def get_profile_url(self, obj):
         if not isinstance(obj, CustomUser):
             return None
         return obj.get_absolute_url()
+# class SimpleCustomUserSerializer(serializers.ModelSerializer):
+#     profile_image = serializers.SerializerMethodField()
+#     is_friend = serializers.SerializerMethodField()
+#     profile_url = serializers.SerializerMethodField()
+
+#     class Meta:
+#         model = CustomUser
+#         fields = ['id', 'username', 'name', 'family', 'profile_image', 'is_friend', 'profile_url']
+#         read_only_fields = ['id']
+
+#     def get_profile_image(self, obj):             # ------------------- باید حل شود + پایین تر
+#         if not isinstance(obj, CustomUser):
+#             return None
+#         request = self.context.get('request')
+#         if obj.image_name:
+#             return request.build_absolute_uri(obj.image_name.url) if request else obj.image_name.url
+#         return None
+
+#     def get_is_friend(self, obj):
+#         if not isinstance(obj, CustomUser):
+#             return False
+#         friend_ids = self.context.get('friend_ids', set())
+#         return obj.id in friend_ids
+    
+#     # def get_profile_url(self, obj):
+#     #     return obj.get_absolute_url()
+    
+#     def get_profile_url(self, obj):              # ------------------- باید حل شود + بالا تر
+#         if not isinstance(obj, CustomUser):
+#             return None
+#         return obj.get_absolute_url()
     
 
 # User Device Key Serializers -----------------------------------------------------------------------

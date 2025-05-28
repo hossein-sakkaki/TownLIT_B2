@@ -452,13 +452,40 @@ STRIPE_CURRENCY = os.getenv('STRIPE_CURRENCY', 'CAD')
 
 # For Translate Languages --------------------------------------------------------------
 from apps.profiles.gift_constants import GIFT_LANGUAGE_CHOICES
-
 LANGUAGES = GIFT_LANGUAGE_CHOICES 
-
 LANGUAGE_CODE = 'en'
-
 USE_I18N = True
 # USE_L10N = True 
+
+
+
+# ---------------- File Serving Policy ------------------
+SERVE_FILES_PUBLICLY = False  # اگر در آینده public شد، فقط این را True کن
+
+# ---------------- Amazon S3 Media Storage ------------------
+USE_S3 = os.getenv('USE_S3', 'False').lower() in ('true', '1', 't')
+
+if USE_S3:
+    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+
+    AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
+    AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
+    AWS_STORAGE_BUCKET_NAME = os.getenv('AWS_STORAGE_BUCKET_NAME')
+    AWS_S3_REGION_NAME = os.getenv('AWS_S3_REGION_NAME', 'us-east-1')
+
+    AWS_S3_CUSTOM_DOMAIN = f'{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com'
+
+    AWS_DEFAULT_ACL = None  # مهم: فایل‌ها private ذخیره می‌شوند
+    AWS_QUERYSTRING_AUTH = True  # برای تولید URL با امضا
+    AWS_S3_FILE_OVERWRITE = False  # فایل‌های تکراری overwrite نمی‌شوند
+
+    AWS_S3_OBJECT_PARAMETERS = {
+        'CacheControl': 'max-age=86400',
+    }
+
+    MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/'
+
+
 
 
 # CSRF_COOKIE_SECURE = True
@@ -469,9 +496,6 @@ USE_I18N = True
 # SECURE_HSTS_PRELOAD = True
 # SECURE_BROWSER_XSS_FILTER = True
 # SECURE_CONTENT_TYPE_NOSNIFF = True
-
-
-
 
 
 
@@ -516,4 +540,5 @@ USE_I18N = True
 # git config --global http.postBuffer 524288000
 
 
+# ssh -i ~/.ssh/townlit_hetzner root@91.99.114.147
 

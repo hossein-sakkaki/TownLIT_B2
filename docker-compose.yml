@@ -16,6 +16,7 @@ services:
       - redis
     volumes:
       - static_volume:/app/staticfiles
+      - /srv/townlit/static:/app/staticfiles
       - media_volume:/app/media
     entrypoint: /entrypoint_backend.sh
     command: []
