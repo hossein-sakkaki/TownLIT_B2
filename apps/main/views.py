@@ -4,13 +4,13 @@ from rest_framework.permissions import IsAuthenticated, AllowAny, IsAdminUser
 from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.exceptions import ValidationError
+from rest_framework.filters import SearchFilter, OrderingFilter
 
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework.filters import SearchFilter, OrderingFilter
 
 from django.utils.decorators import method_decorator
 from django_ratelimit.decorators import ratelimit
-
+from django.shortcuts import render
 import json
 import os
 from django.conf import settings
@@ -340,3 +340,8 @@ class VideoViewLogViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = VideoViewLog.objects.all()
     serializer_class = VideoViewLogSerializer
     permission_classes = [IsAdminUser]
+
+
+
+def coming_soon_view(request):
+    return render(request, "coming_soon.html")
