@@ -343,5 +343,7 @@ class VideoViewLogViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 
+
 def coming_soon_view(request):
-    return render(request, "coming_soon.html")
+    file_path = os.path.join(settings.BASE_DIR, 'static/coming_soon.html')
+    return FileResponse(open(file_path, 'rb'), content_type='text/html')

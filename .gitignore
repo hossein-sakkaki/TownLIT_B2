@@ -31,3 +31,4 @@ accounts/scripts/data/*.json
 # Prevent secrets from being tracked by Git
 .env.production
 
+.information

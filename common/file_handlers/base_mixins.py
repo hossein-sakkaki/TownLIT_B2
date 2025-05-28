@@ -1,6 +1,6 @@
 # common/file_handlers/base_mixins.py
 
-from common.aws.s3_utils import get_file_url_or_default
+from common.aws.s3_utils import get_file_url
 from django.conf import settings
 
 
@@ -18,7 +18,7 @@ class BaseS3URLMixin:
         for field, default in self.signed_fields.items():
             file = getattr(instance, field, None)
             key = getattr(file, 'name', None)
-            url = get_file_url_or_default(key, default)
+            url = get_file_url(key, default)
             request = self.context.get('request')
             rep[f"{field}_url"] = request.build_absolute_uri(url) if request else url
 

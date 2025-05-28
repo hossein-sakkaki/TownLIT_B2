@@ -35,9 +35,9 @@ SECRET_KEY = os.getenv('SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'False').lower() in ('true', '1', 't')
 
+ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "").split(",")
 
-# ALLOWED_HOSTS = []
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'townlit.com']
+
 CSRF_TRUSTED_ORIGINS = ['http://localhost:8000', 'https://townlit.com']
 REDIS_URL = os.getenv('REDIS_URL', 'redis://127.0.0.1:6379/0')
 SITE_URL = os.getenv("SITE_URL", "https://www.townlit.com")
@@ -481,6 +481,7 @@ if USE_S3:
 
     AWS_S3_OBJECT_PARAMETERS = {
         'CacheControl': 'max-age=86400',
+        'ACL': 'private',
     }
 
     MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/'
@@ -499,11 +500,6 @@ if USE_S3:
 
 
 
-
-
-
-
-
 # # Custom IP Whitelisting Configuration --------------------------------------------
 # <RequireAll>
 #     # My IP
@@ -519,26 +515,4 @@ if USE_S3:
 # https://github.com/settings/keys
 # 
 
-# source /home/r7qo6oj6d7zj/virtualenv/public_html/api-v1-private.townlit.com/3.9/bin/activate
-
-
-
-
-
-
-# tmux new-session -d -s django_server 'python3 manage.py runserver'
-# tmux new-session -d -s websocket_server 'daphne -b 0.0.0.0 -p 8000 townlit_b.asgi:application'
-
-# python3 manage.py runserver 8000 & daphne -b 0.0.0.0 -p 8001 townlit_b.asgi:application
-# kill -9 $(lsof -t -i :8000)
-# pkill -f "celery -A"
-
-# honcho start
-
-
-
-# git config --global http.postBuffer 524288000
-
-
-# ssh -i ~/.ssh/townlit_hetzner root@91.99.114.147
 
