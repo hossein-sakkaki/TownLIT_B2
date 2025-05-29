@@ -31,8 +31,10 @@ router.register(r'video-series', VideoSeriesViewSet, basename='video-series')
 router.register(r'official-videos', OfficialVideoViewSet, basename='official-videos')
 router.register(r'prayers', PrayerViewSet, basename='prayers')
 
-urlpatterns = [
-    path('', coming_soon_view, name='coming-soon'),
-]
+# urlpatterns = [
+#     path('', coming_soon_view, name='coming-soon'),
+# ]
 
-urlpatterns += router.urls
+# urlpatterns += router.urls
+
+urlpatterns = router.urls

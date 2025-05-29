@@ -16,4 +16,4 @@ echo "🧹 Collecting static files to: ${STATIC_ROOT}"
 python manage.py collectstatic --noinput
 
 echo "🚀 Starting Daphne server..."
-daphne -b 0.0.0.0 -p 8000 townlit_b.asgi:application
+exec daphne -b 0.0.0.0 -p 8000 townlit_b.asgi:application
