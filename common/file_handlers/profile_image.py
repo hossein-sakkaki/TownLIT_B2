@@ -10,5 +10,6 @@ class ProfileImageMixin(BaseS3URLMixin):
     """
 
     signed_fields = {
-        'image_name': settings.MEDIA_URL + 'sample/user.png'
+        # 'image_name': settings.MEDIA_URL + 'sample/user.png'
+        'image_name': 'sample/user.png'
     }
