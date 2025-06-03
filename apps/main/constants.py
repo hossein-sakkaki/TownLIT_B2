@@ -50,30 +50,28 @@ LANGUAGE_CHOICES = [
 
 # POLICY OF TOWNNLIT Choices ------------------------------------------------------------
 PRIVACY_POLICY = 'privacy_policy'
+COOKIE_POLICY = 'cookie_policy'
+
 TERMS_OF_SERVICE = 'terms_of_service'
-COMMUNITY_GUIDELINES = 'community_guidelines'
-DATA_USAGE_POLICY = 'data_usage_policy'
-CONTENT_MODERATION_POLICY = 'content_moderation_policy'
 COPYRIGHT_POLICY = 'copyright_policy'
-DISPUTE_RESOLUTION = 'dispute_resolution'
+COMMUNITY_GUIDELINES = 'community_guidelines'
+
 VISION_AND_MISSION = 'vision_and_mission'
 TOWNLIT_HISTORY = 'townlit_history'
 TOWNLIT_BELIEFS = 'townlit_beliefs'
-TERMS_AND_CONDITIONS = 'terms_and_conditions'   
-COOKIE_POLICY = 'cookie_policy'
+ 
 TERMS_AND_POLICIES_CHOICES = [
     (PRIVACY_POLICY, 'Privacy Policy'),
+    (COOKIE_POLICY, 'Cookie Policy'),
+    
     (TERMS_OF_SERVICE, 'Terms of Service'),
-    (COMMUNITY_GUIDELINES, 'Community Guidelines'),
-    (DATA_USAGE_POLICY, 'Data Usage Policy'),
-    (CONTENT_MODERATION_POLICY, 'Content Moderation Policy'),
     (COPYRIGHT_POLICY, 'Copyright Policy'),
-    (DISPUTE_RESOLUTION, 'Dispute Resolution and Arbitration'),
+    (COMMUNITY_GUIDELINES, 'Community Guidelines'),
+    
     (VISION_AND_MISSION, 'Vision and Mission'),
     (TOWNLIT_HISTORY, 'TownLIT History'),
     (TOWNLIT_BELIEFS, 'TownLIT Beliefs'),
-    (TERMS_AND_CONDITIONS, 'Terms and Conditions'),
-    (COOKIE_POLICY, 'Cookie Policy'),
+
 ]
 
 

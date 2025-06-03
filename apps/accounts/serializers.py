@@ -258,7 +258,7 @@ class SocialMediaLinkReadOnlySerializer(serializers.ModelSerializer):
 
 # CustomUser Serializers -----------------------------------------------------------------------
 class CustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
-    profile_image_url = serializers.SerializerMethodField()
+    # profile_image_url = serializers.SerializerMethodField()
     label = CustomLabelSerializer(read_only=True)
     country_display = serializers.CharField(source='get_country_display', read_only=True)
     country = serializers.CharField(write_only=True)
@@ -318,7 +318,6 @@ class CustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
         rep['profile_image_url'] = rep.get('image_name_url')
         return rep
     
-    
     def validate_username(self, value):
         # Check if the username is unchanged
         if self.instance and value == self.instance.username:
@@ -330,7 +329,7 @@ class CustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
     
 # CustomUser Public Serializers -----------------------------------------------------------------------
 class PublicCustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
-    profile_image_url = serializers.SerializerMethodField()
+    # profile_image_url = serializers.SerializerMethodField()
     
     class Meta:
         model = CustomUser
@@ -367,7 +366,7 @@ class PublicCustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer)
     
 # LIMITED MEMBER Serializer ------------------------------------------------------------------------------
 class LimitedCustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
-    profile_image_url = serializers.SerializerMethodField()
+    # profile_image_url = serializers.SerializerMethodField()
 
     class Meta:
         model = CustomUser
