@@ -1077,7 +1077,7 @@ class SocialLinksViewSet(viewsets.ViewSet):
     def list_links(self, request):
         content_type = request.query_params.get('content_type')
         object_id = request.query_params.get('object_id')
-        
+                
         if not content_type or not object_id:
             return Response({"error": "content_type and object_id are required."}, status=400)
 

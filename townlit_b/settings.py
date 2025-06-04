@@ -20,6 +20,10 @@ from corsheaders.defaults import default_headers
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+
+ENV_FILE = os.getenv('ENV_FILE', '.env')
+# load_dotenv(BASE_DIR / ENV_FILE, override=True)
+
 load_dotenv(Path(__file__).resolve().parent / '.env', override=True)
 
 
@@ -224,8 +228,8 @@ STATIC_ROOT = '/app/staticfiles'
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 
-MEDIA_URL = '/media/'
-MEDIA_ROOT = os.path.join(BASE_DIR, 'media/')
+# MEDIA_URL = '/media/'
+# MEDIA_ROOT = os.path.join(BASE_DIR, 'media/')
 DEFAULT_PROFILE_IMAGE = 'sample/user.png'
 
 
@@ -468,6 +472,9 @@ SERVE_FILES_PUBLICLY = False  # اگر در آینده public شد، فقط ای
 # ---------------- Amazon S3 Media Storage ------------------
 USE_S3 = os.getenv('USE_S3', 'False').lower() in ('true', '1', 't')
 
+SERVE_FILES_PUBLICLY = os.getenv('SERVE_FILES_PUBLICLY', 'False').lower() in ('true', '1', 't')
+
+
 if USE_S3:
     DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
 
@@ -489,6 +496,10 @@ if USE_S3:
 
     MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/'
 
+else:
+    DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
+    MEDIA_URL = '/media/'
+    MEDIA_ROOT = os.path.join(BASE_DIR, 'media/')
 
 
 
