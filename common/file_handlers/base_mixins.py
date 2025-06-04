@@ -5,11 +5,6 @@ from django.conf import settings
 
 
 class BaseS3URLMixin:
-    """
-    Base mixin to dynamically generate signed or public URLs
-    for given file fields in a serializer.
-    """
-
     signed_fields = {}  # Dict[str, str] => {'image': 'default_path'}
 
     def to_representation(self, instance):
@@ -18,7 +13,7 @@ class BaseS3URLMixin:
         for field, default in self.signed_fields.items():
             file = getattr(instance, field, None)
             key = getattr(file, 'name', None)
-            url = get_file_url(key, default)
+            url = get_file_url(key=key, default_url=default)
             request = self.context.get('request')
             rep[f"{field}_url"] = request.build_absolute_uri(url) if request else url
 

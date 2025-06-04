@@ -23,26 +23,19 @@ def generate_presigned_url(key: str, expires_in: int = 600) -> str:
     )
 
 
-def get_file_url(key: str, expires_in: int = 600) -> str:
-    """
-    Return public URL or presigned URL based on settings.
-    Handles both public serving and presigned URLs.
-    Ignores keys that are already full URLs.
-    """
+def get_file_url(key: str, default_url: str = None, expires_in: int = 600) -> str:
     if not key:
-        return None
+        return default_url
 
-    # اگر key از قبل URL کامل باشد، همان را برگردان (نباید presigned بسازی)
     if key.startswith("http://") or key.startswith("https://"):
         return key
 
-    # حالت public
     if getattr(settings, 'SERVE_FILES_PUBLICLY', False):
-        return f"{settings.MEDIA_URL}{key}"
+        public_url = f"{settings.MEDIA_URL}{key}"
+        return public_url
 
-    # حالت private
     try:
-        return generate_presigned_url(key, expires_in)
+        url = generate_presigned_url(key, expires_in)
+        return url
     except Exception as e:
-        # اگر خطایی در presign رخ دهد، بهتر است None یا یک مسیر پیش‌فرض برگردانیم
-        return None
+        return default_url
