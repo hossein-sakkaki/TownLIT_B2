@@ -27,8 +27,9 @@ class MediaConversionMixin:
                 continue
 
             try:
-                path = file_field.name
-                ext = os.path.splitext(path)[1].lower()
+                source_path = file_field.name
+
+                ext = os.path.splitext(source_path)[1].lower()
                 mime_type, _ = mimetypes.guess_type(file_field.name)
                 file_type = validate_file_type(file_field.name, mime_type)
 
@@ -38,7 +39,7 @@ class MediaConversionMixin:
                         app_label=self._meta.app_label,
                         instance_id=self.pk,
                         field_name=field_name,
-                        source_path=path,
+                        source_path=source_path,
                         fileupload=fileupload.to_dict(),
                     )
 
@@ -48,7 +49,7 @@ class MediaConversionMixin:
                         app_label=self._meta.app_label,
                         instance_id=self.pk,
                         field_name=field_name,
-                        source_path=path,
+                        source_path=source_path,
                         fileupload=fileupload.to_dict(),
                     )
 
@@ -58,7 +59,7 @@ class MediaConversionMixin:
                         app_label=self._meta.app_label,
                         instance_id=self.pk,
                         field_name=field_name,
-                        source_path=path,
+                        source_path=source_path,
                         fileupload=fileupload.to_dict(),
                     )
 

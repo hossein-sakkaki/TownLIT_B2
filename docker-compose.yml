@@ -13,10 +13,10 @@ services:
       - mysql
       - redis
     volumes:
-      - static_volume:/app/staticfiles
       - /srv/townlit/static:/app/staticfiles
       - media_volume:/app/media
     entrypoint: /entrypoint_backend.sh
+    mem_limit: 512m
 
   mysql:
     image: mysql:8
@@ -53,6 +53,8 @@ services:
       - .env.production
     volumes:
       - media_volume:/app/media
+    restart: always
+    mem_limit: 512m
 
   celery-beat:
     build:
@@ -68,8 +70,9 @@ services:
       - .env.production
     volumes:
       - media_volume:/app/media
+    restart: always
+    mem_limit: 384m
 
 volumes:
-  static_volume:
   media_volume:
   mysql_data:
