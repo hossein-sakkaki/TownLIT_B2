@@ -40,7 +40,7 @@ class CustomLabelAdmin(admin.ModelAdmin):
 # SOCIAL MEDIA TYPE Admin --------------------------------------------------------------
 @admin.register(SocialMediaType)
 class SocialMediaTypeAdmin(admin.ModelAdmin):
-    list_display = ['name', 'icon_class', 'icon_svg', 'is_active']
+    list_display = ['name', 'icon_class', 'is_active']
     search_fields = ['name']
     list_editable = ['is_active']
     list_filter = ['is_active']
