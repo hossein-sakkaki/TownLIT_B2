@@ -19,19 +19,19 @@ def get_instance(app_label, model_name, pk):
 
 # Common Handler Converted -----------------------------------------------------------------------
 def handle_converted_file_update(instance, field_name, relative_path):
-    
-    abs_path = os.path.join(settings.MEDIA_ROOT, relative_path)
     try:
         old_file = getattr(instance, field_name)
-        if old_file and old_file.name != relative_path and os.path.exists(old_file.path):
+        if old_file and old_file.name != relative_path:
             old_file.delete(save=False)
 
+        # به جای path، فقط نام فایل (relative path) ست می‌شود
         setattr(instance, field_name, relative_path)
         logger.info(f"✅ Updated field '{field_name}' to: {relative_path}")
 
     except Exception as e:
         logger.error(f"❌ Failed to update file field '{field_name}' on {instance}: {e}")
         raise
+
     
 # Image Convertor Task --------------------------------------------------------------------------
 @shared_task

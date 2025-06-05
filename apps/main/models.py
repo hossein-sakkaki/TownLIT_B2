@@ -260,11 +260,14 @@ class OfficialVideo(MediaConversionMixin, models.Model):
     episode_number = models.PositiveIntegerField(null=True, blank=True, verbose_name="Episode Number")
     view_count = models.PositiveIntegerField(default=0, verbose_name="View Count")
     
-    video_file = models.FileField(upload_to=VIDEO.dir_upload, validators=[validate_video_file, validate_no_executable_file], verbose_name="Video File" )
+    video_file = models.FileField(
+                        upload_to=VIDEO.dir_upload, 
+                        validators=[validate_video_file, validate_no_executable_file], 
+                        verbose_name="Video File" )
     thumbnail = models.FileField(
-        upload_to=THUMBNAIL.dir_upload, 
-        validators=[validate_image_file, validate_image_size, validate_no_executable_file], 
-        verbose_name="Thumbnail / Poster")
+                        upload_to=THUMBNAIL.dir_upload, 
+                        validators=[validate_image_file, validate_image_size, validate_no_executable_file], 
+                        verbose_name="Thumbnail / Poster")
 
     is_active = models.BooleanField(default=True, verbose_name="Active")
     publish_date = models.DateTimeField(verbose_name="Publish Date")

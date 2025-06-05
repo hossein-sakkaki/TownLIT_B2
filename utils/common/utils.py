@@ -39,11 +39,20 @@ class FileUpload:
 
 
 # FILE DIRECTION Handler For Converted Files --------------------
+import tempfile
+from django.core.files.storage import default_storage
+from storages.backends.s3boto3 import S3Boto3Storage
 def get_converted_path(instance, original_path: str, fileupload, extension: str) -> tuple[str, str]:
     today = datetime.datetime.now().strftime("%Y/%m/%d")
     unique_filename = f'{uuid4()}{extension}'
     relative_path = f'{fileupload.app_name}/{fileupload.direction}/{fileupload.folder}/{today}/{unique_filename}'
-    absolute_path = os.path.join(settings.MEDIA_ROOT, relative_path)
+
+    # اگر storage روی S3 بود، فایل را در مسیر موقتی بسازیم
+    if isinstance(default_storage, S3Boto3Storage):
+        absolute_path = os.path.join(tempfile.gettempdir(), unique_filename)
+    else:
+        absolute_path = os.path.join(settings.MEDIA_ROOT, relative_path)
+
     return absolute_path, relative_path
 
 
@@ -52,20 +61,6 @@ def create_active_code(count):
     import random
     count-=1
     return random.randint(10**count, 10**(count+1)-1)
-
-# SEND ACTIVE CODE by SMTP EMAIL ------------------------------------------
-# from django.core.mail import EmailMultiAlternatives
-# from django.conf import settings
-# from django.contrib import messages
-
-# def send_email(subject, message, html_content, to):
-#     email_from = settings.EMAIL_HOST_USER
-#     try:
-#         email = EmailMultiAlternatives(subject, message, email_from, to)
-#         email.attach_alternative(html_content, 'text/html')
-#         email.send()
-#     except Exception as e:
-#         print(f"An error occurred while sending the email: {str(to)}")
         
         
 # SEND ACTIVE CODE by AWS EMAIL ------------------------------------------
