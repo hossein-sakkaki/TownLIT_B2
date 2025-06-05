@@ -22,34 +22,42 @@ def get_instance(app_label, model_name, pk):
 # Common Handler Converted -----------------------------------------------------------------------
 def handle_converted_file_update(model_name: str, app_label: str, instance_id: int, field_name: str, relative_path: str):
     try:
+        if os.path.isabs(relative_path):
+            raise ValueError("Relative path expected, got absolute path.")
+
         model_class = apps.get_model(app_label=app_label, model_name=model_name)
         instance = model_class.objects.get(pk=instance_id)
 
         if not hasattr(instance, field_name):
             raise AttributeError(f"Field '{field_name}' does not exist on model '{model_name}'")
 
-        # باز کردن فایل از طریق backend storage (S3-safe)
+        # باز کردن فایل نهایی
         with default_storage.open(relative_path, 'rb') as f:
             django_file = File(f)
             file_field = getattr(instance, field_name)
+
             file_field.save(
-                name=relative_path,  # ذخیره کامل مسیر نسبی در فیلد فایل
+                name=relative_path,
                 content=django_file,
                 save=False
             )
 
-        instance.is_converted = True
-        instance.save(update_fields=[field_name, "is_converted"])
+        if hasattr(instance, "is_converted"):
+            instance.is_converted = True
+
+        instance.save(update_fields=[field_name, "is_converted"] if hasattr(instance, "is_converted") else [field_name])
         logger.info(f"✅ File field '{field_name}' updated successfully on {instance}")
 
-        # اگر در حالت لوکال هستیم و فایل فیزیکی وجود دارد، پاکش کن
-        abs_path = os.path.join(settings.MEDIA_ROOT, relative_path)
-        if os.path.exists(abs_path) and settings.DEFAULT_FILE_STORAGE == 'django.core.files.storage.FileSystemStorage':
-            os.remove(abs_path)
+        # حذف فایل محلی اگر در لوکال بودیم
+        if settings.DEFAULT_FILE_STORAGE == 'django.core.files.storage.FileSystemStorage':
+            abs_path = os.path.join(settings.MEDIA_ROOT, relative_path)
+            if os.path.exists(abs_path):
+                os.remove(abs_path)
 
     except Exception as e:
         logger.error(f"❌ Failed to update file field '{field_name}' on {model_name}[{instance_id}]: {e}")
         raise
+
 
     
 # Video Convertor Task --------------------------------------------------------------------------
