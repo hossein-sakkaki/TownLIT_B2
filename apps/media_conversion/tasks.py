@@ -2,6 +2,7 @@ import os
 from celery import shared_task
 from django.apps import apps
 from django.conf import settings
+from django.core.files import File
 from utils.common.utils import FileUpload
 from utils.common.image_utils import convert_image_to_jpg
 from utils.common.video_utils import convert_video_to_mp4
@@ -20,13 +21,21 @@ def get_instance(app_label, model_name, pk):
 # Common Handler Converted -----------------------------------------------------------------------
 def handle_converted_file_update(instance, field_name, relative_path):
     try:
-        old_file = getattr(instance, field_name)
-        if old_file and old_file.name != relative_path:
-            old_file.delete(save=False)
+        # باز کردن فایل نهایی تبدیل‌شده
+        with open(os.path.join(settings.MEDIA_ROOT, relative_path), 'rb') as f:
+            django_file = File(f)
+            # تولید نام مناسب (مثلاً فقط نام فایل بدون مسیر)
+            filename = os.path.basename(relative_path)
 
-        # به جای path، فقط نام فایل (relative path) ست می‌شود
-        setattr(instance, field_name, relative_path)
-        logger.info(f"✅ Updated field '{field_name}' to: {relative_path}")
+            # حذف فایل قبلی اگر وجود دارد
+            old_file = getattr(instance, field_name)
+            if old_file and old_file.name != relative_path:
+                old_file.delete(save=False)
+
+            # ذخیره در فیلد، با استفاده از File object
+            getattr(instance, field_name).save(filename, django_file, save=True)
+
+        logger.info(f"✅ Updated file field '{field_name}' to: {relative_path}")
 
     except Exception as e:
         logger.error(f"❌ Failed to update file field '{field_name}' on {instance}: {e}")
