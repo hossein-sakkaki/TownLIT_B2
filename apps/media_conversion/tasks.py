@@ -28,39 +28,29 @@ def handle_converted_file_update(model_name: str, app_label: str, instance_id: i
         if not hasattr(instance, field_name):
             raise AttributeError(f"Field '{field_name}' does not exist on model '{model_name}'")
 
-        # مسیر کامل فیزیکی فایل برای سیستم‌های local
-        abs_path = os.path.join(settings.MEDIA_ROOT, relative_path)
-
-        if not os.path.exists(abs_path):
-            logger.error(f"❌ Converted file does not exist at path: {abs_path}")
-            return
-
-        # ذخیره فایل در فیلد مدل به صورت Django File
+        # باز کردن فایل از طریق backend storage (S3-safe)
         with default_storage.open(relative_path, 'rb') as f:
+            django_file = File(f)
             file_field = getattr(instance, field_name)
             file_field.save(
-                name=relative_path,  # مسیر نسبی کامل (نه فقط basename)
-                content=f,
+                name=relative_path,  # ذخیره کامل مسیر نسبی در فیلد فایل
+                content=django_file,
                 save=False
             )
 
         instance.is_converted = True
         instance.save(update_fields=[field_name, "is_converted"])
-
         logger.info(f"✅ File field '{field_name}' updated successfully on {instance}")
 
-        # اگر فایل در default_storage وجود ندارد، آن را ذخیره کن (مخصوص لوکال)
-        if not default_storage.exists(relative_path):
-            with open(abs_path, "rb") as f:
-                default_storage.save(relative_path, File(f))
-
-        # فایل فیزیکی را پاک کن اگر روی local بودیم (S3 مسیر temp دارد و این فایل نباید حذف شود)
-        if not isinstance(default_storage, type(settings.DEFAULT_FILE_STORAGE)):
+        # اگر در حالت لوکال هستیم و فایل فیزیکی وجود دارد، پاکش کن
+        abs_path = os.path.join(settings.MEDIA_ROOT, relative_path)
+        if os.path.exists(abs_path) and settings.DEFAULT_FILE_STORAGE == 'django.core.files.storage.FileSystemStorage':
             os.remove(abs_path)
 
     except Exception as e:
         logger.error(f"❌ Failed to update file field '{field_name}' on {model_name}[{instance_id}]: {e}")
         raise
+
     
 # Video Convertor Task --------------------------------------------------------------------------
 @shared_task
