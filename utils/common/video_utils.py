@@ -3,6 +3,9 @@
 import os
 import subprocess
 from django.conf import settings
+from storages.backends.s3boto3 import S3Boto3Storage
+from django.core.files import File
+
 from utils.common.utils import FileUpload, get_converted_path
 import logging
 from django.core.files.storage import default_storage
@@ -59,5 +62,8 @@ def convert_video_to_mp4(source_path: str, instance, fileupload: FileUpload) -> 
 
     except subprocess.CalledProcessError as e:
         logger.warning(f"⚠️ FFmpeg conversion failed: {e.stderr.decode(errors='ignore').strip()}")
-        return source_path.replace(settings.MEDIA_ROOT + "/", "")
+        if isinstance(default_storage, S3Boto3Storage):
+            return source_path  # در S3، مسیر از ابتدا relative بوده است
+        else:
+            return os.path.relpath(source_path, settings.MEDIA_ROOT)
    

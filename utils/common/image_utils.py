@@ -5,6 +5,7 @@ import uuid
 import logging
 from PIL import Image, ImageFile
 import pillow_heif
+from storages.backends.s3boto3 import S3Boto3Storage
 from django.conf import settings
 from utils.common.utils import FileUpload, get_converted_path
 from django.core.files.base import File
@@ -47,8 +48,14 @@ def convert_image_to_jpg(source_path: str, instance, fileupload: FileUpload) -> 
         os.remove(temp_input_path)
         os.remove(output_abs_path)
 
+        # ✅ در حالت موفق
         return relative_path
 
     except Exception as e:
         logger.error(f"❌ Image conversion failed: {e}")
-        return source_path.replace(settings.MEDIA_ROOT + "/", "")
+
+        # ✅ در حالت شکست، مسیر fallback بسته به نوع storage
+        if isinstance(default_storage, S3Boto3Storage):
+            return source_path  # در S3 مسیر از ابتدا relative است
+        else:
+            return os.path.relpath(source_path, settings.MEDIA_ROOT)

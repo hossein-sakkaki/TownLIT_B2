@@ -474,7 +474,6 @@ USE_S3 = os.getenv('USE_S3', 'False').lower() in ('true', '1', 't')
 
 SERVE_FILES_PUBLICLY = os.getenv('SERVE_FILES_PUBLICLY', 'False').lower() in ('true', '1', 't')
 
-
 if USE_S3:
     DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
 
@@ -485,9 +484,9 @@ if USE_S3:
 
     AWS_S3_CUSTOM_DOMAIN = f'{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com'
 
-    AWS_DEFAULT_ACL = None  # مهم: فایل‌ها private ذخیره می‌شوند
-    AWS_QUERYSTRING_AUTH = True  # برای تولید URL با امضا
-    AWS_S3_FILE_OVERWRITE = False  # فایل‌های تکراری overwrite نمی‌شوند
+    AWS_DEFAULT_ACL = None  
+    AWS_QUERYSTRING_AUTH = True  
+    AWS_S3_FILE_OVERWRITE = False  
 
     AWS_S3_OBJECT_PARAMETERS = {
         'CacheControl': 'max-age=86400',
