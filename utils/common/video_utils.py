@@ -1,4 +1,4 @@
-# main/utils/video_utils.py
+# /utils/common/video_utils.py
 
 import os
 import subprocess
@@ -12,6 +12,10 @@ logger = logging.getLogger(__name__)
 
 def convert_video_to_mp4(source_path: str, instance, fileupload: FileUpload) -> str:
     try:
+        # تبدیل مسیر absolute به relative در صورت نیاز
+        if os.path.isabs(source_path):
+            source_path = os.path.relpath(source_path, settings.MEDIA_ROOT)
+
         # فایل ورودی از storage (محلی یا S3)
         with default_storage.open(source_path, 'rb') as source_file:
             with NamedTemporaryFile(delete=False, suffix=os.path.splitext(source_path)[1]) as temp_input:
@@ -47,15 +51,13 @@ def convert_video_to_mp4(source_path: str, instance, fileupload: FileUpload) -> 
         )
 
         logger.info(f"✅ Video converted to MP4: {output_abs_path}")
-
-        # حذف فایل موقت ورودی
         os.remove(temp_input_path)
-
         return relative_path
 
     except subprocess.CalledProcessError as e:
         logger.warning(f"⚠️ FFmpeg conversion failed: {e.stderr.decode(errors='ignore').strip()}")
-        return source_path.replace(settings.MEDIA_ROOT + "/", "") 
+        return source_path.replace(settings.MEDIA_ROOT + "/", "")
+
     
     
 

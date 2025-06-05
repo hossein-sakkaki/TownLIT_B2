@@ -18,6 +18,10 @@ from tempfile import NamedTemporaryFile
 
 def convert_image_to_jpg(source_path: str, instance, fileupload: FileUpload) -> str:
     try:
+        # 🔒 تبدیل مسیر مطلق به نسبی (برای سازگاری با S3)
+        if os.path.isabs(source_path):
+            source_path = os.path.relpath(source_path, settings.MEDIA_ROOT)
+
         # دانلود فایل از Storage (در محیط S3)
         with default_storage.open(source_path, 'rb') as source_file:
             with NamedTemporaryFile(delete=False, suffix=os.path.splitext(source_path)[1]) as temp_input:
@@ -40,6 +44,7 @@ def convert_image_to_jpg(source_path: str, instance, fileupload: FileUpload) -> 
     except Exception as e:
         logger.error(f"❌ Image conversion failed (safely caught): {e}")
         return source_path.replace(settings.MEDIA_ROOT + "/", "")
+
 
 
 # def convert_image_to_jpg(source_path: str, instance, fileupload: FileUpload) -> str:

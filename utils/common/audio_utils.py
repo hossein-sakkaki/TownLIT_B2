@@ -14,15 +14,22 @@ from tempfile import NamedTemporaryFile
 
 def convert_audio_to_mp3(source_path: str, instance, fileupload: FileUpload) -> str:
     try:
+        # ✅ تبدیل مسیر مطلق به نسبی برای سازگاری با S3
+        if os.path.isabs(source_path):
+            source_path = os.path.relpath(source_path, settings.MEDIA_ROOT)
+
+        # 📥 دریافت فایل از storage (لوکال یا S3)
         with default_storage.open(source_path, 'rb') as source_file:
             with NamedTemporaryFile(delete=False, suffix=os.path.splitext(source_path)[1]) as temp_input:
                 temp_input.write(source_file.read())
                 temp_input.flush()
                 temp_input_path = temp_input.name
 
+        # 📤 مسیر خروجی برای فایل mp3
         output_abs_path, relative_path = get_converted_path(instance, source_path, fileupload, ".mp3")
         os.makedirs(os.path.dirname(output_abs_path), exist_ok=True)
 
+        # 🎧 اجرای ffmpeg برای تبدیل به MP3
         command = [
             "ffmpeg",
             "-y",
@@ -48,6 +55,7 @@ def convert_audio_to_mp3(source_path: str, instance, fileupload: FileUpload) -> 
         error_output = e.stderr.decode(errors="ignore").strip()
         logger.error(f"❌ Audio conversion failed:\n{error_output}")
         raise RuntimeError(f"Audio conversion failed: {e}")
+
 
 
 
