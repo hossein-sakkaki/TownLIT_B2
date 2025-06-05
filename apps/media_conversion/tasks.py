@@ -36,12 +36,11 @@ def handle_converted_file_update(model_name: str, app_label: str, instance_id: i
             return
 
         # ذخیره فایل در فیلد مدل به صورت Django File
-        with open(abs_path, 'rb') as f:
-            django_file = File(f)
+        with default_storage.open(relative_path, 'rb') as f:
             file_field = getattr(instance, field_name)
             file_field.save(
-                name=os.path.basename(relative_path),  # فقط نام فایل (نسبی)
-                content=django_file,
+                name=relative_path,  # مسیر نسبی کامل (نه فقط basename)
+                content=f,
                 save=False
             )
 
