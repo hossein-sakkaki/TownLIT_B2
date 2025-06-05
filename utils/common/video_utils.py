@@ -62,8 +62,14 @@ def convert_video_to_mp4(source_path: str, instance, fileupload: FileUpload) -> 
 
     except subprocess.CalledProcessError as e:
         logger.warning(f"⚠️ FFmpeg conversion failed: {e.stderr.decode(errors='ignore').strip()}")
+
         if isinstance(default_storage, S3Boto3Storage):
-            return source_path  # در S3، مسیر از ابتدا relative بوده است
+            # بررسی نهایی
+            if os.path.isabs(source_path):
+                logger.warning(f"⚠️ WARNING – absolute path used as fallback in S3: {source_path}")
+                raise ValueError("Invalid absolute path returned in failure mode for S3.")
+            return source_path
         else:
             return os.path.relpath(source_path, settings.MEDIA_ROOT)
+
    

@@ -38,8 +38,9 @@ def handle_converted_file_update(instance, field_name, relative_path):
 
         setattr(instance, field_name, relative_path)
         logger.info(f"✅ Updated field '{field_name}' to: {relative_path}")
+        logger.error(f"🧪 ABSOLUTE? {os.path.isabs(relative_path)}")
         logger.debug(f"📁 Final path set on model: {getattr(instance, field_name).name}")
-        logger.debug(f"📦 Storage backend: {default_storage.__class__.__name__}")
+        logger.debug(f"📦 Storage backend: {default_storage.__class__.__name__}")        
 
     except Exception as e:
         logger.error(f"❌ Failed to update file field '{field_name}' on {instance}: {e}")
