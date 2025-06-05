@@ -501,6 +501,22 @@ else:
     MEDIA_ROOT = os.path.join(BASE_DIR, 'media/')
 
 
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'level': 'DEBUG',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'DEBUG',
+    },
+}
+
+
 
 # CSRF_COOKIE_SECURE = True
 # SESSION_COOKIE_SECURE = True
