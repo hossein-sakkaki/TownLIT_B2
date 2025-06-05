@@ -27,7 +27,7 @@ class MediaConversionMixin:
                 continue
 
             try:
-                path = file_field.path
+                path = file_field.name
                 ext = os.path.splitext(path)[1].lower()
                 mime_type, _ = mimetypes.guess_type(file_field.name)
                 file_type = validate_file_type(file_field.name, mime_type)
