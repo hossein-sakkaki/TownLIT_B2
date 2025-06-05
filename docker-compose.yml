@@ -16,7 +16,8 @@ services:
       - /srv/townlit/static:/app/staticfiles
       - media_volume:/app/media
     entrypoint: /entrypoint_backend.sh
-    mem_limit: 512m
+    mem_limit: 768m
+    cpus: 1.5
 
   mysql:
     image: mysql:8
@@ -33,11 +34,15 @@ services:
       - mysql_data:/var/lib/mysql
     ports:
       - "3307:3306"
+    mem_limit: 768m
+    cpus: 1.0
 
   redis:
     image: redis:7
     container_name: townlit_redis
     restart: always
+    mem_limit: 128m
+    cpus: 0.25
 
   celery:
     build:
@@ -55,6 +60,7 @@ services:
       - media_volume:/app/media
     restart: always
     mem_limit: 512m
+    cpus: 0.75
 
   celery-beat:
     build:
@@ -72,6 +78,7 @@ services:
       - media_volume:/app/media
     restart: always
     mem_limit: 384m
+    cpus: 0.5
 
 volumes:
   media_volume:

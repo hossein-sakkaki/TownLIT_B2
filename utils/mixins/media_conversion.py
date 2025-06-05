@@ -26,7 +26,7 @@ class MediaConversionMixin:
             if not file_field:
                 continue
 
-            try:
+            try: 
                 source_path = file_field.name
 
                 ext = os.path.splitext(source_path)[1].lower()
