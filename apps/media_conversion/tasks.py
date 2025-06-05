@@ -11,7 +11,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-
+import tempfile
+import shutil
 
 def get_instance(app_label, model_name, pk):
     model = apps.get_model(app_label=app_label, model_name=model_name)
@@ -21,19 +22,30 @@ def get_instance(app_label, model_name, pk):
 # Common Handler Converted -----------------------------------------------------------------------
 def handle_converted_file_update(instance, field_name, relative_path):
     try:
-        # باز کردن فایل نهایی تبدیل‌شده
-        with open(os.path.join(settings.MEDIA_ROOT, relative_path), 'rb') as f:
-            django_file = File(f)
-            # تولید نام مناسب (مثلاً فقط نام فایل بدون مسیر)
+        # مسیر کامل به فایل روی دیسک لوکال
+        absolute_path = os.path.join(settings.MEDIA_ROOT, relative_path)
+
+        # مرحله ۱: یک فایل موقت جدید می‌سازیم و محتوا را به آن کپی می‌کنیم
+        with open(absolute_path, 'rb') as f:
+            with tempfile.NamedTemporaryFile(delete=False) as tmp:
+                shutil.copyfileobj(f, tmp)
+                tmp_path = tmp.name
+
+        # مرحله ۲: فایل موقت را باز می‌کنیم و به FileField می‌دهیم
+        with open(tmp_path, 'rb') as final_file:
+            django_file = File(final_file)
             filename = os.path.basename(relative_path)
 
-            # حذف فایل قبلی اگر وجود دارد
+            # حذف فایل قبلی در صورت وجود
             old_file = getattr(instance, field_name)
             if old_file and old_file.name != relative_path:
                 old_file.delete(save=False)
 
-            # ذخیره در فیلد، با استفاده از File object
+            # 👇 ذخیرهٔ فایل در فیلد — این بخش حیاتی است
             getattr(instance, field_name).save(filename, django_file, save=True)
+
+        # حذف فایل موقت بعد از ذخیره
+        os.remove(tmp_path)
 
         logger.info(f"✅ Updated file field '{field_name}' to: {relative_path}")
 
