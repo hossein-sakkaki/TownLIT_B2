@@ -37,7 +37,7 @@ def handle_converted_file_update(model_name: str, app_label: str, instance_id: i
             file_field = getattr(instance, field_name)
 
             file_field.save(
-                name=relative_path,
+                name=os.path.basename(relative_path),
                 content=django_file,
                 save=False
             )
