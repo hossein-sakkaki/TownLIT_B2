@@ -61,7 +61,7 @@ def handle_converted_file_update(model_name: str, app_label: str, instance_id: i
 
     
 # Video Convertor Task --------------------------------------------------------------------------
-@shared_task
+@shared_task(queue="video")
 def convert_video_to_mp4_task(model_name, app_label, instance_id, field_name, source_path, fileupload):
     try:
         instance = get_instance(app_label, model_name, instance_id)
