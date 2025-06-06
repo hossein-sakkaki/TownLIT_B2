@@ -467,12 +467,10 @@ USE_I18N = True
 
 
 # ---------------- File Serving Policy ------------------
-SERVE_FILES_PUBLICLY = False  # اگر در آینده public شد، فقط این را True کن
+SERVE_FILES_PUBLICLY = os.getenv('SERVE_FILES_PUBLICLY', 'False').lower() in ('true', '1', 't')
 
 # ---------------- Amazon S3 Media Storage ------------------
 USE_S3 = os.getenv('USE_S3', 'False').lower() in ('true', '1', 't')
-
-SERVE_FILES_PUBLICLY = os.getenv('SERVE_FILES_PUBLICLY', 'False').lower() in ('true', '1', 't')
 
 if USE_S3:
     DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'

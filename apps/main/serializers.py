@@ -2,6 +2,7 @@ from rest_framework import serializers
 from django.utils.timesince import timesince
 from django.utils import timezone
 
+from common.aws.s3_utils import get_file_url
 from .models import (
     TermsAndPolicy, UserAgreement, PolicyChangeHistory, 
     FAQ, UserFeedback, SiteAnnouncement, UserActionLog,
@@ -114,6 +115,8 @@ class VideoSeriesSerializer(serializers.ModelSerializer):
             "is_active", "created_at", "slug", "intro_video_id"
         ]
         
+        
+# Official Video Serializer -------------------------------------
 class OfficialVideoSerializer(serializers.ModelSerializer):
     category = VideoCategorySerializer(read_only=True)
     series = VideoSeriesSerializer(read_only=True)
@@ -122,15 +125,18 @@ class OfficialVideoSerializer(serializers.ModelSerializer):
         source="parent", queryset=OfficialVideo.objects.all(), required=False, allow_null=True
     )
     children_count = serializers.SerializerMethodField()
+
+    video_url = serializers.SerializerMethodField()
+    thumbnail_url = serializers.SerializerMethodField()
+
     class Meta:
         model = OfficialVideo
         fields = [
             'id', 'title', 'description', 'language',
             'category', 'series', 'episode_number',
-            'video_file', 'thumbnail', 'view_count',
+            'video_url', 'thumbnail_url', 'view_count',
             'is_active', 'publish_date', 'created_at', 'slug',
-            'time_since_publish',
-            'parent_id', 'children_count'
+            'time_since_publish', 'parent_id', 'children_count'
         ]
 
     def get_time_since_publish(self, obj):
@@ -138,6 +144,13 @@ class OfficialVideoSerializer(serializers.ModelSerializer):
 
     def get_children_count(self, obj):
         return obj.children.count()
+
+    def get_video_url(self, obj):
+        return get_file_url(str(obj.video_file.name)) if obj.video_file else None
+
+    def get_thumbnail_url(self, obj):
+        return get_file_url(str(obj.thumbnail.name)) if obj.thumbnail else None
+    
 
 class OfficialVideoCreateUpdateSerializer(serializers.ModelSerializer):
     parent = serializers.PrimaryKeyRelatedField(queryset=OfficialVideo.objects.all(), required=False, allow_null=True)
