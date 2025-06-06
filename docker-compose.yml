@@ -33,7 +33,7 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
     ports:
-      - "3307:3306"
+      - "3306:3306"
     mem_limit: 768m
     cpus: 1.0
 
@@ -41,6 +41,10 @@ services:
     image: redis:7
     container_name: townlit_redis
     restart: always
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--bind", "0.0.0.0"]
+
     mem_limit: 128m
     cpus: 0.25
 
