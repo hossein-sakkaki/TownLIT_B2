@@ -54,7 +54,7 @@ services:
       dockerfile: Dockerfile
     container_name: townlit_celery
     entrypoint: /entrypoint_worker.sh
-    command: celery -A townlit_b worker -l info
+    command: celery -A townlit_b worker -Q default,emails,messages,notifications -l info
     depends_on:
       - backend
       - redis

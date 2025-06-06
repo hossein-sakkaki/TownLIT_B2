@@ -6,8 +6,9 @@ from celery.schedules import crontab
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'townlit_b.settings')
 app = Celery('townlit_b')
-app.config_from_object('django.conf:settings', namespace='CELERY')
+app.config_from_object('django.conf:settings', namespace='CELERY') 
 app.autodiscover_tasks()
+CELERY_TASK_DEFAULT_QUEUE = 'default'
 
 
 
