@@ -2,7 +2,7 @@ import os
 from celery import shared_task
 from django.apps import apps
 from django.conf import settings
-from django.core.files.storage import default_storage
+from django.core.files.storage import default_storage 
 from django.core.files import File
 from utils.common.utils import FileUpload
 from utils.common.image_utils import convert_image_to_jpg
