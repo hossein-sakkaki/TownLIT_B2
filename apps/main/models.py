@@ -250,7 +250,8 @@ class OfficialVideo(MediaConversionMixin, models.Model):
     THUMBNAIL = FileUpload('main', 'image', 'official_thumbnails')
 
     title = models.CharField(max_length=200, verbose_name="Title")
-    description = models.TextField(blank=True, verbose_name="Description")
+    description = RichTextUploadingField(null=True, blank=True, verbose_name="Description")
+    
     language = models.CharField(max_length=10, default="en", verbose_name="Language")
     category = models.ForeignKey(VideoCategory, on_delete=models.SET_NULL, null=True, blank=True, related_name="videos", verbose_name="Category")
     series = models.ForeignKey(VideoSeries, on_delete=models.SET_NULL, null=True, blank=True, related_name="videos", verbose_name="Series")
