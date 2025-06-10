@@ -1,7 +1,8 @@
 from django.utils.timezone import now
 from django.conf import settings
 from apps.accounts.models import InviteCode
-from utils.email.email_tools import send_custom_email  # مسیر به‌روز شده
+from apps.moderation.models import AccessRequest
+from utils.email.email_tools import send_custom_email
 
 def send_pending_invite_emails():
     invites = InviteCode.objects.filter(invite_email_sent=False, email__isnull=False)
@@ -12,7 +13,6 @@ def send_pending_invite_emails():
         email = invite.email
         code = invite.code
 
-        # تعیین نام کوچک برای سلام اولیه
         first_name = invite.first_name or email.split("@")[0].split(".")[0].title()
         last_name = invite.last_name or ""
 
@@ -23,22 +23,32 @@ def send_pending_invite_emails():
             'last_name': last_name,
             'invite_code': code,
             'email': email,
-            'site_domain': settings.SITE_URL,  # اطمینان از وجود SITE_URL در settings.py
+            'site_domain': settings.SITE_URL,
+            "current_year": now().year,
         }
 
-        # ارسال ایمیل با HTML و fallback متن ساده (در صورت نیاز، می‌توان از قالب جداگانه برای متن ساده استفاده کرد)
         success = send_custom_email(
             to=email,
             subject=subject,
             template_path='emails/invite/invite_email.html',
             context=context,
-            text_template_path=None  # اگر بخواهی قالب text داشته باشی، به مسیرش تغییر بده
+            text_template_path=None
         )
 
         if success:
+            # ✅ ۱. به‌روزرسانی InviteCode
             invite.invite_email_sent = True
             invite.invite_email_sent_at = now()
             invite.save()
+
+            # ✅ ۲. اگر رکورد مرتبطی در AccessRequest یافت شد، آن را نیز به‌روزرسانی کن
+            try:
+                request = AccessRequest.objects.get(email=email)
+                request.invite_code_sent = True
+                request.save()
+            except AccessRequest.DoesNotExist:
+                pass  # مشکلی نیست اگر در AccessRequest وجود نداشته باشد
+
             sent_count += 1
             print(f"✅ Invite sent to: {email}")
         else:
@@ -48,6 +58,7 @@ def send_pending_invite_emails():
     print(f"\n📤 Invite Email Summary:")
     print(f"  ✅ Sent: {sent_count}")
     print(f"  ❌ Failed: {failed_count}")
+
 
 
 # python manage.py send_invite_emails 

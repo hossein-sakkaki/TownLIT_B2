@@ -103,6 +103,7 @@ def send_email(subject, message, html_content, to):
                     },
                 },
             },
+            ReturnPath=settings.AWS_SES_RETURN_PATH,
         )
         print(f"Email sent successfully: {response['MessageId']}")
         return True

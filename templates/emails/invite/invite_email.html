@@ -1,34 +1,39 @@
-{% extends "base_email.html" %}
+{% extends 'base_email.html' %}
 
-{% block subject %}You're Invited to Join TownLIT{% endblock %}
+{% block subject %}
+  Your Invitation to TownLIT – The Journey Begins
+{% endblock %}
 
 {% block content %}
-  <h2 style="color:#353839; margin-top: 0;">Grace and Peace, {{ first_name|default:"Friend" }}</h2>
-
-  <p style="font-size: 1.1rem; line-height: 1.6;">
-    You've been personally invited to join <strong>TownLIT</strong> — a Christ-centered network where faith meets community and purpose.
+  <p>
+    Dear <strong>{{ first_name|default:'Friend' }}</strong>,
   </p>
 
-  <!-- Invite Code -->
-  <p style="font-size: 1rem; margin-top: 1.5rem;">Here is your unique invite code:</p>
-  <div style="background: #FFD700; color: #353839; font-weight: bold; padding: 12px 20px; display: inline-block; border-radius: 8px; font-size: 1.3rem; letter-spacing: 1px;">
-    {{ invite_code }}
+  <p>We’ve been waiting for this moment — and so have you. Your faithful patience has not gone unnoticed, and today, with open arms and a grateful heart, we welcome you to TownLIT.</p>
+
+  <p>TownLIT isn’t just a platform — it’s a living city, rooted in the presence of the Lord. A sacred digital space where believers, seekers, and Kingdom builders gather to reflect His light and truth.</p>
+
+  <p>As someone who waited, hoped, and prayed with us from the beginning, this invitation is more than a link — it’s a shared step forward in faith.</p>
+
+  <div class="email-code-container">
+    <div class="code-box">{{ invite_code }}</div>
   </div>
 
-  <!-- Call to Action -->
-  <p style="margin-top: 2rem; font-size: 1.1rem;">
-    Use this code to join us and begin your journey:
-  </p>
-  <p style="margin-top: 0.8rem;">
-    <a href="https://townlit.com/register"
-       style="background: #0F52BA; color: #F8F6F0; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: bold; display: inline-block;">
-        Join TownLIT Now
-    </a>
+  <p>Use your personal code above to join and create your space:</p>
+
+  <div class="email-button-container">
+    <a href="https://townlit.com/register" class="email-button">Step into TownLIT</a>
+  </div>
+
+  <p class="email-reflection">
+    “You are the light of the world. A city built on a hill cannot be hidden.”<br />
+    <span style="font-size: 14px;">– Matthew 5:14</span>
   </p>
 
-  <!-- Blessing -->
-  <p style="margin-top: 2rem; color: #353839; font-size: 1rem;">
-    With blessings,<br />
-    <span style="font-weight: bold;">TownLIT</span>
+  <p>TownLIT was built through prayer, in seasons of solitude and faith — not with abundance, but with conviction. Today, it begins to open — slowly, intentionally — and you are part of its foundation.</p>
+
+  <p class="email-signature">
+    In love and hope,<br />
+    TownLIT
   </p>
 {% endblock %}

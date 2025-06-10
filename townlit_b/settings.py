@@ -318,7 +318,9 @@ AWS_SES_ACCESS_KEY_ID = os.getenv('AWS_SES_ACCESS_KEY_ID')
 AWS_SES_SECRET_ACCESS_KEY = os.getenv('AWS_SES_SECRET_ACCESS_KEY')
 AWS_SES_REGION_NAME = os.getenv('AWS_SES_REGION_NAME', 'us-east-1')
 AWS_SES_REGION_ENDPOINT = os.getenv('AWS_SES_REGION_ENDPOINT', 'email.us-east-1.amazonaws.com')
-AWS_SES_EMAIL_FROM = os.getenv('AWS_SES_EMAIL_FROM', 'no-reply@default.com')
+AWS_SES_EMAIL_FROM = os.getenv('AWS_SES_EMAIL_FROM', 'no-reply@townlit.com')
+AWS_SES_RETURN_PATH = 'no-reply@mail.townlit.com'
+
 
 # Optional settings 
 AWS_SES_AUTO_THROTTLE = 0.5  # Throttle for bulk emails

@@ -20,6 +20,7 @@ SANCTUARY_PARTICIPANTS = 'sanctuary_participants'
 PRIVACY_ENABLED = 'privacy_enabled'
 UNVERIFIED_IDENTITY = 'unverified_identity'
 RE_ENGAGEMENT = 'reengagement'
+ACCESS_REQUESTS = 'access_requests'
 
 TARGET_GROUP_CHOICES = [
     (ALL_ACTIVE, 'All Active Users'),
@@ -35,6 +36,9 @@ TARGET_GROUP_CHOICES = [
     (PRIVACY_ENABLED, 'Members with Privacy Enabled'),
     (UNVERIFIED_IDENTITY, 'Members with Unverified Identity'),
     (RE_ENGAGEMENT, 'Previously Unsubscribed Users (Re-engagement Campaign)'),
+    
+    # 🔶 TEMPORARY: External invitees (not yet registered users)
+    (ACCESS_REQUESTS, 'Pending Access Requests (pre-registration users)'),
 ]
 
 
@@ -43,6 +47,6 @@ TARGET_GROUP_CHOICES = [
 LAYOUT_BASE_EMAIL = 'base_email'
 LAYOUT_BASE_SITE = 'base_site'
 EMAIL_LAYOUT_CHOICES = [
-    (LAYOUT_BASE_EMAIL, 'System Email (Security, Activation, etc.)'),
-    (LAYOUT_BASE_SITE, 'Campaign/Newsletter (Invitation, Updates)'),
+    (LAYOUT_BASE_EMAIL, 'System Email (Security, Activation, etc.)_Base Email'),
+    (LAYOUT_BASE_SITE, 'Campaign/Newsletter (Invitation, Updates)_Base Site'),
 ]

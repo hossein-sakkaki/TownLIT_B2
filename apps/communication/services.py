@@ -8,6 +8,8 @@ from django.utils import timezone
 
 
 from .models import EmailCampaign, EmailLog, UnsubscribedUser, ExternalContact
+from apps.moderation.models import AccessRequest
+
 from utils.email.email_tools import send_custom_email
 from utils.email.token_generator import generate_email_opt_token, generate_external_email_token
 from utils.email.template_context import validate_template_variables
@@ -16,7 +18,7 @@ from utils.common.file_reader import read_csv_or_json
 CustomUser = get_user_model()
 
 
-# Filters For Campaign --------------------------------------------------------------------
+# Filters For Campaign ------------------------------------------------------------------------
 def get_users_for_campaign(campaign):
     tg = campaign.target_group
     users = CustomUser.objects.all()
@@ -76,6 +78,18 @@ def get_users_for_campaign(campaign):
     elif tg == 'reengagement':
         unsub_ids = UnsubscribedUser.objects.values_list('user_id', flat=True)
         users = CustomUser.objects.filter(id__in=unsub_ids, is_active=True)
+        
+    elif tg == 'access_requests':
+        # TEMPORARY TARGET GROUP: AccessRequest users
+        # These users are not registered yet (not CustomUser)
+        # This is used for pre-launch communication and will be removed once they convert
+        qs = AccessRequest.objects.filter(
+            is_active=True,
+        ).exclude(email__isnull=True).exclude(email__exact='')
+        if not campaign.ignore_unsubscribe:
+            unsubscribed_emails = UnsubscribedUser.objects.filter(user__isnull=True).values_list('email', flat=True)
+            qs = qs.exclude(email__in=unsubscribed_emails)
+        return list(qs)
 
     else:
         # fallback → all active
@@ -89,9 +103,7 @@ def get_users_for_campaign(campaign):
     return users
 
 
-
-
-# Send Campaign Email Engin --------------------------------------------------------------------
+# Send Campaign Email Engin 
 def send_campaign_email_batch(campaign_id):
     try:
         campaign = EmailCampaign.objects.get(id=campaign_id)
@@ -117,23 +129,32 @@ def send_campaign_email_batch(campaign_id):
     # --- Send emails ---
     sent_count = 0
     for user in users:
-        email = user.email
-        token = generate_email_opt_token(user.id)
+        is_access_request = isinstance(user, AccessRequest)
 
+        if is_access_request:
+            email = user.email
+            first_name = user.first_name
+            username = "guest"
+            token = generate_email_opt_token(user.id)
+        else:
+            email = user.email
+            first_name = getattr(user, 'name', '') or email.split("@")[0].title()
+            username = getattr(user, 'username', '')
+            token = generate_email_opt_token(user.id)
+            
         context = {
             'email': email,
-            'user': user,
-            'first_name': user.name,
-            'username': user.username,
+            'first_name': first_name,
+            'username': username,
             'site_domain': settings.SITE_URL,
             "logo_base_url": settings.EMAIL_LOGO_URL,
             "current_year": timezone.now().year,
-            'unsubscribe_url': f"{settings.SITE_URL}/communication/unsubscribe/{token}/",
+            'unsubscribe_url': f"{settings.SITE_URL}/api/communication/unsubscribe/{token}/",
         }
         
         # ✅ Add resubscribe link only for reengagement campaigns
         if campaign.target_group == 'reengagement':
-            context['resubscribe_url'] = f"{settings.SITE_URL}/communication/resubscribe/{token}/"
+            context['resubscribe_url'] = f"{settings.SITE_URL}/api/communication/resubscribe/{token}/"
 
         # Render email content
         raw_template = campaign.custom_html or (campaign.template.body_template if campaign.template else '')
@@ -146,11 +167,7 @@ def send_campaign_email_batch(campaign_id):
         rendered_subject = subject_template.render(Context(context))
         
 
-        if campaign.template and hasattr(campaign.template, 'layout'):
-            layout = campaign.template.layout  # مقدار مثل 'base_site' یا 'base_email'
-        else:
-            layout = 'base_site'  # مقدار پیش‌فرض
-
+        layout = campaign.template.layout if campaign.template and hasattr(campaign.template, 'layout') else 'base_site'
         template_path = f'{layout}.html'
 
         success = send_custom_email(
@@ -161,19 +178,30 @@ def send_campaign_email_batch(campaign_id):
         )
 
         if success:
-            EmailLog.objects.create(
-                campaign=campaign,
-                user=user,
-                email=email
-            )
+            if isinstance(user, CustomUser):
+                EmailLog.objects.create(
+                    campaign=campaign,
+                    user=user,
+                    email=email
+                )
+            else:
+                EmailLog.objects.create(
+                    campaign=campaign,
+                    email=email
+                )
+            
             sent_count += 1
+            print(f"✅ Sent to: {email}")
+        else:
+            print(f"❌ Failed to send to: {email}")
+
 
     # --- Finalize ---
     campaign.status = 'sent'
     campaign.sent_at = now()
     campaign.save()
+    print(f"📤 Campaign Completed: Sent {sent_count} emails.")
 
-    print(f"✅ Sent {sent_count} emails.")
 
 
 
@@ -247,7 +275,7 @@ def send_external_email_campaign(campaign):
             continue  # Skip sending email if saving fails
                 
         unsubscribe_token = generate_external_email_token(email)
-        unsubscribe_url = f"{settings.SITE_URL}/communication/external-unsubscribe/{unsubscribe_token}/"
+        unsubscribe_url = f"{settings.SITE_URL}/api/communication/external-unsubscribe/{unsubscribe_token}/"
         context = {
             'email': email,
             'first_name': row.get("name", "Friend"),
@@ -298,3 +326,4 @@ def send_external_email_campaign(campaign):
         "skipped_duplicates": skipped_count,
         "failed_saves": failed_count,
     }
+
