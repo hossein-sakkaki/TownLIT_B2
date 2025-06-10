@@ -19,10 +19,11 @@ from .forms import EmailCampaignAdminForm, EmailTemplateAdminForm
 @admin.register(EmailTemplate)
 class EmailTemplateAdmin(admin.ModelAdmin):
     form = EmailTemplateAdminForm
-    class Media:
-        css = {
-            'all': ('css/custom_admin.css',)
-        }
+    # class Media:
+    #     css = {
+    #         'all': ('css/custom_admin.css',)
+    #     }
+        
     list_display = ['name', 'subject_template', 'created_at', 'preview_link']
     search_fields = ['name', 'subject_template']
     ordering = ['-created_at']
@@ -53,10 +54,10 @@ class EmailTemplateAdmin(admin.ModelAdmin):
 @admin.register(EmailCampaign)
 class EmailCampaignAdmin(admin.ModelAdmin):
     form = EmailCampaignAdminForm
-    class Media:
-        css = {
-            'all': ('css/custom_admin.css',)
-        }
+    # class Media:
+    #     css = {
+    #         'all': ('css/custom_admin.css',)
+    #     }
         
     list_display = [
             'title', 'status', 'target_group', 'scheduled_time', 'sent_at', 'created_by',
@@ -245,10 +246,10 @@ class EmailLogAdmin(admin.ModelAdmin):
 # EXTERNAL EMAIL CAMPAIGN Admin -------------------------------------------------------
 @admin.register(ExternalEmailCampaign)
 class ExternalEmailCampaignAdmin(admin.ModelAdmin):
-    class Media:
-        css = {
-            'all': ('css/custom_admin.css',)
-        }
+    # class Media:
+    #     css = {
+    #         'all': ('css/custom_admin.css',)
+    #     }
         
     list_display = ['title', 'created_by', 'created_at', 'is_sent', 'sent_at', 'preview_link']
     readonly_fields = ['created_at', 'sent_at', 'is_sent']

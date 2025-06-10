@@ -31,4 +31,10 @@ accounts/scripts/data/*.json
 # Prevent secrets from being tracked by Git
 .env.production
 
+# Ignore collected static files (Django)
+staticfiles/
+!static/.keep
+
+
+
 .information
