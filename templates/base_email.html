@@ -1,129 +1,315 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <title>
-      {% block subject %}
-        TownLIT Email
-      {% endblock %}
-    </title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<head>
+  <meta charset="UTF-8" />
+  <title>{% block subject %}TownLIT Email{% endblock %}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-    <style>
-      /* ========== RESET ========== */
-      body,
-      table,
-      td,
-      a {
-        -webkit-text-size-adjust: 100%;
-        -ms-text-size-adjust: 100%;
-      }
-      table,
-      td {
-        mso-table-lspace: 0pt;
-        mso-table-rspace: 0pt;
-      }
-      img {
-        -ms-interpolation-mode: bicubic;
-      }
-      body {
-        background: radial-gradient(circle, #0f52ba 10%, #000000 75%, #000000 100%);
-        background-repeat: no-repeat;
-        background-position: center;
-        background-attachment: fixed;
+  <style>
+    /* ========== RESET ========== */
+    body, table, td, a {
+      -webkit-text-size-adjust: 100%;
+      -ms-text-size-adjust: 100%;
+    }
+    table, td {
+      mso-table-lspace: 0pt;
+      mso-table-rspace: 0pt;
+    }
+    img {
+      -ms-interpolation-mode: bicubic;
+    }
+    body {
+      background: radial-gradient(circle, #0F52BA 10%, #000000 75%, #000000 100%);
+      background-repeat: no-repeat;
+      background-position: center;
+      background-attachment: fixed;
+
+
+      font-family: 'Lato', 'Segoe UI', sans-serif;
+
       
-        font-family: 'Lato', 'Segoe UI', sans-serif;
-      }
-      
-      /* ========== GLOBAL WRAPPER ========== */
-      .email-wrapper {
-        width: 100%;
-        padding: 20px 0;
-      }
-      
+    }
+
+    /* ========== GLOBAL WRAPPER ========== */
+    .email-wrapper {
+      width: 100%;
+      padding: 20px 0;
+    }
+
+    .email-container {
+      max-width: 600px;
+      margin: 0 auto;
+      border: 1px solid rgba(43, 44, 48, 0.1);
+      border-radius: 10px;
+      padding: 32px 24px;
+      background: linear-gradient(
+        290deg,
+        #F9F8F4 0%,
+        #F5F1EA 20%,
+        #EEE6DB 45%,
+        #F4F1EB 70%,
+        #F9F8F4 100%
+      );
+    }
+
+    /* ========== HEADER ========== */
+    .email-header {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      margin-bottom: 24px;
+      gap: 8px;
+    }
+
+    .logos-header {
+      display: flex;
+      flex-direction: row;
+      justify-content: center;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .email-header img.logo {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      width: 60px;
+      height: 60px;
+    }
+
+
+    /* ========== BODY ========== */
+    .email-content {
+      font-size: 16px;
+      line-height: 1.4;
+      color: #2B2C30;
+      margin-top: 60px;
+      margin-bottom: 60px;
+    }
+
+    {% comment %} h1, h2 {
+      color: #2B2C30;
+      font-weight: bold;
+      font-size: 22px;
+      margin-bottom: 12px;
+    } {% endcomment %}
+
+    h1 {
+      color: #0F52BA;
+      font-size: 20px;
+      font-weight: bold;
+      line-height: 1.4;
+    }
+  
+    h2 {
+      color: #F6C860; 
+      font-size: 16px;
+      font-weight: bold;
+      line-height: 1.4;
+    }
+  
+    h3 {
+      color: #2B2C30;
+      font-size: 14px;
+      font-weight: bold;
+      margin: 10px 0 2px;
+      line-height: 1.4;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+  
+    em {
+      color: #3BAA75;
+    }
+
+    .email-code-container {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .email-button-container {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .email-button {
+      display: inline-block;
+      background-color: #0F52BA;
+      color: #F8F6F0 !important;
+      padding: 12px 24px;
+      border-radius: 10px;
+      text-decoration: none;
+      font-size: 16px;
+      font-weight: 600;
+      text-align: center;
+    }
+
+    .email-button:hover {
+      background-color: #F6C860;
+    }
+
+    .code-box {
+      display: inline-block;
+      background-color: #F4F1EB;
+      border: 1px dashed #0F52BA;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-weight: bold;
+      color: #0F52BA;
+      letter-spacing: 4px;
+      text-align: center;
+      margin: 24px 0;
+      font-family: 'Lato', monospace;
+    }
+
+    .email-reflection {
+      font-style: italic;
+      font-size: 16px;
+      text-align: center;
+      color: #F6C860;
+      margin-top: 32px;
+      margin-bottom: 32px;
+      line-height: 1.6;
+    }
+
+    .email-signature {
+      margin-top: 32px;
+      font-size: 15px;
+      font-weight: bold;
+      color: #2B2C30;
+      font-family: 'Lato', sans-serif;
+      line-height: 1.3;
+    }
+
+
+    p {
+      margin-top: 8px;
+      margin-bottom: 8px;
+    }
+
+    p a{
+      color: #0F52BA !important;
+      text-decoration: none;
+    }
+    p a:hover {
+      color: #F6C860 !important;
+    }
+
+    /* ========== FOOTER ========== */
+    .email-footer {
+      margin-top: 32px;
+      font-size: 12px;
+      text-align: center;
+      color: #7A7A7A;
+    }
+
+    .email-divider {
+      border-top: 1px solid rgba(43, 44, 48, 0.1);
+      margin: 32px 0 12px 0;
+    }
+
+    .email-support-text {
+      text-align: center;
+      font-size: 14px;
+      color: #555;
+    }
+
+    .email-footer p {
+      margin: 4px 0;
+    }
+
+    .email-footer-links a {
+      color: #7A7A7A;
+      text-decoration: none;
+    }
+
+    .email-footer-links a:hover {
+      color: #F6C860 !important;
+    }
+
+    @media only screen and (max-width: 620px) {
       .email-container {
-        max-width: 600px;
-        margin: 0 auto;
-        border: 1px solid rgba(43, 44, 48, 0.1);
-        border-radius: 10px;
-        padding: 32px 24px;
-        background: linear-gradient(290deg, #f9f8f4 0%, #f5f1ea 20%, #eee6db 45%, #f4f1eb 70%, #f9f8f4 100%);
+        padding: 24px 16px;
       }
-      
-      /* ========== HEADER ========== */
-      .email-header {
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
+      .email-button {
+        width: 100%;
         text-align: center;
-        margin-bottom: 24px;
-        gap: 8px;
       }
-      
-      .logos-header {
-        display: flex;
-        flex-direction: row;
-        justify-content: center;
-        align-items: center;
-        gap: 10px;
-      }
-      
-      .email-header img.logo {
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        width: 60px;
-        height: 60px;
-      }
-      
-      /* ========== BODY ========== */
-      .email-content {
-        font-size: 16px;
-        line-height: 1.4;
-        color: #2b2c30;
-        margin-top: 60px;
-        margin-bottom: 60px;
-      }
-    </style>
-  </head>
+    }
 
-  <body>
-    <div class="email-wrapper">
-      <div class="email-container">
-        <!-- Header -->
-        <div class="email-header">
-          <div class="logos-header">
-            <img src="https://townlit.com/images/logo/TownLITLogo.png" alt="TownLIT Logo" class="logo" />
-          </div>
-        </div>
 
-        <!-- Content Block -->
-        <div class="email-content">
-          {% block content %}
-            {{ content|safe }}
-          {% endblock %}
-        </div>
+     /* ========== SAFTY ========== */
+    .alert-box {
+      background-color: #FFF4F4;
+      border-left: 6px solid #C40233; /* --color-danger */
+      padding: 20px;
+      border-radius: 8px;
+      margin-bottom: 24px;
+    }
 
-        <!-- Footer -->
+    .info-box {
+      background-color: #FFF8EC;
+      border-left: 5px solid #F4A429; /* --color-warning */
+      padding: 16px 20px;
+      border-radius: 6px;
+      margin-top: 24px;
+    }
 
-        <div class="email-divider"></div>
+    .warning-button {
+      background-color: #F4A429 !important;
+      color: #ffffff !important;
+    }
 
-        <p class="email-support-text">
-          Need help or have a question? Reach us at
-          <a href="mailto:support@townlit.com">support@townlit.com</a>
-        </p>
 
-        <div class="email-footer">
-          <div class="email-footer-links">
-            <a href="https://townlit.com" class="footer-link">TownLIT</a> |
-            <a href="https://townlit.com/townlit-official/foundation/townlit_beliefs" class="footer-link">Statement of Faith</a> |
-            <a href="https://townlit.com/townlit-official/foundation/vision_and_mission" class="footer-link">Vision & Mission</a>
-          </div>
-          <p>If you didn’t request this email, feel free to ignore it.</p>
-          <p>&copy; 2022–{{ current_year }} TownLIT. All rights reserved.</p>
+  </style>
+</head>
+
+<body>
+  <div class="email-wrapper">
+    <div class="email-container">
+
+      <!-- Header -->
+      <div class="email-header">
+
+        <div class="logos-header">
+          <img src="https://townlit.com/images/logo/TownLITLogo.png" alt="TownLIT Logo" class="logo" />
         </div>
       </div>
+
+      <!-- Content Block -->
+      <div class="email-content">
+        {% block content %}
+          {{ content|safe }}
+        {% endblock %}
+      </div>
+
+      <!-- Footer -->
+
+      <div class="email-divider"></div>
+
+
+
+      <p class="email-support-text">
+        Need help or have a question? Reach us at
+        <a href="mailto:support@townlit.com">support@townlit.com</a>
+      </p>
+
+      <div class="email-footer">
+        <div class="email-footer-links">
+          <a href="https://townlit.com" class="footer-link">TownLIT</a> |
+          <a href="https://townlit.com/townlit-official/foundation/townlit_beliefs" class="footer-link">Statement of Faith</a> |
+          <a href="https://townlit.com/townlit-official/foundation/vision_and_mission" class="footer-link">Vision & Mission</a>
+        </div>
+        <p>If you didn’t request this email, feel free to ignore it.</p>
+        <p>&copy; 2022–{{ current_year }} TownLIT. All rights reserved.</p>
+      </div>
+
     </div>
-  </body>
+  </div>
+</body>
 </html>
+
