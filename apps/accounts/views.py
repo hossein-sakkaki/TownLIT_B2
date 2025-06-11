@@ -82,10 +82,6 @@ class AuthViewSet(viewsets.ViewSet):
                 user.user_active_code_expiry = expiration_time
                 user.save()
 
-                print('------------------')
-                print(active_code)          # Delete after test ------------------------------------------------------------------------------
-                print('------------------')
-                
                 subject = "Welcome to TownLIT - Activate Your Account!"
                 context = {
                     'activation_code': active_code,
@@ -325,10 +321,6 @@ class AuthViewSet(viewsets.ViewSet):
                 if not success:
                     return Response({"error": "Failed to send OTP email. Please try again later."}, status=500)
                                 
-                print('------------------------')
-                print(otp_code)
-                print('------------------------')
-
                 return Response({
                     "message": "Two-factor authentication required. Please check your email for the OTP code.",
                     "two_factor_enabled": user.two_factor_enabled,
@@ -452,7 +444,6 @@ class AuthViewSet(viewsets.ViewSet):
                 if success:
                     return Response({"message": "Password reset email sent successfully.", "reset_token": reset_token}, status=status.HTTP_200_OK)
                 else:
-                    print("Failed to send email.")
                     return Response({"error": "Failed to send password reset email. Please try again later."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
                                     
             except CustomUser.DoesNotExist:
@@ -512,12 +503,7 @@ class AuthViewSet(viewsets.ViewSet):
             )
 
             if not success:
-                return Response({"error": "Failed to send OTP email. Please try again later."}, status=500)
-                        
-            print('----------------------------------------')
-            print(otp_code)
-            print('----------------------------------------')
-            
+                return Response({"error": "Failed to send OTP email. Please try again later."}, status=500)            
             return Response({"message": "A verification code has been sent to your email."}, status=status.HTTP_200_OK)
 
         except Exception as e:
@@ -606,10 +592,6 @@ class AuthViewSet(viewsets.ViewSet):
             if not success:
                 return Response({"error": "Failed to send OTP email. Please try again later."}, status=500)
                         
-            print('----------------------------------------')
-            print(otp_code)
-            print('----------------------------------------')
-            
             return Response({"message": "A verification code has been sent to your email."}, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -774,10 +756,6 @@ class AuthViewSet(viewsets.ViewSet):
             user.user_active_code = encrypted_active_code.decode()  # Save as string
             user.user_active_code_expiry = expiration_time
             user.save()
-            
-            print('------------------------------')
-            print(active_code)
-            print('------------------------------')
 
             # Send email
             subject = "Confirm Account Deletion - TownLIT"
@@ -890,10 +868,6 @@ class AuthViewSet(viewsets.ViewSet):
             user.user_active_code = encrypted_active_code.decode()  # Save as string
             user.user_active_code_expiry = expiration_time
             user.save()
-            
-            print('+++++++++++++++++++')
-            print(active_code)
-            print('+++++++++++++++++++')
 
             # Send email
             subject = "Reactivate Your Account - TownLIT"
@@ -930,11 +904,6 @@ class AuthViewSet(viewsets.ViewSet):
             user = request.user
             code = request.data.get('code')
             
-            print('--------------------------_—')
-            print(user)
-            print(code)
-            print('--------------------------_—')
-
             if not code:
                 return Response({"error": "Reactivation code is required."}, status=status.HTTP_400_BAD_REQUEST)
 

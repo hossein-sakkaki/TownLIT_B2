@@ -1,10 +1,13 @@
 from rest_framework import viewsets, permissions, status
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
+from django.conf import settings
+from django.utils import timezone
 
 from django.utils.decorators import method_decorator
 from django_ratelimit.decorators import ratelimit
 
+from utils.email.email_tools import send_custom_email
 from .models import CollaborationRequest, JobApplication, AccessRequest, ReviewLog
 from .utils import create_review_log
 from .serializers import (
@@ -14,7 +17,9 @@ from .serializers import (
     AccessRequestSerializer
 )
 from common.permissions import IsAdminOrReadOnly
+import logging
 
+logger = logging.getLogger(__name__)
 
 
 # CollaborationRequest ViewSet ----------------------------------------------------------
@@ -123,8 +128,63 @@ class AccessRequestViewSet(viewsets.ModelViewSet):
             return super().get_queryset()
         return AccessRequest.objects.none()
 
-    def perform_create(self, serializer):
-        serializer.save()
+    def create(self, request, *args, **kwargs):
+        email = request.data.get("email")
+        
+        # Step 1 – Check for duplicate requests
+        if AccessRequest.objects.filter(email=email).exists():
+            logger.info(f"Duplicate access request attempt detected for email: {email}")
+            return Response(
+                {
+                    "message": "You have already submitted a request with this email. "
+                            "We will get back to you soon with an invitation after review."
+                },
+                status=status.HTTP_200_OK
+            )
+
+        # Step 2 – Proceed with saving the request
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        access_request = serializer.save()
+
+        # Step 3 – Prepare email context
+        subject = "🌟 You're Almost There — TownLIT Is Opening Its Doors"
+        context = {
+            "first_name": access_request.first_name,
+            "email": access_request.email,
+            "submitted_at": access_request.submitted_at,
+            "site_domain": settings.SITE_URL,
+            "logo_base_url": settings.EMAIL_LOGO_URL,
+            "current_year": timezone.now().year,
+        }
+
+        # Step 4 – Send confirmation email
+        success = send_custom_email(
+            to=access_request.email,
+            subject=subject,
+            template_path="emails/forms/access_request_received.html",
+            context=context,
+        )
+
+        if not success:
+            logger.error(f"❌ Failed to send access request confirmation email to {access_request.email}")
+            return Response(
+                {
+                    "error": "Your request was submitted, but we couldn’t send a confirmation email. "
+                            "Please contact us if you don’t receive a response soon."
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+        # Step 5 – Return success response
+        return Response(
+            {
+                "message": "Your access request has been received successfully. "
+                        "A confirmation email has been sent to you."
+            },
+            status=status.HTTP_201_CREATED
+        )
+
         
 
 # ReviewLog Read-only ViewSet ----------------------------------------------------------
