@@ -92,9 +92,19 @@ app.conf.beat_schedule = {
         'task': 'apps.communication.tasks.run_scheduled_emails',
         'schedule': crontab(minute='*/2'),  # هر ۲ دقیقه
     },
-
-
+    
+    'delete-abandoned-users-daily': {
+        'task': 'accounts.tasks.delete_abandoned_users',
+        'schedule': crontab(hour=3, minute=0),  # هر روز ساعت ۳ صبح
+    },
 }
+
+from celery.schedules import crontab
+
+
+
+
+
 
 
 

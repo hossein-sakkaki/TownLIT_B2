@@ -26,8 +26,9 @@ class LoginSerializer(serializers.Serializer):
 # REGISTER USER Serializer ---------------------------------------------------------------
 class RegisterUserSerializer(serializers.ModelSerializer):
     agree_to_terms = serializers.BooleanField(write_only=True)
-    invite_code = serializers.CharField(write_only=True, required=False)
-
+    invite_code = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    email = serializers.EmailField()
+    
     class Meta:
         model = CustomUser
         fields = ['email', 'password', 'agree_to_terms', 'invite_code']
@@ -35,48 +36,48 @@ class RegisterUserSerializer(serializers.ModelSerializer):
             'password': {'write_only': True}
         }
 
+    def validate_email(self, value):
+        existing_user = CustomUser.objects.filter(email__iexact=value).first()
+        if existing_user and existing_user.is_active:
+            raise serializers.ValidationError(
+                "A user with this email already exists. Please log in or use a different email address."
+            )
+        return value
+
     def validate(self, data):
         if not data.get('agree_to_terms'):
-            raise serializers.ValidationError("You must agree to the terms and conditions.")
+            raise serializers.ValidationError(
+                "To join our community, we kindly ask you to agree to the terms and conditions. It’s how we care for one another in love and trust."
+            )
 
         if getattr(settings, 'USE_INVITE_CODE', False):
             invite_code = data.get('invite_code')
             if not invite_code:
-                raise serializers.ValidationError({"invite_code": "An invite code is required."})
+                raise serializers.ValidationError({
+                    "invite_code": "An invite code is needed to continue. If you haven’t received one, feel free to reach out — we’re here for you!"
+                })
+
             try:
                 invite = InviteCode.objects.get(code=invite_code)
             except InviteCode.DoesNotExist:
-                raise serializers.ValidationError({"invite_code": "Invalid invite code."})
+                raise serializers.ValidationError({
+                    "invite_code": "This invite code doesn’t seem to be valid. Please double-check or contact us if you need help."
+                })
 
             if invite.is_used:
-                raise serializers.ValidationError({"invite_code": "This invite code has already been used."})
+                raise serializers.ValidationError({
+                    "invite_code": "This invite code has already been used. If you need a new one, we’d be glad to assist!"
+                })
 
             email = data.get('email')
             if invite.email and invite.email.lower() != email.lower():
-                raise serializers.ValidationError({"invite_code": "This invite code is not valid for this email address."})
+                raise serializers.ValidationError({
+                    "invite_code": "This code was sent for a different email. If you believe this is an error, please let us know — we’re happy to help."
+                })
 
             self.invite = invite
 
         return data
-
-    def create(self, validated_data):
-        validated_data.pop('agree_to_terms')
-        invite_code = validated_data.pop('invite_code', None)
-
-        user = CustomUser.objects.create_user(
-            email=validated_data['email']
-        )
-        if not user.image_name:
-            user.image_name = settings.DEFAULT_PROFILE_IMAGE
-
-        user.set_password(validated_data['password'])
-        user.save()
-
-        # اگر invite تعریف شده بود، آن را استفاده‌شده علامت بزن
-        if getattr(settings, 'USE_INVITE_CODE', False):
-            self.invite.mark_as_used(user)
-
-        return user
 
 
 # VERIFY NEWBORN CODE Serializer -------------------------------------------------------------
@@ -93,12 +94,6 @@ class VerifyNewBornSerializer(serializers.Serializer):
 class ForgetPasswordSerializer(serializers.Serializer):
     email = serializers.EmailField()
 
-    def validate_email(self, value):
-        try:
-            user = CustomUser.objects.get(email=value)
-        except CustomUser.DoesNotExist:
-            raise serializers.ValidationError("This email does not exist in our system.")
-        return value
     
 class ResetPasswordSerializer(serializers.Serializer):
     new_password = serializers.CharField(max_length=128, write_only=True)
@@ -258,7 +253,6 @@ class SocialMediaLinkReadOnlySerializer(serializers.ModelSerializer):
 
 # CustomUser Serializers -----------------------------------------------------------------------
 class CustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
-    # profile_image_url = serializers.SerializerMethodField()
     label = CustomLabelSerializer(read_only=True)
     country_display = serializers.CharField(source='get_country_display', read_only=True)
     country = serializers.CharField(write_only=True)
@@ -307,12 +301,6 @@ class CustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
         instance.save()
         return instance
     
-    # def get_profile_image_url(self, obj):
-    #     request = self.context.get('request')
-    #     if obj.image_name and obj.image_name.url:
-    #         return request.build_absolute_uri(obj.image_name.url) if request else obj.image_name.url
-    #     default_image_path = settings.MEDIA_URL + 'sample/user.png'
-    #     return request.build_absolute_uri(default_image_path) if request else default_image_path
     def to_representation(self, instance):
         rep = super().to_representation(instance)
         rep['profile_image_url'] = rep.get('image_name_url')
@@ -321,7 +309,7 @@ class CustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
     def validate_username(self, value):
         # Check if the username is unchanged
         if self.instance and value == self.instance.username:
-            return value  # Username has not changed
+            return value  
         if CustomUser.objects.filter(username=value).exists():
             raise serializers.ValidationError("Unfortunately, this username is already taken. Please choose another one.")
         return value
@@ -329,7 +317,6 @@ class CustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
     
 # CustomUser Public Serializers -----------------------------------------------------------------------
 class PublicCustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
-    # profile_image_url = serializers.SerializerMethodField()
     
     class Meta:
         model = CustomUser
@@ -356,17 +343,9 @@ class PublicCustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer)
             rep.pop('city', None)
         return rep
 
-    # def get_profile_image_url(self, obj):
-    #     request = self.context.get('request')
-    #     if obj.image_name and obj.image_name.url:
-    #         return request.build_absolute_uri(obj.image_name.url) if request else obj.image_name.url
-    #     default_image_path = settings.MEDIA_URL + 'sample/user.png'
-    #     return request.build_absolute_uri(default_image_path) if request else default_image_path
-
     
 # LIMITED MEMBER Serializer ------------------------------------------------------------------------------
 class LimitedCustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
-    # profile_image_url = serializers.SerializerMethodField()
 
     class Meta:
         model = CustomUser
@@ -376,12 +355,6 @@ class LimitedCustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer
             'primary_language', 'secondary_language', 'is_member',
         ]
         
-    # def get_profile_image_url(self, obj):
-    #     request = self.context.get('request')
-    #     if obj.image_name and obj.image_name.url:
-    #         return request.build_absolute_uri(obj.image_name.url) if request else obj.image_name.url
-    #     default_image_path = settings.MEDIA_URL + 'sample/user.png'
-    #     return request.build_absolute_uri(default_image_path) if request else default_image_path
     def to_representation(self, instance):
         rep = super().to_representation(instance)
         rep['profile_image_url'] = rep.get('image_name_url')
@@ -400,7 +373,6 @@ class SimpleCustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer)
         read_only_fields = ['id']
 
     def get_profile_image(self, obj):
-        # استفاده از image_name_url که mixin ساخته
         rep = self.to_representation(obj)
         return rep.get('image_name_url')
 
@@ -414,38 +386,7 @@ class SimpleCustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer)
         if not isinstance(obj, CustomUser):
             return None
         return obj.get_absolute_url()
-# class SimpleCustomUserSerializer(serializers.ModelSerializer):
-#     profile_image = serializers.SerializerMethodField()
-#     is_friend = serializers.SerializerMethodField()
-#     profile_url = serializers.SerializerMethodField()
 
-#     class Meta:
-#         model = CustomUser
-#         fields = ['id', 'username', 'name', 'family', 'profile_image', 'is_friend', 'profile_url']
-#         read_only_fields = ['id']
-
-#     def get_profile_image(self, obj):             # ------------------- باید حل شود + پایین تر
-#         if not isinstance(obj, CustomUser):
-#             return None
-#         request = self.context.get('request')
-#         if obj.image_name:
-#             return request.build_absolute_uri(obj.image_name.url) if request else obj.image_name.url
-#         return None
-
-#     def get_is_friend(self, obj):
-#         if not isinstance(obj, CustomUser):
-#             return False
-#         friend_ids = self.context.get('friend_ids', set())
-#         return obj.id in friend_ids
-    
-#     # def get_profile_url(self, obj):
-#     #     return obj.get_absolute_url()
-    
-#     def get_profile_url(self, obj):              # ------------------- باید حل شود + بالا تر
-#         if not isinstance(obj, CustomUser):
-#             return None
-#         return obj.get_absolute_url()
-    
 
 # User Device Key Serializers -----------------------------------------------------------------------
 class UserDeviceKeySerializer(serializers.ModelSerializer):

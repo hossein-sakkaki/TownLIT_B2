@@ -82,6 +82,7 @@ class CustomUserManager(BaseUserManager):
         user_active_code_expiry = user_active_code_expiry or None
         reset_token = reset_token if reset_token else None
         reset_token_expiration = reset_token_expiration if reset_token_expiration else None
+        registration_started_at = timezone.now()
 
         # Create user instance
         user = self.model(
@@ -114,6 +115,7 @@ class CustomUserManager(BaseUserManager):
             show_country=show_country,
             show_city=show_city,
             is_account_paused=is_account_paused,
+            registration_started_at=registration_started_at,
         )
         
         user.set_password(password)
@@ -295,6 +297,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     reset_token = models.CharField(max_length=255, null=True, blank=True) # For Forgot Password
     reset_token_expiration = models.DateTimeField(null=True, blank=True)
 
+    registration_started_at = models.DateTimeField(default=timezone.now, verbose_name='Registration Start Date')
     is_active = models.BooleanField(default=False, verbose_name='Is Active')
     is_admin = models.BooleanField(default=False, verbose_name='Is Admin')
     is_member = models.BooleanField(default=False, verbose_name='Is Member')

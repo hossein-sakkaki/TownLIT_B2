@@ -1,7 +1,8 @@
-from django.shortcuts import get_object_or_404
 from django.contrib.auth import update_session_auth_hash
 from django.utils import timezone
+from django.conf import settings
 import datetime
+import traceback
 
 from rest_framework import viewsets
 from rest_framework.decorators import action
@@ -9,11 +10,11 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 
+from django.contrib.auth.hashers import check_password
 from rest_framework_simplejwt.tokens import RefreshToken
 from django_otp.plugins.otp_totp.models import TOTPDevice
 from django.contrib.contenttypes.models import ContentType
 
-from django.conf import settings
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from cryptography.fernet import Fernet
@@ -29,7 +30,7 @@ from .serializers import (
     UserDeviceKeySerializer
     )
 from .constants import BELIEVER, SEEKER, PREFER_NOT_TO_SAY
-from .models import CustomLabel, SocialMediaLink, SocialMediaType
+from .models import CustomLabel, SocialMediaLink, SocialMediaType, InviteCode
 from apps.profilesOrg.models import Organization
 from apps.profiles.models import Member, GuestUser
 from apps.main.models import TermsAndPolicy, UserAgreement
@@ -37,7 +38,6 @@ from apps.communication.models import ExternalContact
 from utils.common.utils import create_active_code, MAIN_URL
 from utils.email.email_tools import send_custom_email
 from utils.security.dialogue_cleanup import handle_sensitive_dialogue_cleanup
-from django.template.loader import render_to_string
 import utils as utils
 import logging
 from django.contrib.auth import get_user_model
@@ -45,23 +45,117 @@ from django.contrib.auth import get_user_model
 CustomUser = get_user_model()
 logger = logging.getLogger(__name__)
 
+
+
 # Generate key for encryption ---------------------------------------------------
 cipher_suite = Fernet(settings.FERNET_KEY)
 
+# Error Message Extract Method for Actions Return -------------------------------
+def extract_first_error_message(errors):
+    if isinstance(errors, dict):
+        for val in errors.values():
+            if isinstance(val, list) and val:
+                return val[0]
+            elif isinstance(val, str):
+                return val
+    return "Invalid registration data."
+
+
 # AUTH View  --------------------------------------------------------------------
 class AuthViewSet(viewsets.ViewSet):
+    
     @action(detail=False, methods=['post'], permission_classes=[AllowAny])
     def register(self, request):  # Register
         try:
             ser_data = RegisterUserSerializer(data=request.data)
             email = ser_data.initial_data.get('email')
-            if email and CustomUser.objects.filter(email=email).exists():
-                return Response(
-                    {"message": "A user with this email already exists. Please log in or use a different email address."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )            
+            existing_user = CustomUser.objects.filter(email=email).first()
+            if existing_user:
+                if existing_user.is_active:
+                    return Response(
+                        {"message": "A user with this email already exists. Please log in or use a different email address."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                else:
+                    # کاربر غیرفعال → آپدیت پسورد و ارسال مجدد کد
+                    if ser_data.is_valid():
+                        existing_user.set_password(ser_data.validated_data['password'])
+                        existing_user.user_active_code = None
+                        existing_user.user_active_code_expiry = None
+                        existing_user.registration_started_at = timezone.now()
+                        existing_user.save()
+
+                        try:
+                            terms_policy = TermsAndPolicy.objects.get(policy_type='terms_and_conditions')
+                            UserAgreement.objects.get_or_create(
+                                user=existing_user,
+                                policy=terms_policy,
+                                defaults={"is_latest_agreement": True}
+                            )
+                        except TermsAndPolicy.DoesNotExist:
+                            return Response(
+                                {"message": "Terms and Conditions policy not found."},
+                                status=status.HTTP_400_BAD_REQUEST
+                            )
+
+                        active_code = create_active_code(5)
+                        expiration_minutes = settings.EMAIL_CODE_EXPIRATION_MINUTES
+                        expiration_time = timezone.now() + datetime.timedelta(minutes=expiration_minutes)
+                        encrypted_active_code = cipher_suite.encrypt(str(active_code).encode())
+                        existing_user.user_active_code = encrypted_active_code
+                        existing_user.user_active_code_expiry = expiration_time
+                        existing_user.save()
+
+                        subject = "Welcome back to TownLIT - Verify Again"
+                        context = {
+                            'activation_code': active_code,
+                            'user': existing_user,
+                            'site_domain': settings.SITE_URL,
+                            "logo_base_url": settings.EMAIL_LOGO_URL,
+                            "expiration_minutes": expiration_minutes,
+                            'email': existing_user.email,
+                            "current_year": timezone.now().year,
+                        }
+
+                        success = send_custom_email(
+                            to=existing_user.email,
+                            subject=subject,
+                            template_path='emails/account/activation_email.html',
+                            context=context,
+                            text_template_path=None
+                        )
+
+                        if not success:
+                            return Response(
+                                {"message": "Failed to send activation email. Please try again later."},
+                                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                            )                            
+
+                        request.session['user_session'] = {
+                            'active_code': encrypted_active_code.decode(),
+                            'user_id': existing_user.id,
+                            'forget_password': False
+                        }
+                        request.session.modified = True
+                        request.session.save()
+
+                        return Response({
+                            "message": "Existing account updated. Please verify the new code.",
+                            "redirect_to_verify": True
+                        }, status=status.HTTP_200_OK)
+                    else:
+                        return Response({"message": extract_first_error_message(ser_data.errors)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+            # در صورت نبود کاربر → مسیر عادی ثبت‌نام
             if ser_data.is_valid():
-                user = ser_data.create(ser_data.validated_data)                
+                user = CustomUser.objects.create_user(
+                    email=ser_data.validated_data['email'],
+                )
+                user.set_password(ser_data.validated_data['password'])
+                user.image_name = settings.DEFAULT_PROFILE_IMAGE
+                user.save()
+
                 try:
                     terms_policy = TermsAndPolicy.objects.get(policy_type='terms_and_conditions')
                     UserAgreement.objects.create(
@@ -71,11 +165,12 @@ class AuthViewSet(viewsets.ViewSet):
                     )
                 except TermsAndPolicy.DoesNotExist:
                     return Response(
-                        {"error": "Terms and Conditions policy not found."},
+                        {"message": "Terms and Conditions policy not found."},
                         status=status.HTTP_400_BAD_REQUEST
-                    )           
+                    )
+
                 active_code = create_active_code(5)
-                expiration_minutes = settings.EMAIL_CODE_EXPIRATION_MINUTES                         
+                expiration_minutes = settings.EMAIL_CODE_EXPIRATION_MINUTES
                 expiration_time = timezone.now() + datetime.timedelta(minutes=expiration_minutes)
                 encrypted_active_code = cipher_suite.encrypt(str(active_code).encode())
                 user.user_active_code = encrypted_active_code
@@ -86,7 +181,7 @@ class AuthViewSet(viewsets.ViewSet):
                 context = {
                     'activation_code': active_code,
                     'user': user,
-                    'site_domain': settings.SITE_URL, 
+                    'site_domain': settings.SITE_URL,
                     "logo_base_url": settings.EMAIL_LOGO_URL,
                     "expiration_minutes": expiration_minutes,
                     'email': user.email,
@@ -98,34 +193,41 @@ class AuthViewSet(viewsets.ViewSet):
                     subject=subject,
                     template_path='emails/account/activation_email.html',
                     context=context,
-                    text_template_path=None  
+                    text_template_path=None
                 )
 
                 if not success:
                     user.delete()
-                    return Response({"error": "Failed to send activation email. Please try again later."}, status=500)
+                    return Response(
+                        {"message": "Failed to send activation email. Please try again later."},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    )
 
                 request.session['user_session'] = {
                     'active_code': encrypted_active_code.decode(),
                     'user_id': user.id,
                     'forget_password': False
                 }
-                
                 request.session.modified = True
                 request.session.save()
-                            
+
                 return Response({
                     "message": "User registered successfully and profile created.",
                     "redirect_to_verify": True
                 }, status=status.HTTP_200_OK)
-            else:
-                return Response(ser_data.errors, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            logger.error(f"Unexpected error during registration: {str(e)}")
+                
             return Response(
-                {"error": "An unexpected error occurred during registration. Please try again later."},
+                {"message": extract_first_error_message(ser_data.errors)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        except Exception as e:
+            logger.error("Unexpected error during registration:\n%s", traceback.format_exc())
+            return Response(
+                {"message": "An unexpected error occurred during registration. Please try again later."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
+            )
+
 
     @action(detail=False, methods=['post'], permission_classes=[AllowAny])
     def verify(self, request):  # Verify
@@ -158,6 +260,7 @@ class AuthViewSet(viewsets.ViewSet):
                     {"error": "Incorrect activation code. Please check and try again."},
                     status=status.HTTP_400_BAD_REQUEST
                 )
+                
             try:
                 user = CustomUser.objects.get(id=user_session['user_id'])
             except CustomUser.DoesNotExist:
@@ -176,7 +279,10 @@ class AuthViewSet(viewsets.ViewSet):
                 "message": "User verified successfully. Please answer the category questions.",
                 "redirect_to_choose_path": True
             }, status=status.HTTP_200_OK)
-        return Response(ser_data.errors, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {"message": extract_first_error_message(ser_data.errors)},
+            status=status.HTTP_400_BAD_REQUEST
+        )
 
     @action(detail=False, methods=['post'], url_path='choose-path', permission_classes=[AllowAny])
     def choose_path(self, request):  # Answer the category questions
@@ -239,6 +345,16 @@ class AuthViewSet(viewsets.ViewSet):
         user.is_active = True
         user.save()
         
+        # Mark invite code as used, only now that everything is successful
+        if getattr(settings, 'USE_INVITE_CODE', False):
+            try:
+                invite = InviteCode.objects.filter(email__iexact=user.email, used_by__isnull=True).first()
+                if invite:
+                    invite.mark_as_used(user)
+            except Exception as e:
+                logger.warning(f"Failed to mark invite as used: {str(e)}")
+
+        
         refresh = RefreshToken.for_user(user)
         access = refresh.access_token
         user_data = CustomUserSerializer(user).data
@@ -263,13 +379,13 @@ class AuthViewSet(viewsets.ViewSet):
                 user = CustomUser.objects.get(email=ser_data.validated_data['email'])
             except CustomUser.DoesNotExist:
                 return Response({
-                    "message": "Invalid credentials. Please check your email and password."
+                    "message": "We couldn't find an account with this email. If you're new, consider joining the family!"
                 }, status=status.HTTP_401_UNAUTHORIZED)
             
             # بررسی رمز عبور
             if not user.check_password(ser_data.validated_data['password']):
                 return Response({
-                    "message": "Invalid credentials. Please check your email and password."
+                    "message": "Hmm... that password didn’t match. Please try again — and don’t worry, it happens!"
                 }, status=status.HTTP_401_UNAUTHORIZED)
                 
 
@@ -344,7 +460,10 @@ class AuthViewSet(viewsets.ViewSet):
                 'user_id': user.id
             }, status=status.HTTP_200_OK)
 
-        return Response({"error": ser_data.errors}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {"error": extract_first_error_message(ser_data.errors)},
+            status=status.HTTP_400_BAD_REQUEST
+        )
 
     # Login with 2FA ----------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='login-with-2fa', permission_classes=[AllowAny])
@@ -352,7 +471,8 @@ class AuthViewSet(viewsets.ViewSet):
         email = request.data.get('email')
         otp_code = request.data.get('otp_code')
 
-        if not otp_code or not email:
+        # اعتبارسنجی اولیه
+        if not email or not otp_code:
             return Response({
                 "message": "Email and OTP code are required."
             }, status=status.HTTP_400_BAD_REQUEST)
@@ -364,14 +484,21 @@ class AuthViewSet(viewsets.ViewSet):
                 "message": "User with this email does not exist."
             }, status=status.HTTP_404_NOT_FOUND)
 
-        if user.two_factor_enabled and user.validate_two_factor_token(otp_code):
+        if not user.two_factor_enabled:
+            return Response({
+                "message": "Two-factor authentication is not enabled for this user."
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        token_status = user.validate_two_factor_token(otp_code)
+
+        if token_status == "valid":
             user.last_login = timezone.now()
             user.save(update_fields=['last_login'])
 
             refresh = RefreshToken.for_user(user)
             access = refresh.access_token
             user_data = CustomUserSerializer(user).data
-            
+
             return Response({
                 'refresh': str(refresh),
                 'access': str(access),
@@ -379,9 +506,20 @@ class AuthViewSet(viewsets.ViewSet):
                 'user': user_data,
                 'user_id': user.id,
             }, status=status.HTTP_200_OK)
-        else:
+
+        elif token_status == "expired":
             return Response({
-                "message": "Invalid OTP code or 2FA is not enabled."
+                "message": "Your OTP code has expired. Please request a new one."
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        elif token_status == "no_token":
+            return Response({
+                "message": "No OTP code was generated. Please start the login process again."
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        else: 
+            return Response({
+                "message": "Invalid OTP code. Please try again."
             }, status=status.HTTP_400_BAD_REQUEST)
 
     # Logout ---------------------------------------------------------------------------------------------------------
@@ -407,8 +545,6 @@ class AuthViewSet(viewsets.ViewSet):
             return Response({"error": "Invalid token or token has already been blacklisted."}, status=status.HTTP_400_BAD_REQUEST)
         
         
-        
-        
     # Forgot Password -------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='forget-password', permission_classes=[AllowAny])
     def forget_password(self, request): # Forget Password
@@ -422,7 +558,7 @@ class AuthViewSet(viewsets.ViewSet):
                 user.reset_token = reset_token
                 user.reset_token_expiration = expiration_time
                 user.save()
-                reset_link = f'{MAIN_URL}/auth/reset-password/{reset_token}/'
+                reset_link = f'{MAIN_URL}/reset-password/{reset_token}/'
                 
                 # Send reset your password link via email
                 subject = "Password Reset Link"
@@ -442,36 +578,72 @@ class AuthViewSet(viewsets.ViewSet):
                     text_template_path=None 
                 )
                 if success:
-                    return Response({"message": "Password reset email sent successfully.", "reset_token": reset_token}, status=status.HTTP_200_OK)
+                    return Response({
+                        "message": (
+                            "A password reset link has been sent to your email. "
+                            "Please check your inbox and click the secure link to continue the process. "
+                            "If you don’t see the email, kindly check your spam or promotions folder as well."
+                        ),
+                        "reset_token": reset_token
+                    }, status=status.HTTP_200_OK)
                 else:
-                    return Response({"error": "Failed to send password reset email. Please try again later."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                    return Response({
+                        "error": (
+                            "We couldn’t send the reset link at this moment. "
+                            "Please try again later or contact us if the issue continues. "
+                            "We’re here to help you regain access with peace and care."
+                        )
+                    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
                                     
             except CustomUser.DoesNotExist:
                 return Response({"message": "The provided email does not exist in our system."}, status=status.HTTP_404_NOT_FOUND)
         return Response(ser_data.errors, status=status.HTTP_400_BAD_REQUEST)
 
+
     @action(detail=False, methods=['post'], permission_classes=[AllowAny], url_path='reset-password/(?P<reset_token>[^/.]+)')
-    def reset_password(self, request, reset_token): # Reset Password
-        user = get_object_or_404(CustomUser, reset_token=reset_token, reset_token_expiration__gt=timezone.now())
-        ser_data = ResetPasswordSerializer(data=request.data)
-        if ser_data.is_valid():
-            user.set_password(ser_data.validated_data['new_password'])
+    def reset_password(self, request, reset_token):
+        try:
+            user = CustomUser.objects.get(reset_token=reset_token)
+            if user.reset_token_expiration < timezone.now():
+                return Response(
+                    {"message": "This password reset link has expired. Please request a new one."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        except CustomUser.DoesNotExist:
+            return Response(
+                {"message": "Invalid or expired reset link. Please try again."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = ResetPasswordSerializer(data=request.data)
+        if serializer.is_valid():
+            new_password = serializer.validated_data['new_password']
+
+            if check_password(new_password, user.password):
+                return Response(
+                    {"message": "The new password must be different from your current password."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            user.set_password(new_password)
             user.reset_token = None
             user.reset_token_expiration = None
             user.last_login = timezone.now()
             user.save()
-            
+
             refresh = RefreshToken.for_user(user)
             access = refresh.access_token
             user_data = CustomUserSerializer(user).data
-            
+
             return Response({
-                'refresh': str(refresh),
-                'access': str(access),
-                'is_member': user.is_member,
-                'user': user_data,
+                "refresh": str(refresh),
+                "access": str(access),
+                "is_member": user.is_member,
+                "user": user_data,
             }, status=status.HTTP_200_OK)
-        return Response(ser_data.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
 
     # Enable 2FA ----------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='enable-2fa', permission_classes=[IsAuthenticated])
@@ -729,14 +901,6 @@ class AuthViewSet(viewsets.ViewSet):
         except Exception as e:
             logger.error(f"Error occurred: {str(e)}")
             return Response({"error": "An unexpected error occurred"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-
-
-
-
-
-
 
 
 
