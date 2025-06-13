@@ -1,0 +1,29 @@
+{% extends "base_email.html" %}
+
+{% block subject %}
+Your Payment to TownLIT Was Not Completed
+{% endblock %}
+
+{% block content %}
+<h1>Dear {{ first_name }},</h1>
+
+<p>We noticed that your recent {{ payment_type }} payment was not completed.</p>
+
+<p>Sometimes, payments may be canceled for various reasons such as timeouts, declined cards, or interrupted connections.</p>
+
+<p><strong>🧾 Payment Reference:</strong> {{ reference_number }}</p>
+<p>If this was unintentional or you’d like to try again, we invite you to return and complete the process at your convenience.</p>
+
+<p>
+If you believe this was a mistake or need help, feel free to contact our team at 
+<a href="mailto:payment@townlit.com">payment@townlit.com</a>. We’re here to assist you.
+</p>
+
+<p>We appreciate your interest in supporting TownLIT.<br />
+Your presence and engagement already mean a lot to us!</p>
+
+<p>Warmly,<br />
+<strong>The TownLIT Team</strong><br />
+<em>"Where The <b>L</b>ord <b>I</b>s <b>T</b>here"</em>
+</p>
+{% endblock %}

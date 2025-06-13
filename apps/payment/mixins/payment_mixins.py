@@ -14,7 +14,10 @@ from django.shortcuts import get_object_or_404
 from apps.payment.models import PaymentInvoice, PaymentDonation, PaymentSubscription, PaymentAdvertisement, PaymentShoppingCart, Payment
 from django.contrib.auth import get_user_model, login
 from apps.payment.stripe_utils import create_stripe_payment_intent
+from apps.payment.utils import send_payment_confirmation_email, send_payment_rejection_email
+import logging
 
+logger = logging.getLogger(__name__)
 CustomUser = get_user_model()
 
 
@@ -150,6 +153,10 @@ class PaymentMixin:
                 payment_instance.confirm_token = None  # 🔐 invalidate after use
                 payment_instance.confirm_token_created_at = None
                 payment_instance.save()
+                
+                success = send_payment_confirmation_email(payment_instance)
+                if not success:
+                    logger.warning(f"⚠️ Failed to send confirmation email for payment {payment_instance.reference_number}")
 
                 PaymentInvoice.objects.create(
                     payment=payment_instance,
@@ -191,11 +198,17 @@ class PaymentMixin:
             )
 
         # Proceed with rejection
-        print('------------------------------------------------------------------  1')
         payment_instance.payment_status = 'rejected'
-        payment_instance.cancel_token = None  # ❌ Invalidate token after use
+        payment_instance.cancel_token = None 
         payment_instance.cancel_token_created_at = None
         payment_instance.save()
+        
+        # Send rejection email
+        reject = send_payment_rejection_email(payment_instance)
+        if not reject:
+            logger.warning(f"⚠️ Failed to send rejection email for payment {payment_instance.reference_number}")
+                
+        
         self.post_payment_action(payment_instance, status='rejected')
 
         type_param = self.get_payment_type_param(payment_instance)
@@ -208,7 +221,6 @@ class PaymentMixin:
     def retry_payment(self, request, pk=None):
         payment_instance = self.get_object()
 
-        print('------------------------------------------------------------------  2')
         if payment_instance.payment_status not in ['rejected', 'failed']:
             return Response(
                 {"error": "Payment is not in a retryable state."},
@@ -237,7 +249,6 @@ class PaymentMixin:
         payment = get_object_or_404(Payment, reference_number=ref)
 
         # فقط اگر وضعیت فعلی قابل بازگشت است
-        print('------------------------------------------------------------------  3')
         if payment.payment_status not in ['rejected', 'failed', 'expired']:
             return Response(
                 {"error": "This payment is not eligible for retry."},
@@ -306,7 +317,6 @@ class PaymentMixin:
     def cancel_payment(self, request, pk=None):
         payment_instance = self.get_object()
 
-        print('------------------------------------------------------------------  1')
         # Only allow canceling pending or expired (not finalized)
         if payment_instance.payment_status in ["confirmed", "rejected", "canceled"]:
             return Response(

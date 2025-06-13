@@ -5,8 +5,14 @@ from django.conf import settings
 from django.http import JsonResponse, HttpResponse
 from django.utils import timezone
 
-from apps.payment.models import PaymentDonation, PaymentInvoice
+from apps.payment.models import Payment, PaymentInvoice
 from utils.email.email_tools import send_custom_email
+from .utils import send_payment_confirmation_email, send_payment_rejection_email
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 
 @csrf_exempt
 def stripe_webhook_view(request):
@@ -21,58 +27,58 @@ def stripe_webhook_view(request):
     except stripe.error.SignatureVerificationError:
         return HttpResponse(status=400)  # Invalid signature
 
-    # ----------------- SUCCESS CASE -----------------
+    # ---------- ✅ Success Case ----------
     if event['type'] == 'payment_intent.succeeded':
         intent = event['data']['object']
         payment_intent_id = intent['id']
 
         try:
-            donation = PaymentDonation.objects.get(stripe_payment_intent_id=payment_intent_id)
-        except PaymentDonation.DoesNotExist:
+            payment = Payment.objects.get(stripe_payment_intent_id=payment_intent_id)
+        except Payment.DoesNotExist:
             return HttpResponse(status=404)
 
-        if donation.payment_status != 'confirmed':
-            donation.payment_status = 'confirmed'
-            donation.confirm_token = None
-            donation.confirm_token_created_at = None
-            donation.save()
+        if payment.payment_status != 'confirmed':
+            payment.payment_status = 'confirmed'
+            payment.confirm_token = None
+            payment.confirm_token_created_at = None
+            payment.cancel_token = None
+            payment.cancel_token_created_at = None
+            payment.save()
 
+            # ✅ Create Invoice
             PaymentInvoice.objects.create(
-                payment=donation,
+                payment=payment,
                 issued_date=timezone.now(),
                 is_paid=True
             )
-            
-            if donation.email:
-                send_custom_email(
-                    to=donation.email,
-                    subject="Thank You for Your Donation!",
-                    template_path="emails/payment/donation_confirmed.html",
-                    context={"name": donation.user.name if donation.user else "Friend", "amount": donation.amount},
-                )
 
-    # ----------------- CANCELED CASE -----------------
+            # ✅ Send General Payment Confirmation Email
+            success = send_payment_confirmation_email(payment)
+            if not success:
+                logger.warning(f"⚠️ Failed to send confirmation email for payment {payment.reference_number}")
+
+
+    # ---------- ✅ Canceled Case ----------
     elif event['type'] == 'payment_intent.canceled':
         intent = event['data']['object']
         payment_intent_id = intent['id']
 
         try:
-            donation = PaymentDonation.objects.get(stripe_payment_intent_id=payment_intent_id)
-        except PaymentDonation.DoesNotExist:
+            payment = Payment.objects.get(stripe_payment_intent_id=payment_intent_id)
+        except Payment.DoesNotExist:
             return HttpResponse(status=404)
 
-        if donation.payment_status == 'pending':
-            donation.payment_status = 'rejected'
-            donation.cancel_token = None
-            donation.cancel_token_created_at = None
-            donation.save()
+        if payment.payment_status == 'pending':
+            payment.payment_status = 'rejected'
+            payment.confirm_token = None
+            payment.confirm_token_created_at = None
+            payment.cancel_token = None
+            payment.cancel_token_created_at = None
+            payment.save()
 
-            if donation.email:
-                send_custom_email(
-                    to=donation.email,
-                    subject="Donation Canceled",
-                    template_path="emails/payment/donation_rejected.html",
-                    context={"name": donation.user.name if donation.user else "Friend"},
-                )
+            # Unified rejection email sender
+            reject = send_payment_rejection_email(payment)
+            if not reject:
+                logger.warning(f"⚠️ Failed to send rejection email for payment {payment.reference_number}")
 
     return JsonResponse({'status': 'success'})

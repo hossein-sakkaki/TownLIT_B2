@@ -32,10 +32,10 @@ class CollaborationRequest(models.Model):
     country = models.CharField(max_length=100, blank=True, null=True,)
     city = models.CharField(max_length=100, blank=True, null=True,)
 
-    collaboration_type = models.CharField(max_length=50, choices=COLLABORATION_TYPE_CHOICES)
+    collaboration_type = models.CharField(max_length=50, choices=COLLABORATION_TYPE_CHOICES, default='other')
     collaboration_mode = models.CharField(max_length=20, choices=COLLABORATION_MODE_CHOICES, default='online')
     availability = models.CharField(max_length=10, choices=COLLABORATION_AVAILABILITY_CHOICES, blank=True, null=True, default=AVAILABILITY_5)
-    message = models.TextField(blank=True)
+    message = models.TextField(blank=True, null=True)
     allow_contact = models.BooleanField(default=True)
 
     status = models.CharField(max_length=20, choices=COLLABORATION_STATUS_CHOICES, default=COLLABORATION_STATUS_NEW)

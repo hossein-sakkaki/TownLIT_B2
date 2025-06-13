@@ -1,0 +1,25 @@
+{% extends "base_email.html" %}
+
+{% block subject %}
+We’ve Received Your Collaboration Request – Thank You!
+{% endblock %}
+
+{% block content %}
+
+<h1>Dear {{ first_name }},</h1>
+
+<p>Thank you for offering to collaborate with TownLIT. Your heart to serve and your willingness to share your gifts is deeply appreciated.</p>
+
+<p>We’ve received your collaboration request and our team will prayerfully review it. If a suitable opportunity arises, someone from our team will be in touch with you directly.</p>
+
+<p>In the meantime, feel free to stay connected and explore more about the mission and vision of TownLIT:</p>
+
+<ul>
+  <li>💡 <a href="https://townlit.com/townlit-official">Visit TownLIT official</a></li>
+  <li>🛐 <a href="https://townlit.com/townlit-official/prayer">Share a prayer</a> to bless others</li>
+</ul>
+
+<br>
+<p>With gratitude and joy,<br /><strong>The TownLIT Family</strong><br />"Where The <b>L</b>ord <b>I</b>s <b>T</b>here"</p>
+
+{% endblock %}

@@ -1,0 +1,28 @@
+{% extends "base_email.html" %}
+
+{% block subject %}
+Your Payment to TownLIT Was Successful – Thank You!
+{% endblock %}
+
+{% block content %}
+<h1>Dear {{ first_name }},</h1>
+
+<p>We’re truly grateful for your {{ payment_type }} payment. Your generosity and trust mean a lot to us.</p>
+
+<p>We’ve successfully received and processed your payment. Every contribution plays a vital role in helping TownLIT grow and serve the Body of Christ around the world.</p>
+
+<p><strong>Payment Details:</strong></p>
+<ul>
+  <li>🧾 Reference Number: <strong>{{ reference_number }}</strong></li>
+  <li>💰 Amount: ${{ amount }}</li>
+  <li>📅 Date: {{ date|date:"F j, Y – H:i" }}</li>
+</ul>
+
+<p>If you have any questions, feel free to reach us at <a href="mailto:payment@townlit.com">payment@townlit.com</a>.</p>
+
+<p>With deep appreciation,<br />
+<strong>The TownLIT Team</strong><br />
+"Where The <b>L</b>ord <b>I</b>s <b>T</b>here"
+</p>
+{% endblock %}
+

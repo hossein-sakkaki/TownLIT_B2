@@ -3,6 +3,7 @@ from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 from django.conf import settings
 from django.utils import timezone
+import traceback
 
 from django.utils.decorators import method_decorator
 from django_ratelimit.decorators import ratelimit
@@ -30,7 +31,7 @@ class CollaborationRequestViewSet(viewsets.ModelViewSet):
 
     @method_decorator(ratelimit(key='user_or_ip', rate='5/m', method='POST', block=True))
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
+        serializer = self.get_serializer(data=request.data, context={'request': request})
 
         # Check spam field before validation
         company_name = request.data.get("company_name", "")
@@ -40,6 +41,28 @@ class CollaborationRequestViewSet(viewsets.ModelViewSet):
         try:
             serializer.is_valid(raise_exception=True)
             instance = serializer.save()
+            
+            if instance.email:
+                subject = "🤝 Your Collaboration Request Has Been Received – TownLIT"
+                context = {
+                    "first_name": instance.full_name or "Friend",
+                    "email": instance.email,
+                    "submitted_at": instance.submitted_at,
+                    "site_domain": settings.SITE_URL,
+                    "logo_base_url": settings.EMAIL_LOGO_URL,
+                    "current_year": timezone.now().year,
+                }
+
+                success = send_custom_email(
+                    to=instance.email,
+                    subject=subject,
+                    template_path="emails/forms/collaboration_request_received.html",  # تمپلیت جدید
+                    context=context,
+                )
+
+                if not success:
+                    logger.warning(f"⚠️ Collaboration email failed to send to {instance.email}")
+            
             return Response({
                 "message": "Thank you for your willingness to collaborate. Our team will prayerfully review your request and contact you if needed.",
                 "data": self.get_serializer(instance).data
@@ -79,7 +102,7 @@ class JobApplicationViewSet(viewsets.ModelViewSet):
 
     @method_decorator(ratelimit(key='user_or_ip', rate='5/m', method='POST', block=True))
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
+        serializer = self.get_serializer(data=request.data, context={'request': request})
 
         # Check spam field before validation
         company_name = request.data.get("company_name", "")
@@ -89,6 +112,29 @@ class JobApplicationViewSet(viewsets.ModelViewSet):
         try:
             serializer.is_valid(raise_exception=True)
             instance = serializer.save()
+            if instance.email:
+                subject = "📄 We’ve Received Your Job Application – TownLIT"
+                context = {
+                    "first_name": instance.full_name or "Friend",
+                    "email": instance.email,
+                    "submitted_at": instance.submitted_at,
+                    "site_domain": settings.SITE_URL,
+                    "logo_base_url": settings.EMAIL_LOGO_URL,
+                    "current_year": timezone.now().year,
+                }
+
+                success = send_custom_email(
+                    to=instance.email,
+                    subject=subject,
+                    template_path="emails/forms/job_application_received.html",
+                    context=context,
+                )
+
+                if not success:
+                    logger.warning(f"⚠️ Job application email failed to send to {instance.email}")
+
+            
+            
             return Response({
                 "message": "Your application was received. Our team will prayerfully review it and contact you if appropriate.",
                 "data": self.get_serializer(instance).data

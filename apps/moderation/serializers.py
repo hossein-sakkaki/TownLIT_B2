@@ -35,8 +35,12 @@ class CollaborationRequestSerializer(serializers.ModelSerializer):
             if not validated_data.get("full_name"):
                 name_parts = filter(None, [user.name, user.family])
                 validated_data["full_name"] = " ".join(name_parts)
+        else:
+            validated_data.pop("user", None)
 
         return super().create(validated_data)
+
+
 
 
 # Job Application Serializer ----------------------------------------------------------

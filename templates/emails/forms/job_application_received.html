@@ -1,0 +1,25 @@
+{% extends "base_email.html" %}
+
+{% block subject %}
+Thank You for Your Job Application – TownLIT
+{% endblock %}
+
+{% block content %}
+
+<h1>Dear {{ first_name }},</h1>
+
+<p>We appreciate your interest in joining the TownLIT team. Your job application has been successfully received and is currently under review.</p>
+
+<p>Our team will prayerfully assess your submission. If we find a good match between your experience and our current needs, we’ll reach out to you for next steps.</p>
+
+<p>In the meantime, we invite you to explore more of what TownLIT is all about:</p>
+
+<ul>
+  <li>💡 <a href="https://townlit.com/townlit-official">Visit TownLIT official</a></li>
+  <li>🛐 <a href="https://townlit.com/townlit-official/prayer">Share a prayer</a> to bless others</li>
+</ul>
+
+<br>
+<p>With gratitude,<br /><strong>The TownLIT Team</strong><br />"Where The <b>L</b>ord <b>I</b>s <b>T</b>here"</p>
+
+{% endblock %}
