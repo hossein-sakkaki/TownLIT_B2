@@ -14,6 +14,13 @@ services:
     mem_limit: 7g
     cpus: 1.9
 
+    networks:
+      - townlit-network
+
 volumes:
   media_volume:
+
+networks:
+  townlit-network:
+    external: true
 
