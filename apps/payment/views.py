@@ -208,13 +208,17 @@ class PaymentProcessViewSet(PaymentMixin, GenericViewSet):
 
         # --- Choose Serializer ---
         if hasattr(payment, 'paymentdonation'):
-            serializer = PaymentDonationSerializer(payment.paymentdonation, context={'request': request})
+            serializer = PaymentSerializer(payment, context={'request': request})
+            
         elif hasattr(payment, 'paymentsubscription'):
             serializer = PaymentSerializer(payment)
+            
         elif hasattr(payment, 'paymentadvertisement'):
             serializer = PaymentSerializer(payment)
+            
         elif hasattr(payment, 'paymentshoppingcart'):
             serializer = PaymentSerializer(payment)
+            
         else:
             serializer = PaymentSerializer(payment)
 

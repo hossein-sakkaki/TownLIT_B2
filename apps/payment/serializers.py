@@ -90,9 +90,24 @@ class PaymentShoppingCartSerializer(serializers.ModelSerializer):
         
 # PAYMENT  Serializer ------------------------------------------------------------------------------
 class PaymentSerializer(serializers.ModelSerializer):
+    type = serializers.SerializerMethodField()
+
     class Meta:
         model = Payment
         fields = '__all__'
+        read_only_fields = ['type']
+
+    def get_type(self, obj):
+        if hasattr(obj, 'paymentdonation'):
+            return 'donation'
+        elif hasattr(obj, 'paymentsubscription'):
+            return 'subscription'
+        elif hasattr(obj, 'paymentadvertisement'):
+            return 'ads'
+        elif hasattr(obj, 'paymentshoppingcart'):
+            return 'shop'
+        return 'unknown'
+
 
 
 

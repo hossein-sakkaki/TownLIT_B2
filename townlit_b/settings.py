@@ -218,22 +218,6 @@ USE_TZ = True
 
 
 
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/4.1/howto/static-files/
-
-STATIC_URL = '/static/'
-STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static')]
-
-STATIC_ROOT = '/app/staticfiles'
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
-
-
-# MEDIA_URL = '/media/'
-# MEDIA_ROOT = os.path.join(BASE_DIR, 'media/')
-DEFAULT_PROFILE_IMAGE = 'sample/user.png'
-
-
-
 
 
 # Default primary key field type
@@ -467,6 +451,15 @@ USE_I18N = True
 # USE_L10N = True 
 
 
+
+# ✅ Static files
+STATIC_URL = '/static/'
+STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static')]  # چون گفتی داری
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
+# ✅ Media files
+DEFAULT_PROFILE_IMAGE = 'sample/user.png'
 
 # ---------------- File Serving Policy ------------------
 SERVE_FILES_PUBLICLY = os.getenv('SERVE_FILES_PUBLICLY', 'False').lower() in ('true', '1', 't')
