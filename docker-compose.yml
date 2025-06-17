@@ -19,9 +19,6 @@ services:
     mem_limit: 768m
     cpus: 1.5
 
-    networks:
-      - townlit-network
-
   mysql:
     image: mysql:8
     container_name: townlit_mysql
@@ -39,10 +36,6 @@ services:
       - "3306:3306"
     mem_limit: 768m
     cpus: 1.0
-
-    networks:
-      - townlit-network
-
 
   redis:
     image: redis:7
@@ -73,9 +66,6 @@ services:
     mem_limit: 512m
     cpus: 0.75
 
-    networks:
-      - townlit-network
-
   celery-beat:
     build:
       context: .
@@ -94,13 +84,6 @@ services:
     mem_limit: 384m
     cpus: 0.5
 
-    networks:
-      - townlit-network
-
 volumes:
   media_volume:
   mysql_data:
-
-networks:
-  townlit-network:
-    driver: bridge
