@@ -16,4 +16,10 @@ echo "🧹 Collecting static files to: ${STATIC_ROOT}"
 python manage.py collectstatic --noinput
 
 echo "🚀 Starting Daphne server..."
-exec daphne -b 0.0.0.0 -p 8000 townlit_b.asgi:application
+exec gunicorn townlit_b.asgi:application \
+  -k uvicorn.workers.UvicornWorker \
+  --bind 0.0.0.0:8000 \
+  --timeout 600 \
+  --log-level info
+
+

@@ -25,7 +25,6 @@ click-repl==0.3.0
 constantly==23.10.4
 cron-descriptor==1.4.3
 cryptography==43.0.1
-daphne==4.1.2
 Django==4.2.4
 django-admin-list-filter-dropdown==1.0.3
 django-celery-beat==2.6.0
@@ -43,6 +42,7 @@ django-phonenumber-field==8.0.0
 django-ratelimit==4.1.0
 django-ses==4.2.0
 django-ssl-smtp==2.0.0
+django-storages==1.14.6
 django-timezone-field==7.0
 django-two-factor-auth==1.17.0
 djangorestframework==3.14.0
@@ -52,6 +52,8 @@ ffmpeg-python==0.2.0
 frozenlist==1.4.1
 future==1.0.0
 google-auth==2.34.0
+gunicorn==23.0.0
+h11==0.16.0
 honcho==2.0.0
 hyperlink==21.0.0
 idna==3.4
@@ -61,6 +63,7 @@ kombu==5.4.0
 msgpack==1.0.8
 multidict==6.0.5
 mysqlclient==2.2.6
+packaging==25.0
 paypalrestsdk==1.13.3
 pexpect==4.9.0
 phonenumbers==8.13.45
@@ -98,9 +101,9 @@ txaio==23.1.1
 typing_extensions==4.7.1
 tzdata==2024.1
 urllib3==2.0.4
+uvicorn==0.34.3
 vine==5.1.0
 wcwidth==0.2.13
+whitenoise==6.9.0
 yarl==1.9.4
 zope.interface==7.2
-whitenoise
-django-storages==1.14.6

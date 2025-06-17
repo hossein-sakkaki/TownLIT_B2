@@ -56,7 +56,6 @@ USE_INVITE_CODE = True  # Set to False to disable invite code requirement
 # Application definition
 
 INSTALLED_APPS = [
-    'daphne',               # To support ASGI
     'channels',             # Real-Time Notification
     
     'django.contrib.admin',
