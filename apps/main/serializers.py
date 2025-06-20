@@ -128,15 +128,17 @@ class OfficialVideoSerializer(serializers.ModelSerializer):
 
     video_url = serializers.SerializerMethodField()
     thumbnail_url = serializers.SerializerMethodField()
+    video_file_path = serializers.SerializerMethodField()
 
     class Meta:
         model = OfficialVideo
         fields = [
             'id', 'title', 'description', 'language',
             'category', 'series', 'episode_number',
-            'video_url', 'thumbnail_url', 'view_count',
+            'video_url', 'thumbnail_url', 'video_file_path', 'view_count',
             'is_active', 'publish_date', 'created_at', 'slug',
-            'time_since_publish', 'parent_id', 'children_count'
+            'time_since_publish', 'parent_id', 'children_count',
+            'is_converted',
         ]
 
     def get_time_since_publish(self, obj):
@@ -147,6 +149,11 @@ class OfficialVideoSerializer(serializers.ModelSerializer):
 
     def get_video_url(self, obj):
         return get_file_url(str(obj.video_file.name)) if obj.video_file else None
+
+    def get_video_file_path(self, obj):
+        path = str(obj.video_file.name) if obj.video_file else None
+        print("✅ [get_video_file_path CALLED] =>", path)
+        return path
 
     def get_thumbnail_url(self, obj):
         return get_file_url(str(obj.thumbnail.name)) if obj.thumbnail else None

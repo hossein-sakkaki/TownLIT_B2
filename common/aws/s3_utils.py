@@ -1,3 +1,4 @@
+# common/s3_utils.py
 import boto3
 from django.conf import settings
 from botocore.exceptions import ClientError
@@ -5,9 +6,6 @@ import logging
 
 
 def get_file_size(key: str) -> int:
-    """
-    Get file size in bytes from S3.
-    """
     s3 = boto3.client(
         's3',
         region_name=settings.AWS_S3_REGION_NAME,
@@ -19,11 +17,6 @@ def get_file_size(key: str) -> int:
 
 
 def generate_presigned_url(key: str, expires_in: int = None, force_download: bool = False) -> str:
-    """
-    Generate a presigned URL for a private S3 object.
-    - If expires_in is None, it will be calculated dynamically based on file size.
-    - If force_download is True, the browser will download the file instead of previewing it.
-    """
     s3 = boto3.client(
         's3',
         region_name=settings.AWS_S3_REGION_NAME,
@@ -55,9 +48,6 @@ def generate_presigned_url(key: str, expires_in: int = None, force_download: boo
 
 
 def get_file_url(key: str, default_url: str = None, expires_in: int = None, force_download: bool = False) -> str:
-    """
-    Get the appropriate file URL (public or signed) depending on project settings.
-    """
     if not key:
         return default_url
 

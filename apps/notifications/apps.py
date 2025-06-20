@@ -11,5 +11,5 @@ class NotificationsConfig(AppConfig):
         import apps.notifications.signals.reaction_signals
         import apps.notifications.signals.friend_signals
         import apps.notifications.signals.manager_signals
-        import apps.notifications.signals.user_signals
+        # import apps.notifications.signals.user_signals
 

@@ -1,3 +1,21 @@
+# from __future__ import absolute_import, unicode_literals
+# import os
+# import django
+
+# from celery import Celery
+# from celery.schedules import crontab
+
+# os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'townlit_b.settings')
+# django.setup()
+
+# app = Celery('townlit_b')
+# app.config_from_object('django.conf:settings', namespace='CELERY') 
+# app.autodiscover_tasks()
+
+# import apps.media_conversion.tasks
+
+
+
 from __future__ import absolute_import, unicode_literals
 import os
 from celery import Celery
@@ -8,17 +26,12 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'townlit_b.settings')
 app = Celery('townlit_b')
 app.config_from_object('django.conf:settings', namespace='CELERY') 
 app.autodiscover_tasks()
-CELERY_TASK_DEFAULT_QUEUE = 'default'
+
 
 
 
 # Define all beat schedules in one dictionary
 app.conf.beat_schedule = {
-    # ✅ Cancel Friendship After 3 Months
-    # 'delete_expired_friendships_every_day': {
-    #     'task': 'apps.profiles.tasks.delete_expired_friendships',
-    #     'schedule': crontab(hour=0, minute=0),
-    # },
 
     # ✅ Delete Inactive Users
     'delete-inactive-users-every-day': {
@@ -99,7 +112,6 @@ app.conf.beat_schedule = {
     },
 }
 
-from celery.schedules import crontab
 
 
 

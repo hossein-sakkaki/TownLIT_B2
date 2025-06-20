@@ -21,5 +21,3 @@ exec gunicorn townlit_b.asgi:application \
   --bind 0.0.0.0:8000 \
   --timeout 600 \
   --log-level info
-
-

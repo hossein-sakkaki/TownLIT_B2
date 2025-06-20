@@ -22,9 +22,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 ENV_FILE = os.getenv('ENV_FILE', '.env')
-# load_dotenv(BASE_DIR / ENV_FILE, override=True)
+load_dotenv(BASE_DIR / ENV_FILE, override=True)
 
-load_dotenv(Path(__file__).resolve().parent / '.env', override=True)
+# load_dotenv(Path(__file__).resolve().parent / '.env', override=True)
+
 
 
 ADMIN_E2E_DEBUG_PASSWORD = "testpassword"
@@ -174,7 +175,6 @@ DATABASES = {
         'NAME': os.getenv('DATABASE_NAME'),
         'USER': os.getenv('DATABASE_USER'),
         'PASSWORD': os.getenv('DATABASE_PASSWORD'),
-        # 'HOST': os.getenv('DATABASE_HOST', '127.0.0.1'),
         'HOST': os.getenv('DATABASE_HOST', 'mysql'),
         'PORT': os.getenv('DATABASE_PORT', '3306'),
         'OPTIONS': {
@@ -387,6 +387,8 @@ CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 30 * 60
 CELERY_TASK_ALWAYS_EAGER = False
 CELERY_ACKS_LATE = True
+CELERY_TASK_DEFAULT_QUEUE = 'default'
+
 
 broker_connection_retry_on_startup = True
 

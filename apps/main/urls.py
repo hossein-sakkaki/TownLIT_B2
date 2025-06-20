@@ -1,6 +1,6 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
-
+from common.views.media_proxy import serve_s3_media_file
 from .views import (
     TermsAndPolicyViewSet,
     FAQViewSet,
@@ -31,10 +31,10 @@ router.register(r'video-series', VideoSeriesViewSet, basename='video-series')
 router.register(r'official-videos', OfficialVideoViewSet, basename='official-videos')
 router.register(r'prayers', PrayerViewSet, basename='prayers')
 
-# urlpatterns = [
-#     path('', coming_soon_view, name='coming-soon'),
-# ]
 
-# urlpatterns += router.urls
 
-urlpatterns = router.urls
+urlpatterns = router.urls + [
+    path("media-proxy/", serve_s3_media_file, name="serve-s3-media"),
+    #     path('', coming_soon_view, name='coming-soon'),
+]
+

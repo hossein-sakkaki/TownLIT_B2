@@ -38,7 +38,7 @@ class FileUpload:
         )
 
 
-# FILE DIRECTION Handler For Converted Files --------------------
+# FILE DIRECTION Handler For Converted Files --------------------------
 import tempfile
 from django.core.files.storage import default_storage
 from storages.backends.s3boto3 import S3Boto3Storage
@@ -55,8 +55,21 @@ def get_converted_path(instance, original_path: str, fileupload, extension: str)
 
     return absolute_path, relative_path
 
+# HLS OUTPUT DIRECTION Handler For Converted Files --------------------
+def get_hls_output_dir(instance, fileupload: FileUpload) -> tuple[str, str]:
+    today = datetime.datetime.now().strftime("%Y/%m/%d")
+    unique_folder = str(uuid4())
+    relative_dir = f"{fileupload.app_name}/{fileupload.direction}/{fileupload.folder}/{today}/{unique_folder}"
 
-# CREATE RANDOM Code ------------------------------------------
+    if isinstance(default_storage, S3Boto3Storage):
+        absolute_dir = os.path.join(tempfile.gettempdir(), unique_folder)
+    else:
+        absolute_dir = os.path.join(settings.MEDIA_ROOT, relative_dir)
+
+    return absolute_dir, relative_dir
+
+
+# CREATE RANDOM Code ---------------------------------------------------
 def create_active_code(count):
     import random
     count-=1

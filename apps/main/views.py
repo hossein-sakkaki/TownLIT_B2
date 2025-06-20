@@ -315,6 +315,17 @@ class OfficialVideoViewSet(viewsets.ModelViewSet):
         if self.action in ['create', 'update', 'partial_update']:
             return OfficialVideoCreateUpdateSerializer
         return OfficialVideoSerializer
+    
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        serializer = self.get_serializer(queryset, many=True)
+
+        # ✅ اینجا لاگ بگیر
+        print('---------------------------------------------------------------------------------------=======================')
+        print("🎯 [OfficialVideoViewSet.list] sample item:")
+        print(serializer.data[0]) 
+
+        return Response(serializer.data)
 
     @action(detail=True, methods=["post"], permission_classes=[AllowAny])
     def track_view(self, request, pk=None):

@@ -4,9 +4,11 @@ from django.apps import apps
 from django.conf import settings
 from django.core.files.storage import default_storage 
 from django.core.files import File
+from django.db import close_old_connections
+
 from utils.common.utils import FileUpload
 from utils.common.image_utils import convert_image_to_jpg
-from utils.common.video_utils import convert_video_to_mp4
+from utils.common.video_utils import convert_video_to_multi_hls
 from utils.common.audio_utils import convert_audio_to_mp3
 import logging
 
@@ -60,30 +62,48 @@ def handle_converted_file_update(model_name: str, app_label: str, instance_id: i
 
 
     
-# Video Convertor Task --------------------------------------------------------------------------
+
+# Video Convertor Task to HLS --------------------------------------------------------------------------
 @shared_task(queue="video")
-def convert_video_to_mp4_task(model_name, app_label, instance_id, field_name, source_path, fileupload):
+def convert_video_to_multi_hls_task(model_name, app_label, instance_id, field_name, source_path, fileupload):
     try:
+        from django.db import close_old_connections
+        close_old_connections()
+
+        logger.info(f"🚧 Celery Task triggered for video conversion: {model_name} (id={instance_id})")
+
         instance = get_instance(app_label, model_name, instance_id)
         upload = FileUpload(**fileupload)
 
-        relative_path = convert_video_to_mp4(source_path, instance, upload)
-        handle_converted_file_update(model_name, app_label, instance_id, field_name, relative_path)
+        # 🚀 تبدیل فایل ویدیویی به HLS multi-bitrate
+        relative_path = convert_video_to_multi_hls(source_path, instance, upload)
 
+        # 🔁 به‌روزرسانی مسیر فایل در مدل (فقط فایل master.m3u8)
+        setattr(instance, field_name, relative_path)
+        logger.warning(f"🎯 After update: {getattr(instance, field_name, None)}")
 
         update_fields = [field_name]
+
+        # ✳️ اگر فیلد is_converted وجود دارد، مقداردهی کن
         if hasattr(instance, "is_converted"):
             instance.is_converted = True
             update_fields.append("is_converted")
 
         instance.save(update_fields=update_fields)
+        logger.warning(f"📦 Saved fields: {update_fields}")
+        logger.info(f"✅ HLS conversion complete: {relative_path}")
 
-        logger.info(f"✅ Video conversion and model update successful: {relative_path}")
+        # 🧹 حذف فایل اصلی آپلودشده پس از موفقیت تبدیل
+        if source_path and default_storage.exists(source_path):
+            default_storage.delete(source_path)
+            logger.info(f"🗑️ Deleted original uploaded file: {source_path}")
 
     except Exception as e:
-        logger.error(f"❌ convert_video_to_mp4_task failed for {model_name} (id={instance_id}) – error: {e}")
+        logger.error(
+            f"❌ convert_video_to_multi_hls_task failed for {model_name} (id={instance_id}) – error: {e}"
+        )
 
-
+    
     
 # Image Convertor Task --------------------------------------------------------------------------
 @shared_task
