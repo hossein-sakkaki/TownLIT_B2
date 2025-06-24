@@ -15,7 +15,7 @@ python manage.py migrate
 echo "🧹 Collecting static files to: ${STATIC_ROOT}"
 python manage.py collectstatic --noinput
 
-echo "🚀 Starting Daphne server..."
+echo "🚀 Starting server..."
 exec gunicorn townlit_b.asgi:application \
   -k uvicorn.workers.UvicornWorker \
   --bind 0.0.0.0:8000 \

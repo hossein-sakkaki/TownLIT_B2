@@ -68,8 +68,8 @@ def convert_video_to_multi_hls(source_path: str, instance, fileupload: FileUploa
                 "ffmpeg", "-y",
                 "-i", temp_input_path,
                 "-vf", f"scale={resolution}",
-                "-c:a", "aac", "-b:a", "96k",  # کاهش بیت‌ریت صدا
-                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",  # کاهش کیفیت به شکل کنترل‌شده
+                "-c:a", "aac", "-b:a", "96k",
+                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
                 "-f", "hls",
                 "-hls_time", "5",
                 "-hls_playlist_type", "vod",

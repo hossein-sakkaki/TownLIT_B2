@@ -23,9 +23,31 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 ENV_FILE = os.getenv('ENV_FILE', '.env')
 load_dotenv(BASE_DIR / ENV_FILE, override=True)
-
 # load_dotenv(Path(__file__).resolve().parent / '.env', override=True)
 
+
+
+# ---------------------------------------------------------------------------------------
+
+# CORS_ALLOW_ALL_ORIGINS = False
+CORS_ALLOW_ALL_ORIGINS = os.getenv('CORS_ALLOW_ALL_ORIGINS', 'False').lower() in ('true', '1', 't')
+
+# CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:3000').split(',')
+
+
+if not CORS_ALLOW_ALL_ORIGINS:
+    allowed_origins = os.getenv("CORS_ALLOWED_ORIGINS", "")
+    CORS_ALLOWED_ORIGINS = [origin.strip() for origin in allowed_origins.split(",") if origin.strip()]
+else:
+    CORS_ALLOWED_ORIGINS = []
+
+
+
+
+FRONTEND_BASE_URL = CORS_ALLOWED_ORIGINS[0] if CORS_ALLOWED_ORIGINS else "http://localhost:3000"
+CORS_ALLOW_CREDENTIALS = os.getenv('CORS_ALLOW_CREDENTIALS', 'True').lower() in ('true', '1', 't')
+
+# ---------------------------------------------------------------------------------------
 
 
 ADMIN_E2E_DEBUG_PASSWORD = "testpassword"
@@ -52,6 +74,17 @@ RESET_LINK_EXPIRATION_MINUTES = int(os.getenv('RESET_LINK_EXPIRATION_MINUTES', 3
 EMAIL_CODE_EXPIRATION_MINUTES = int(os.getenv('EMAIL_CODE_EXPIRATION_MINUTES', 10))
 
 USE_INVITE_CODE = True  # Set to False to disable invite code requirement
+
+
+
+
+
+
+
+
+
+
+
 
 
 # Application definition
@@ -103,6 +136,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -111,7 +145,6 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     
-    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django_otp.middleware.OTPMiddleware',  # 2FA
     
@@ -124,10 +157,6 @@ MIDDLEWARE = [
 ASGI_APPLICATION = 'townlit_b.asgi.application'
 
 
-CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:3000').split(',')
-FRONTEND_BASE_URL = CORS_ALLOWED_ORIGINS[0]
-CORS_ALLOW_CREDENTIALS = os.getenv('CORS_ALLOW_CREDENTIALS', 'True').lower() in ('true', '1', 't')
-CORS_ALLOW_ALL_ORIGINS = True
 
 CORS_ALLOW_HEADERS = list(default_headers) + [
     'Range',
