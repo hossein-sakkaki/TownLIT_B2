@@ -1,40 +1,60 @@
-# Ignore virtualenv environments
+# =============================
+# 🐍 Python-specific ignores
+# =============================
+__pycache__/
+*.py[cod]
+*.sqlite3
+*.log
+
+# =============================
+# 🧪 Virtual Environments
+# =============================
 .env/
 venv/
 ENV/
 
-# Ignore Django media files
+# =============================
+# 🛠️ Django-specific
+# =============================
 media/
+staticfiles/
+!static/.keep
+.information
 
-# Ignore Python cache files
-__pycache__/
-*.py[cod]
-*.sqlite3
+# =============================
+# 🛡️ Environment & Secrets
+# =============================
+.env
+.env.production
+.env.example
 
-# Ignore IDE/editor-specific files
+# =============================
+# ⚙️ Local Config & Entrypoints
+# =============================
+entrypoint_worker.sh
+entrypoint_backend.sh
+docker-compose.override.yml
+docker-compose.worker.yml
+docker-compose.local.yml
+Dockerfile
+
+Procfile
+
+# =============================
+# 🧪 App-specific user data or scripts
+# =============================
+accounts/scripts/data/*.json
+
+# =============================
+# 🧠 IDE/editor ignores
+# =============================
 *.swp
 *.swo
 *.idea/
 .vscode/
 
-# Ignore OS-generated files
+# =============================
+# 🧬 OS-specific junk
+# =============================
 .DS_Store
 Thumbs.db
-
-# Ignore env vars or local config
-.env
-.env.example
-
-# Ignore User Information
-accounts/scripts/data/*.json
-
-# Prevent secrets from being tracked by Git
-.env.production
-
-# Ignore collected static files (Django)
-staticfiles/
-!static/.keep
-
-
-
-.information
