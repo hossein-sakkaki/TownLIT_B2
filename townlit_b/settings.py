@@ -64,8 +64,12 @@ DEBUG = os.getenv('DEBUG', 'False').lower() in ('true', '1', 't')
 
 ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "").split(",")
 
+# ----------------------------------------------------------------------------------------------------------------------------
+# CSRF_TRUSTED_ORIGINS = ['http://localhost:8000', 'https://townlit.com']
+CSRF_TRUSTED_ORIGINS = os.getenv("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",")
+# ----------------------------------------------------------------------------------------------------------------------------
 
-CSRF_TRUSTED_ORIGINS = ['http://localhost:8000', 'https://townlit.com']
+
 REDIS_URL = os.getenv('REDIS_URL', 'redis://127.0.0.1:6379/0')
 SITE_URL = os.getenv("SITE_URL", "https://www.townlit.com")
 EMAIL_LOGO_URL = os.getenv("EMAIL_LOGO_URL", "https://www.townlit.com")
@@ -405,6 +409,7 @@ CKEDITOR_CONFIGS = {
 }
 
 # Redis Celery ------------------------------------------------------------------------
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
 CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
 CELERY_ACCEPT_CONTENT = ['application/json']
