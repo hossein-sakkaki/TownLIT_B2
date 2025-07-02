@@ -27,6 +27,7 @@ staticfiles/
 .env
 .env.production
 .env.example
+.dockerignore
 
 # =============================
 # ⚙️ Local Config & Entrypoints
@@ -58,3 +59,6 @@ accounts/scripts/data/*.json
 # =============================
 .DS_Store
 Thumbs.db
+
+# Ignore CKEditor static files
+static/ckeditor/ckeditor/
