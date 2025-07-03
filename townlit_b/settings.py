@@ -29,11 +29,7 @@ load_dotenv(BASE_DIR / ENV_FILE, override=True)
 
 # ---------------------------------------------------------------------------------------
 
-# CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOW_ALL_ORIGINS = os.getenv('CORS_ALLOW_ALL_ORIGINS', 'False').lower() in ('true', '1', 't')
-
-# CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:3000').split(',')
-
 
 if not CORS_ALLOW_ALL_ORIGINS:
     allowed_origins = os.getenv("CORS_ALLOWED_ORIGINS", "")
@@ -65,7 +61,6 @@ DEBUG = os.getenv('DEBUG', 'False').lower() in ('true', '1', 't')
 ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "").split(",")
 
 # ----------------------------------------------------------------------------------------------------------------------------
-# CSRF_TRUSTED_ORIGINS = ['http://localhost:8000', 'https://townlit.com']
 CSRF_TRUSTED_ORIGINS = os.getenv("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",")
 # ----------------------------------------------------------------------------------------------------------------------------
 
