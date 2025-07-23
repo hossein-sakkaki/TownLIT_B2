@@ -55,7 +55,7 @@ from apps.profilesOrg.constants import (
 )
 
 # Import Gift
-from apps.profiles.gift_constants import GIFT_LANGUAGE_CHOICES
+from apps.profiles.gift_constants import GIFT_LANGUAGE_CHOICES, GIFT_ANSWER_LABELS
 
 # Import payments
 from apps.payment.constants import (
@@ -171,6 +171,7 @@ CHOICES_MAP = {
     
     # Gift Constants
     'gift_language_choices': GIFT_LANGUAGE_CHOICES,
+    "gift_answer_labels": GIFT_ANSWER_LABELS,
 
     # Payments constants
     'payment_status': PAYMENT_STATUS_CHOICES,

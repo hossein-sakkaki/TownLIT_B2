@@ -213,13 +213,13 @@ class StaticChoiceViewSet(viewsets.ViewSet):
             return Response({"error": f"Choice '{choice_name}' not found."}, status=404)
         return Response(choices)
 
-
+    
+# PRAYER View -----------------------------------------------------------------------------------------------
 class PrayerPagination(PageNumberPagination):
     page_size = 20
     page_size_query_param = 'page_size'
     max_page_size = 100
     
-# PRAYER View -----------------------------------------------------------------------------------------------
 class PrayerViewSet(viewsets.ModelViewSet):
     queryset = Prayer.objects.all().order_by('-submitted_at')
     serializer_class = PrayerSerializer
@@ -319,12 +319,6 @@ class OfficialVideoViewSet(viewsets.ModelViewSet):
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
         serializer = self.get_serializer(queryset, many=True)
-
-        # ✅ اینجا لاگ بگیر
-        print('---------------------------------------------------------------------------------------=======================')
-        print("🎯 [OfficialVideoViewSet.list] sample item:")
-        print(serializer.data[0]) 
-
         return Response(serializer.data)
 
     @action(detail=True, methods=["post"], permission_classes=[AllowAny])

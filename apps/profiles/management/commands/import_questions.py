@@ -22,3 +22,5 @@ class Command(BaseCommand):
                     )
 
             self.stdout.write(self.style.SUCCESS('Successfully imported questions'))
+            
+# docker compose exec backend python manage.py import_questions

@@ -36,6 +36,7 @@ from apps.profiles.models import Member, GuestUser
 from apps.main.models import TermsAndPolicy, UserAgreement
 from apps.communication.models import ExternalContact
 from utils.common.utils import create_active_code, MAIN_URL
+from utils.common.ip import get_client_ip, get_location_from_ip
 from utils.email.email_tools import send_custom_email
 from utils.security.dialogue_cleanup import handle_sensitive_dialogue_cleanup
 import utils as utils
@@ -85,16 +86,24 @@ class AuthViewSet(viewsets.ViewSet):
                         existing_user.registration_started_at = timezone.now()
                         existing_user.save()
 
-                        try:
-                            terms_policy = TermsAndPolicy.objects.get(policy_type='terms_and_conditions')
-                            UserAgreement.objects.get_or_create(
-                                user=existing_user,
-                                policy=terms_policy,
-                                defaults={"is_latest_agreement": True}
-                            )
-                        except TermsAndPolicy.DoesNotExist:
+                        # ثبت توافق با سیاست‌ها
+                        required_policies = ['terms_of_service', 'privacy_policy']
+                        missing_policies = []
+
+                        for policy_type in required_policies:
+                            try:
+                                policy = TermsAndPolicy.objects.get(policy_type=policy_type)
+                                UserAgreement.objects.get_or_create(
+                                    user=existing_user,
+                                    policy=policy,
+                                    defaults={"is_latest_agreement": True}
+                                )
+                            except TermsAndPolicy.DoesNotExist:
+                                missing_policies.append(policy_type)
+
+                        if missing_policies:
                             return Response(
-                                {"message": "Terms and Conditions policy not found."},
+                                {"message": f"Required policy(ies) not found: {', '.join(missing_policies)}"},
                                 status=status.HTTP_400_BAD_REQUEST
                             )
 
@@ -105,6 +114,11 @@ class AuthViewSet(viewsets.ViewSet):
                         existing_user.user_active_code = encrypted_active_code
                         existing_user.user_active_code_expiry = expiration_time
                         existing_user.save()
+                        
+                        print('--------------------------------------------')
+                        print(active_code)
+                        logger.error(f"code: {active_code}")
+                        print('--------------------------------------------')
 
                         subject = "Welcome back to TownLIT - Verify Again"
                         context = {
@@ -156,16 +170,23 @@ class AuthViewSet(viewsets.ViewSet):
                 user.image_name = settings.DEFAULT_PROFILE_IMAGE
                 user.save()
 
-                try:
-                    terms_policy = TermsAndPolicy.objects.get(policy_type='terms_and_conditions')
-                    UserAgreement.objects.create(
-                        user=user,
-                        policy=terms_policy,
-                        is_latest_agreement=True
-                    )
-                except TermsAndPolicy.DoesNotExist:
+                missing_policies = []
+                required_policies = ['terms_of_service', 'privacy_policy']
+
+                for policy_type in required_policies:
+                    try:
+                        policy = TermsAndPolicy.objects.get(policy_type=policy_type)
+                        UserAgreement.objects.get_or_create(
+                            user=existing_user,
+                            policy=policy,
+                            defaults={"is_latest_agreement": True}
+                        )
+                    except TermsAndPolicy.DoesNotExist:
+                        missing_policies.append(policy_type)
+
+                if missing_policies:
                     return Response(
-                        {"message": "Terms and Conditions policy not found."},
+                        {"message": f"Required policy(ies) not found: {', '.join(missing_policies)}"},
                         status=status.HTTP_400_BAD_REQUEST
                     )
 
@@ -176,6 +197,12 @@ class AuthViewSet(viewsets.ViewSet):
                 user.user_active_code = encrypted_active_code
                 user.user_active_code_expiry = expiration_time
                 user.save()
+                
+                print('--------------------------------------------')
+                print(active_code)
+                logger.error(f"code: {active_code}")
+                print('--------------------------------------------')
+                    
 
                 subject = "Welcome to TownLIT - Activate Your Account!"
                 context = {
@@ -195,7 +222,7 @@ class AuthViewSet(viewsets.ViewSet):
                     context=context,
                     text_template_path=None
                 )
-
+                                            
                 if not success:
                     user.delete()
                     return Response(
@@ -435,7 +462,7 @@ class AuthViewSet(viewsets.ViewSet):
                 )
 
                 if not success:
-                    return Response({"error": "Failed to send OTP email. Please try again later."}, status=500)
+                    return Response({"error": "Failed to send OTP email. Please try again later."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
                                 
                 return Response({
                     "message": "Two-factor authentication required. Please check your email for the OTP code.",
@@ -675,7 +702,7 @@ class AuthViewSet(viewsets.ViewSet):
             )
 
             if not success:
-                return Response({"error": "Failed to send OTP email. Please try again later."}, status=500)            
+                return Response({"error": "Failed to send OTP email. Please try again later."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)            
             return Response({"message": "A verification code has been sent to your email."}, status=status.HTTP_200_OK)
 
         except Exception as e:
@@ -762,7 +789,7 @@ class AuthViewSet(viewsets.ViewSet):
             )
 
             if not success:
-                return Response({"error": "Failed to send OTP email. Please try again later."}, status=500)
+                return Response({"error": "Failed to send OTP email. Please try again later."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
                         
             return Response({"message": "A verification code has been sent to your email."}, status=status.HTTP_200_OK)
         except Exception as e:
@@ -941,7 +968,7 @@ class AuthViewSet(viewsets.ViewSet):
             )
 
             if not success:
-                return Response({"error": "Failed to send confirmation email. Please try again later."}, status=500)
+                return Response({"error": "Failed to send confirmation email. Please try again later."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
             return Response({"message": "A confirmation email has been sent. Please check your inbox."}, status=status.HTTP_200_OK)
         except Exception as e:
@@ -1049,11 +1076,11 @@ class AuthViewSet(viewsets.ViewSet):
                 subject=subject,
                 template_path='emails/account/reactivate_account_email.html',
                 context=context,
-                text_template_path=None  # اگر متن ساده هم بخواهی، می‌توان اضافه کرد
+                text_template_path=None
             )
 
             if not success:
-                return Response({"error": "Failed to send reactivation code. Please try again later."}, status=500)
+                return Response({"error": "Failed to send reactivation code. Please try again later."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
             return Response({"message": "A reactivation code has been sent to your email. Please check your inbox."}, status=status.HTTP_200_OK)
         except Exception as e:
@@ -1142,12 +1169,27 @@ class AuthViewSet(viewsets.ViewSet):
         public_key = request.data.get("public_key")
         device_name = request.data.get("device_name")
         user_agent = request.META.get("HTTP_USER_AGENT", "")
-        ip_address = request.META.get("REMOTE_ADDR")
+        ip_address = get_client_ip(request)
 
         if not device_id or not public_key:
-            return Response({"error": "Device ID and public key are required."},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "Device ID and public key are required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
+        # Location info
+        location = get_location_from_ip(ip_address)
+
+        city = location.get("city")
+        region = location.get("region")
+        country = location.get("country")
+        timezone_str = location.get("timezone")
+        organization = location.get("org")
+        latitude = location.get("latitude")
+        longitude = location.get("longitude")
+        postal = location.get("postal")
+
+        # ذخیره یا به‌روزرسانی دستگاه
         device, created = UserDeviceKey.objects.update_or_create(
             user=user,
             device_id=device_id,
@@ -1158,9 +1200,24 @@ class AuthViewSet(viewsets.ViewSet):
                 "ip_address": ip_address,
                 "last_used": timezone.now(),
                 "is_active": True,
+                "location_city": city,
+                "location_region": region,
+                "location_country": country,
+                "timezone": timezone_str,
+                "organization": organization,
+                "latitude": latitude,
+                "longitude": longitude,
+                "postal_code": postal,
             }
         )
-        return Response({"message": "Device key registered successfully."})
+
+        return Response({
+            "message": "Device key registered successfully.",
+            "created": created,
+            "location": location,  # شامل همه اطلاعات است
+        })
+
+
 
     @action(detail=False, methods=["get"], url_path="my-devices", permission_classes=[IsAuthenticated])
     def my_devices(self, request):
@@ -1180,17 +1237,102 @@ class AuthViewSet(viewsets.ViewSet):
         except UserDeviceKey.DoesNotExist:
             return Response({"error": "Device not found."}, status=status.HTTP_404_NOT_FOUND)
 
-    @action(detail=False, methods=["post"], url_path="logout-all-devices")
-    def logout_all_devices(self, request):
-        user = request.user
-        current_device_id = request.data.get("device_id")
-        if not current_device_id:
-            return Response({"error": "Current device ID is required."},
-                            status=status.HTTP_400_BAD_REQUEST)
 
-        # غیرفعال کردن تمام دستگاه‌ها به جز دستگاه فعلی
-        UserDeviceKey.objects.filter(user=user).exclude(device_id=current_device_id).update(is_active=False)
-        return Response({"message": "All other devices have been logged out."})
+    @action(detail=False, methods=["post"], url_path="send-device-deletion-code", permission_classes=[IsAuthenticated])
+    def send_device_deletion_code(self, request):
+        user = request.user
+        device_id = request.data.get("device_id")
+
+        if not device_id:
+            return Response({"error": "Device ID is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            device = UserDeviceKey.objects.get(user=user, device_id=device_id)
+        except UserDeviceKey.DoesNotExist:
+            return Response({"error": "Device not found."}, status=status.HTTP_404_NOT_FOUND)
+        
+        code = str(create_active_code(5))
+        encrypted_code = cipher_suite.encrypt(code.encode()).decode()
+
+        expiration_minutes = settings.EMAIL_CODE_EXPIRATION_MINUTES
+        expiry = timezone.now() + datetime.timedelta(minutes=expiration_minutes)
+
+        # ذخیره در مدل
+        device.deletion_code = encrypted_code
+        device.deletion_code_expiry = expiry
+        device.save()
+
+        # ارسال ایمیل
+        context = {
+            'activation_code': code,
+            'user': user,
+            'site_domain': settings.SITE_URL,
+            "logo_base_url": settings.EMAIL_LOGO_URL,
+            "expiration_minutes": expiration_minutes,
+            "current_year": timezone.now().year,
+            "device_name": device.device_name,
+            "device_ip": device.ip_address,
+        }
+
+        subject = "Confirm Device Deletion - TownLIT"
+        success = send_custom_email(
+            to=user.email,
+            subject=subject,
+            template_path='emails/account/confirm_device_deletion.html',
+            context=context,
+            text_template_path=None,
+        )
+
+        if not success:
+            return Response({"error": "Failed to send confirmation code."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({"message": "A confirmation code was sent to your email."}, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["post"], url_path="verify-delete-device", permission_classes=[IsAuthenticated])
+    def verify_and_delete_device(self, request):
+        user = request.user
+        device_id = request.data.get("device_id")
+        input_code = request.data.get("code")
+
+        if not device_id or not input_code:
+            return Response({"error": "Device ID and code are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            device = UserDeviceKey.objects.get(user=user, device_id=device_id)
+        except UserDeviceKey.DoesNotExist:
+            return Response({"error": "Device not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # بررسی وجود و اعتبار کد
+        if not device.deletion_code or not device.deletion_code_expiry:
+            return Response({"error": "No code found. Please request again."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if timezone.now() > device.deletion_code_expiry:
+            return Response({"error": "The code has expired. Please request a new one."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            decrypted_code = cipher_suite.decrypt(device.deletion_code.encode()).decode()
+        except Exception:
+            return Response({"error": "Invalid code."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if decrypted_code != input_code:
+            return Response({"error": "Incorrect verification code."}, status=status.HTTP_400_BAD_REQUEST)
+
+        active_devices = UserDeviceKey.objects.filter(user=user, is_active=True)
+        if active_devices.count() <= 1:
+            return Response({"error": "Cannot delete your last active device."}, status=status.HTTP_400_BAD_REQUEST)
+
+        device.delete()
+        # device.deletion_code = None
+        # device.deletion_code_expiry = None
+        # device.save()
+
+        return Response({"message": "Device deleted successfully."}, status=status.HTTP_200_OK)
+
+
+
+
+
+
+
 
 
 
@@ -1224,7 +1366,7 @@ class SocialLinksViewSet(viewsets.ViewSet):
                     return Response({"error": "Access denied to this organization's links."}, status=403)
 
             serializer = SocialMediaLinkReadOnlySerializer(links, many=True, context={'request': request})
-            return Response({"links": serializer.data, "message": "Links fetched successfully."}, status=200)
+            return Response({"links": serializer.data, "message": "Links fetched successfully."}, status=status.HTTP_200_OK)
 
         except (ValueError, TypeError):
             return Response({"error": "Invalid object ID or content_type."}, status=400)
@@ -1289,7 +1431,7 @@ class SocialLinksViewSet(viewsets.ViewSet):
             elif link.content_object != request.user:
                 return Response({"error": "You cannot delete this link."}, status=403)
             link.delete()
-            return Response({"success": True, "message": "Link deleted successfully."}, status=200)
+            return Response({"success": True, "message": "Link deleted successfully."}, status=status.HTTP_200_OK)
 
         except SocialMediaLink.DoesNotExist:
             return Response({"error": "Link not found."}, status=404)
@@ -1303,6 +1445,6 @@ class SocialLinksViewSet(viewsets.ViewSet):
             ).values_list('social_media_type', flat=True)
             available_types = SocialMediaType.objects.filter(is_active=True).exclude(id__in=used_social_media)
             serializer = SocialMediaTypeSerializer(available_types, many=True)
-            return Response(serializer.data, status=200)
+            return Response(serializer.data, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         except Exception as e:
-            return Response({"error": "Failed to fetch social media types."}, status=500)
+            return Response({"error": "Failed to fetch social media types."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

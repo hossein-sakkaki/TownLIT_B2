@@ -5,7 +5,7 @@ from django.conf import settings
 
 
 class BaseS3URLMixin:
-    signed_fields = {}  # Dict[str, str] => {'image': 'default_path'}
+    signed_fields = {} 
 
     def to_representation(self, instance):
         rep = super().to_representation(instance)

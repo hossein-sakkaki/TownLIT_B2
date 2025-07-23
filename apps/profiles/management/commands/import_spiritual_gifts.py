@@ -12,3 +12,5 @@ class Command(BaseCommand):
             description = GIFT_DESCRIPTIONS.get(gift_value, _('No description available'))
             SpiritualGift.objects.get_or_create(name=gift_value, description=description)
         self.stdout.write(self.style.SUCCESS('Successfully imported spiritual gifts with descriptions'))
+        
+# docker compose exec backend python manage.py import_spiritual_gifts

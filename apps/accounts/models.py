@@ -394,18 +394,49 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
 class UserDeviceKey(models.Model):
     id = models.BigAutoField(primary_key=True)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='device_keys')
-    device_id = models.CharField(max_length=100, verbose_name="Device ID")  # از کلاینت میاد
+    device_id = models.CharField(max_length=100, verbose_name="Device ID")
     public_key = models.TextField(verbose_name="Public Key (PEM)")
-    device_name = models.CharField(max_length=255, blank=True, null=True)  # مثلا "iPhone 14"
-    user_agent = models.TextField(blank=True, null=True)  # از request.META گرفته میشه
+    device_name = models.CharField(max_length=255, blank=True, null=True)
+    user_agent = models.TextField(blank=True, null=True)
     ip_address = models.GenericIPAddressField(blank=True, null=True)
+
+    location_city = models.CharField(max_length=100, blank=True, null=True)
+    location_region = models.CharField(max_length=100, blank=True, null=True)
+    location_country = models.CharField(max_length=100, blank=True, null=True)
+    timezone = models.CharField(max_length=100, blank=True, null=True)
+    organization = models.CharField(max_length=255, blank=True, null=True)
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, blank=True, null=True)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, blank=True, null=True)
+    postal_code = models.CharField(max_length=20, blank=True, null=True)
     
     created_at = models.DateTimeField(auto_now_add=True)
     last_used = models.DateTimeField(auto_now=True)
     is_active = models.BooleanField(default=True)
 
+    deletion_code = models.CharField(max_length=255, blank=True, null=True)
+    deletion_code_expiry = models.DateTimeField(blank=True, null=True)
+    
+    def is_delete_code_valid(self, code: str) -> bool:
+        from django.conf import settings
+        from cryptography.fernet import Fernet
+        fernet = Fernet(settings.FERNET_KEY)
+
+        if not self.delete_code or not self.delete_code_expiry:
+            return False
+        if timezone.now() > self.delete_code_expiry:
+            return False
+
+        try:
+            decrypted = fernet.decrypt(self.delete_code.encode()).decode()
+            return decrypted == code
+        except Exception:
+            return False
+
     class Meta:
         unique_together = ('user', 'device_id')
+
+    def __str__(self):
+        return f"{self.user} - {self.device_name or self.device_id}"
 
 
 # Invite Code Model -----------------------------------------------------

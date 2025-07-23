@@ -256,11 +256,11 @@ class CustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
     label = CustomLabelSerializer(read_only=True)
     country_display = serializers.CharField(source='get_country_display', read_only=True)
     country = serializers.CharField(write_only=True)
-
+    
     class Meta:
         model = CustomUser
         exclude = ['registration_id', 'access_pin', 'delete_pin', 'is_active', 'is_admin', 'is_deleted', 'reports_count',
-                   'is_superuser', 'is_suspended', 'reactivated_at', 'deletion_requested_at',
+                   'is_superuser', 'is_suspended', 'reactivated_at', 'deletion_requested_at', 'email_change_tokens',
                    'reset_token', 'reset_token_expiration', 'register_date', 'mobile_verification_code', 'mobile_verification_expiry', 'user_active_code', 'user_active_code_expiry',
                 ]        
         read_only_fields = ['id', 'register_date', ]
@@ -301,11 +301,6 @@ class CustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
         instance.save()
         return instance
     
-    def to_representation(self, instance):
-        rep = super().to_representation(instance)
-        rep['profile_image_url'] = rep.get('image_name_url')
-        return rep
-    
     def validate_username(self, value):
         # Check if the username is unchanged
         if self.instance and value == self.instance.username:
@@ -322,17 +317,13 @@ class PublicCustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer)
         model = CustomUser
         fields = [
             'email', 'mobile_number', 'name', 'family', 'username', 'birthday', 
-            'gender', 'label', 'profile_image_url', 'country',
+            'gender', 'label', 'country',
             'primary_language', 'secondary_language', 'is_active', 'is_member', 'is_suspended'
         ]
 
     def to_representation(self, instance):
         rep = super().to_representation(instance)
 
-        # اضافه کردن profile_image_url
-        rep['profile_image_url'] = rep.get('image_name_url')
-
-        # حذف مقادیر بر اساس show_* flags
         if not getattr(instance, 'show_email', False):
             rep.pop('email', None)
         if not getattr(instance, 'show_phone_number', False):
@@ -341,7 +332,10 @@ class PublicCustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer)
             rep.pop('country', None)
         if not getattr(instance, 'show_city', False):
             rep.pop('city', None)
+
         return rep
+
+
 
     
 # LIMITED MEMBER Serializer ------------------------------------------------------------------------------
@@ -351,30 +345,20 @@ class LimitedCustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer
         model = CustomUser
         fields = [
             'name', 'family', 'username',
-            'gender', 'label', 'profile_image_url',
+            'gender', 'label',
             'primary_language', 'secondary_language', 'is_member',
         ]
-        
-    def to_representation(self, instance):
-        rep = super().to_representation(instance)
-        rep['profile_image_url'] = rep.get('image_name_url')
-        return rep
-    
+
 
 # Simple CustomUser Serializers For Showing Users ------------------------------------------------
 class SimpleCustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
-    profile_image = serializers.SerializerMethodField()
     is_friend = serializers.SerializerMethodField()
     profile_url = serializers.SerializerMethodField()
 
     class Meta:
         model = CustomUser
-        fields = ['id', 'username', 'name', 'family', 'profile_image', 'is_friend', 'profile_url']
+        fields = ['id', 'username', 'name', 'family', 'is_friend', 'profile_url']
         read_only_fields = ['id']
-
-    def get_profile_image(self, obj):
-        rep = self.to_representation(obj)
-        return rep.get('image_name_url')
 
     def get_is_friend(self, obj):
         if not isinstance(obj, CustomUser):
@@ -393,12 +377,7 @@ class UserDeviceKeySerializer(serializers.ModelSerializer):
     class Meta:
         model = UserDeviceKey
         fields = [
-            'device_id',
-            'device_name',
-            'user_agent',
-            'ip_address',
-            'created_at',
-            'last_used',
-            'is_active'
+            'device_id', 'device_name', 'user_agent', 'ip_address',
+            'created_at', 'last_used', 'is_active',
+            "location_city", "location_region", "location_country",
         ]
-

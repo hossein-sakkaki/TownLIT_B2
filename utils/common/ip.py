@@ -1,4 +1,7 @@
 # utils/common/ip.py
+import requests
+from django.conf import settings
+
 
 def get_client_ip(request):
     """
@@ -14,24 +17,28 @@ def get_client_ip(request):
 
 
 
-# اگر احتمال جعل IP یا حملات DOS بالا باشد، یا در CDN/proxyهای پیچیده باشید
-# def get_client_ip(request, trusted_proxies=None):
-#     """
-#     Extract client IP while accounting for proxy chains.
-#     Only trusts X-Forwarded-For if sent through a known proxy.
-#     """
-#     trusted_proxies = trusted_proxies or []
+def get_location_from_ip(ip_address):
+    """
+    Return approximate location (city, region, country) based on IP address.
+    """
+    try:
+        token = settings.IPINFO_API_KEY
+        url = f"https://ipinfo.io/{ip_address}/json?token={token}"
+        response = requests.get(url, timeout=5)
+        
+        if response.status_code == 200:
+            data = response.json()
+            return {
+                "city": data.get("city"),
+                "region": data.get("region"),
+                "country": data.get("country"),
+                "timezone": data.get("timezone"),
+                "org": data.get("org"),
+                "latitude": float(data.get("loc", "0,0").split(",")[0]),
+                "longitude": float(data.get("loc", "0,0").split(",")[1]),
+                "postal": data.get("postal"),
+            }
 
-#     x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
-#     remote_addr = request.META.get("REMOTE_ADDR", "")
-
-#     if x_forwarded_for:
-#         forwarded_ips = [ip.strip() for ip in x_forwarded_for.split(",")]
-#         # Remove trusted proxies from the end (right to left)
-#         while forwarded_ips and forwarded_ips[-1] in trusted_proxies:
-#             forwarded_ips.pop()
-#         ip = forwarded_ips[-1] if forwarded_ips else remote_addr
-#     else:
-#         ip = remote_addr
-
-#     return ip
+    except Exception:
+        pass
+    return {"city": None, "region": None, "country": None}

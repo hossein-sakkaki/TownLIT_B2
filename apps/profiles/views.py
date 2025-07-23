@@ -37,7 +37,7 @@ from apps.accounts.serializers import SimpleCustomUserSerializer
 
 from validators.user_validators import validate_phone_number
 from django.core.exceptions import ValidationError
-from utils.common.utils import create_veriff_session, get_veriff_status, create_active_code
+from utils.common.utils import create_veriff_session, get_veriff_status, create_active_code, send_sms
 from utils.email.email_tools import send_custom_email
 from django.template.loader import render_to_string
 from services.friendship_suggestions import suggest_friends_for_friends_tab, suggest_friends_for_requests_tab
@@ -153,7 +153,11 @@ class MemberViewSet(viewsets.ModelViewSet):
             serializer = MemberSerializer(member, data=request.data, partial=True)
             if serializer.is_valid():
                 updated_member = serializer.save()
-                return Response({"message": "Profile updated successfully.","data": MemberSerializer(updated_member).data},status=status.HTTP_200_OK)
+                return Response({
+                    "message": "Profile updated successfully.",
+                    "user": MemberSerializer(updated_member).data
+                }, status=status.HTTP_200_OK)
+
             raise serializers.ValidationError({"error": "Invalid data. Please check the provided fields.", "details": serializer.errors})
 
         except Member.DoesNotExist:
@@ -278,8 +282,11 @@ class MemberViewSet(viewsets.ModelViewSet):
             )
 
             if not success:
-                # این قسمت به تناسب کد شما ممکن است متفاوت باشد
-                print("❌ Failed to send email change confirmation to current email.")
+                logger.error(f"❌ Failed to send email change confirmation to current email: {user.email}")
+                return Response(
+                    {"error": "Failed to send confirmation email to your current address. Please try again later."},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
 
             # Send email to the new email address
             subject = "Verify Your New Email"
@@ -301,9 +308,22 @@ class MemberViewSet(viewsets.ModelViewSet):
             )
 
             if not success:
-                print("❌ Failed to send verification email to the new address.")
+                logger.error(f"❌ Failed to send verification email to new address: {new_email}")
+                return Response(
+                    {"error": "Failed to send verification email to the new address. Please try again later."},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
 
-            return Response({"message": "Verification codes have been sent to your current and new email addresses."}, status=status.HTTP_200_OK)
+            return Response({
+                "message": f"Verification codes have been sent to {user.email} and {new_email}. They are valid for {expiration_minutes} minutes.",
+                "code_type": "email",
+                "old_email": user.email,
+                "new_email": new_email,
+                "expiry_minutes": expiration_minutes,
+                "timestamp": timezone.now(),
+                "expires_at": expiration_time,
+            }, status=status.HTTP_200_OK)
+
         except Exception as e:
             return Response({"error": "An unexpected error occurred.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -381,36 +401,39 @@ class MemberViewSet(viewsets.ModelViewSet):
             verification_code = create_active_code(5)
             encrypted_verification_code = cipher_suite.encrypt(str(verification_code).encode())
             user.mobile_verification_code = encrypted_verification_code.decode()
-            user.mobile_verification_expiry = timezone.now() + timedelta(minutes=10)
+            user.mobile_verification_expiry = timezone.now() + timedelta(minutes=settings.PHONE_CODE_EXPIRATION_MINUTES)
             user.save()
 
             # دیباگ
-            print('===================')
-            print(f"Original Code: {verification_code}")  # Delete after test ------------------------------------------------------------------------------
-            print('===================')
+            # print('===================')
+            # print(f"Original Code: {verification_code}")  # Delete after test ------------------------------------------------------------------------------
+            # print('===================')
             
-#             if user.name and user.name.strip():
-#                 greeting = f"Good to See You {user.name.capitalize()},"  #  Onward
-#             else:
-#                 greeting = "Greetings,"
-#             sms_response = send_sms(
-#                 phone_number=new_phone,
-# message = f"""{greeting}
-# Your Journey of Connections within TownLIT Lives On!
+            if user.name and user.name.strip():
+                greeting = f"Good to See You {user.name.capitalize()},"  #  Onward
+            else:
+                greeting = "Greetings,"
+            sms_response = send_sms(
+                phone_number=new_phone,
+message = f"""{greeting}
+Your Journey of Connections within TownLIT Lives On!
 
-# Your TownLIT Verification Code:
-# 🔐 {verification_code}
+Your TownLIT Verification Code:
+🔐 {verification_code}
 
-# This code is valid for 10 minutes. If this wasn’t you, feel free to ignore this message.
+This code is valid for 10 minutes. If this wasn’t you, feel free to ignore this message.
 
-# Stay secure,  
-# The TownLIT Team 🌍
-# """
-#             )
-#             if not sms_response["success"]:
-#                 raise Exception(sms_response["error"])
-
-            return Response({"message": "Verification code sent to the provided phone number."}, status=status.HTTP_200_OK)
+Stay secure,  
+The TownLIT Team 🌍
+"""
+            )
+            if not sms_response["success"]:
+                raise Exception(sms_response["error"])
+            return Response({
+                "message": f"A verification code was sent to {new_phone}. It is valid for {settings.PHONE_CODE_EXPIRATION_MINUTES} minutes.",
+                "code_type": "phone",
+            }, status=status.HTTP_200_OK)
+        
         except Exception as e:
             return Response({"error": f"An unexpected error occurred: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -612,12 +635,6 @@ class GuestUserViewSet(viewsets.ModelViewSet):
 
 
 
-
-
-
-
-
-
 # FRIENDSHIP View --------------------------------------------------------------------------------------------
 class FriendshipViewSet(viewsets.ModelViewSet):
     queryset = Friendship.objects.all()
@@ -701,6 +718,11 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                 Q(from_user=request.user, status='accepted') | Q(to_user=request.user, status='accepted')
             )
             friend_ids = set(friends.values_list('from_user', flat=True)) | set(friends.values_list('to_user', flat=True))
+            
+            print("SEARCH DEBUG >>>>>>>>>>>>>>>>>>>>>>>>>")
+            print(f"query: {query}")
+            print(f"found users: {users.count()}")
+            print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
 
             serializer = SimpleCustomUserSerializer(
                 users,
@@ -1166,6 +1188,11 @@ class FellowshipViewSet(viewsets.ModelViewSet):
             return Response({'error': 'An unexpected error occurred.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+
+
+
+
+
 # MEMBER'S SPIRITUAL GIFT Viewset  ---------------------------------------------------------------------------------
 class MemberSpiritualGiftsViewSet(viewsets.ModelViewSet):
     queryset = MemberSpiritualGifts.objects.all()
@@ -1190,8 +1217,8 @@ class MemberSpiritualGiftsViewSet(viewsets.ModelViewSet):
         member = request.user.member_profile
         last_submission = MemberSpiritualGifts.objects.filter(member=member).first()
         
-        if last_submission and last_submission.created_at >= timezone.now() - timedelta(days=30):
-            return Response({"error": "You can only participate in this course once every 30 days."}, status=status.HTTP_403_FORBIDDEN)
+        if last_submission and last_submission.created_at >= timezone.now() - timedelta(days=90):
+            return Response({"error": "You can only participate in this course once every 90 days."}, status=status.HTTP_403_FORBIDDEN)
 
         survey_responses = SpiritualGiftSurveyResponse.objects.filter(member=member)        
         if not survey_responses.exists():
@@ -1207,7 +1234,6 @@ class MemberSpiritualGiftsViewSet(viewsets.ModelViewSet):
                     member_spiritual_gifts.created_at = timezone.now()
 
                 scores = calculate_spiritual_gifts_scores(member)
-                print(f"Scores: {scores}")
                 member_spiritual_gifts.survey_results = scores
                 member_spiritual_gifts.save()
 
@@ -1227,7 +1253,7 @@ class MemberSpiritualGiftsViewSet(viewsets.ModelViewSet):
                 survey_responses.delete()
                 MemberSurveyProgress.objects.filter(member=member).delete()
                 
-            return Response({"message": "Survey completed successfully. You can retake it once a month."}, status=status.HTTP_200_OK)
+            return Response({"message": "Survey completed successfully. You can retake it once every 90 days."}, status=status.HTTP_200_OK)
 
         except Exception as e:
             return Response({"error": f"An error occurred: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

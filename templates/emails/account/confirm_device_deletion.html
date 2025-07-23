@@ -1,0 +1,37 @@
+{% extends "base_email.html" %}
+
+{% block subject %}
+Confirm Device Deletion – TownLIT
+{% endblock %}
+
+{% block content %}
+
+<h1>Security Verification Required</h1>
+
+<p>Hello {{ user.name|default:"there" }},</p>
+
+<p>You recently requested to remove a device from your TownLIT account.</p>
+
+<p>If this was you, please enter the following code to confirm the deletion of the device:</p>
+
+<div class="email-button-container">
+  <div class="code-box">{{ activation_code }}</div>
+</div>
+
+<p>This code is valid for {{ expiration_minutes }} minutes.</p>
+
+<p><strong>Device Info:</strong></p>
+<ul>
+  <li><strong>Name:</strong> {{ device_name|default:"Unknown Device" }}</li>
+  <li><strong>IP Address:</strong> {{ device_ip|default:"N/A" }}</li>
+</ul>
+
+<p>If you did not make this request, we recommend reviewing your login sessions and updating your password for extra security.</p>
+
+<p class="email-reflection">
+  Your safety is our top priority. We're here to help if you have any concerns.
+</p>
+
+<p class="email-signature">With care,<br />The TownLIT Team</p>
+
+{% endblock %}

@@ -8,7 +8,7 @@ from django.utils.html import format_html
 from .forms import UserCreationForm, UserChangeForm
 from .models import (
                 Address, CustomLabel, SocialMediaType, SocialMediaLink,
-                InviteCode
+                InviteCode, UserDeviceKey
             )
 from apps.profiles.models import Friendship
 from django.contrib.auth import get_user_model
@@ -80,7 +80,7 @@ class FriendshipInline(admin.TabularInline):
 class CustomUserAdmin(UserAdmin):
     form = UserChangeForm
     add_form = UserCreationForm
-    list_display = ['email', 'name', 'family', 'username', 'gender', 'label', 'two_factor_enabled', 'is_member', 'is_active', 'is_admin', 'is_suspended', 'is_deleted', 'reports_count', 'is_account_paused', 'register_date', 'profile_image_thumbnail']
+    list_display = ['email', 'name', 'family', 'username', 'gender', 'label', 'pin_security_enabled', 'two_factor_enabled', 'is_member', 'is_active', 'is_admin', 'is_suspended', 'is_deleted', 'reports_count', 'is_account_paused', 'register_date', 'profile_image_thumbnail']
     list_filter = ['is_active', 'is_admin', 'gender', 'label', 'register_date']
     list_editable = ['is_active', 'is_admin', 'is_member'] 
     search_fields = ['username', 'mobile_number', 'name']
@@ -91,7 +91,7 @@ class CustomUserAdmin(UserAdmin):
         ('Sanctuary info', {'fields': ('is_suspended', 'reports_count')}),
         ('Expiry date info', {'fields': ('user_active_code_expiry', 'mobile_verification_expiry', 'reset_token_expiration')}),
         # ('Keys & Security', {'fields': ('two_factor_enabled'),}),
-        ('Deleted Info', {'fields': ('deletion_requested_at', 'is_deleted', 'reactivated_at')}),
+        ('Deleted Info', {'fields': ('pin_security_enabled', 'deletion_requested_at', 'is_deleted', 'reactivated_at')}),
         ('Permissions', {'fields': ('show_email', 'show_phone_number', 'show_country', 'show_city', 'is_active', 'is_member', 'is_admin', 'is_superuser', 'groups', 'user_permissions')}),
     )
     add_fieldsets = (
@@ -122,3 +122,30 @@ class InviteCodeAdmin(admin.ModelAdmin):
     list_display = ['code', 'email', 'is_used', 'used_by', 'created_at', 'used_at', 'invite_email_sent', 'invite_email_sent_at']
     search_fields = ['code', 'email']
     list_filter = ['is_used']
+    
+
+# User Device Key Admin ------------------------------------------------------------------
+@admin.register(UserDeviceKey)
+class UserDeviceKeyAdmin(admin.ModelAdmin):
+    list_display = (
+        'user', 'device_name', 'device_id', 'ip_address',
+        'location_city', 'location_region', 'location_country',
+        'timezone', 'organization', 'postal_code',
+        'latitude', 'longitude',
+        'last_used', 'is_active',
+    )
+    list_filter = (
+        'is_active', 'location_country', 'location_region', 'organization', 'timezone'
+    )
+    search_fields = (
+        'user__email', 'device_id', 'device_name', 'ip_address',
+        'location_city', 'location_region', 'location_country',
+        'organization', 'postal_code'
+    )
+    readonly_fields = (
+        'created_at', 'last_used', 'ip_address',
+        'location_city', 'location_region', 'location_country',
+        'timezone', 'organization', 'postal_code',
+        'latitude', 'longitude',
+    )
+    ordering = ('-last_used',)
