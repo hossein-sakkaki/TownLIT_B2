@@ -177,6 +177,8 @@ class Member(SlugMixin):
     
     show_gifts_in_profile = models.BooleanField(default=True, verbose_name=_("Show Gifts in Profile"), help_text=_("Allow gifts to be visible on the profile page."))
     show_fellowship_in_profile = models.BooleanField(default=True, verbose_name='Show Fellowship in Profile')
+    hide_confidants = models.BooleanField(default=False, verbose_name='Hide Confidants in setting')
+    
     testimony = models.ForeignKey(Testimony, on_delete=models.CASCADE, null=True, blank=True, related_name='member_testimonies', verbose_name='Member Testimony')
     register_date = models.DateField(default=timezone.now, verbose_name='Register Date')
 

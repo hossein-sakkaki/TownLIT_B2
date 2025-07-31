@@ -2,7 +2,7 @@
 PENDING = 'pending'
 ACCEPTED = 'accepted'
 DECLINED = 'declined'
-CANCELLED = 'cancelled'
+CANCELLED = 's'
 DELETED = 'deleted'
 FRIENDSHIP_STATUS_CHOICES = [
     (PENDING, 'Pending'),
@@ -14,25 +14,25 @@ FRIENDSHIP_STATUS_CHOICES = [
 
 
 # Fellowship Relationship Choices ----------------------------------------------------------------------
+HUSBAND = 'Husband'
+WIFE = 'Wife'
 FATHER = 'Father'
 MOTHER = 'Mother'
 SON = 'Son'
 DAUGHTER = 'Daughter'
-HUSBAND = 'Husband'
-WIFE = 'Wife'
 CONFIDANT = 'Confidant'
 PASTOR = 'Pastor'
 MENTOR = 'Mentor'
 FELLOWSHIP_RELATIONSHIP_CHOICES = [
-    (FATHER, 'Father'),
-    (MOTHER, 'Mother'),
-    (SON, 'Son'),
-    (DAUGHTER, 'Daughter'),
-    (HUSBAND, 'Husband'),
-    (WIFE, 'Wife'),
-    (CONFIDANT, 'Confidant'),
-    (PASTOR, 'Pastor'),
-    (MENTOR, 'Mentor'),
+    (HUSBAND, 'He is my Husband'),
+    (WIFE, 'She is my Wife'),
+    (FATHER, 'He is my Father'),
+    (MOTHER, 'She is my Mother'),
+    (SON, 'He is my Son'),
+    (DAUGHTER, 'She is my Daughter'),
+    (CONFIDANT, 'My Trusted Confidant'),
+    (PASTOR, 'My Spiritual Pastor'),
+    (MENTOR, 'My Mentor and Guide'),
 ]
 
 

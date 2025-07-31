@@ -201,7 +201,7 @@ class IconViewSet(viewsets.ViewSet):
             icons = []
         return Response({'icons': icons})
     
-    
+
 # STATIC CHOICE MAP ViewSet -------------------------------------------------------------------------
 class StaticChoiceViewSet(viewsets.ViewSet):
     permission_classes = [AllowAny]
@@ -209,10 +209,21 @@ class StaticChoiceViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['get'], url_path='(?P<choice_name>[a-zA-Z_-]+)')
     def get_static_choice(self, request, choice_name):
         choices = CHOICES_MAP.get(choice_name)
+        
         if choices is None:
             return Response({"error": f"Choice '{choice_name}' not found."}, status=404)
-        return Response(choices)
+        
+        # ✅ Conditionally filter 'fellowship_relationship' choices
+        if choice_name == "fellowship_relationship":
+            user = request.user
+            if user.is_authenticated:
+                # pin_security_enabled is on CustomUser
+                if not getattr(user, "pin_security_enabled", False):
+                    print("Filtering out 'Confidant' from choices...")
+                    choices = [choice for choice in choices if choice[0] != "Confidant"]
 
+        return Response(choices)
+    
     
 # PRAYER View -----------------------------------------------------------------------------------------------
 class PrayerPagination(PageNumberPagination):

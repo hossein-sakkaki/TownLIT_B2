@@ -128,17 +128,17 @@ class PrayInline(GenericTabularInline):
 # Member Admin
 @admin.register(Member)
 class MemberAdmin(admin.ModelAdmin):
-    list_display = ['user', 'spiritual_rebirth_day', 'is_migrated', 'is_active', 'is_privacy', 'register_date', 'identity_verification_status', 'is_verified_identity', 'is_sanctuary_participant','is_hidden_by_confidants']
+    list_display = ['user', 'spiritual_rebirth_day', 'is_migrated', 'is_active', 'is_privacy', 'register_date', 'identity_verification_status', 'is_verified_identity', 'is_sanctuary_participant','is_hidden_by_confidants', 'show_fellowship_in_profile', 'hide_confidants']
     list_filter = ['is_migrated', 'is_active', 'is_privacy', 'register_date']
     search_fields = ['user__username', 'biography', 'vision', 'service_types__service__name']
     autocomplete_fields = ['user', 'testimony']
     filter_horizontal = ['service_types', 'organization_memberships']
     fieldsets = (
-        ('Personal Info', {'fields': ('user', 'biography', 'vision', 'spiritual_rebirth_day', 'denominations_type', 'show_gifts_in_profile','show_fellowship_in_profile')}),
+        ('Personal Info', {'fields': ('user', 'biography', 'vision', 'spiritual_rebirth_day', 'denominations_type', 'show_gifts_in_profile','show_fellowship_in_profile', 'hide_confidants')}),
         ('Services', {'fields': ('service_types', 'academic_record')}),
         ('Organizations & Memberships', {'fields': ('organization_memberships',)}),
         ('Testimonies & Moments', {'fields': ('testimony',)}),
-        ('Status', {'fields': ('is_migrated', 'is_active', 'is_privacy', 'identity_verification_status', 'identity_verified_at', 'is_verified_identity', 'is_sanctuary_participant',)}),
+        ('Status', {'fields': ('is_migrated', 'is_active', 'is_privacy', 'identity_verification_status', 'identity_verified_at', 'is_verified_identity', 'is_sanctuary_participant', 'is_hidden_by_confidants')}),
         ('Dates', {'fields': ('register_date',)}),
     )
     # inlines = [OrganizationManagerInMemberInline]

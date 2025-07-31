@@ -228,7 +228,7 @@ class MemberSerializer(serializers.ModelSerializer):
         fields = [
             'user', 'service_types', 'organization_memberships', 'academic_record', 'testimony',
             'spiritual_rebirth_day', 'biography', 'vision', 'denominations_type',
-            'show_gifts_in_profile', 'show_fellowship_in_profile', 'is_hidden_by_confidants',
+            'show_gifts_in_profile', 'show_fellowship_in_profile', 'hide_confidants', 'is_hidden_by_confidants',
             'register_date', 'identity_verification_status', 'is_verified_identity', 'identity_verified_at', 'is_sanctuary_participant',
             'is_privacy', 'is_migrated', 'is_active'
         ]
@@ -241,7 +241,6 @@ class MemberSerializer(serializers.ModelSerializer):
             self.fields["user"] = CustomUserSerializer(context=context)
 
     def update(self, instance, validated_data):
-        print('-------------------------   111')
         custom_user_data = validated_data.pop('user', None)
         if custom_user_data:
             custom_user_serializer = CustomUserSerializer(instance.user, data=custom_user_data, partial=True)

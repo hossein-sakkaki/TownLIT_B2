@@ -6,6 +6,7 @@ from .models import (
                 UserDeviceKey,
                 InviteCode
             )
+from apps.profiles.models import Member
 from apps.profilesOrg.models import Organization
 from validators.user_validators import validate_email_field, validate_password_field
 from common.file_handlers.profile_image import ProfileImageMixin
@@ -256,6 +257,8 @@ class CustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
     label = CustomLabelSerializer(read_only=True)
     country_display = serializers.CharField(source='get_country_display', read_only=True)
     country = serializers.CharField(write_only=True)
+    is_verified_identity = serializers.SerializerMethodField()
+
     
     class Meta:
         model = CustomUser
@@ -309,15 +312,21 @@ class CustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
             raise serializers.ValidationError("Unfortunately, this username is already taken. Please choose another one.")
         return value
 
+    def get_is_verified_identity(self, obj):
+        return getattr(getattr(obj, 'member_profile', None), 'is_verified_identity', False)
+    
     
 # CustomUser Public Serializers -----------------------------------------------------------------------
 class PublicCustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
+    label = CustomLabelSerializer(read_only=True)
+    is_verified_identity = serializers.SerializerMethodField()
+
     
     class Meta:
         model = CustomUser
         fields = [
             'email', 'mobile_number', 'name', 'family', 'username', 'birthday', 
-            'gender', 'label', 'country',
+            'gender', 'label', 'country', 'is_verified_identity',
             'primary_language', 'secondary_language', 'is_active', 'is_member', 'is_suspended'
         ]
 
@@ -335,41 +344,85 @@ class PublicCustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer)
 
         return rep
 
+    def get_is_verified_identity(self, obj):
+        return getattr(getattr(obj, 'member_profile', None), 'is_verified_identity', False)
 
 
     
 # LIMITED MEMBER Serializer ------------------------------------------------------------------------------
 class LimitedCustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
+    label = CustomLabelSerializer(read_only=True)
+    is_verified_identity = serializers.SerializerMethodField()
+
 
     class Meta:
         model = CustomUser
         fields = [
             'name', 'family', 'username',
-            'gender', 'label',
+            'gender', 'label', 'is_verified_identity',
             'primary_language', 'secondary_language', 'is_member',
         ]
+
+    def get_is_verified_identity(self, obj):
+        return getattr(getattr(obj, 'member_profile', None), 'is_verified_identity', False)
 
 
 # Simple CustomUser Serializers For Showing Users ------------------------------------------------
 class SimpleCustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
+    label = CustomLabelSerializer(read_only=True)
     is_friend = serializers.SerializerMethodField()
     profile_url = serializers.SerializerMethodField()
+    is_verified_identity = serializers.SerializerMethodField()
+    
+    request_sent = serializers.SerializerMethodField()
+    has_received_request = serializers.SerializerMethodField()
+    friendship_id = serializers.SerializerMethodField()
+    fellowship_id = serializers.SerializerMethodField()
+
 
     class Meta:
         model = CustomUser
-        fields = ['id', 'username', 'name', 'family', 'is_friend', 'profile_url']
+        fields = [
+                'id', 'username', 'name', 'family', 'label', 
+                'is_friend', 'request_sent', 'has_received_request', 'friendship_id', 'fellowship_id',
+                'profile_url', 'is_verified_identity'
+            ]
         read_only_fields = ['id']
 
     def get_is_friend(self, obj):
-        if not isinstance(obj, CustomUser):
-            return False
         friend_ids = self.context.get('friend_ids', set())
         return obj.id in friend_ids
+
+    def get_request_sent(self, obj):
+        sent_map = self.context.get('sent_request_map', {})
+        return obj.id in sent_map
+
+    def get_has_received_request(self, obj):
+        received_map = self.context.get('received_request_map', {})
+        return obj.id in received_map
+
+    def get_friendship_id(self, obj):
+        received_map = self.context.get('received_request_map', {})
+        if obj.id in received_map:
+            return received_map[obj.id]
+
+        sent_map = self.context.get('sent_request_map', {})
+        if obj.id in sent_map:
+            return sent_map[obj.id]
+
+        return None
+
+    def get_fellowship_id(self, obj):
+        return self.context.get('fellowship_ids', {}).get(obj.id)
 
     def get_profile_url(self, obj):
         if not isinstance(obj, CustomUser):
             return None
         return obj.get_absolute_url()
+
+    def get_is_verified_identity(self, obj):
+        return getattr(getattr(obj, 'member_profile', None), 'is_verified_identity', False)
+
 
 
 # User Device Key Serializers -----------------------------------------------------------------------

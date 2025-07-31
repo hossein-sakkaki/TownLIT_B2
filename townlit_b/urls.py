@@ -36,6 +36,7 @@ urlpatterns = [
         path('warehouse/', include('apps.warehouse.urls')),
         
         path('v1/', include('api.v1.api_urls')),
+        path("security/", include("apps.core.security.urls")),
     ])),
     
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

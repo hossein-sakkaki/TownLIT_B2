@@ -21,12 +21,12 @@ import json
 from .models import Dialogue, Message, MessageEncryption, UserDialogueMarker, DialogueParticipant
 from .serializers import DialogueSerializer, MessageSerializer, UserDialogueMarkerSerializer, DialogueParticipantSerializer
 from .permissions import ConversationAccessPermission, IsDialogueParticipant
-from .decorators import require_conversation_access
 from apps.accounts.serializers import SimpleCustomUserSerializer
 from apps.accounts.models import UserDeviceKey
 from apps.conversation.utils import get_websocket_url
-from utils.security.dialogue_cleanup import handle_sensitive_dialogue_cleanup
 from common.mime_type_validator import validate_file_type, is_unsafe_file
+from apps.core.security.decorators import require_litshield_access
+
 
 from django.contrib.auth import get_user_model
 CustomUser = get_user_model()
@@ -83,9 +83,9 @@ class DialogueViewSet(viewsets.ModelViewSet):
             deleted_by_users=self.request.user
         ).prefetch_related('participants', 'participants_roles', 'marked_users')
         
-    
+        
     @action(detail=False, methods=['post'], url_path='create-dialogue', permission_classes=[IsAuthenticated])
-    @require_conversation_access
+    @require_litshield_access("conversation")
     def create_dialogue(self, request):
         recipient_id = request.data.get('recipient_id')
         if not recipient_id:
@@ -130,7 +130,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
 
 
     @action(detail=False, methods=['post'], url_path='create-group', permission_classes=[IsAuthenticated])
-    @require_conversation_access
+    @require_litshield_access("conversation")
     def create_group(self, request):
         data = request.data
         group_name = data.get('name')
@@ -161,7 +161,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
 
     # Update Group Image Action
     @action(detail=True, methods=["post"], url_path="update-group-image", permission_classes=[IsAuthenticated])
-    @require_conversation_access
+    @require_litshield_access("conversation")
     def update_group_image(self, request, **kwargs):
         dialogue = self.get_object()
 
@@ -185,7 +185,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
         return Response({"detail": "Group image updated successfully."}, status=status.HTTP_200_OK)
     
     @action(detail=True, methods=['post'], url_path='smart-delete', permission_classes=[IsAuthenticated])
-    @require_conversation_access
+    @require_litshield_access("conversation")
     def smart_delete_dialogue(self, request, slug=None):
         user = request.user
         dialogue = get_object_or_404(Dialogue, slug=slug, participants=user)
@@ -218,7 +218,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
         return Response({'error': 'Only the founder can delete the group. To leave, use the leave action.'}, status=status.HTTP_403_FORBIDDEN)
 
     @action(detail=True, methods=['post'], url_path='add-participant', permission_classes=[IsAuthenticated])
-    @require_conversation_access
+    @require_litshield_access("conversation")
     def add_participant(self, request, slug=None):
         dialogue = get_object_or_404(Dialogue, slug=slug, is_group=True)
         participant_id = request.data.get('participant_id')
@@ -269,7 +269,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
         return Response({'message': f'{participant.username} added to the group.'}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], url_path='remove-participant', permission_classes=[IsAuthenticated])
-    @require_conversation_access
+    @require_litshield_access("conversation")
     def remove_participant(self, request, slug=None):
         dialogue = get_object_or_404(Dialogue, slug=slug, is_group=True)
         participant_id = request.data.get('participant_id')
@@ -313,7 +313,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
         return Response({'message': f'{participant.username} removed from the group.'}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['get'], url_path='participants', permission_classes=[IsAuthenticated])
-    @require_conversation_access
+    @require_litshield_access("conversation")
     def get_group_participants(self, request, slug=None):
         dialogue = get_object_or_404(Dialogue, slug=slug, is_group=True)
         participants = DialogueParticipant.objects.filter(dialogue=dialogue).select_related('user')
@@ -325,7 +325,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
     @action(detail=True, methods=['post'], url_path='promote-to-elder', permission_classes=[IsAuthenticated])
-    @require_conversation_access
+    @require_litshield_access("conversation")
     def promote_to_elder(self, request, slug=None):
         dialogue = get_object_or_404(Dialogue, slug=slug, is_group=True)
         user_id = request.data.get('user_id')
@@ -343,7 +343,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
         return Response({'message': 'User promoted to Elder.'}, status=200)
 
     @action(detail=True, methods=['post'], url_path='demote-to-participant', permission_classes=[IsAuthenticated])
-    @require_conversation_access
+    @require_litshield_access("conversation")
     def demote_to_participant(self, request, slug=None):
         dialogue = get_object_or_404(Dialogue, slug=slug, is_group=True)
         user_id = request.data.get('user_id')
@@ -364,9 +364,8 @@ class DialogueViewSet(viewsets.ModelViewSet):
         send_system_message(dialogue, request.user, 'demoted_to_participant', f"{participant.user.username} was demoted to Participant.")
         return Response({'message': 'User demoted to Participant.'}, status=200)
 
-
     @action(detail=True, methods=['post'], url_path='resign-elder-role', permission_classes=[IsAuthenticated])
-    @require_conversation_access
+    @require_litshield_access("conversation")
     def resign_elder_role(self, request, slug=None):
         dialogue = get_object_or_404(Dialogue, slug=slug, is_group=True)
         user = request.user
@@ -386,7 +385,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
 
 
     @action(detail=True, methods=['post'], url_path='leave-group', permission_classes=[IsAuthenticated])
-    @require_conversation_access
+    @require_litshield_access("conversation")
     def leave_group(self, request, slug=None):
         user = request.user
         dialogue = get_object_or_404(Dialogue, slug=slug, is_group=True)
@@ -423,9 +422,8 @@ class DialogueViewSet(viewsets.ModelViewSet):
     
         return Response({'message': 'You left the group and your chat was removed from the list.'}, status=status.HTTP_200_OK)
 
-            
     @action(detail=True, methods=['post'], url_path='transfer-founder', permission_classes=[IsAuthenticated])
-    @require_conversation_access
+    @require_litshield_access("conversation") 
     def transfer_founder(self, request, slug=None):
         dialogue = get_object_or_404(Dialogue, slug=slug, is_group=True)
 
@@ -464,80 +462,26 @@ class DialogueViewSet(viewsets.ModelViewSet):
         return Response({'message': 'Founder role transferred successfully. You have left the group.'}, status=200)
 
 
-    @action(detail=False, methods=['post'], url_path='enter-chat', permission_classes=[IsAuthenticated])
+    @action(detail=False, methods=["post"], url_path="enter-chat")
+    @require_litshield_access("conversation")
     def enter_chat(self, request):
         user = request.user
-        entered_pin = request.data.get("pin")
-        device_id = request.data.get("device_id") 
-
-        if not (user.is_member and user.pin_security_enabled):
-            dialogues = Dialogue.objects.filter(participants=user).exclude(deleted_by_users=user)
-            serializer = DialogueSerializer(dialogues, many=True, context={"request": request, "device_id": device_id})
-            return Response({'status': 'Access granted', 'dialogues': serializer.data}, status=status.HTTP_200_OK)
-        
-        if user.pin_security_enabled and not entered_pin:
-            return Response({'error': 'PIN is required.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        if user.verify_access_pin(entered_pin) or user.verify_delete_pin(entered_pin):
-            if user.verify_delete_pin(entered_pin):
-                handle_sensitive_dialogue_cleanup(user)
-        else:
-            return Response({'error': 'Wrong PIN! Please retry.'}, status=status.HTTP_403_FORBIDDEN)
-        
-        # 🕒 ایجاد کوکی دسترسی
-        max_age = 5 * 60
-        expires = timezone.now() + timedelta(seconds=max_age)
+        device_id = request.data.get("device_id")
 
         dialogues = Dialogue.objects.filter(participants=user).exclude(deleted_by_users=user)
-        serializer = DialogueSerializer(dialogues, many=True, context={"request": request, "device_id": device_id})
-        response_data = {
-            'status': 'Access granted',
-            'dialogues': serializer.data,
-            'expires_at': expires.isoformat()
-        }
-
-        response = Response(response_data, status=status.HTTP_200_OK)
-        response.set_cookie(
-            "conversation_access",
-            "granted",
-            max_age=max_age,
-            httponly=True,
-            secure=True,
-            samesite="Lax",
+        serializer = DialogueSerializer(
+            dialogues,
+            many=True,
+            context={"request": request, "device_id": device_id}
         )
-        return response
 
+        return Response({
+            "dialogues": serializer.data
+        }, status=status.HTTP_200_OK)
         
-    @action(detail=False, methods=['get'], url_path='check-access', permission_classes=[IsAuthenticated])
-    def check_access(self, request):
-        user = request.user
-        if not getattr(user, "pin_security_enabled", False):
-            return Response({"access_granted": True, "expires_at": None})
-
-        has_cookie = request.COOKIES.get("conversation_access") == "granted"        
-        if has_cookie:
-            max_age = 5 * 60
-            approx_exp = timezone.now() + timedelta(seconds=max_age)
-            return Response({
-                "access_granted": True,
-                "expires_at": approx_exp.isoformat()
-            })
-        
-        return Response({"access_granted": False})
-
-
-    @action(detail=False, methods=['post'], url_path='logout-conversation', permission_classes=[IsAuthenticated])
-    def logout_conversation(self, request):
-        response = Response({"message": "Conversation access revoked"}, status=status.HTTP_200_OK)
-        response.delete_cookie(
-            "conversation_access",
-            path="/",
-            samesite="Lax",
-        )
-        return response
     
     @action(detail=True, methods=["get"], url_path="keys", permission_classes=[IsAuthenticated])
-    @require_conversation_access
+    @require_litshield_access("conversation")
     def get_dialogue_keys(self, request, slug=None):
         dialogue = self.get_object()
         user = request.user
@@ -549,12 +493,11 @@ class DialogueViewSet(viewsets.ModelViewSet):
         keys = UserDeviceKey.objects.filter(user=partner, is_active=True)
         result = [{"device_id": k.device_id, "public_key": k.public_key} for k in keys]
         return Response(result)
-    
 
 
     # Get Last Seen Users 
     @action(detail=True, methods=['get'], url_path='last-seen', permission_classes=[IsAuthenticated])
-    @require_conversation_access
+    @require_litshield_access("conversation")
     def get_last_seen_view(self, request, slug=None):
         dialogue = get_object_or_404(Dialogue, slug=slug)
 
@@ -604,7 +547,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
 
     # Get Unread Counts 
     @action(detail=False, methods=["get"], url_path="unread-counts", permission_classes=[IsAuthenticated])
-    @require_conversation_access
+    # @require_litshield_access("conversation")
     def get_unread_counts(self, request):
         user = request.user
         dialogues = Dialogue.objects.filter(participants=user)

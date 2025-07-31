@@ -72,6 +72,7 @@ EMAIL_LOGO_URL = os.getenv("EMAIL_LOGO_URL", "https://www.townlit.com")
 RESET_LINK_EXPIRATION_MINUTES = int(os.getenv('RESET_LINK_EXPIRATION_MINUTES', 30))
 EMAIL_CODE_EXPIRATION_MINUTES = int(os.getenv('EMAIL_CODE_EXPIRATION_MINUTES', 10))
 PHONE_CODE_EXPIRATION_MINUTES = int(os.getenv("PHONE_CODE_EXPIRATION_MINUTES", 10))
+LITSHIELD_ACCESS_EXPIRATION_SECONDS = int(os.getenv("LITSHIELD_ACCESS_EXPIRATION_SECONDS", 300))
 
 
 # Set to False to disable invite code requirement -----------------------------

@@ -84,7 +84,7 @@ class CustomUserAdmin(UserAdmin):
     list_filter = ['is_active', 'is_admin', 'gender', 'label', 'register_date']
     list_editable = ['is_active', 'is_admin', 'is_member'] 
     search_fields = ['username', 'mobile_number', 'name']
-    readonly_fields = ['register_date', 'last_login']
+    readonly_fields = ['register_date', 'last_login', 'email']
     fieldsets = (
         ('Account Info', {'fields': ('mobile_number', 'mobile_verification_code', 'password', 'username', 'registration_id', 'is_account_paused')}),
         ('Personal info', {'fields': ('name', 'family', 'email', 'last_email_change', 'email_change_tokens', 'gender', 'label', 'birthday', 'country', 'city', 'primary_language', 'secondary_language', 'image_name')}),

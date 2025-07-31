@@ -38,7 +38,7 @@ from apps.communication.models import ExternalContact
 from utils.common.utils import create_active_code, MAIN_URL
 from utils.common.ip import get_client_ip, get_location_from_ip
 from utils.email.email_tools import send_custom_email
-from utils.security.dialogue_cleanup import handle_sensitive_dialogue_cleanup
+from utils.security.destructive_actions import handle_destructive_pin_actions
 import utils as utils
 import logging
 from django.contrib.auth import get_user_model
@@ -117,7 +117,6 @@ class AuthViewSet(viewsets.ViewSet):
                         
                         print('--------------------------------------------')
                         print(active_code)
-                        logger.error(f"code: {active_code}")
                         print('--------------------------------------------')
 
                         subject = "Welcome back to TownLIT - Verify Again"
@@ -200,7 +199,6 @@ class AuthViewSet(viewsets.ViewSet):
                 
                 print('--------------------------------------------')
                 print(active_code)
-                logger.error(f"code: {active_code}")
                 print('--------------------------------------------')
                     
 
@@ -918,7 +916,7 @@ class AuthViewSet(viewsets.ViewSet):
                 return Response({"message": "Security pins removed and pin security disabled."}, status=status.HTTP_200_OK)
 
             elif user.verify_delete_pin(entered_pin):
-                handle_sensitive_dialogue_cleanup(user)
+                handle_destructive_pin_actions(user)
                 user.access_pin = None
                 user.delete_pin = None
                 user.pin_security_enabled = False
@@ -930,7 +928,7 @@ class AuthViewSet(viewsets.ViewSet):
             return Response({"error": "An unexpected error occurred"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-
+    # ---------------------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='send-delete-confirmation', permission_classes=[IsAuthenticated])
     def send_delete_confirmation(self, request):
         try:
@@ -1042,7 +1040,7 @@ class AuthViewSet(viewsets.ViewSet):
             logger.error(f"Error in confirm_delete_account: {str(e)}")
             return Response({"error": f"An error occurred: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
-            
+    # ----------------------------------------------------------------------------------------------------        
     @action(detail=False, methods=['post'], url_path='send-reactivate-confirmation', permission_classes=[AllowAny])
     def send_reactivate_confirmation(self, request):
         try:
@@ -1088,7 +1086,6 @@ class AuthViewSet(viewsets.ViewSet):
             return Response({"error": f"An error occurred: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
                 
-            
     @action(detail=False, methods=['post'], url_path='confirm-reactivate-account', permission_classes=[IsAuthenticated])
     def confirm_reactivate_account(self, request):
         try:
@@ -1214,11 +1211,11 @@ class AuthViewSet(viewsets.ViewSet):
         return Response({
             "message": "Device key registered successfully.",
             "created": created,
-            "location": location,  # شامل همه اطلاعات است
+            "location": location,
         })
 
 
-
+    # -------------------------------------------------------------------------------------------
     @action(detail=False, methods=["get"], url_path="my-devices", permission_classes=[IsAuthenticated])
     def my_devices(self, request):
         user = request.user
@@ -1445,6 +1442,7 @@ class SocialLinksViewSet(viewsets.ViewSet):
             ).values_list('social_media_type', flat=True)
             available_types = SocialMediaType.objects.filter(is_active=True).exclude(id__in=used_social_media)
             serializer = SocialMediaTypeSerializer(available_types, many=True)
-            return Response(serializer.data, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
         except Exception as e:
             return Response({"error": "Failed to fetch social media types."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
