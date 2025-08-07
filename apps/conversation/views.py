@@ -4,7 +4,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.utils import timezone
-from datetime import timedelta
+from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
 import base64
 
@@ -18,7 +18,7 @@ from django.utils.timesince import timesince
 from rest_framework.renderers import JSONRenderer
 import json
 
-from .models import Dialogue, Message, MessageEncryption, UserDialogueMarker, DialogueParticipant
+from .models import Dialogue, Message, MessageSearchIndex, MessageEncryption, UserDialogueMarker, DialogueParticipant
 from .serializers import DialogueSerializer, MessageSerializer, UserDialogueMarkerSerializer, DialogueParticipantSerializer
 from .permissions import ConversationAccessPermission, IsDialogueParticipant
 from apps.accounts.serializers import SimpleCustomUserSerializer
@@ -42,7 +42,6 @@ def send_system_message(dialogue, sender, system_event, content):
         content_encrypted=content_bytes,
         is_system=True,
         system_event=system_event,
-        is_encrypted=False
     )
 
     dialogue.last_message = system_message
@@ -64,7 +63,6 @@ def send_system_message(dialogue, sender, system_event, content):
             "timestamp": system_message.timestamp.isoformat(),
             "is_system": True,
             "system_event": system_event,
-            "is_encrypted": False
         }
     )
 
@@ -133,16 +131,25 @@ class DialogueViewSet(viewsets.ModelViewSet):
     @require_litshield_access("conversation")
     def create_group(self, request):
         data = request.data
-        group_name = data.get('name')
-        group_image = request.FILES.get('image')
+
+        group_name = data.get('group_name')
+        group_image = request.FILES.get('group_image')
+
 
         if not group_name:
             return Response({'error': 'Group name is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # ✅ ایجاد دیالوگ اولیه (بدون slug)
+        # بررسی اینکه گروهی با این نام قبلاً ثبت نشده باشد (case-insensitive)
+        if Dialogue.objects.filter(
+            is_group=True,
+            group_name__iexact=group_name.strip()
+        ).exists():
+            return Response({'error': 'A group with this name already exists.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # ✅ ایجاد دیالوگ اولیه
         dialogue = Dialogue.objects.create(
             is_group=True,
-            name=group_name,
+            group_name=group_name.strip(),
             group_image=group_image,
         )
 
@@ -500,12 +507,19 @@ class DialogueViewSet(viewsets.ModelViewSet):
     @require_litshield_access("conversation")
     def get_last_seen_view(self, request, slug=None):
         dialogue = get_object_or_404(Dialogue, slug=slug)
+        
+        if dialogue.is_group:
+            return Response({
+                'note': 'Last seen is not applicable to group chats.',
+                'user_id': None,
+                'is_online': None,
+                'last_seen': None,
+                'last_seen_display': None
+            }, status=status.HTTP_200_OK)
 
         if request.user not in dialogue.participants.all():
             return Response({'error': 'You are not a participant of this dialogue.'}, status=status.HTTP_403_FORBIDDEN)
 
-        if dialogue.is_group:
-            return Response({'error': 'Last seen is only available for private chats.'}, status=status.HTTP_400_BAD_REQUEST)
 
         participant = dialogue.participants.exclude(id=request.user.id).first()
         if not participant:
@@ -571,7 +585,8 @@ class DialogueViewSet(viewsets.ModelViewSet):
 class MessageViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, ConversationAccessPermission, IsDialogueParticipant]
     queryset = Message.objects.all()
-    
+    serializer_class = MessageSerializer
+
     def list(self, request, dialogue_slug=None):
         """ Retrieve messages for a dialogue with pagination """
         dialogue_slug = request.query_params.get("dialogue_slug")
@@ -589,7 +604,7 @@ class MessageViewSet(viewsets.ModelViewSet):
         has_more = offset + limit < total_messages
 
         messages = messages_query[offset:offset + limit]
-        is_encrypted = messages_query.filter(is_encrypted=True).exists()
+        is_encrypted = MessageEncryption.objects.filter(message__dialogue=dialogue).exists()
 
         serializer = MessageSerializer(
             messages,
@@ -603,6 +618,7 @@ class MessageViewSet(viewsets.ModelViewSet):
             'has_more': has_more
         }, status=status.HTTP_200_OK)
 
+    # -------------------------------------------------------------------------------------------------
     @action( detail=False, methods=['post'], url_path='send-message', permission_classes=[IsAuthenticated], parser_classes=[JSONParser] )
     def send_message(self, request):
         user = request.user
@@ -632,7 +648,6 @@ class MessageViewSet(viewsets.ModelViewSet):
                 dialogue=dialogue,
                 sender=user,
                 content_encrypted=content_bytes,
-                is_encrypted=False
             )
         else:
             if not encrypted_contents or not isinstance(encrypted_contents, list):
@@ -642,7 +657,6 @@ class MessageViewSet(viewsets.ModelViewSet):
                 dialogue=dialogue,
                 sender=user,
                 content_encrypted=b"[Encrypted]",
-                is_encrypted=True
             )
 
             for enc in encrypted_contents:
@@ -666,7 +680,7 @@ class MessageViewSet(viewsets.ModelViewSet):
             'websocket_url': get_websocket_url(request, dialogue.slug)
         }, status=201)
 
-    
+    # -------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='upload-file', permission_classes=[IsAuthenticated], parser_classes=[MultiPartParser, FormParser])
     def upload_file(self, request):
         dialogue_slug = request.data.get("dialogue_slug")
@@ -703,7 +717,6 @@ class MessageViewSet(viewsets.ModelViewSet):
             message = Message.objects.create(
                 dialogue=dialogue,
                 sender=user,
-                is_encrypted=False,
                 is_encrypted_file=False,
                 **{field_name: uploaded_file},
             )
@@ -713,7 +726,6 @@ class MessageViewSet(viewsets.ModelViewSet):
             message = Message.objects.create(
                 dialogue=dialogue,
                 sender=user,
-                is_encrypted=True,
                 is_encrypted_file=True,
                 encrypted_for_device=encrypted_for_device,
                 aes_key_encrypted=base64.b64decode(aes_key_encrypted_main),
@@ -743,8 +755,7 @@ class MessageViewSet(viewsets.ModelViewSet):
             "is_encrypted": message.is_encrypted,
         }, status=201)
 
-
-
+    # -------------------------------------------------------------------------------------------------
     @action(detail=True, methods=['get'], url_path='access-media', permission_classes=[IsAuthenticated])
     def access_media(self, request, pk=None):
         user = request.user
@@ -820,7 +831,6 @@ class MessageViewSet(viewsets.ModelViewSet):
             message.content_encrypted = content_bytes
             message.edited_at = timezone.now()
             message.is_edited = True
-            message.is_encrypted = False
             message.encrypted_for_device = None
             message.aes_key_encrypted = None
             message.save()
@@ -836,7 +846,6 @@ class MessageViewSet(viewsets.ModelViewSet):
             message.content_encrypted = b"[Encrypted]"
             message.edited_at = timezone.now()
             message.is_edited = True
-            message.is_encrypted = True
             message.save()
 
             for enc in encrypted_contents:
@@ -990,33 +999,40 @@ class MessageViewSet(viewsets.ModelViewSet):
 
 
     @action(detail=True, methods=["get"], url_path="search-messages", permission_classes=[IsAuthenticated])
-    def search_messages(self, request, slug=None):
+    def search_messages(self, request, pk=None):
         query = request.query_params.get("q")
-        
+
         if not query:
             return Response({"error": "Search query `q` is required."}, status=400)
 
-        dialogue = get_object_or_404(Dialogue, slug=slug)
+        dialogue = get_object_or_404(Dialogue, slug=pk)
         if not dialogue.participants.filter(id=request.user.id).exists():
             return Response({"error": "You are not a participant of this dialogue."}, status=403)
 
         if dialogue.is_group:
-            messages = Message.objects.filter(
-                dialogue=dialogue,
-                is_encrypted=False,
-                content_encrypted__icontains=query,
-                is_system=False
-            ).order_by("-timestamp")[:100]
+            # 🔍 ابتدا پیام‌هایی که متن‌شان شامل عبارت جستجو است از مدل MessageSearchIndex پیدا کن
+            matching_message_ids = (
+                MessageSearchIndex.objects
+                .filter(plaintext__icontains=query, message__dialogue=dialogue)
+                .values_list("message_id", flat=True)
+            )
+
+            # 🔁 سپس پیام‌های اصلی را بازیابی کن
+            messages = (
+                Message.objects
+                .filter(id__in=matching_message_ids, is_system=False)
+                .order_by("-timestamp")[:100]
+            )
 
             serializer = MessageSerializer(messages, many=True, context={"request": request})
             return Response(serializer.data)
 
         else:
-            # چت خصوصی → فقط یادآوری برای جستجوی کلاینتی
             return Response({
                 "note": "Client-side search is required for encrypted private chats.",
                 "messages": []
             })
+
 
     @action(detail=True, methods=["get"], url_path="get-message", permission_classes=[IsAuthenticated])
     def get_message(self, request, pk=None):

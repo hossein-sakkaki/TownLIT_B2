@@ -1,9 +1,12 @@
 from rest_framework import serializers
+from common.file_handlers.group_image import GroupImageMixin
+import base64
+from django.db.models import Count
+
 from .models import Dialogue, DialogueParticipant, Message, UserDialogueMarker
-from apps.conversation.utils import get_websocket_url
 from apps.accounts.serializers import SimpleCustomUserSerializer
 from apps.accounts.models import UserDeviceKey
-import base64
+from apps.conversation.utils import get_websocket_url
 
 
 # Dialogue Participant Serializer ------------------------------------------------------
@@ -19,8 +22,9 @@ class DialogueParticipantSerializer(serializers.ModelSerializer):
 
 
 # Dialogue Serializer ------------------------------------------------------------------
-class DialogueSerializer(serializers.ModelSerializer):
+class DialogueSerializer(GroupImageMixin, serializers.ModelSerializer):
     participants = SimpleCustomUserSerializer(many=True, read_only=True)
+    
     chat_partner = serializers.SerializerMethodField()     
     last_message = serializers.SerializerMethodField()
     participants_roles = DialogueParticipantSerializer(many=True, read_only=True)
@@ -28,16 +32,15 @@ class DialogueSerializer(serializers.ModelSerializer):
     # Dynamically determine if any message in this dialogue is encrypted
     is_encrypted = serializers.SerializerMethodField()
     websocket_url = serializers.SerializerMethodField()
-    group_image = serializers.ImageField(required=False, allow_null=True)
     my_role = serializers.SerializerMethodField()
 
     is_sensitive = serializers.SerializerMethodField()
     marker_id = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = Dialogue
         fields = [
-            'id', 'slug', 'name', 'group_image', 'participants', 'chat_partner', 'created_at', 'is_group', 'last_message',
+            'id', 'slug', 'group_name', 'participants', 'chat_partner', 'created_at', 'is_group', 'last_message',
             'participants_roles', 'is_encrypted', 'websocket_url', 'my_role',
             'is_sensitive', 'marker_id'
         ]
@@ -49,8 +52,8 @@ class DialogueSerializer(serializers.ModelSerializer):
         return None
 
     def get_is_encrypted(self, obj):
-        return obj.messages.filter(is_encrypted=True).exists()
-    
+        return obj.messages.annotate(enc_count=Count("encryptions")).filter(enc_count__gt=0).exists()
+        
     def get_chat_partner(self, obj):
         request = self.context.get('request')
         if not request:
@@ -85,13 +88,6 @@ class DialogueSerializer(serializers.ModelSerializer):
             )
             return serializer.data
         return None
-
-    def get_group_image(self, obj):
-        request = self.context.get('request')
-        if obj.group_image:
-            return request.build_absolute_uri(obj.group_image.url) if request else obj.group_image.url
-        else:
-            return request.build_absolute_uri('/media/sample/group-image.png') if request else 'media/sample/group-image.png'
         
     def get_my_role(self, obj):
         request = self.context.get("request")
@@ -124,6 +120,7 @@ class MessageSerializer(serializers.ModelSerializer):
     content_encrypted = serializers.SerializerMethodField()
     aes_key_encrypted = serializers.SerializerMethodField()
     encrypted_for_device = serializers.SerializerMethodField()
+    is_encrypted = serializers.SerializerMethodField()  # ✅ جدید
 
     image_url = serializers.SerializerMethodField()
     video_url = serializers.SerializerMethodField()
@@ -144,9 +141,11 @@ class MessageSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             'sender': {'read_only': True},
             'timestamp': {'read_only': True},
-            'is_encrypted': {'read_only': True},
         }
-            
+
+    def get_is_encrypted(self, obj):
+        return obj.is_encrypted 
+
     def get_content_encrypted(self, obj):
         request = self.context.get("request")
         device_id = self.context.get("device_id") or (request.query_params.get("device_id") if request else None)
@@ -154,13 +153,11 @@ class MessageSerializer(serializers.ModelSerializer):
         if not obj.is_encrypted:
             if obj.content_encrypted:
                 try:
-                    # ✅ تبدیل Binary → UTF-8 (اگر پیام گروهی باشد)
                     return base64.b64decode(obj.content_encrypted).decode("utf-8")
                 except Exception as e:
                     return "⚠️ Failed to decode content"
             return None
 
-        # پیام رمزنگاری شده:
         if not device_id:
             return None
 

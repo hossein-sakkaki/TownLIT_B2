@@ -16,9 +16,9 @@ class DialogueParticipantInline(admin.TabularInline):
 # Dialogue Admin -------------------------------------------------------------------------
 @admin.register(Dialogue)
 class DialogueAdmin(admin.ModelAdmin):
-    list_display = ('name', 'is_group', 'created_at', 'display_participants', 'last_message_display')
+    list_display = ('group_name', 'is_group', 'created_at', 'display_participants', 'last_message_display', 'group_image')
     list_filter = ('is_group', 'created_at')
-    search_fields = ('name', 'participants__username')
+    search_fields = ('group_name', 'participants__username')
     filter_horizontal = ('participants', 'deleted_by_users')
     inlines = [DialogueParticipantInline]
 
@@ -38,7 +38,7 @@ class DialogueAdmin(admin.ModelAdmin):
 class MessageAdmin(admin.ModelAdmin):
     list_display = ('dialogue', 'sender', 'timestamp', 'get_is_read', 'get_is_encrypted', 'display_deleted_by_users')
     list_filter = ('timestamp',)
-    search_fields = ('sender__username', 'dialogue__name')
+    search_fields = ('sender__username', 'dialogue__group_name')
     readonly_fields = ('timestamp', 'content_encrypted', 'self_destruct_at')
 
     def get_is_read(self, obj):
@@ -48,8 +48,8 @@ class MessageAdmin(admin.ModelAdmin):
     get_is_read.short_description = "Read"
 
     def get_is_encrypted(self, obj):
-        """ Ensure `is_encrypted` is accessible in admin """
-        return bool(obj.content_encrypted)  # Checking if the encrypted content exists
+        """ Securely check if message is encrypted using @property """
+        return obj.is_encrypted
     get_is_encrypted.boolean = True
     get_is_encrypted.short_description = "Encrypted"
 
@@ -60,12 +60,13 @@ class MessageAdmin(admin.ModelAdmin):
 
 
 
+
 # DialogueParticipant Admin -------------------------------------------------------------------------
 @admin.register(DialogueParticipant)
 class DialogueParticipantAdmin(admin.ModelAdmin):
     list_display = ('dialogue', 'user', 'role', 'get_role_display')
     list_filter = ('role',)
-    search_fields = ('dialogue__name', 'user__username')
+    search_fields = ('dialogue__group_name', 'user__username')
 
 
 # UserDialogueMarker Admin -------------------------------------------------------------------------
@@ -73,4 +74,4 @@ class DialogueParticipantAdmin(admin.ModelAdmin):
 class UserDialogueMarkerAdmin(admin.ModelAdmin):
     list_display = ('user', 'dialogue', 'is_sensitive', 'delete_policy')
     list_filter = ('is_sensitive', 'delete_policy')
-    search_fields = ('user__username', 'dialogue__name')
+    search_fields = ('user__username', 'dialogue__group_name')

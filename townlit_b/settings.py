@@ -85,6 +85,9 @@ IPINFO_API_KEY = os.getenv("IPINFO_API_KEY", "")
 
 
 
+DEFAULT_USER_AVATAR_URL = os.getenv("DEFAULT_USER_AVATAR_URL", "/static/defaults/default-avatar.png")
+DEFAULT_GROUP_AVATAR_URL = os.getenv("DEFAULT_GROUP_AVATAR_URL", "/static/defaults/default-group-avatar.png")
+
 
 
 

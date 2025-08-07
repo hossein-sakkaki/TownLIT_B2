@@ -285,7 +285,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     primary_language = models.CharField(max_length=5, choices=LANGUAGE_CHOICES, default=ENGLISH, verbose_name='Primary Language')
     secondary_language = models.CharField(max_length=5, choices=LANGUAGE_CHOICES, null=True, blank=True, verbose_name='Secondary Language')
     
-    image_name = models.ImageField(upload_to=IMAGE.dir_upload, default='media/sample/user.png', null=True, blank=True, validators=[validate_image_file, validate_image_size, validate_no_executable_file], verbose_name='Image')
+    image_name = models.ImageField(upload_to=IMAGE.dir_upload, null=True, blank=True, validators=[validate_image_file, validate_image_size, validate_no_executable_file], verbose_name='Image')
     user_active_code = models.CharField(max_length=200, null=True, blank=True)
     user_active_code_expiry = models.DateTimeField(null=True, blank=True)
     register_date = models.DateField(default=timezone.now, verbose_name='Register Date')
@@ -378,6 +378,12 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
         
     def is_member_user(self):
         return self.is_member
+    
+    @property
+    def image_url(self):
+        if self.image_name:
+            return self.image_name.url
+        return settings.DEFAULT_USER_AVATAR_URL
     
     @property
     def is_staff(self):

@@ -78,7 +78,9 @@ DISCORD = 'discord'
 TWITCH = 'twitch'
 VIMEO = 'vimeo'
 LINE = 'line'
+
 VK = 'vk'
+
 QQ = 'qq'
 REDDIT = 'reddit'
 WEBSITE = 'website'

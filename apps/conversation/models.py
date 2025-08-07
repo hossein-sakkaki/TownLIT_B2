@@ -27,9 +27,8 @@ def get_upload_path(category, file_type, sub_folder):
 # DIALOGUE Model -------------------------------------------------------------------------
 class Dialogue(models.Model):
     id = models.BigAutoField(primary_key=True)
-    name = models.CharField(max_length=255, blank=True, null=True, verbose_name="Group Name")
+    group_name = models.CharField( max_length=255, blank=True, null=True, unique=False, verbose_name="Group Name")
     group_image = models.ImageField(upload_to=get_upload_path('conversation', 'cover', 'group'), validators=[validate_image_file, validate_image_size, validate_no_executable_file], blank=True, null=True, verbose_name="Group Image")
-
     participants = models.ManyToManyField(settings.AUTH_USER_MODEL, related_name="dialogues")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Created At")
     is_group = models.BooleanField(default=False, verbose_name="Is Group")
@@ -38,12 +37,18 @@ class Dialogue(models.Model):
     rsa_required = models.BooleanField(default=False, verbose_name="Requires RSA Encryption")
     
     slug = models.SlugField(max_length=255, unique=True, blank=True, null=True, verbose_name="Slug")
-    
+
     @staticmethod
     def generate_dialogue_slug(usernames: list[str], group_name: str | None = None) -> str:
         random_part = get_random_string(length=10)
         timestamp = timezone.now().strftime("%Y%m%d%H%M%S")
         return f"d-{timestamp}-{random_part}"
+
+    @property
+    def group_image_url(self):
+        if self.group_image:
+            return self.group_image.url
+        return settings.DEFAULT_GROUP_AVATAR_URL
 
 
     # ✅ بررسی اینکه آیا کاربر نقش خاصی دارد
@@ -92,7 +97,7 @@ class Dialogue(models.Model):
 
     def __str__(self):
         if self.is_group:
-            return f"Group: {self.name} with {self.participants.count()} participants"
+            return f"Group: {self.group_name} with {self.participants.count()} participants"
         return f"Dialogue between: {', '.join([user.username for user in self.participants.all()])}"
 
 
@@ -108,7 +113,7 @@ class DialogueParticipant(models.Model):
         unique_together = ('dialogue', 'user')
 
     def __str__(self):
-        return f"{self.user.username} in {self.dialogue.name} as {self.role}"
+        return f"{self.user.username} in {self.dialogue.group_name} as {self.role}"
 
 
 # MESSAGE Model -------------------------------------------------------------------------
@@ -126,7 +131,7 @@ class Message(models.Model):
     content_encrypted = models.BinaryField(blank=True, null=True)
     aes_key_encrypted = models.BinaryField(blank=True, null=True)  # AES key encrypted with RSA
     encrypted_for_device = models.CharField(max_length=100, null=True, blank=True)
-    is_encrypted = models.BooleanField(default=False, verbose_name="Is Encrypted")
+    
     is_encrypted_file = models.BooleanField(default=False, verbose_name="Is File Encrypted")
         
     image = models.ImageField(upload_to=get_upload_path('conversation', 'image', 'message'), blank=True, null=True, verbose_name="Image")
@@ -142,6 +147,10 @@ class Message(models.Model):
     
     is_system = models.BooleanField(default=False)
     system_event = models.CharField(max_length=50, choices=SYSTEM_MESSAGE_EVENT_CHOICES, null=True, blank=True)
+
+    @property
+    def is_encrypted(self):
+        return self.encryptions.exists()
 
     def set_self_destruct(self, duration_minutes):
         """ Set the message to self-destruct after a specified duration """
@@ -287,9 +296,17 @@ class Message(models.Model):
 
 class MessageEncryption(models.Model):
     id = models.BigAutoField(primary_key=True)
-    message = models.ForeignKey('Message', on_delete=models.CASCADE, related_name='encryptions')
+    message = models.ForeignKey(Message, on_delete=models.CASCADE, related_name='encryptions')
     device_id = models.CharField(max_length=255)
     encrypted_content = models.TextField()
+    
+class MessageSearchIndex(models.Model):
+    message = models.OneToOneField(Message, on_delete=models.CASCADE, related_name="search_index")
+    plaintext = models.TextField()
+
+    def __str__(self):
+        return f"SearchIndex for Message {self.message_id}"
+
 
 
 

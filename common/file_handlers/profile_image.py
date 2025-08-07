@@ -10,8 +10,7 @@ class ProfileImageMixin(BaseS3URLMixin):
     and rename `image_name_url` → `profile_image_url` in representation.
     """
     signed_fields = {
-        # 'image_name': settings.MEDIA_URL + 'sample/user.png'
-        'image_name': 'sample/user.png'
+        'image_name': settings.DEFAULT_USER_AVATAR_URL
     }
 
     def to_representation(self, instance):

@@ -486,7 +486,6 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
                     dialogue=dialogue,
                     sender=self.user,
                     content_encrypted=b"[Encrypted]",
-                    is_encrypted=True
                 )
             else:
                 plain_message = encrypted_contents[0].get("encrypted_content", "").strip()
@@ -497,7 +496,6 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
                     dialogue=dialogue,
                     sender=self.user,
                     content_encrypted=content_bytes,
-                    is_encrypted=False
                 )
 
             # Store encrypted versions (if applicable)
