@@ -36,27 +36,24 @@ class DialogueAdmin(admin.ModelAdmin):
 # Message Admin -------------------------------------------------------------------------
 @admin.register(Message)
 class MessageAdmin(admin.ModelAdmin):
-    list_display = ('dialogue', 'sender', 'timestamp', 'get_is_read', 'get_is_encrypted', 'display_deleted_by_users')
+    list_display = ('dialogue', 'sender', 'timestamp', 'get_seen_by', 'get_is_encrypted', 'display_deleted_by_users')
     list_filter = ('timestamp',)
     search_fields = ('sender__username', 'dialogue__group_name')
     readonly_fields = ('timestamp', 'content_encrypted', 'self_destruct_at')
 
-    def get_is_read(self, obj):
-        """ Ensure `is_read` is accessible in admin """
-        return obj.is_read
-    get_is_read.boolean = True
-    get_is_read.short_description = "Read"
+    def get_seen_by(self, obj):
+        return ", ".join([user.username for user in obj.seen_by_users.all()])
+    get_seen_by.short_description = "Seen By"
 
     def get_is_encrypted(self, obj):
-        """ Securely check if message is encrypted using @property """
         return obj.is_encrypted
     get_is_encrypted.boolean = True
     get_is_encrypted.short_description = "Encrypted"
 
     def display_deleted_by_users(self, obj):
-        """ Show users who soft-deleted the message """
         return ", ".join([user.username for user in obj.deleted_by_users.all()])
     display_deleted_by_users.short_description = 'Deleted By'
+
 
 
 

@@ -91,7 +91,7 @@ async def get_last_seen(user_id: int) -> int | None:
     await redis_conn.close()
     return int(ts) if ts else None
 
-# ✅ تمدید اتصال در هنگام دریافت ping (Heartbeat)
+
 # ✅ تمدید اتصال در هنگام دریافت ping (Heartbeat)
 async def refresh_user_connection(user_id: int, socket_id: str):
     redis_conn = await get_redis_connection()

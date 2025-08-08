@@ -81,17 +81,52 @@ class DialogueViewSet(viewsets.ModelViewSet):
             deleted_by_users=self.request.user
         ).prefetch_related('participants', 'participants_roles', 'marked_users')
         
+    # ---------------------------------------
+    @action(detail=False, methods=["post"], url_path="enter-chat")
+    @require_litshield_access("conversation")
+    def enter_chat(self, request):
+        user = request.user
+        device_id = request.data.get("device_id")
+
+        dialogues = Dialogue.objects.filter(participants=user).exclude(deleted_by_users=user)
+        serializer = DialogueSerializer(
+            dialogues,
+            many=True,
+            context={"request": request, "device_id": device_id}
+        )
+
+        return Response({
+            "dialogues": serializer.data
+        }, status=status.HTTP_200_OK)
         
+    # ---------------------------------------
+    @action(detail=True, methods=["get"], url_path="keys", permission_classes=[IsAuthenticated])
+    @require_litshield_access("conversation")
+    def get_dialogue_keys(self, request, slug=None):
+        dialogue = self.get_object()
+        user = request.user
+
+        partner = dialogue.participants.exclude(id=user.id).first()
+        if not partner:
+            return Response({"error": "No chat partner found."}, status=404)
+
+        keys = UserDeviceKey.objects.filter(user=partner, is_active=True)
+        result = [{"device_id": k.device_id, "public_key": k.public_key} for k in keys]
+        return Response(result)
+     
+    # ---------------------------------------   
     @action(detail=False, methods=['post'], url_path='create-dialogue', permission_classes=[IsAuthenticated])
     @require_litshield_access("conversation")
     def create_dialogue(self, request):
         recipient_id = request.data.get('recipient_id')
+        check_only = request.data.get('check_only', False)
+
         if not recipient_id:
             return Response({'error': 'Recipient ID is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
         recipient = get_object_or_404(CustomUser, id=recipient_id)
 
-        # اگر دیالوگ قبلاً وجود دارد، همان را برگردان
+        # بررسی وجود دیالوگ
         dialogue = Dialogue.objects.filter(
             participants=request.user,
             is_group=False
@@ -100,26 +135,29 @@ class DialogueViewSet(viewsets.ModelViewSet):
         if dialogue:
             if dialogue.deleted_by_users.filter(id=request.user.id).exists():
                 dialogue.deleted_by_users.remove(request.user)
-                
+            
             serializer = DialogueSerializer(dialogue, context={"request": request})
             return Response({
                 'dialogue': serializer.data,
                 'message': 'Dialogue already exists.'
             }, status=status.HTTP_200_OK)
 
-        # ایجاد دیالوگ جدید
+        if check_only:
+            return Response({
+                'message': 'Dialogue does not exist.'
+            }, status=status.HTTP_204_NO_CONTENT)
+
+        # ایجاد دیالوگ جدید (در صورتی که check_only=False)
         dialogue = Dialogue.objects.create(is_group=False)
         dialogue.participants.add(request.user, recipient)
-        
-        # ✅ ساخت slug
+
         usernames = sorted([request.user.username, recipient.username])
         dialogue.slug = Dialogue.generate_dialogue_slug(usernames)
         dialogue.save()
 
-        # اضافه کردن نقش‌ها
         DialogueParticipant.objects.create(dialogue=dialogue, user=request.user, role='participant')
-        DialogueParticipant.objects.create(dialogue=dialogue, user=recipient, role='participant')        
-        
+        DialogueParticipant.objects.create(dialogue=dialogue, user=recipient, role='participant')
+
         serializer = DialogueSerializer(dialogue, context={"request": request})
         return Response({
             'dialogue': serializer.data,
@@ -127,26 +165,23 @@ class DialogueViewSet(viewsets.ModelViewSet):
         }, status=status.HTTP_201_CREATED)
 
 
+    # ---------------------------------------
     @action(detail=False, methods=['post'], url_path='create-group', permission_classes=[IsAuthenticated])
     @require_litshield_access("conversation")
     def create_group(self, request):
         data = request.data
-
         group_name = data.get('group_name')
         group_image = request.FILES.get('group_image')
-
 
         if not group_name:
             return Response({'error': 'Group name is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # بررسی اینکه گروهی با این نام قبلاً ثبت نشده باشد (case-insensitive)
         if Dialogue.objects.filter(
             is_group=True,
             group_name__iexact=group_name.strip()
         ).exists():
             return Response({'error': 'A group with this name already exists.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # ✅ ایجاد دیالوگ اولیه
         dialogue = Dialogue.objects.create(
             is_group=True,
             group_name=group_name.strip(),
@@ -161,12 +196,10 @@ class DialogueViewSet(viewsets.ModelViewSet):
         usernames = list(dialogue.participants.values_list("username", flat=True))
         dialogue.slug = Dialogue.generate_dialogue_slug(usernames, group_name)
         dialogue.save(update_fields=["slug"])
-
-        # ✅ سریال‌سازی و پاسخ
         serializer = DialogueSerializer(dialogue, context={"request": request})
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-    # Update Group Image Action
+    # Update Group Image Action ---------------
     @action(detail=True, methods=["post"], url_path="update-group-image", permission_classes=[IsAuthenticated])
     @require_litshield_access("conversation")
     def update_group_image(self, request, **kwargs):
@@ -191,6 +224,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
 
         return Response({"detail": "Group image updated successfully."}, status=status.HTTP_200_OK)
     
+    # ---------------------------------------
     @action(detail=True, methods=['post'], url_path='smart-delete', permission_classes=[IsAuthenticated])
     @require_litshield_access("conversation")
     def smart_delete_dialogue(self, request, slug=None):
@@ -224,6 +258,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
         send_system_message(dialogue, request.user, 'group_deleted', "Group has been deleted by the founder.")
         return Response({'error': 'Only the founder can delete the group. To leave, use the leave action.'}, status=status.HTTP_403_FORBIDDEN)
 
+    # ---------------------------------------
     @action(detail=True, methods=['post'], url_path='add-participant', permission_classes=[IsAuthenticated])
     @require_litshield_access("conversation")
     def add_participant(self, request, slug=None):
@@ -275,6 +310,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
     
         return Response({'message': f'{participant.username} added to the group.'}, status=status.HTTP_200_OK)
 
+    # ---------------------------------------
     @action(detail=True, methods=['post'], url_path='remove-participant', permission_classes=[IsAuthenticated])
     @require_litshield_access("conversation")
     def remove_participant(self, request, slug=None):
@@ -319,6 +355,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
         send_system_message(dialogue, request.user, 'removed', f"{participant.username} was removed from the group.")
         return Response({'message': f'{participant.username} removed from the group.'}, status=status.HTTP_200_OK)
 
+    # ---------------------------------------
     @action(detail=True, methods=['get'], url_path='participants', permission_classes=[IsAuthenticated])
     @require_litshield_access("conversation")
     def get_group_participants(self, request, slug=None):
@@ -331,6 +368,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
         )
         return Response(serializer.data)
 
+    # ---------------------------------------
     @action(detail=True, methods=['post'], url_path='promote-to-elder', permission_classes=[IsAuthenticated])
     @require_litshield_access("conversation")
     def promote_to_elder(self, request, slug=None):
@@ -349,6 +387,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
         send_system_message(dialogue, request.user, 'promoted_to_elder', f"{participant.user.username} was promoted to Elder.")
         return Response({'message': 'User promoted to Elder.'}, status=200)
 
+    # ---------------------------------------
     @action(detail=True, methods=['post'], url_path='demote-to-participant', permission_classes=[IsAuthenticated])
     @require_litshield_access("conversation")
     def demote_to_participant(self, request, slug=None):
@@ -371,6 +410,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
         send_system_message(dialogue, request.user, 'demoted_to_participant', f"{participant.user.username} was demoted to Participant.")
         return Response({'message': 'User demoted to Participant.'}, status=200)
 
+    # ---------------------------------------
     @action(detail=True, methods=['post'], url_path='resign-elder-role', permission_classes=[IsAuthenticated])
     @require_litshield_access("conversation")
     def resign_elder_role(self, request, slug=None):
@@ -390,7 +430,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
         send_system_message(dialogue, request.user, 'resigned_from_elder', f"{user.username} resigned from Elder role.")
         return Response({'message': 'You stepped down as an Elder.'}, status=200)
 
-
+    # ---------------------------------------
     @action(detail=True, methods=['post'], url_path='leave-group', permission_classes=[IsAuthenticated])
     @require_litshield_access("conversation")
     def leave_group(self, request, slug=None):
@@ -429,6 +469,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
     
         return Response({'message': 'You left the group and your chat was removed from the list.'}, status=status.HTTP_200_OK)
 
+    # ---------------------------------------
     @action(detail=True, methods=['post'], url_path='transfer-founder', permission_classes=[IsAuthenticated])
     @require_litshield_access("conversation") 
     def transfer_founder(self, request, slug=None):
@@ -468,46 +509,11 @@ class DialogueViewSet(viewsets.ModelViewSet):
         send_system_message(dialogue, request.user, 'founder_transferred', f"Founder role transferred to {new_founder.user.username}.")
         return Response({'message': 'Founder role transferred successfully. You have left the group.'}, status=200)
 
-
-    @action(detail=False, methods=["post"], url_path="enter-chat")
-    @require_litshield_access("conversation")
-    def enter_chat(self, request):
-        user = request.user
-        device_id = request.data.get("device_id")
-
-        dialogues = Dialogue.objects.filter(participants=user).exclude(deleted_by_users=user)
-        serializer = DialogueSerializer(
-            dialogues,
-            many=True,
-            context={"request": request, "device_id": device_id}
-        )
-
-        return Response({
-            "dialogues": serializer.data
-        }, status=status.HTTP_200_OK)
-        
-    
-    @action(detail=True, methods=["get"], url_path="keys", permission_classes=[IsAuthenticated])
-    @require_litshield_access("conversation")
-    def get_dialogue_keys(self, request, slug=None):
-        dialogue = self.get_object()
-        user = request.user
-
-        partner = dialogue.participants.exclude(id=user.id).first()
-        if not partner:
-            return Response({"error": "No chat partner found."}, status=404)
-
-        keys = UserDeviceKey.objects.filter(user=partner, is_active=True)
-        result = [{"device_id": k.device_id, "public_key": k.public_key} for k in keys]
-        return Response(result)
-
-
-    # Get Last Seen Users 
+    # Get Last Seen Users -------------------
     @action(detail=True, methods=['get'], url_path='last-seen', permission_classes=[IsAuthenticated])
     @require_litshield_access("conversation")
     def get_last_seen_view(self, request, slug=None):
         dialogue = get_object_or_404(Dialogue, slug=slug)
-        
         if dialogue.is_group:
             return Response({
                 'note': 'Last seen is not applicable to group chats.',
@@ -519,7 +525,6 @@ class DialogueViewSet(viewsets.ModelViewSet):
 
         if request.user not in dialogue.participants.all():
             return Response({'error': 'You are not a participant of this dialogue.'}, status=status.HTTP_403_FORBIDDEN)
-
 
         participant = dialogue.participants.exclude(id=request.user.id).first()
         if not participant:
@@ -546,7 +551,8 @@ class DialogueViewSet(viewsets.ModelViewSet):
                     'user_id': participant.id,
                     'is_online': False,
                     'last_seen': last_seen_dt.isoformat(),
-                    'last_seen_display': timesince(last_seen_dt) + " ago"
+                    # 'last_seen_display': timesince(last_seen_dt) + " ago"
+                    'last_seen_display': timesince(last_seen_dt)
                 })
         except Exception as e:
             print("❌ Error getting last seen:", e)
@@ -559,7 +565,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
         })
 
 
-    # Get Unread Counts 
+    # Get Unread Counts -------------------------
     @action(detail=False, methods=["get"], url_path="unread-counts", permission_classes=[IsAuthenticated])
     # @require_litshield_access("conversation")
     def get_unread_counts(self, request):
@@ -996,8 +1002,9 @@ class MessageViewSet(viewsets.ModelViewSet):
             return Response({'message': 'Message permanently deleted.'}, status=status.HTTP_200_OK)
 
         return Response({'error': 'You are not allowed to permanently delete this message.'}, status=status.HTTP_403_FORBIDDEN)
+    
 
-
+    # Search Messages -----------------------------------------------------------------------------------------
     @action(detail=True, methods=["get"], url_path="search-messages", permission_classes=[IsAuthenticated])
     def search_messages(self, request, pk=None):
         query = request.query_params.get("q")
@@ -1010,7 +1017,6 @@ class MessageViewSet(viewsets.ModelViewSet):
             return Response({"error": "You are not a participant of this dialogue."}, status=403)
 
         if dialogue.is_group:
-            # 🔍 ابتدا پیام‌هایی که متن‌شان شامل عبارت جستجو است از مدل MessageSearchIndex پیدا کن
             matching_message_ids = (
                 MessageSearchIndex.objects
                 .filter(plaintext__icontains=query, message__dialogue=dialogue)
@@ -1034,6 +1040,7 @@ class MessageViewSet(viewsets.ModelViewSet):
             })
 
 
+    # Get Message -------------------------------------------------------------------------------------------
     @action(detail=True, methods=["get"], url_path="get-message", permission_classes=[IsAuthenticated])
     def get_message(self, request, pk=None):
         message = get_object_or_404(Message, pk=pk)
