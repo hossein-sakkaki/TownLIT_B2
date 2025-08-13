@@ -433,4 +433,5 @@ class UserDeviceKeySerializer(serializers.ModelSerializer):
             'device_id', 'device_name', 'user_agent', 'ip_address',
             'created_at', 'last_used', 'is_active',
             "location_city", "location_region", "location_country",
+            "is_verified", "verified_at"
         ]

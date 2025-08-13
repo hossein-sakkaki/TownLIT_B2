@@ -1,5 +1,6 @@
 from django.contrib import admin
-from .models import Dialogue, DialogueParticipant, Message, UserDialogueMarker
+from .models import Dialogue, DialogueParticipant, Message, UserDialogueMarker, MessageEncryption
+
 
 
 # Inline for managing group participants
@@ -72,3 +73,12 @@ class UserDialogueMarkerAdmin(admin.ModelAdmin):
     list_display = ('user', 'dialogue', 'is_sensitive', 'delete_policy')
     list_filter = ('is_sensitive', 'delete_policy')
     search_fields = ('user__username', 'dialogue__group_name')
+
+
+
+
+@admin.register(MessageEncryption)
+class MessageEncryptionAdmin(admin.ModelAdmin):
+    list_display = ("id", "message", "device_id","created_at")
+    # list_filter = ("device_id")
+    search_fields = ("device_id", "message__id")

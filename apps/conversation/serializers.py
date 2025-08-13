@@ -78,7 +78,7 @@ class DialogueSerializer(GroupImageMixin, serializers.ModelSerializer):
 
     def get_last_message(self, obj):
         request = self.context.get("request")
-        device_id = request.query_params.get("device_id") if request else None
+        device_id = request.query_params.get("device_id", "").strip().lower() if request else None
         last_msg = obj.messages.filter(is_system=False).order_by("-timestamp").first()
 
         if last_msg:
@@ -120,7 +120,7 @@ class MessageSerializer(serializers.ModelSerializer):
     content_encrypted = serializers.SerializerMethodField()
     aes_key_encrypted = serializers.SerializerMethodField()
     encrypted_for_device = serializers.SerializerMethodField()
-    is_encrypted = serializers.SerializerMethodField()  # ✅ جدید
+    is_encrypted = serializers.SerializerMethodField()
 
     image_url = serializers.SerializerMethodField()
     video_url = serializers.SerializerMethodField()
@@ -147,25 +147,48 @@ class MessageSerializer(serializers.ModelSerializer):
         return obj.is_encrypted 
 
     def get_content_encrypted(self, obj):
+        """
+        Returns per-device encrypted payload for the requesting device_id.
+        Fallback: if not found for current device_id, try any of the user's registered device_ids.
+        This helps after localStorage reset + restore (new device_id) so old messages remain decryptable.
+        """
         request = self.context.get("request")
         device_id = self.context.get("device_id") or (request.query_params.get("device_id") if request else None)
 
+        if device_id:
+            device_id = device_id.strip().lower()  # Normalize
+
+        # Unencrypted / group message: decode server-stored Base64 string back to UTF-8
         if not obj.is_encrypted:
             if obj.content_encrypted:
                 try:
                     return base64.b64decode(obj.content_encrypted).decode("utf-8")
-                except Exception as e:
+                except Exception:
                     return "⚠️ Failed to decode content"
             return None
 
+        # Encrypted (private) message requires a device_id
         if not device_id:
             return None
 
+        # 1) Try exact match for current device_id
         encryption = obj.encryptions.filter(device_id=device_id).first()
         if encryption:
             return encryption.encrypted_content
-        else:
-            return base64.b64encode(b"[Encrypted]").decode("utf-8")
+
+        # 2) Fallback: try any of this user's registered device_ids
+        user = request.user if request else None
+        if user and user.is_authenticated:
+            # Collect all device_ids registered for this user
+            user_device_ids = list(UserDeviceKey.objects.filter(user=user).values_list("device_id", flat=True))
+            if user_device_ids:
+                fallback_enc = obj.encryptions.filter(device_id__in=user_device_ids).first()
+                if fallback_enc:
+                    return fallback_enc.encrypted_content
+
+        # Nothing found for this device nor any of the user's devices
+        return None  # keep previous behavior; alternatively, return base64.b64encode(b"[Encrypted]").decode("utf-8")
+
 
     def get_encrypted_for_device(self, obj):
         return self.context.get("device_id")

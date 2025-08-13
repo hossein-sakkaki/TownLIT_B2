@@ -1,7 +1,9 @@
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from asgiref.sync import sync_to_async
+from channels.db import database_sync_to_async
 import json
 import base64
+from urllib.parse import parse_qs
 from datetime import datetime
 from apps.conversation.models import Message, Dialogue, MessageEncryption
 from apps.accounts.models import UserDeviceKey
@@ -15,6 +17,7 @@ from services.redis_online_manager import (
     get_all_online_users, get_online_status_for_users,
     refresh_user_connection, get_last_seen
 )
+from apps.accounts.services.sender_verification import is_sender_device_verified
 from services.message_atomic_utils import (
     mark_message_as_delivered_atomic,
     mark_message_as_read_atomic,
@@ -37,16 +40,27 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
     # Connect ---------------------------
     async def connect(self):
         self.connected = True
-        self.user = self.scope["user"]
-        self.slug = self.scope['url_route']['kwargs'].get('slug')
+        self.user = self.scope.get("user")
+        self.slug = self.scope["url_route"]["kwargs"].get("slug")
 
-        # 🔐 Extract device_id from query string
-        query_string = self.scope.get("query_string", b"").decode()
-        query_params = dict(qc.split("=") for qc in query_string.split("&") if "=" in qc)
-        self.device_id = query_params.get("device_id")
+        # --- Parse & normalize device_id from query string safely ---
+        qs = parse_qs(self.scope.get("query_string", b"").decode())
+        device_id = (qs.get("device_id", [""])[0] or "").strip().lower()
+        self.device_id = device_id if device_id else None
 
+        # Basic auth/device guard
         if not self.user or not self.user.is_authenticated or not self.device_id:
             await self.close()
+            return
+
+        # Ensure the device belongs to this user and is active
+        belongs = await database_sync_to_async(
+            UserDeviceKey.objects.filter(
+                user=self.user, device_id=self.device_id, is_active=True
+            ).exists
+        )()
+        if not belongs:
+            await self.close(code=4403)  # Forbidden-like
             return
 
         # ✅ Cancel previous disconnect timer if reconnected
@@ -54,13 +68,14 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
             DISCONNECT_TIMERS[self.user.id].cancel()
             del DISCONNECT_TIMERS[self.user.id]
 
-        # ✅ Set user as online in Redis
+        # ✅ Mark user online
         await set_user_online(self.user.id, self.channel_name)
 
-        # ✅ Join user-specific groups
+        # ✅ Join user/device groups (use normalized device_id)
         await self.channel_layer.group_add(f"user_{self.user.id}", self.channel_name)
         await self.channel_layer.group_add(f"device_{self.device_id}", self.channel_name)
 
+        # Load dialogues
         if self.slug:
             try:
                 dialogue = await sync_to_async(Dialogue.objects.get)(slug=self.slug, participants=self.user)
@@ -69,12 +84,11 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
             except Dialogue.DoesNotExist:
                 await self.close()
                 return
-        else:   
+        else:
             dialogues = await sync_to_async(list)(Dialogue.objects.filter(participants=self.user))
             self.dialogue_map = {f"dialogue_{d.slug}": d.id for d in dialogues}
-            
-        self.group_names = set(self.dialogue_map.keys())
 
+        self.group_names = set(self.dialogue_map.keys())
         for group in self.group_names:
             await self.channel_layer.group_add(group, self.channel_name)
 
@@ -468,103 +482,120 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
     
     # Handle Message ----------------------                
     async def handle_message(self, data):
-        dialogue_slug = data.get("dialogue_slug")
+        dialogue_slug = (data.get("dialogue_slug") or "").strip()
+        is_encrypted = bool(data.get("is_encrypted", False))
         encrypted_contents = data.get("encrypted_contents", [])
-        is_encrypted = data.get("is_encrypted", False)
 
-        if not encrypted_contents or not isinstance(encrypted_contents, list):
-            await self.send(text_data=json.dumps({
-                "type": "error",
-                "message": "Missing or invalid encrypted contents."
-            }))
+        if not dialogue_slug:
+            await self.send_json({"type": "error", "code": "BAD_REQUEST", "message": "dialogue_slug is required"})
             return
 
         try:
-            dialogue = await sync_to_async(Dialogue.objects.get)(slug=dialogue_slug)
-            if is_encrypted:
-                message = await sync_to_async(Message.objects.create)(
-                    dialogue=dialogue,
-                    sender=self.user,
-                    content_encrypted=b"[Encrypted]",
-                )
-            else:
-                plain_message = encrypted_contents[0].get("encrypted_content", "").strip()
+            dialogue = await sync_to_async(Dialogue.objects.get)(slug=dialogue_slug, participants=self.user)
+        except Dialogue.DoesNotExist:
+            await self.send_json({"type": "error", "code": "NOT_FOUND", "message": "Dialogue not found"})
+            return
+
+        is_group = bool(dialogue.is_group)
+
+        # Enforce sender PoP for DMs (configurable in settings)
+        verified = await database_sync_to_async(is_sender_device_verified)(
+            self.user, self.device_id, dialogue_is_group=is_group
+        )
+        if not verified:
+            await self.send_json({
+                "type": "error",
+                "code": "SENDER_DEVICE_UNVERIFIED",
+                "message": "Sender device is not verified"
+            })
+            return
+
+        # Policy alignment:
+        # - Group: MUST NOT be client-encrypted
+        # - DM: MUST be client-encrypted
+        if is_group and is_encrypted:
+            await self.send_json({"type": "error", "code": "BAD_REQUEST", "message": "Group messages must not be encrypted"})
+            return
+        if (not is_group) and (not is_encrypted):
+            await self.send_json({"type": "error", "code": "BAD_REQUEST", "message": "DM messages must be encrypted"})
+            return
+
+        try:
+            if is_group:
+                # Expect plaintext in encrypted_contents[0].encrypted_content
+                plain_message = (encrypted_contents[0].get("encrypted_content") if encrypted_contents and isinstance(encrypted_contents, list) else "") or ""
+                plain_message = plain_message.strip()
+                if not plain_message:
+                    await self.send_json({"type": "error", "code": "BAD_REQUEST", "message": "Empty content"})
+                    return
+
                 base64_str = base64.b64encode(plain_message.encode("utf-8")).decode("utf-8")
                 content_bytes = base64_str.encode("utf-8")
-                
+
                 message = await sync_to_async(Message.objects.create)(
                     dialogue=dialogue,
                     sender=self.user,
                     content_encrypted=content_bytes,
                 )
 
-            # Store encrypted versions (if applicable)
-            if is_encrypted:
+            else:
+                # DM: E2EE required
+                if not isinstance(encrypted_contents, list) or not encrypted_contents:
+                    await self.send_json({"type": "error", "code": "BAD_REQUEST", "message": "encrypted_contents must be a non-empty list"})
+                    return
+
+                # Sanitize & dedupe by device_id (first occurrence wins)
+                seen = set()
+                clean_items = []
                 for item in encrypted_contents:
-                    device_id = item.get("device_id")
-                    encrypted_content = item.get("encrypted_content")
-                    if not device_id or not encrypted_content:
+                    dev = (str(item.get("device_id") or "").strip().lower())
+                    enc = item.get("encrypted_content")
+                    if not dev or not isinstance(enc, str) or not enc:
                         continue
+                    if dev in seen:
+                        continue
+                    seen.add(dev)
+                    clean_items.append({"device_id": dev, "encrypted_content": enc})
 
-                    await sync_to_async(MessageEncryption.objects.create)(
-                        message=message,
-                        device_id=device_id,
-                        encrypted_content=encrypted_content
-                    )
+                if not clean_items:
+                    await self.send_json({"type": "error", "code": "BAD_REQUEST", "message": "No valid encrypted contents"})
+                    return
 
+                message = await sync_to_async(Message.objects.create)(
+                    dialogue=dialogue,
+                    sender=self.user,
+                    content_encrypted=b"[Encrypted]",
+                )
+
+                # Optional safety bound
+                MAX_PER_MESSAGE = 500
+                to_create = [
+                    MessageEncryption(message=message, device_id=it["device_id"], encrypted_content=it["encrypted_content"])
+                    for it in clean_items[:MAX_PER_MESSAGE]
+                ]
+                await sync_to_async(MessageEncryption.objects.bulk_create)(to_create)
+
+            # Update dialogue metadata
             dialogue.last_message = message
-            await sync_to_async(dialogue.save)(update_fields=['last_message'])
+            await sync_to_async(dialogue.save)(update_fields=["last_message"])
 
         except Exception as e:
-            await self.send(text_data=json.dumps({
-                "type": "error",
-                "message": "Failed to save message.",
-                "details": str(e)
-            }))
+            await self.send_json({"type": "error", "message": "Failed to save message", "details": str(e)})
             return
 
+        # Self-destruct hook (unchanged)
         await self.handle_self_destruct_messages()
 
+        # Broadcast
         participants = await sync_to_async(list)(dialogue.participants.all())
         user_ids = [p.id for p in participants if p.id != self.user.id]
         online_statuses = await get_online_status_for_users(user_ids)
 
-        for participant in participants:
-            is_delivered = online_statuses.get(participant.id, False)
-
-            if is_encrypted:
-                user_device_keys = await sync_to_async(list)(
-                    UserDeviceKey.objects.filter(user=participant, is_active=True)
-                )
-                device_ids = [dk.device_id for dk in user_device_keys]
-
-                for device_id in device_ids:
-                    enc_obj = await sync_to_async(MessageEncryption.objects.filter)(
-                        message=message,
-                        device_id=device_id
-                    )
-                    if await sync_to_async(enc_obj.exists)():
-                        enc = await sync_to_async(enc_obj.first)()
-                        await self.channel_layer.group_send(
-                            f"device_{device_id}",
-                            {
-                                "type": "chat_message",
-                                "event_type": "chat_message",
-                                "message_id": message.id,
-                                "dialogue_slug": dialogue_slug,
-                                "content": enc.encrypted_content,
-                                "sender": {
-                                    "id": self.user.id,
-                                    "username": self.user.username,
-                                    "email": self.user.email,
-                                },
-                                "timestamp": message.timestamp.isoformat(),
-                                "is_encrypted": True,
-                                "encrypted_for_device": device_id,
-                                "is_delivered": is_delivered
-                            }
-                        )
-            else:
+        if is_group:
+            # Plain (server-encoded)
+            plain_message = base64.b64decode(message.content_encrypted).decode("utf-8")
+            for participant in participants:
+                is_delivered = online_statuses.get(participant.id, False)
                 await self.channel_layer.group_send(
                     f"user_{participant.id}",
                     {
@@ -581,21 +612,49 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
                         "timestamp": message.timestamp.isoformat(),
                         "is_encrypted": False,
                         "encrypted_for_device": None,
-                        "is_delivered": is_delivered
+                        "is_delivered": is_delivered,
                     }
                 )
+                if is_delivered:
+                    await self.mark_message_as_delivered(message)
+                else:
+                    deliver_offline_message.delay(message.id)
+                await self.channel_layer.group_send(f"user_{participant.id}", {"type": "trigger_unread_count_update"})
+        else:
+            # DM: per-device broadcast for which we actually have envelopes
+            enc_rows = await sync_to_async(list)(MessageEncryption.objects.filter(message=message).values("device_id", "encrypted_content"))
 
-            if is_delivered:
-                await self.mark_message_as_delivered(message)
-            else:
-                deliver_offline_message.delay(message.id)
-
-            await self.channel_layer.group_send(
-                f"user_{participant.id}",
-                {
-                    "type": "trigger_unread_count_update"
-                }
-            )
+            for enc in enc_rows:
+                device_id = enc["device_id"]
+                # Resolve participant by device_id (optional optimization: map device->user)
+                # We keep delivery mark per recipient user; compute from online_statuses if you want.
+                await self.channel_layer.group_send(
+                    f"device_{device_id}",
+                    {
+                        "type": "chat_message",
+                        "event_type": "chat_message",
+                        "message_id": message.id,
+                        "dialogue_slug": dialogue_slug,
+                        "content": enc["encrypted_content"],
+                        "sender": {
+                            "id": self.user.id,
+                            "username": self.user.username,
+                            "email": self.user.email,
+                        },
+                        "timestamp": message.timestamp.isoformat(),
+                        "is_encrypted": True,
+                        "encrypted_for_device": device_id,
+                        "is_delivered": False,  # if you have per-device online info, set accordingly
+                    }
+                )
+            # Delivery bookkeeping (keep your existing policy)
+            for participant in participants:
+                is_delivered = online_statuses.get(participant.id, False)
+                if is_delivered:
+                    await self.mark_message_as_delivered(message)
+                else:
+                    deliver_offline_message.delay(message.id)
+                await self.channel_layer.group_send(f"user_{participant.id}", {"type": "trigger_unread_count_update"})
 
 
 
@@ -741,6 +800,17 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
                 lambda: Message.objects.select_related("dialogue").get(id=message_id, dialogue__slug=dialogue_slug)
             )()
         except Message.DoesNotExist:
+            return
+
+        dialogue = message.dialogue
+        is_group = bool(dialogue.is_group)
+
+        # Enforce PoP for DMs (broadcast path)
+        verified = await database_sync_to_async(is_sender_device_verified)(
+            self.user, self.device_id, dialogue_is_group=is_group
+        )
+        if not verified:
+            await self.send_json({"type": "error", "code": "SENDER_DEVICE_UNVERIFIED", "message": "Sender device is not verified"})
             return
 
         sender = await sync_to_async(lambda: {
@@ -890,8 +960,9 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
     # Handle Edit Message ------------------------------------------------------
     async def handle_edit_message(self, data):
         message_id = data.get("message_id")
+        is_encrypted = bool(data.get("is_encrypted", False))
         encrypted_contents = data.get("encrypted_contents", [])
-        is_encrypted = data.get("is_encrypted", False)
+        new_content = (data.get("new_content") or "").strip()
 
         if not message_id:
             return
@@ -901,103 +972,86 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
         except Message.DoesNotExist:
             return
 
-        if await sync_to_async(lambda: message.sender.id)() != self.user.id:
+        if message.sender_id != self.user.id:
             return
 
-        dialogue = await sync_to_async(lambda: message.dialogue)()
+        dialogue = message.dialogue
         dialogue_slug = dialogue.slug
+        is_group = bool(dialogue.is_group)
         now = timezone.now()
 
-        if is_encrypted:
-            # حذف نسخه‌های قبلی رمزنگاری‌شده
-            await sync_to_async(MessageEncryption.objects.filter(message=message).delete)()
+        # Enforce PoP for DMs
+        verified = await database_sync_to_async(is_sender_device_verified)(
+            self.user, self.device_id, dialogue_is_group=is_group
+        )
+        if not verified:
+            await self.send_json({"type": "error", "code": "SENDER_DEVICE_UNVERIFIED", "message": "Sender device is not verified"})
+            return
 
-            # ثبت پیام به‌روزرسانی‌شده
+        if is_group:
+            if not new_content:
+                return
+            base64_str = base64.b64encode(new_content.encode("utf-8")).decode("utf-8")
+            content_bytes = base64_str.encode("utf-8")
+
+            await sync_to_async(setattr)(message, "content_encrypted", content_bytes)
+            await sync_to_async(setattr)(message, "is_edited", True)
+            await sync_to_async(setattr)(message, "edited_at", now)
+            await sync_to_async(setattr)(message, "encrypted_for_device", None)
+            await sync_to_async(setattr)(message, "aes_key_encrypted", None)
+            await sync_to_async(message.save)()
+
+        else:
+            if not isinstance(encrypted_contents, list) or not encrypted_contents:
+                await self.send_json({"type": "error", "code": "BAD_REQUEST", "message": "encrypted_contents required for DM edit"})
+                return
+
+            # Sanitize & dedupe envelopes
+            seen = set()
+            clean_items = []
+            for item in encrypted_contents:
+                dev = (str(item.get("device_id") or "").strip().lower())
+                enc = item.get("encrypted_content")
+                if not dev or not isinstance(enc, str) or not enc:
+                    continue
+                if dev in seen:
+                    continue
+                seen.add(dev)
+                clean_items.append({"device_id": dev, "encrypted_content": enc})
+
+            if not clean_items:
+                await self.send_json({"type": "error", "code": "BAD_REQUEST", "message": "No valid encrypted contents"})
+                return
+
+            await sync_to_async(MessageEncryption.objects.filter(message=message).delete)()
             await sync_to_async(setattr)(message, "content_encrypted", b"[Encrypted]")
             await sync_to_async(setattr)(message, "is_edited", True)
             await sync_to_async(setattr)(message, "edited_at", now)
-            await sync_to_async(setattr)(message, "is_encrypted", True)
             await sync_to_async(message.save)()
 
-            # ذخیره نسخه‌های جدید رمزنگاری‌شده
-            for item in encrypted_contents:
-                device_id = item.get("device_id")
-                encrypted_content = item.get("encrypted_content")
-                if not device_id or not encrypted_content:
-                    continue
-                await sync_to_async(MessageEncryption.objects.create)(
-                    message=message,
-                    device_id=device_id,
-                    encrypted_content=encrypted_content
-                )
+            MAX_PER_MESSAGE = 500
+            to_create = [
+                MessageEncryption(message=message, device_id=it["device_id"], encrypted_content=it["encrypted_content"])
+                for it in clean_items[:MAX_PER_MESSAGE]
+            ]
+            await sync_to_async(MessageEncryption.objects.bulk_create)(to_create)
 
-        else:            
-            new_content = data.get("new_content", "").strip()
-            if not new_content:
-                return
-
-            base64_str = base64.b64encode(new_content.encode("utf-8")).decode("utf-8")
-            content_bytes = base64_str.encode("utf-8")
-            await sync_to_async(setattr)(message, "content_encrypted", content_bytes)
-
-            await sync_to_async(setattr)(message, "is_edited", True)
-            await sync_to_async(setattr)(message, "edited_at", now)
-            await sync_to_async(setattr)(message, "is_encrypted", False)
-            await sync_to_async(message.save)()
-
-        # بروزرسانی آخرین پیام گفتگو (اختیاری)
+        # Update last_message
         dialogue.last_message = message
         await sync_to_async(dialogue.save)(update_fields=["last_message"])
 
-        # آماده‌سازی ارسال به کاربران (WebSocket)
+        # Broadcast edits
         participants = await sync_to_async(list)(dialogue.participants.all())
 
-        for participant in participants:
-            
-            if is_encrypted:
-                # فقط اگر کلید برای participant داریم
-                user_device_keys = await sync_to_async(list)(
-                    UserDeviceKey.objects.filter(user=participant, is_active=True)
-                )
-
-                for device_key in user_device_keys:
-                    enc = await sync_to_async(MessageEncryption.objects.filter(
-                        message=message,
-                        device_id=device_key.device_id
-                    ).first)()
-
-                    if not enc:
-                        continue
-
-
-                    await self.channel_layer.group_send(
-                        f"device_{device_key.device_id}",
-                        {
-                            "type": "edit_message",
-                            "message_id": message.id,
-                            "dialogue_slug": dialogue_slug,
-                            "edited_at": now.isoformat(),
-                            "is_encrypted": True,
-                            "is_edited": True,
-                            "encrypted_contents": [{
-                                "device_id": device_key.device_id,
-                                "encrypted_content": enc.encrypted_content
-                            }],
-                            "sender": {
-                                "id": message.sender.id,
-                                "username": message.sender.username,
-                            },
-                        }
-                    )
-                    
-            else:
+        if is_group:
+            for participant in participants:
                 await self.channel_layer.group_send(
                     f"user_{participant.id}",
                     {
                         "type": "edit_message",
                         "message_id": message.id,
                         "dialogue_slug": dialogue_slug,
-                        "new_content": data.get("new_content", ""),
+                        "new_content": new_content,
                         "edited_at": now.isoformat(),
                         "is_encrypted": False,
                         "is_edited": True,
@@ -1005,33 +1059,30 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
                             "id": message.sender.id,
                             "username": message.sender.username,
                         },
-                        "decrypted_content": data.get("new_content", ""),
                     }
                 )
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        else:
+            enc_rows = await sync_to_async(list)(MessageEncryption.objects.filter(message=message).values("device_id", "encrypted_content"))
+            for enc in enc_rows:
+                await self.channel_layer.group_send(
+                    f"device_{enc['device_id']}",
+                    {
+                        "type": "edit_message",
+                        "message_id": message.id,
+                        "dialogue_slug": dialogue_slug,
+                        "edited_at": now.isoformat(),
+                        "is_encrypted": True,
+                        "is_edited": True,
+                        "encrypted_contents": [{
+                            "device_id": enc["device_id"],
+                            "encrypted_content": enc["encrypted_content"],
+                        }],
+                        "sender": {
+                            "id": message.sender.id,
+                            "username": message.sender.username,
+                        },
+                    }
+                )
 
 
 

@@ -173,6 +173,7 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
 ]
 CORS_EXPOSE_HEADERS = ['Content-Range', 'Accept-Ranges']
 
+
 # Cookies setting ----------------------------------------------------------------------
 # SESSION_COOKIE_SAMESITE = None
 SESSION_COOKIE_SAMESITE = 'Lax'
@@ -263,7 +264,24 @@ USE_TZ = True
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 AUTH_USER_MODEL = 'accounts.CustomUser'
 
+# -------------------------------------------------------------------------------------------------------------------
+POP_TTL_MINUTES = int(os.getenv("POP_TTL_MINUTES", "10"))
+MAX_ACTIVE_DEVICE_KEYS = int(os.getenv("MAX_ACTIVE_DEVICE_KEYS", "10"))
 
+
+# Throttle rates from env (fallback to sensible defaults) -----------------------------------------------------------
+CRYPTO_THROTTLE_RATE = os.getenv("CRYPTO_THROTTLE_RATE", "30/min")
+CRYPTO_HEAVY_THROTTLE_RATE = os.getenv("CRYPTO_HEAVY_THROTTLE_RATE", "10/min")
+
+
+# Enforce sender verification only for DMs (True by default) --------------------------------------------------------
+REQUIRE_SENDER_VERIFIED_DMS_ONLY = os.getenv("REQUIRE_SENDER_VERIFIED_DMS_ONLY", "1").lower() in ("1","true","yes")
+
+# Optional grace for new devices to send before completing PoP (0 = disabled).
+SENDER_VERIFIED_GRACE_MINUTES = int(os.getenv("SENDER_VERIFIED_GRACE_MINUTES", "0"))
+
+
+# -------------------------------------------------------------------------------------------------------------------
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework_simplejwt.authentication.JWTAuthentication',
@@ -275,7 +293,18 @@ REST_FRAMEWORK = {
         'rest_framework.parsers.JSONParser',
         'rest_framework.parsers.FormParser',
         'rest_framework.parsers.MultiPartParser',
-    ]
+    ],
+    
+    # ✅ Enable scoped throttling
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.ScopedRateThrottle",
+    ],
+    
+    "DEFAULT_THROTTLE_RATES": {
+        # Read from env; strings like "30/min" or "200/hour"
+        "crypto": CRYPTO_THROTTLE_RATE,
+        "crypto_heavy": CRYPTO_HEAVY_THROTTLE_RATE,
+    },
 }
 
 from datetime import timedelta
@@ -494,7 +523,7 @@ USE_I18N = True
 
 # ✅ Static files
 STATIC_URL = '/static/'
-STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static')]  # چون گفتی داری
+STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static')]
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 

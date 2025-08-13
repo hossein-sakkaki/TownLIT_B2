@@ -1,14 +1,27 @@
 from django.contrib.auth import update_session_auth_hash
 from django.utils import timezone
 from django.conf import settings
+from django.db import IntegrityError, transaction
+from django.db.models import Q
 import datetime
 import traceback
+import re
+import base64
+import secrets
+
+
+from datetime import timedelta
+from apps.core.crypto import rsa as crsa
+POP_TTL_MINUTES = 10
+
+
 
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework import status
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.permissions import IsAuthenticated, AllowAny    
+from rest_framework.throttling import ScopedRateThrottle
 
 from django.contrib.auth.hashers import check_password
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -19,8 +32,10 @@ from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from cryptography.fernet import Fernet
 
-from .models import UserDeviceKey
-
+from .models import (
+    CustomLabel, SocialMediaLink, SocialMediaType, InviteCode,
+    UserDeviceKey, UserDeviceKeyBackup, UserSecurityProfile
+    )
 
 from .serializers import (
     CustomUserSerializer,
@@ -30,7 +45,6 @@ from .serializers import (
     UserDeviceKeySerializer
     )
 from .constants import BELIEVER, SEEKER, PREFER_NOT_TO_SAY
-from .models import CustomLabel, SocialMediaLink, SocialMediaType, InviteCode
 from apps.profilesOrg.models import Organization
 from apps.profiles.models import Member, GuestUser
 from apps.main.models import TermsAndPolicy, UserAgreement
@@ -51,6 +65,13 @@ logger = logging.getLogger(__name__)
 # Generate key for encryption ---------------------------------------------------
 cipher_suite = Fernet(settings.FERNET_KEY)
 
+
+# Normalize PEM: strip headers/footers and all whitespace, then base64-decode → DER bytes -----------
+def _pem_to_der_bytes(pem: str) -> bytes:
+    cleaned = re.sub(r"-----(BEGIN|END) PUBLIC KEY-----|\s+", "", pem or "")
+    return base64.b64decode(cleaned) if cleaned else b""
+
+
 # Error Message Extract Method for Actions Return -------------------------------
 def extract_first_error_message(errors):
     if isinstance(errors, dict):
@@ -64,6 +85,28 @@ def extract_first_error_message(errors):
 
 # AUTH View  --------------------------------------------------------------------
 class AuthViewSet(viewsets.ViewSet):
+
+    # Enable scoped throttling for this viewset
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "crypto"  # default scope for most actions
+    
+    def get_throttles(self):
+        """
+        Dynamically adjust throttle scope per action.
+        """
+        # Heavy actions: stricter rate limit
+        heavy_actions = {"backfill_device_keys"}
+
+        # You can add more heavy actions if needed:
+        # heavy_actions.update({"send-device-deletion-code"})  # example
+
+        if getattr(self, "action", None) in heavy_actions:
+            self.throttle_scope = "crypto_heavy"
+        else:
+            self.throttle_scope = "crypto"
+
+        return super().get_throttles()
+    
     
     @action(detail=False, methods=['post'], permission_classes=[AllowAny])
     def register(self, request):  # Register
@@ -176,7 +219,7 @@ class AuthViewSet(viewsets.ViewSet):
                     try:
                         policy = TermsAndPolicy.objects.get(policy_type=policy_type)
                         UserAgreement.objects.get_or_create(
-                            user=existing_user,
+                            user=user,
                             policy=policy,
                             defaults={"is_latest_agreement": True}
                         )
@@ -1162,21 +1205,27 @@ class AuthViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["post"], url_path="register-device-key", permission_classes=[IsAuthenticated])
     def register_device_key(self, request):
         user = request.user
-        device_id = request.data.get("device_id")
+        device_id = (request.data.get("device_id") or "").strip().lower()
         public_key = request.data.get("public_key")
         device_name = request.data.get("device_name")
-        user_agent = request.META.get("HTTP_USER_AGENT", "")
+        allow_rotate = bool(request.data.get("allow_rotate", False))
+
+        # Enforce header/body consistency
+        header_device = (request.headers.get("X-Device-ID") or "").strip().lower()
+        if header_device and header_device != device_id:
+            return Response({"error": "X-Device-ID mismatch."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user_agent = request.META.get("HTTP_USER_AGENT", "") or ""
         ip_address = get_client_ip(request)
 
+        # Basic validation
         if not device_id or not public_key:
-            return Response(
-                {"error": "Device ID and public key are required."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({"error": "Device ID and public key are required."}, status=status.HTTP_400_BAD_REQUEST)
+        if "-----BEGIN PUBLIC KEY-----" not in public_key or "-----END PUBLIC KEY-----" not in public_key:
+            return Response({"error": "Invalid public key format (PEM expected)."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Location info
-        location = get_location_from_ip(ip_address)
-
+        # Best-effort geo
+        location = get_location_from_ip(ip_address) or {}
         city = location.get("city")
         region = location.get("region")
         country = location.get("country")
@@ -1186,33 +1235,506 @@ class AuthViewSet(viewsets.ViewSet):
         longitude = location.get("longitude")
         postal = location.get("postal")
 
-        # ذخیره یا به‌روزرسانی دستگاه
-        device, created = UserDeviceKey.objects.update_or_create(
+        # Safe casting for limits and TTL
+        raw_limit = getattr(settings, "MAX_ACTIVE_DEVICE_KEYS", 10)
+        try:
+            MAX_ACTIVE_DEVICE_KEYS = int(raw_limit)
+        except (TypeError, ValueError):
+            MAX_ACTIVE_DEVICE_KEYS = 10
+
+        raw_ttl = getattr(settings, "POP_TTL_MINUTES", 10)
+        try:
+            POP_TTL_MINUTES = int(raw_ttl)
+        except (TypeError, ValueError):
+            POP_TTL_MINUTES = 10
+
+        with transaction.atomic():
+            # Lock row if exists to prevent races
+            existing = (
+                UserDeviceKey.objects
+                .select_for_update(of=("self",))
+                .filter(user=user, device_id=device_id)
+                .first()
+            )
+
+            created = False
+            rotated = False
+            device_obj = None
+
+            if existing:
+                # Compare DER to be robust to PEM whitespace
+                old_der = _pem_to_der_bytes(existing.public_key)
+                new_der = _pem_to_der_bytes(public_key)
+
+                if old_der != new_der:
+                    if not allow_rotate:
+                        return Response(
+                            {
+                                "error": "Public key mismatch for this device_id.",
+                                "code": "KEY_MISMATCH",
+                                "detail": (
+                                    "This device_id is already registered with a different public key. "
+                                    "If you intend to rotate keys, re-send with allow_rotate=true. "
+                                    "Old E2EE messages may no longer be decryptable after rotation."
+                                ),
+                            },
+                            status=status.HTTP_409_CONFLICT,
+                        )
+                    # Intentional rotation
+                    existing.public_key = public_key
+                    rotated = True
+
+                # Refresh mutable metadata
+                existing.device_name = device_name or existing.device_name
+                existing.user_agent = user_agent
+                existing.ip_address = ip_address
+                existing.last_used = timezone.now()
+                existing.is_active = True
+                existing.location_city = city
+                existing.location_region = region
+                existing.location_country = country
+                existing.timezone = timezone_str
+                existing.organization = organization
+                existing.latitude = latitude
+                existing.longitude = longitude
+                existing.postal_code = postal
+                existing.save(update_fields=[
+                    "public_key", "device_name", "user_agent", "ip_address", "last_used", "is_active",
+                    "location_city", "location_region", "location_country", "timezone",
+                    "organization", "latitude", "longitude", "postal_code"
+                ])
+
+                device_obj = existing
+
+            else:
+                # Enforce device count limit
+                active_count = UserDeviceKey.objects.filter(user=user, is_active=True).count()
+                if active_count >= MAX_ACTIVE_DEVICE_KEYS:
+                    return Response(
+                        {"error": "Active device limit reached.", "limit": MAX_ACTIVE_DEVICE_KEYS},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+
+                try:
+                    device_obj = UserDeviceKey.objects.create(
+                        user=user,
+                        device_id=device_id,
+                        public_key=public_key,
+                        device_name=device_name,
+                        user_agent=user_agent,
+                        ip_address=ip_address,
+                        is_active=True,
+                        location_city=city,
+                        location_region=region,
+                        location_country=country,
+                        timezone=timezone_str,
+                        organization=organization,
+                        latitude=latitude,
+                        longitude=longitude,
+                        postal_code=postal,
+                    )
+                    created = True
+
+                except IntegrityError:
+                    # Lost the race: fall back to update path
+                    existing = (
+                        UserDeviceKey.objects
+                        .select_for_update(of=("self",))
+                        .get(user=user, device_id=device_id)
+                    )
+
+                    old_der = _pem_to_der_bytes(existing.public_key)
+                    new_der = _pem_to_der_bytes(public_key)
+
+                    if old_der != new_der and not allow_rotate:
+                        return Response(
+                            {
+                                "error": "Public key mismatch for this device_id.",
+                                "code": "KEY_MISMATCH",
+                                "detail": (
+                                    "This device_id is already registered with a different public key. "
+                                    "If you intend to rotate keys, re-send with allow_rotate=true."
+                                ),
+                            },
+                            status=status.HTTP_409_CONFLICT,
+                        )
+                    if old_der != new_der and allow_rotate:
+                        existing.public_key = public_key
+                        rotated = True
+
+                    existing.device_name = device_name or existing.device_name
+                    existing.user_agent = user_agent
+                    existing.ip_address = ip_address
+                    existing.last_used = timezone.now()
+                    existing.is_active = True
+                    existing.location_city = city
+                    existing.location_region = region
+                    existing.location_country = country
+                    existing.timezone = timezone_str
+                    existing.organization = organization
+                    existing.latitude = latitude
+                    existing.longitude = longitude
+                    existing.postal_code = postal
+                    existing.save(update_fields=[
+                        "public_key", "device_name", "user_agent", "ip_address", "last_used", "is_active",
+                        "location_city", "location_region", "location_country", "timezone",
+                        "organization", "latitude", "longitude", "postal_code"
+                    ])
+
+                    device_obj = existing
+
+            # -------- Proof-of-Possession (PoP): issue challenge when needed --------
+            pop_payload = None
+            issue_pop = False
+            if created:
+                issue_pop = True
+            elif rotated:
+                issue_pop = True
+            elif not device_obj.is_verified:
+                issue_pop = True
+
+            if issue_pop:
+                nonce = crsa.randbytes(32)
+                device_obj.pop_challenge_hash = crsa.sha256_bytes(nonce)
+                device_obj.pop_challenge_expiry = timezone.now() + timedelta(minutes=POP_TTL_MINUTES)
+                device_obj.pop_attempts = 0
+                device_obj.is_verified = False
+                device_obj.verified_at = None
+                device_obj.save(update_fields=[
+                    "pop_challenge_hash", "pop_challenge_expiry", "pop_attempts",
+                    "is_verified", "verified_at", "last_used"
+                ])
+
+                ct = crsa.rsa_oaep_encrypt_with_public_pem(device_obj.public_key, nonce)
+                pop_payload = {
+                    "ciphertext_b64": crsa.b64e(ct),
+                    "expires_at": device_obj.pop_challenge_expiry.isoformat(),
+                    "ttl_minutes": POP_TTL_MINUTES,
+                }
+
+        # -------- Response --------
+        return Response({
+            "message": "Device key registered successfully." if created else "Device key updated.",
+            "created": bool(created),
+            "rotated": bool(rotated),
+            "location": location,
+            "pop": pop_payload,
+        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+
+    # Device Pop Challenge --------------------------------------------------------------------------------
+    @action(detail=False, methods=["post"], url_path="device-pop-challenge", permission_classes=[IsAuthenticated])
+    def device_pop_challenge(self, request):
+        user = request.user
+        device_id = (request.data.get("device_id") or "").strip().lower()
+        header_device = (request.headers.get("X-Device-ID") or "").strip().lower()
+        if header_device and header_device != device_id:
+            return Response({"error": "X-Device-ID mismatch."}, status=status.HTTP_400_BAD_REQUEST)
+
+        dev = UserDeviceKey.objects.filter(user=user, device_id=device_id).first()
+        if not dev:
+            return Response({"error": "Unknown device_id for this user."}, status=status.HTTP_404_NOT_FOUND)
+
+        if dev.is_verified:
+            return Response({"pop": None, "verified": True}, status=status.HTTP_200_OK)
+
+        # چالش جدید
+        nonce = crsa.randbytes(32)
+        dev.pop_challenge_hash = crsa.sha256_bytes(nonce)
+        dev.pop_challenge_expiry = timezone.now() + timedelta(minutes=POP_TTL_MINUTES)
+        dev.pop_attempts = 0
+        dev.save(update_fields=["pop_challenge_hash", "pop_challenge_expiry", "pop_attempts"])
+
+        ct = crsa.rsa_oaep_encrypt_with_public_pem(dev.public_key, nonce)
+        return Response({
+            "pop": {
+                "ciphertext_b64": crsa.b64e(ct),
+                "expires_at": dev.pop_challenge_expiry.isoformat(),
+                "ttl_minutes": POP_TTL_MINUTES,
+            },
+            "verified": False
+        }, status=status.HTTP_200_OK)
+
+    # Device Pop Verify --------------------------------------------------------------------------------
+    @action(detail=False, methods=["post"], url_path="device-pop-verify", permission_classes=[IsAuthenticated])
+    def device_pop_verify(self, request):
+        user = request.user
+        device_id = (request.data.get("device_id") or "").strip().lower()
+        nonce_b64 = request.data.get("nonce_b64")
+        header_device = (request.headers.get("X-Device-ID") or "").strip().lower()
+
+        if header_device and header_device != device_id:
+            return Response({"error": "X-Device-ID mismatch."}, status=status.HTTP_400_BAD_REQUEST)
+        if not nonce_b64:
+            return Response({"error": "nonce_b64 required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        dev = UserDeviceKey.objects.filter(user=user, device_id=device_id).first()
+        if not dev:
+            return Response({"error": "Unknown device_id for this user."}, status=status.HTTP_404_NOT_FOUND)
+
+        if dev.pop_attempts >= 5:
+            return Response({"error": "Too many attempts. Request a new challenge."}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+        if not dev.pop_challenge_hash or not dev.pop_challenge_expiry or timezone.now() > dev.pop_challenge_expiry:
+            return Response({"error": "Challenge expired. Request a new challenge."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            nonce = crsa.b64d(nonce_b64)
+        except Exception:
+            dev.pop_attempts += 1
+            dev.save(update_fields=["pop_attempts"])
+            return Response({"error": "Invalid nonce format."}, status=status.HTTP_400_BAD_REQUEST)
+
+        calc = crsa.sha256_bytes(nonce)
+        if not secrets.compare_digest(calc, dev.pop_challenge_hash):
+            dev.pop_attempts += 1
+            dev.save(update_fields=["pop_attempts"])
+            return Response({"error": "Invalid nonce."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # موفق
+        dev.is_verified = True
+        dev.verified_at = timezone.now()
+        dev.pop_challenge_hash = None
+        dev.pop_challenge_expiry = None
+        dev.pop_attempts = 0
+        dev.save(update_fields=["is_verified", "verified_at", "pop_challenge_hash", "pop_challenge_expiry", "pop_attempts"])
+
+        return Response({"ok": True, "verified": True}, status=status.HTTP_200_OK)
+
+
+    # -------------------------------------------------------------------------------------------
+    @action(detail=False, methods=["post"], url_path="key-backup-save", permission_classes=[IsAuthenticated])
+    def key_backup_save(self, request):
+        user = request.user
+        device_id = (request.data.get("device_id") or "").strip().lower()
+        blob = request.data.get("blob")
+        header_device = (request.headers.get("X-Device-ID") or "").strip().lower()
+
+        if not device_id or not isinstance(blob, dict):
+            return Response({"error": "device_id and blob are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Optional: enforce header matches body to avoid confusion
+        if header_device and header_device != device_id:
+            return Response({"error": "X-Device-ID mismatch."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Optional: size limit (e.g., 64KB)
+        import json
+        if len(json.dumps(blob)) > 64 * 1024:
+            return Response({"error": "Backup blob too large."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Ensure this device exists (optional but good)
+        if not UserDeviceKey.objects.filter(user=user, device_id=device_id).exists():
+            return Response({"error": "Device not registered."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Upsert backup
+        obj, created = UserDeviceKeyBackup.objects.update_or_create(
             user=user,
             device_id=device_id,
-            defaults={
-                "public_key": public_key,
-                "device_name": device_name,
-                "user_agent": user_agent,
-                "ip_address": ip_address,
-                "last_used": timezone.now(),
-                "is_active": True,
-                "location_city": city,
-                "location_region": region,
-                "location_country": country,
-                "timezone": timezone_str,
-                "organization": organization,
-                "latitude": latitude,
-                "longitude": longitude,
-                "postal_code": postal,
-            }
+            defaults={"blob": blob},
+        )
+        return Response({"ok": True, "created": created}, status=status.HTTP_200_OK)
+
+    # -------------------------------------------------------------------------------------------
+    @action(detail=False, methods=["get"], url_path="key-backup-fetch", permission_classes=[IsAuthenticated])
+    def key_backup_fetch(self, request):
+        user = request.user
+        device_id = (request.query_params.get("device_id") or "").strip().lower()
+        header_device = (request.headers.get("X-Device-ID") or "").strip().lower()
+
+        if not device_id:
+            return Response({"error": "device_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if header_device and header_device != device_id:
+            return Response({"error": "X-Device-ID mismatch."}, status=status.HTTP_400_BAD_REQUEST)
+
+        obj = UserDeviceKeyBackup.objects.filter(user=user, device_id=device_id).first()
+        if not obj:
+            return Response({"blob": None}, status=status.HTTP_200_OK)
+
+        return Response({"blob": obj.blob}, status=status.HTTP_200_OK)
+
+    # -------------------------------------------------------------------------------------------
+    @action(detail=False, methods=["get"], url_path="has-key-backup", permission_classes=[IsAuthenticated])
+    def has_key_backup(self, request):
+        """
+        Return whether the current user has an encrypted key backup for the given device_id.
+        Response: {"has_backup": true/false}
+        """
+        user = request.user
+        device_id = (request.query_params.get("device_id") or "").strip().lower()
+        header_device = (request.headers.get("X-Device-ID") or "").strip().lower()
+
+        # Basic validation
+        if not device_id:
+            return Response({"error": "device_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Optional: enforce header-body consistency
+        if header_device and header_device != device_id:
+            return Response({"error": "X-Device-ID mismatch."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Lightweight existence check (no blob loading)
+        from .models import UserDeviceKeyBackup
+        has_backup = UserDeviceKeyBackup.objects.filter(user=user, device_id=device_id).exists()
+
+        return Response({"has_backup": bool(has_backup)}, status=status.HTTP_200_OK)
+
+    # -------------------------------------------------------------------------------------------
+    @action(detail=False, methods=["get"], url_path="passphrase-profile", permission_classes=[IsAuthenticated])
+    def passphrase_profile(self, request):
+        """
+        Returns whether the user has already set a passphrase and (optional) KDF params.
+        No passphrase is ever sent/stored server-side.
+        """
+        from .models import UserSecurityProfile
+        prof, _ = UserSecurityProfile.objects.get_or_create(user=request.user)
+        return Response({
+            "has_passphrase": prof.has_passphrase,
+            "kdf": prof.kdf,
+            "iterations": prof.iterations,
+        }, status=status.HTTP_200_OK)
+
+    # -------------------------------------------------------------------------------------------
+    @action(detail=False, methods=["post"], url_path="passphrase-profile-set", permission_classes=[IsAuthenticated])
+    def passphrase_profile_set(self, request):
+        """
+        Marks that the user has set a passphrase (after a successful client-side backup).
+        Client may optionally send chosen KDF params (non-secret).
+        """
+        prof, _ = UserSecurityProfile.objects.get_or_create(user=request.user)
+
+        kdf = request.data.get("kdf") or prof.kdf or "PBKDF2"
+        iterations = int(request.data.get("iterations") or prof.iterations or 600000)
+
+        prof.kdf = kdf
+        prof.iterations = iterations
+        prof.has_passphrase = True
+        prof.save(update_fields=["has_passphrase", "kdf", "iterations", "updated_at"])
+
+        return Response({"ok": True}, status=status.HTTP_200_OK)
+    
+    # 1) Do I have any backup across my devices? -----------------------------------------------------------------
+    @action(detail=False, methods=["get"], url_path="has-any-key-backup", permission_classes=[IsAuthenticated])
+    def has_any_key_backup(self, request):
+        has_any = UserDeviceKeyBackup.objects.filter(user=request.user).exists()
+        return Response({"has_backup": bool(has_any)}, status=status.HTTP_200_OK)
+
+    # 2) Return latest backup blob (regardless of device_id)
+    @action(detail=False, methods=["get"], url_path="key-backup-latest", permission_classes=[IsAuthenticated])
+    def key_backup_latest(self, request):
+        obj = (UserDeviceKeyBackup.objects
+            .filter(user=request.user)
+            .order_by("-updated_at", "-created_at")
+            .first())
+        if not obj:
+            return Response({"blob": None}, status=status.HTTP_200_OK)
+        return Response({"blob": obj.blob, "device_id": obj.device_id}, status=status.HTTP_200_OK)
+
+    # 3) (Optional) List all backup entries for selection UI
+    @action(detail=False, methods=["get"], url_path="key-backup-list", permission_classes=[IsAuthenticated])
+    def key_backup_list(self, request):
+        qs = UserDeviceKeyBackup.objects.filter(user=request.user).order_by("-updated_at", "-created_at")
+        items = [{"device_id": x.device_id, "updated_at": x.updated_at} for x in qs]
+        return Response({"items": items}, status=status.HTTP_200_OK)
+
+    # -------------------------------------------------------------------------------------------------------
+    @action(detail=False, methods=["post"], url_path="backfill-device-keys", permission_classes=[IsAuthenticated])
+    def backfill_device_keys(self, request):
+        """
+        Copy existing per-message encryption rows from any of the user's device_ids
+        to the provided new device_id, if missing. This makes the device immediately
+        able to decrypt past messages after a key restore.
+        """
+        user = request.user
+        new_device_id = (request.data.get("device_id") or "").strip().lower()
+        if not new_device_id:
+            return Response({"error": "device_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        from apps.conversation.models import Message, MessageEncryption
+        
+        # 1) Ensure the target device belongs to this user
+        if not UserDeviceKey.objects.filter(user=user, device_id=new_device_id).exists():
+            return Response({"error": "Unknown device_id for this user."}, status=status.HTTP_404_NOT_FOUND)
+
+        # 2) Collect all device_ids of this user (including the new one)
+        user_device_ids = list(
+            UserDeviceKey.objects.filter(user=user).values_list("device_id", flat=True)
         )
 
-        return Response({
-            "message": "Device key registered successfully.",
-            "created": created,
-            "location": location,
-        })
+        # 3) Gather all message ids the user is allowed to access (their dialogues)
+        #    NOTE: if you have very large datasets, consider restricting time range or paging
+        message_ids = list(
+            Message.objects.filter(dialogue__participants=user)
+            .values_list("id", flat=True)
+            .distinct()
+        )
+
+        if not message_ids:
+            return Response({"backfilled": 0, "skipped": 0}, status=status.HTTP_200_OK)
+
+        # 4) Which messages already have an entry for the new_device_id?
+        existing_for_new = set(
+            MessageEncryption.objects.filter(message_id__in=message_ids, device_id=new_device_id)
+            .values_list("message_id", flat=True)
+        )
+
+        # 5) Source rows = user's existing encryptions for those messages (from any of user_device_ids),
+        #    excluding messages that already have an entry for new_device_id
+        #    We'll pick exactly one source per message_id.
+        #    (Order by message_id then id to have deterministic first-row selection.)
+        sources_qs = (
+            MessageEncryption.objects
+            .filter(message_id__in=message_ids, device_id__in=user_device_ids)
+            .exclude(message_id__in=existing_for_new)
+            .order_by("message_id", "id")
+            .only("message_id", "encrypted_content")  # reduce DB payload
+        )
+
+        # 6) Build one row per message_id
+        #    Use a dict to keep the first source per message_id
+        src_by_msg = {}
+        for src in sources_qs.iterator(chunk_size=2000):
+            mid = src.message_id
+            if mid not in src_by_msg:
+                src_by_msg[mid] = src.encrypted_content
+
+        if not src_by_msg:
+            return Response({"backfilled": 0, "skipped": len(existing_for_new)}, status=status.HTTP_200_OK)
+
+        # 7) Prepare bulk_create payload (only for messages missing new_device_id)
+        to_create = []
+        for mid, enc_content in src_by_msg.items():
+            # Safety: if for any reason it already exists, skip (idempotent)
+            if mid in existing_for_new:
+                continue
+            to_create.append(
+                MessageEncryption(
+                    message_id=mid,
+                    device_id=new_device_id,
+                    encrypted_content=enc_content,
+                )
+            )
+
+        if not to_create:
+            return Response({"backfilled": 0, "skipped": len(existing_for_new)}, status=status.HTTP_200_OK)
+
+        # 8) Bulk create in batches
+        target_mids = list(src_by_msg.keys())
+        pre_count = MessageEncryption.objects.filter(
+            message_id__in=target_mids, device_id=new_device_id
+        ).count()
+
+        batch_size = 1000
+        with transaction.atomic():
+            for i in range(0, len(to_create), batch_size):
+                chunk = to_create[i:i+batch_size]
+                MessageEncryption.objects.bulk_create(chunk, ignore_conflicts=True)
+
+        post_count = MessageEncryption.objects.filter(
+            message_id__in=target_mids, device_id=new_device_id
+        ).count()
+
+        created_count = max(0, post_count - pre_count)
+        return Response({"backfilled": created_count, "skipped": len(existing_for_new)}, status=status.HTTP_200_OK)
 
 
     # -------------------------------------------------------------------------------------------
@@ -1222,12 +1744,13 @@ class AuthViewSet(viewsets.ViewSet):
         devices = UserDeviceKey.objects.filter(user=user).order_by('-last_used')
         serializer = UserDeviceKeySerializer(devices, many=True)
         return Response(serializer.data)
-
+    
 
     @action(detail=False, methods=["delete"], url_path="remove-device/(?P<device_id>[^/.]+)", permission_classes=[IsAuthenticated])
     def remove_device(self, request, device_id=None):
         user = request.user
         try:
+            device_id = device_id.strip().lower()
             device = UserDeviceKey.objects.get(user=user, device_id=device_id)
             device.delete()
             return Response({"message": f"Device {device_id} removed successfully."})
@@ -1238,13 +1761,14 @@ class AuthViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["post"], url_path="send-device-deletion-code", permission_classes=[IsAuthenticated])
     def send_device_deletion_code(self, request):
         user = request.user
-        device_id = request.data.get("device_id")
+        device_id = request.data.get("device_id", "").strip().lower()
+
 
         if not device_id:
             return Response({"error": "Device ID is required."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            device = UserDeviceKey.objects.get(user=user, device_id=device_id)
+            device = UserDeviceKey.objects.get(user=user, device_id=device_id)   
         except UserDeviceKey.DoesNotExist:
             return Response({"error": "Device not found."}, status=status.HTTP_404_NOT_FOUND)
         
@@ -1287,7 +1811,7 @@ class AuthViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["post"], url_path="verify-delete-device", permission_classes=[IsAuthenticated])
     def verify_and_delete_device(self, request):
         user = request.user
-        device_id = request.data.get("device_id")
+        device_id = request.data.get("device_id", "").strip().lower()
         input_code = request.data.get("code")
 
         if not device_id or not input_code:

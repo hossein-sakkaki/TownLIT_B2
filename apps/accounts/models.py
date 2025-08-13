@@ -20,6 +20,8 @@ from validators.security_validators import validate_no_executable_file
 
 from utils.common.utils import FileUpload, create_active_code
 
+from cryptography.fernet import Fernet
+cipher_suite = Fernet(settings.FERNET_KEY)
 
 # USER & SUPERUSER Manager ------------------------------------------
 class CustomUserManager(BaseUserManager):
@@ -422,27 +424,60 @@ class UserDeviceKey(models.Model):
     deletion_code = models.CharField(max_length=255, blank=True, null=True)
     deletion_code_expiry = models.DateTimeField(blank=True, null=True)
     
-    def is_delete_code_valid(self, code: str) -> bool:
-        from django.conf import settings
-        from cryptography.fernet import Fernet
-        fernet = Fernet(settings.FERNET_KEY)
+    is_verified = models.BooleanField(default=False)
+    verified_at = models.DateTimeField(blank=True, null=True)
 
-        if not self.delete_code or not self.delete_code_expiry:
+    pop_challenge_hash = models.BinaryField(blank=True, null=True)
+    pop_challenge_expiry = models.DateTimeField(blank=True, null=True)
+    pop_attempts = models.IntegerField(default=0)
+            
+    def is_delete_code_valid(self, code: str) -> bool:
+        if not self.deletion_code or not self.deletion_code_expiry:
             return False
-        if timezone.now() > self.delete_code_expiry:
+        if timezone.now() > self.deletion_code_expiry:
             return False
 
         try:
-            decrypted = fernet.decrypt(self.delete_code.encode()).decode()
+            decrypted = cipher_suite.decrypt(self.deletion_code.encode()).decode()
             return decrypted == code
         except Exception:
             return False
+
 
     class Meta:
         unique_together = ('user', 'device_id')
 
     def __str__(self):
         return f"{self.user} - {self.device_name or self.device_id}"
+
+
+# User Device Key Backup --------------------------------------------
+class UserDeviceKeyBackup(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='device_key_backups')
+    device_id = models.CharField(max_length=100, db_index=True)
+    blob = models.JSONField()  # stores the encrypted JSON: salt/iv/ciphertext/etc
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('user', 'device_id')
+
+    def __str__(self):
+        return f"KeyBackup(user={self.user_id}, device={self.device_id})"
+    
+    
+# User Security Profile --------------------------------------------
+class UserSecurityProfile(models.Model):
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="sec_profile")
+    has_passphrase = models.BooleanField(default=False)  # indicates the user set a recovery passphrase
+    kdf = models.CharField(max_length=20, default="PBKDF2")  # informational, e.g., PBKDF2, Argon2id
+    iterations = models.IntegerField(default=600000)  # PBKDF2 iterations (non-secret metadata)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"UserSecurityProfile(user={self.user_id}, has_pp={self.has_passphrase})"
 
 
 # Invite Code Model -----------------------------------------------------

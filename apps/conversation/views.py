@@ -7,7 +7,8 @@ from django.utils import timezone
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
 import base64
-
+import os
+        
 
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
@@ -21,6 +22,7 @@ import json
 from .models import Dialogue, Message, MessageSearchIndex, MessageEncryption, UserDialogueMarker, DialogueParticipant
 from .serializers import DialogueSerializer, MessageSerializer, UserDialogueMarkerSerializer, DialogueParticipantSerializer
 from .permissions import ConversationAccessPermission, IsDialogueParticipant
+from apps.accounts.services.sender_verification import is_sender_device_verified
 from apps.accounts.serializers import SimpleCustomUserSerializer
 from apps.accounts.models import UserDeviceKey
 from apps.conversation.utils import get_websocket_url
@@ -105,15 +107,33 @@ class DialogueViewSet(viewsets.ModelViewSet):
     def get_dialogue_keys(self, request, slug=None):
         dialogue = self.get_object()
         user = request.user
+        if not dialogue.participants.filter(id=user.id).exists():
+            return Response({"error": "Forbidden"}, status=403)
 
         partner = dialogue.participants.exclude(id=user.id).first()
         if not partner:
             return Response({"error": "No chat partner found."}, status=404)
 
-        keys = UserDeviceKey.objects.filter(user=partner, is_active=True)
-        result = [{"device_id": k.device_id, "public_key": k.public_key} for k in keys]
-        return Response(result)
-     
+        qs_verified = (UserDeviceKey.objects
+                    .filter(user=partner, is_active=True, is_verified=True)
+                    .only("device_id", "public_key")
+                    .order_by("-last_used", "device_id"))
+
+        qs_unverified = (UserDeviceKey.objects
+                        .filter(user=partner, is_active=True, is_verified=False)
+                        .only("device_id", "public_key")
+                        .order_by("-last_used", "device_id"))
+
+        full = request.query_params.get("full", "").lower() in ("1", "true", "yes")
+
+        if full:
+            return Response({
+                "verified":   [{"device_id": k.device_id, "public_key": k.public_key} for k in qs_verified],
+                "unverified": [{"device_id": k.device_id, "public_key": k.public_key} for k in qs_unverified],
+            }, status=200)
+
+        return Response([{"device_id": k.device_id, "public_key": k.public_key} for k in qs_verified], status=200)
+        
     # ---------------------------------------   
     @action(detail=False, methods=['post'], url_path='create-dialogue', permission_classes=[IsAuthenticated])
     @require_litshield_access("conversation")
@@ -598,7 +618,8 @@ class MessageViewSet(viewsets.ModelViewSet):
         dialogue_slug = request.query_params.get("dialogue_slug")
         offset = int(request.query_params.get("offset", 0))
         limit = int(request.query_params.get("limit", 20))
-        device_id = request.query_params.get("device_id")
+        device_id = request.query_params.get("device_id", "")
+        device_id = device_id.strip().lower()
 
         dialogue = get_object_or_404(Dialogue, slug=dialogue_slug, participants=request.user)
 
@@ -628,98 +649,172 @@ class MessageViewSet(viewsets.ModelViewSet):
     @action( detail=False, methods=['post'], url_path='send-message', permission_classes=[IsAuthenticated], parser_classes=[JSONParser] )
     def send_message(self, request):
         user = request.user
-        dialogue_slug = request.data.get('dialogue_slug')
-        is_encrypted = request.data.get('is_encrypted', False)
-        encrypted_contents = request.data.get('encrypted_contents', [])
+        dialogue_slug = request.data.get("dialogue_slug")
+        is_encrypted = bool(request.data.get("is_encrypted", False))
+        encrypted_contents = request.data.get("encrypted_contents", [])
 
+        # 1) Basic validation
         if not dialogue_slug:
-            return Response({'error': 'dialogue_slug is required.'}, status=400)
+            return Response({"error": "dialogue_slug is required."}, status=status.HTTP_400_BAD_REQUEST)
 
         dialogue = get_object_or_404(Dialogue, slug=dialogue_slug, participants=user)
 
+        # Un-delete if the user had deleted this dialogue
         if dialogue.deleted_by_users.filter(id=user.id).exists():
             dialogue.deleted_by_users.remove(user)
 
-        if dialogue.is_group and is_encrypted:
-            return Response({'error': 'Group messages should not be encrypted.'}, status=400)
+        # 2) Enforce sender PoP (only for DMs by default; configurable in settings)
+        header_device = (request.headers.get("X-Device-ID") or "").strip().lower()
+        if not header_device:
+            return Response({"error": "X-Device-ID header is required."}, status=status.HTTP_400_BAD_REQUEST)
 
+        # NOTE: This enforces only for DMs if REQUIRE_SENDER_VERIFIED_DMS_ONLY=True (default).
+        #       For groups it returns True unless you change settings to enforce globally.
+        if not is_sender_device_verified(user, header_device, dialogue_is_group=bool(dialogue.is_group)):
+            # Hard-block (recommended for DMs). Replace with logging if you want a soft rollout.
+            return Response(
+                {"error": "Sender device is not verified.", "code": "SENDER_DEVICE_UNVERIFIED"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # 3) Group vs DM handling
         if dialogue.is_group:
-            content = request.data.get('content', '').strip()
-            if not content:
-                return Response({'error': 'Message content is required for group chat.'}, status=400)
+            # Group messages must NOT be encrypted (server-side stores base64-encoded bytes)
+            if is_encrypted:
+                return Response({"error": "Group messages should not be encrypted."}, status=status.HTTP_400_BAD_REQUEST)
 
+            content = (request.data.get("content") or "").strip()
+            if not content:
+                return Response({"error": "Message content is required for group chat."}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Store as base64 bytes for uniformity with encrypted storage
             base64_str = base64.b64encode(content.encode("utf-8")).decode("utf-8")
             content_bytes = base64_str.encode("utf-8")
+
             message = Message.objects.create(
                 dialogue=dialogue,
                 sender=user,
                 content_encrypted=content_bytes,
             )
-        else:
-            if not encrypted_contents or not isinstance(encrypted_contents, list):
-                return Response({'error': 'encrypted_contents must be a non-empty list.'}, status=400)
 
+        else:
+            # DM path: client-side E2EE is required
+            if not is_encrypted:
+                return Response({"error": "DM messages must be encrypted on client."}, status=status.HTTP_400_BAD_REQUEST)
+
+            if not encrypted_contents or not isinstance(encrypted_contents, list):
+                return Response({"error": "encrypted_contents must be a non-empty list."}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Create message shell first (content is placeholder)
             message = Message.objects.create(
                 dialogue=dialogue,
                 sender=user,
                 content_encrypted=b"[Encrypted]",
             )
 
+            # 4) Sanitize and dedupe encrypted_contents by device_id
+            #    Keep the first occurrence per device_id (stable behavior)
+            seen = set()
+            to_create = []
             for enc in encrypted_contents:
-                device_id = enc.get('device_id')
-                encrypted_content = enc.get('encrypted_content')
-                if not device_id or not encrypted_content:
-                    continue
+                device_id = (enc.get("device_id") or "").strip().lower()
+                encrypted_content = enc.get("encrypted_content")
 
-                MessageEncryption.objects.create(
-                    message=message,
-                    device_id=device_id,
-                    encrypted_content=encrypted_content
+                # Skip invalid entries
+                if not device_id or not encrypted_content or not isinstance(encrypted_content, str):
+                    continue
+                if device_id in seen:
+                    continue
+                seen.add(device_id)
+
+                to_create.append(
+                    MessageEncryption(
+                        message=message,
+                        device_id=device_id,
+                        encrypted_content=encrypted_content,
+                    )
                 )
 
-        dialogue.last_message = message
-        dialogue.save(update_fields=['last_message'])
+            if not to_create:
+                # If nothing valid remains, roll back message creation for cleanliness
+                message.delete()
+                return Response({"error": "No valid encrypted contents."}, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response({
-            'dialogue_slug': dialogue.slug,
-            'message_id': message.id,
-            'websocket_url': get_websocket_url(request, dialogue.slug)
-        }, status=201)
+            # (Optional) impose a safe upper bound to avoid abuse (e.g., 200 devices)
+            MAX_PER_MESSAGE = 500
+            if len(to_create) > MAX_PER_MESSAGE:
+                to_create = to_create[:MAX_PER_MESSAGE]
+
+            MessageEncryption.objects.bulk_create(to_create)
+
+        # 5) Finalize dialogue metadata
+        dialogue.last_message = message
+        dialogue.save(update_fields=["last_message"])
+
+        return Response(
+            {
+                "dialogue_slug": dialogue.slug,
+                "message_id": message.id,
+                "websocket_url": get_websocket_url(request, dialogue.slug),
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
     # -------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='upload-file', permission_classes=[IsAuthenticated], parser_classes=[MultiPartParser, FormParser])
     def upload_file(self, request):
+        user = request.user
         dialogue_slug = request.data.get("dialogue_slug")
         uploaded_file = request.FILES.get("file")
-        user = request.user
 
+        # --- Basic validations -----------------------------------------------------
         if not dialogue_slug or not uploaded_file:
-            return Response({"error": "Dialogue slug and file are required."}, status=400)
+            return Response({"error": "Dialogue slug and file are required."}, status=status.HTTP_400_BAD_REQUEST)
 
-        MAX_FILE_SIZE = 1000 * 1024 * 1024
+        MAX_FILE_SIZE = 1000 * 1024 * 1024  # 1000 MB
         if uploaded_file.size > MAX_FILE_SIZE:
-            return Response({"error": "File too large. Max size is 1000MB."}, status=400)
+            return Response({"error": "File too large. Max size is 1000MB."}, status=status.HTTP_400_BAD_REQUEST)
 
-        file_name = uploaded_file.name.lower()
-        file_type = uploaded_file.content_type
+        file_name = (uploaded_file.name or "").lower()
+        file_type = uploaded_file.content_type or "application/octet-stream"
 
         if is_unsafe_file(file_name):
-            return Response({"error": "This file type is not allowed for security reasons."}, status=400)
+            return Response({"error": "This file type is not allowed for security reasons."}, status=status.HTTP_400_BAD_REQUEST)
 
         field_name = validate_file_type(file_name, file_type)
         if not field_name:
-            return Response({"error": f"Unsupported file type: {file_type}"}, status=400)
+            return Response({"error": f"Unsupported file type: {file_type}"}, status=status.HTTP_400_BAD_REQUEST)
 
         dialogue = get_object_or_404(Dialogue, slug=dialogue_slug, participants=user)
+
+        # If user had deleted the dialogue, revive it on new activity
         if dialogue.deleted_by_users.filter(id=user.id).exists():
             dialogue.deleted_by_users.remove(user)
 
-        is_encrypted_file = request.data.get("is_encrypted_file") == "true"
-        aes_key_encrypted_main = request.data.get("aes_key_encrypted")
-        encrypted_for_device = request.data.get("encrypted_for_device")
+        # --- Sender PoP enforcement (DMs by default; groups bypass unless configured) ---
+        header_device = (request.headers.get("X-Device-ID") or "").strip().lower()
+        if not header_device:
+            return Response({"error": "X-Device-ID header is required."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 1. چت گروهی یا فایل غیررمزنگاری‌شده
-        if dialogue.is_group or not is_encrypted_file:
+        if not is_sender_device_verified(user, header_device, dialogue_is_group=bool(dialogue.is_group)):
+            return Response(
+                {"error": "Sender device is not verified.", "code": "SENDER_DEVICE_UNVERIFIED"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # --- E2EE flags & inputs ---------------------------------------------------
+        is_encrypted_file = str(request.data.get("is_encrypted_file", "")).strip().lower() in ("true", "1", "yes")
+        aes_key_encrypted_main = request.data.get("aes_key_encrypted")
+        encrypted_for_device = (request.data.get("encrypted_for_device") or "").strip().lower()  # normalize
+
+        # Policy: group messages must NOT be client-encrypted; DMs MUST be client-encrypted
+        if dialogue.is_group and is_encrypted_file:
+            return Response({"error": "Group files must not be client-encrypted."}, status=status.HTTP_400_BAD_REQUEST)
+        if (not dialogue.is_group) and (not is_encrypted_file):
+            return Response({"error": "DM file uploads must be end-to-end encrypted."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # --- Case 1: Group OR non-encrypted file in general (only groups allowed here) ---
+        if dialogue.is_group:
             message = Message.objects.create(
                 dialogue=dialogue,
                 sender=user,
@@ -727,49 +822,86 @@ class MessageViewSet(viewsets.ModelViewSet):
                 **{field_name: uploaded_file},
             )
 
-        # 2. رمزنگاری توسط کلاینت (E2EE)
-        elif is_encrypted_file and aes_key_encrypted_main and encrypted_for_device:
+        # --- Case 2: DM + client-side E2EE file upload ----------------------------------
+        else:
+            # Basic required E2EE fields
+            if not aes_key_encrypted_main or not encrypted_for_device:
+                return Response({"error": "Missing E2EE fields: aes_key_encrypted and encrypted_for_device."}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Decode the main AES key (encrypted with recipient device's public key)
+            try:
+                aes_key_bytes = base64.b64decode(aes_key_encrypted_main.encode("utf-8"))
+            except Exception:
+                return Response({"error": "Invalid base64 for aes_key_encrypted."}, status=status.HTTP_400_BAD_REQUEST)
+
             message = Message.objects.create(
                 dialogue=dialogue,
                 sender=user,
                 is_encrypted_file=True,
-                encrypted_for_device=encrypted_for_device,
-                aes_key_encrypted=base64.b64decode(aes_key_encrypted_main),
+                encrypted_for_device=encrypted_for_device,  # normalized device_id
+                aes_key_encrypted=aes_key_bytes,
                 **{field_name: uploaded_file},
             )
 
+            # Optional: per-device key envelopes (JSON dict: {device_id: encrypted_key})
             encrypted_keys_json = request.data.get("encrypted_keys_per_device")
             if encrypted_keys_json:
-                import json
                 try:
-                    encrypted_keys = json.loads(encrypted_keys_json)
-                    for device_id, encrypted_key in encrypted_keys.items():
-                        MessageEncryption.objects.create(
-                            message=message,
-                            device_id=device_id,
-                            encrypted_content=encrypted_key,
-                        )
+                    payload = json.loads(encrypted_keys_json)
+                    if isinstance(payload, dict):
+                        seen = set()
+                        to_create = []
+                        for dev_id, enc_key in payload.items():
+                            did = (str(dev_id or "").strip().lower())
+                            enc = enc_key if isinstance(enc_key, str) else None
+                            if not did or not enc:
+                                continue
+                            if did in seen:
+                                continue
+                            seen.add(did)
+                            to_create.append(
+                                MessageEncryption(message=message, device_id=did, encrypted_content=enc)
+                            )
+                        if to_create:
+                            # Optional upper bound
+                            MAX_PER_MESSAGE = 500
+                            MessageEncryption.objects.bulk_create(to_create[:MAX_PER_MESSAGE])
                 except Exception as e:
+                    # Non-fatal: we keep the message but report parsing error
                     print("❌ Failed to parse/store per-device keys:", e)
 
+        # --- Finalize dialogue metadata --------------------------------------------
+        dialogue.last_message = message
+        dialogue.save(update_fields=["last_message"])
+
         file_url = request.build_absolute_uri(getattr(message, field_name).url)
-        return Response({
-            "file_url": file_url,
-            "message_id": message.id,
-            "file_type": file_type,
-            "dialogue_slug": dialogue.slug,
-            "is_encrypted": message.is_encrypted,
-        }, status=201)
+
+        return Response(
+            {
+                "file_url": file_url,
+                "message_id": message.id,
+                "file_type": file_type,
+                "dialogue_slug": dialogue.slug,
+                "is_encrypted_file": bool(message.is_encrypted_file),
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
     # -------------------------------------------------------------------------------------------------
     @action(detail=True, methods=['get'], url_path='access-media', permission_classes=[IsAuthenticated])
     def access_media(self, request, pk=None):
+        """
+        Serve encrypted media and the per-device encrypted AES key.
+        Fallback: if there is no MessageEncryption for the current device_id,
+        try any of the user's registered device_ids so a restored key can decrypt old media.
+        """
         user = request.user
-        device_id = request.headers.get("X-Device-ID")
+        device_id = (request.headers.get("X-Device-ID") or "").strip().lower()  # normalize
 
         if not device_id:
             return Response({"error": "Missing device ID."}, status=400)
 
+        # Ensure the user participates in the dialogue
         message = get_object_or_404(Message, pk=pk, dialogue__participants=user)
 
         if not message.is_encrypted_file:
@@ -783,21 +915,41 @@ class MessageViewSet(viewsets.ModelViewSet):
         if not media_file:
             return Response({"error": f"{media_type} not found on this message."}, status=404)
 
-        # 📥 دریافت کلید رمزنگاری‌شده مخصوص این دستگاه
+        # 1) Try per-device entry for current device_id
         encryption_entry = MessageEncryption.objects.filter(
             message=message,
             device_id=device_id
         ).first()
 
+        # 2) Fallback: use any encryption for any of this user's registered device_ids
         if not encryption_entry:
-            return Response({"error": "Encrypted key not found for this device."}, status=403)
+            user_device_ids = list(
+                UserDeviceKey.objects.filter(user=user).values_list("device_id", flat=True)
+            )
+            if user_device_ids:
+                encryption_entry = MessageEncryption.objects.filter(
+                    message=message,
+                    device_id__in=user_device_ids
+                ).first()
+
+        if not encryption_entry:
+            return Response(
+                {"error": "Encrypted key not found for this device or user devices."},
+                status=403
+            )
 
         try:
-            with open(media_file.path, "rb") as f:
+            # Ensure file exists on disk
+            file_path = getattr(media_file, "path", None)
+            if not file_path or not os.path.exists(file_path):
+                return Response({"error": "Encrypted media file not found on server."}, status=404)
+
+            with open(file_path, "rb") as f:
                 encrypted_bytes = f.read()
 
             encrypted_file_b64 = base64.b64encode(encrypted_bytes).decode("utf-8")
-            aes_key_b64 = encryption_entry.encrypted_content  # چون قبلاً در کلاینت به base64 تبدیل شده
+            # aes_key_b64 is already base64 (client stored it that way)
+            aes_key_b64 = encryption_entry.encrypted_content
 
             return Response(
                 {
@@ -807,82 +959,120 @@ class MessageViewSet(viewsets.ModelViewSet):
                 status=200,
             )
 
-        except Exception as e:
+        except Exception:
             return Response({"error": "Error accessing encrypted file."}, status=500)
 
 
-            
 
     # Edit Message -----------------------------------------------------------------------------------------
     @action(detail=True, methods=['post'], url_path='edit-message', permission_classes=[IsAuthenticated])
     def edit_message(self, request, pk=None):
+        # 1) Load & basic ownership check
         message = get_object_or_404(Message, pk=pk, sender=request.user)
         if not message.can_edit():
-            return Response({'error': 'You can only edit messages within 12 hours of sending.'},
-                            status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {'error': 'You can only edit messages within 12 hours of sending.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
 
         dialogue = message.dialogue
-        encrypted_contents = request.data.get('encrypted_contents', [])
-        new_content = None  # will set if group
+        is_group = bool(dialogue.is_group)
 
-        if dialogue.is_group:
-            new_content = request.data.get("content", "").strip()
+        # 2) Enforce sender PoP (DMs by default; configurable via settings)
+        header_device = (request.headers.get("X-Device-ID") or "").strip().lower()
+        if not header_device:
+            return Response({"error": "X-Device-ID header is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not is_sender_device_verified(request.user, header_device, dialogue_is_group=is_group):
+            return Response(
+                {"error": "Sender device is not verified.", "code": "SENDER_DEVICE_UNVERIFIED"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        encrypted_contents = request.data.get('encrypted_contents', [])
+        new_content = None
+
+        if is_group:
+            # 3) Group: server-side storage (base64-encoded text); must NOT be client-encrypted
+            new_content = (request.data.get("content") or "").strip()
             if not new_content:
                 return Response({'error': 'Message content cannot be empty.'}, status=status.HTTP_400_BAD_REQUEST)
 
-            # 🟢 Encode like initial group message saving
             base64_str = base64.b64encode(new_content.encode("utf-8")).decode("utf-8")
             content_bytes = base64_str.encode("utf-8")
 
             message.content_encrypted = content_bytes
             message.edited_at = timezone.now()
             message.is_edited = True
+            # Clear E2EE-specific fields on group messages (safety)
             message.encrypted_for_device = None
             message.aes_key_encrypted = None
-            message.save()
-
+            message.save(update_fields=["content_encrypted", "edited_at", "is_edited",
+                                        "encrypted_for_device", "aes_key_encrypted"])
         else:
+            # 4) DM: must be client-encrypted; replace per-device envelopes
             if not isinstance(encrypted_contents, list) or not encrypted_contents:
-                return Response({'error': 'Missing or invalid encrypted_contents for private chat.'},
-                                status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    {'error': 'Missing or invalid encrypted_contents for private chat.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
-            # حذف نسخه‌های قبلی رمزنگاری
+            # Remove old envelopes
             MessageEncryption.objects.filter(message=message).delete()
 
+            # Placeholder content (DM bodies are not stored in plaintext)
             message.content_encrypted = b"[Encrypted]"
             message.edited_at = timezone.now()
             message.is_edited = True
-            message.save()
+            message.save(update_fields=["content_encrypted", "edited_at", "is_edited"])
 
+            # Sanitize, dedupe by device_id (first occurrence wins), and create rows
+            seen = set()
+            to_create = []
             for enc in encrypted_contents:
-                device_id = enc.get('device_id')
+                device_id = (enc.get('device_id') or '').strip().lower()
                 encrypted_content = enc.get('encrypted_content')
 
-                if not device_id or not encrypted_content:
+                if not device_id or not isinstance(encrypted_content, str) or not encrypted_content:
                     continue
+                if device_id in seen:
+                    continue
+                seen.add(device_id)
 
-                MessageEncryption.objects.create(
-                    message=message,
-                    device_id=device_id,
-                    encrypted_content=encrypted_content
+                to_create.append(
+                    MessageEncryption(
+                        message=message,
+                        device_id=device_id,
+                        encrypted_content=encrypted_content
+                    )
                 )
 
-        # اطلاع‌رسانی WebSocket
-        channel_layer = get_channel_layer()
+            if not to_create:
+                # Roll back edit if nothing valid remains
+                return Response({"error": "No valid encrypted contents."}, status=status.HTTP_400_BAD_REQUEST)
 
+            # Optional guardrail to prevent abuse
+            MAX_PER_MESSAGE = 500
+            MessageEncryption.objects.bulk_create(to_create[:MAX_PER_MESSAGE])
+
+        # 5) WebSocket notification (avoid relying on message.is_encrypted field)
+        is_encrypted_flag = not is_group
+        channel_layer = get_channel_layer()
         async_to_sync(channel_layer.group_send)(
             f"dialogue_{dialogue.slug}",
             {
                 "type": "edit_message",
                 "dialogue_slug": dialogue.slug,
                 "edited_at": message.edited_at.isoformat(),
-                "is_encrypted": message.is_encrypted,
-                "is_edited": message.is_edited,
-                "encrypted_contents": encrypted_contents if not dialogue.is_group else None,
-                "new_content": new_content if dialogue.is_group else None,
+                "is_encrypted": is_encrypted_flag,  # derived from dialogue type
+                "is_edited": bool(message.is_edited),
+                "encrypted_contents": encrypted_contents if not is_group else None,
+                "new_content": new_content if is_group else None,
             }
         )
+
         return Response({'message': 'Message edited successfully.'}, status=status.HTTP_200_OK)
+
 
         
     # Mark As Delivered  -----------------------------------------------------------------------------------------
@@ -1022,8 +1212,6 @@ class MessageViewSet(viewsets.ModelViewSet):
                 .filter(plaintext__icontains=query, message__dialogue=dialogue)
                 .values_list("message_id", flat=True)
             )
-
-            # 🔁 سپس پیام‌های اصلی را بازیابی کن
             messages = (
                 Message.objects
                 .filter(id__in=matching_message_ids, is_system=False)
