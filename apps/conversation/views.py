@@ -19,6 +19,8 @@ from django.utils.timesince import timesince
 from rest_framework.renderers import JSONRenderer
 import json
 
+from common.aws.s3_utils import get_file_url
+
 from .models import Dialogue, Message, MessageSearchIndex, MessageEncryption, UserDialogueMarker, DialogueParticipant
 from .serializers import DialogueSerializer, MessageSerializer, UserDialogueMarkerSerializer, DialogueParticipantSerializer
 from .permissions import ConversationAccessPermission, IsDialogueParticipant
@@ -874,7 +876,9 @@ class MessageViewSet(viewsets.ModelViewSet):
         dialogue.last_message = message
         dialogue.save(update_fields=["last_message"])
 
-        file_url = request.build_absolute_uri(getattr(message, field_name).url)
+        # file_url = request.build_absolute_uri(getattr(message, field_name).url)
+        stored_file = getattr(message, field_name)
+        file_url = stored_file.url if not message.is_encrypted_file else None
 
         return Response(
             {
@@ -890,77 +894,55 @@ class MessageViewSet(viewsets.ModelViewSet):
     # -------------------------------------------------------------------------------------------------
     @action(detail=True, methods=['get'], url_path='access-media', permission_classes=[IsAuthenticated])
     def access_media(self, request, pk=None):
-        """
-        Serve encrypted media and the per-device encrypted AES key.
-        Fallback: if there is no MessageEncryption for the current device_id,
-        try any of the user's registered device_ids so a restored key can decrypt old media.
-        """
         user = request.user
-        device_id = (request.headers.get("X-Device-ID") or "").strip().lower()  # normalize
-
+        device_id = (request.headers.get("X-Device-ID") or "").strip().lower()
         if not device_id:
-            return Response({"error": "Missing device ID."}, status=400)
+            return Response({"error": "Missing device ID."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Ensure the user participates in the dialogue
         message = get_object_or_404(Message, pk=pk, dialogue__participants=user)
-
         if not message.is_encrypted_file:
-            return Response({"error": "This media is not encrypted."}, status=400)
+            return Response({"error": "This media is not encrypted."}, status=status.HTTP_400_BAD_REQUEST)
 
         media_type = request.query_params.get("media_type")
         if media_type not in ["image", "video", "file", "audio"]:
-            return Response({"error": "Invalid media type."}, status=400)
+            return Response({"error": "Invalid media type."}, status=status.HTTP_400_BAD_REQUEST)
 
-        media_file = getattr(message, media_type, None)
-        if not media_file:
-            return Response({"error": f"{media_type} not found on this message."}, status=404)
+        mode = (request.query_params.get("mode") or "inline").strip().lower()  # "inline" | "download"
+        
+        
+        media_field = getattr(message, media_type, None)
+        if not media_field:
+            return Response({"error": f"{media_type} not found on this message."}, status=status.HTTP_404_NOT_FOUND)
 
-        # 1) Try per-device entry for current device_id
-        encryption_entry = MessageEncryption.objects.filter(
-            message=message,
-            device_id=device_id
-        ).first()
+        # envelope برای دستگاه
+        enc_entry = MessageEncryption.objects.filter(message=message, device_id=device_id).first()
+        if not enc_entry:
+            user_dev_ids = list(UserDeviceKey.objects.filter(user=user).values_list("device_id", flat=True))
+            if user_dev_ids:
+                enc_entry = MessageEncryption.objects.filter(message=message, device_id__in=user_dev_ids).first()
+        if not enc_entry:
+            return Response({"error": "Encrypted key not found for this device or user devices."}, status=status.HTTP_403_FORBIDDEN)
 
-        # 2) Fallback: use any encryption for any of this user's registered device_ids
-        if not encryption_entry:
-            user_device_ids = list(
-                UserDeviceKey.objects.filter(user=user).values_list("device_id", flat=True)
-            )
-            if user_device_ids:
-                encryption_entry = MessageEncryption.objects.filter(
-                    message=message,
-                    device_id__in=user_device_ids
-                ).first()
+        # ساخت لینک امضاشده به encrypted object روی S3
+        key = getattr(media_field, "name", None)
+        if not key:
+            return Response({"error": "Media key missing."}, status=status.HTTP_404_NOT_FOUND)
 
-        if not encryption_entry:
-            return Response(
-                {"error": "Encrypted key not found for this device or user devices."},
-                status=403
-            )
+        # inline: بدون Content-Disposition
+        # download: با Content-Disposition: attachment
+        force_download = (mode == "download")
+        signed_url = get_file_url(key=key, expires_in=None, force_download=force_download)
 
-        try:
-            # Ensure file exists on disk
-            file_path = getattr(media_file, "path", None)
-            if not file_path or not os.path.exists(file_path):
-                return Response({"error": "Encrypted media file not found on server."}, status=404)
-
-            with open(file_path, "rb") as f:
-                encrypted_bytes = f.read()
-
-            encrypted_file_b64 = base64.b64encode(encrypted_bytes).decode("utf-8")
-            # aes_key_b64 is already base64 (client stored it that way)
-            aes_key_b64 = encryption_entry.encrypted_content
-
-            return Response(
-                {
-                    "encrypted_file": encrypted_file_b64,
-                    "encrypted_aes_key": aes_key_b64,
-                },
-                status=200,
-            )
-
-        except Exception:
-            return Response({"error": "Error accessing encrypted file."}, status=500)
+        return Response(
+            {
+                "download_url": signed_url,                 # points to ENCRYPTED bytes
+                "encrypted_aes_key": enc_entry.encrypted_content,  # base64 envelope (aes_key+nonce encrypted)
+                # optionally include mime/filename hints if ذخیره کرده‌ای
+                # "filename": os.path.basename(key),
+                # "mime": media_field.file.content_type if available
+            },
+            status=status.HTTP_200_OK
+        )
 
 
 

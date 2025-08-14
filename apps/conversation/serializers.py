@@ -7,6 +7,7 @@ from .models import Dialogue, DialogueParticipant, Message, UserDialogueMarker
 from apps.accounts.serializers import SimpleCustomUserSerializer
 from apps.accounts.models import UserDeviceKey
 from apps.conversation.utils import get_websocket_url
+from common.aws.s3_utils import get_file_url
 
 
 # Dialogue Participant Serializer ------------------------------------------------------
@@ -122,10 +123,15 @@ class MessageSerializer(serializers.ModelSerializer):
     encrypted_for_device = serializers.SerializerMethodField()
     is_encrypted = serializers.SerializerMethodField()
 
+
     image_url = serializers.SerializerMethodField()
+    image_download_url = serializers.SerializerMethodField()
     video_url = serializers.SerializerMethodField()
-    file_url = serializers.SerializerMethodField()
+    video_download_url = serializers.SerializerMethodField()
     audio_url = serializers.SerializerMethodField()
+    audio_download_url = serializers.SerializerMethodField()
+    file_url = serializers.SerializerMethodField()
+    file_download_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Message
@@ -134,7 +140,10 @@ class MessageSerializer(serializers.ModelSerializer):
             'seen_by_users', 'is_delivered',
             'content_encrypted', 'aes_key_encrypted', 'encrypted_for_device',
             'image', 'video', 'file', 'audio',
-            'image_url', 'video_url', 'file_url', 'audio_url',
+            'image_url','image_download_url',
+            'video_url','video_download_url',
+            'file_url','file_download_url',
+            'audio_url','audio_download_url',
             'is_system', 'system_event',
             'self_destruct_at', 'is_encrypted', 'is_encrypted_file',
         ]
@@ -142,6 +151,8 @@ class MessageSerializer(serializers.ModelSerializer):
             'sender': {'read_only': True},
             'timestamp': {'read_only': True},
         }
+        
+        
 
     def get_is_encrypted(self, obj):
         return obj.is_encrypted 
@@ -196,18 +207,33 @@ class MessageSerializer(serializers.ModelSerializer):
     def get_aes_key_encrypted(self, obj):
         return base64.b64encode(obj.aes_key_encrypted).decode('utf-8') if obj.aes_key_encrypted else None
 
-    def get_image_url(self, obj):
-        return obj.image.url if obj.image else None
 
-    def get_video_url(self, obj):
-        return obj.video.url if obj.video else None
+    # ---- helpers
+    def _inline_url(self, field):
+        if not field:
+            return None
+        return get_file_url(getattr(field, 'name', None))
 
-    def get_file_url(self, obj):
-        return obj.file.url if obj.file else None
+    def _download_url(self, field):
+        if not field:
+            return None
+        return get_file_url(getattr(field, 'name', None), force_download=True)
 
-    def get_audio_url(self, obj):
-        return obj.audio.url if obj.audio else None
+    # ---- getters (فقط برای غیررمز)
+    def _maybe(self, obj, field_name, download=False):
+        if obj.is_encrypted_file:  # DM/E2EE → URL نده
+            return None
+        field = getattr(obj, field_name, None)
+        return self._download_url(field) if download else self._inline_url(field)
 
+    def get_image_url(self, obj):            return self._maybe(obj, 'image', download=False)
+    def get_image_download_url(self, obj):   return self._maybe(obj, 'image', download=True)
+    def get_video_url(self, obj):            return self._maybe(obj, 'video', download=False)
+    def get_video_download_url(self, obj):   return self._maybe(obj, 'video', download=True)
+    def get_audio_url(self, obj):            return self._maybe(obj, 'audio', download=False)
+    def get_audio_download_url(self, obj):   return self._maybe(obj, 'audio', download=True)
+    def get_file_url(self, obj):             return self._maybe(obj, 'file', download=False)
+    def get_file_download_url(self, obj):    return self._maybe(obj, 'file', download=True)
 
 
 

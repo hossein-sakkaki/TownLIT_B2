@@ -45,8 +45,6 @@ def serve_s3_media_file(request):
         return response
 
 
-
-
     if is_hls_manifest or is_hls_segment:
         logger.info(f"⏳ Streaming HLS asset from S3: {key}")
         try:

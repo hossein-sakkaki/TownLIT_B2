@@ -201,35 +201,32 @@ class Message(models.Model):
         decrypted_content = aesgcm.decrypt(nonce, self.content_encrypted, None)
         return decrypted_content.decode()
 
+    # For Admin And Debuging ------------------------------
     def decrypt_file(self, media_type, private_key):
-        encrypted_file_field = getattr(self, media_type)
-        encrypted_path = encrypted_file_field.path
+        ffield = getattr(self, media_type, None)
+        if not ffield:
+            return None
+        storage = ffield.storage
+        name = ffield.name
+        if not name or not storage.exists(name):
+            return None
 
-        with open(encrypted_path, 'rb') as f:
+        with storage.open(name, 'rb') as f:
             encrypted_bytes = f.read()
 
-        # فرض: رمزنگاری با AES-GCM بوده و AES key رمزنگاری‌شده در self.aes_key_encrypted ذخیره شده
         decrypted_key = private_key.decrypt(
             self.aes_key_encrypted,
-            padding.OAEP(
-                mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                algorithm=hashes.SHA256(),
-                label=None
-            )
+            padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                        algorithm=hashes.SHA256(), label=None)
         )
-        aes_key = decrypted_key[:32]
-        nonce = decrypted_key[32:]
-
+        aes_key, nonce = decrypted_key[:32], decrypted_key[32:]
         aesgcm = AESGCM(aes_key)
         decrypted_bytes = aesgcm.decrypt(nonce, encrypted_bytes, None)
 
-        # فایل رمزگشایی‌شده را موقت ذخیره کنیم
-        decrypted_path = f"/tmp/decrypted_{uuid.uuid4()}.bin"
-        with open(decrypted_path, 'wb') as f:
-            f.write(decrypted_bytes)
-
-        return decrypted_path
-
+        import tempfile, uuid
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{uuid.uuid4().hex}.bin") as tmp:
+            tmp.write(decrypted_bytes)
+            return tmp.name
 
     def edit_message(self, new_content, receiver_public_key=None, receiver_device_id=None):
         if self.is_encrypted and receiver_public_key:
