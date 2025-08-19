@@ -8,6 +8,8 @@ from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
 import base64
 import os
+from django.db import transaction
+
         
 
 from channels.layers import get_channel_layer
@@ -22,7 +24,7 @@ import json
 from common.aws.s3_utils import get_file_url
 
 from .models import Dialogue, Message, MessageSearchIndex, MessageEncryption, UserDialogueMarker, DialogueParticipant
-from .serializers import DialogueSerializer, MessageSerializer, UserDialogueMarkerSerializer, DialogueParticipantSerializer
+from .serializers import DialogueSerializer, MessageSerializer, UserDialogueMarkerSerializer, DialogueParticipantSerializer, UpdateGroupInfoSerializer
 from .permissions import ConversationAccessPermission, IsDialogueParticipant
 from apps.accounts.services.sender_verification import is_sender_device_verified
 from apps.accounts.serializers import SimpleCustomUserSerializer
@@ -245,7 +247,71 @@ class DialogueViewSet(viewsets.ModelViewSet):
         dialogue.save()
 
         return Response({"detail": "Group image updated successfully."}, status=status.HTTP_200_OK)
-    
+
+    # Update Group Name & ... Action ---------------
+    @action(detail=True, methods=["post", "patch"], url_path="update-group-info", permission_classes=[IsAuthenticated])
+    @require_litshield_access("conversation")
+    def update_group_info(self, request, **kwargs):
+        dialogue = self.get_object()
+        if not getattr(dialogue, "is_group", False):
+            return Response({"detail": "Only group dialogues can be updated."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            participant = DialogueParticipant.objects.get(dialogue=dialogue, user=request.user)
+            if participant.role not in ["founder", "elder"]:
+                return Response({"detail": "You don't have permission to update group info."}, status=status.HTTP_403_FORBIDDEN)
+        except DialogueParticipant.DoesNotExist:
+            return Response({"detail": "You are not a participant of this group."}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = UpdateGroupInfoSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        payload = serializer.validated_data
+        field_map = {
+            "group_name": "group_name",
+        }
+
+        updated_fields = {}
+        unsupported_keys = []
+        with transaction.atomic():
+            for client_key, value in payload.items():
+                model_field = field_map.get(client_key)
+                if not model_field:
+                    unsupported_keys.append(client_key)
+                    continue
+                if not hasattr(dialogue, model_field):
+                    unsupported_keys.append(client_key)
+                    continue
+
+                # Skip no-op updates
+                current_val = getattr(dialogue, model_field, None)
+                if isinstance(value, str):
+                    value = value.strip()
+                if value == current_val:
+                    continue
+
+                setattr(dialogue, model_field, value)
+                updated_fields[model_field] = value
+
+            if not updated_fields:
+                if unsupported_keys:
+                    return Response(
+                        {"detail": "No supported fields provided.", "unsupported": unsupported_keys},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                return Response({"detail": "No changes detected."}, status=status.HTTP_200_OK)
+            try:
+                dialogue.save(update_fields=list(updated_fields.keys()))
+            except Exception:
+                dialogue.save()
+
+        return Response(
+            {
+                "detail": "Group info updated successfully.",
+                "updated": updated_fields,
+                "unsupported": unsupported_keys or [],
+            },
+            status=status.HTTP_200_OK,
+        )
+        
     # ---------------------------------------
     @action(detail=True, methods=['post'], url_path='smart-delete', permission_classes=[IsAuthenticated])
     @require_litshield_access("conversation")

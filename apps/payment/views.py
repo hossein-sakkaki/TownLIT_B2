@@ -120,7 +120,6 @@ class PaymentDonationViewSet(viewsets.ModelViewSet):
         )
 
 
-
     @action(detail=False, methods=['get'], url_path='my-donations', permission_classes=[IsAuthenticated])
     def my_donations(self, request):
         # Endpoint for users to get their own donations

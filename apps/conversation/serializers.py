@@ -112,7 +112,18 @@ class DialogueSerializer(GroupImageMixin, serializers.ModelSerializer):
         marker = obj.marked_users.filter(user=request.user).first()
         return marker.id if marker else None
 
-        
+
+# Update Group Info Serializer --------------------------------------------------------
+class UpdateGroupInfoSerializer(serializers.Serializer):
+    group_name = serializers.CharField(required=False, allow_blank=False, max_length=64, trim_whitespace=True)
+    # info = serializers.CharField(required=False, allow_blank=True, max_length=512, trim_whitespace=True)
+    # bio = serializers.CharField(required=False, allow_blank=True, max_length=2048, trim_whitespace=True)
+
+    def validate(self, attrs):
+        if not attrs:
+            raise serializers.ValidationError("At least one field must be provided.")
+        return attrs
+
 
 # Message Serializer -------------------------------------------------------------------
 class MessageSerializer(serializers.ModelSerializer):

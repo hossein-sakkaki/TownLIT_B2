@@ -84,7 +84,7 @@ def cleanup_sensitive_group_dialogues(user):
 # --- 3. Hide confidants from user profile ---
 def hide_confidants_for_user(user):
     try:
-        member = user.member
+        member = user.member_profile
         member.hide_confidants = True  # This field must be added to Member model
         member.save()
     except Member.DoesNotExist:
