@@ -408,6 +408,9 @@ class UserDeviceKey(models.Model):
     user_agent = models.TextField(blank=True, null=True)
     ip_address = models.GenericIPAddressField(blank=True, null=True)
 
+    install_id = models.CharField(max_length=64, blank=True, null=True, db_index=True)
+    fp_hint = models.CharField(max_length=128, blank=True, null=True, db_index=True)
+
     location_city = models.CharField(max_length=100, blank=True, null=True)
     location_region = models.CharField(max_length=100, blank=True, null=True)
     location_country = models.CharField(max_length=100, blank=True, null=True)

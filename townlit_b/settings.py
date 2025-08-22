@@ -58,8 +58,6 @@ SECRET_KEY = os.getenv('SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'False').lower() in ('true', '1', 't')
 
-
-
 # ----------------------------------------------------------------------------------------------------------------------------
 ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "").split(",")
 CSRF_TRUSTED_ORIGINS = os.getenv("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",")
@@ -165,11 +163,10 @@ MIDDLEWARE = [
 # To active WebSocket
 ASGI_APPLICATION = 'townlit_b.asgi.application'
 
-
-
 CORS_ALLOW_HEADERS = list(default_headers) + [
     'Range',
     'x-device-id',
+    "x-install-id",
 ]
 CORS_EXPOSE_HEADERS = ['Content-Range', 'Accept-Ranges']
 

@@ -20,13 +20,13 @@ class JWTAuthMiddleware(BaseMiddleware):
             user = await self.get_user_from_token(token)
             if user:
                 scope["user"] = user
-                # logger.info(f"✅ WebSocket Authenticated: {user.username} (ID: {user.id})")
+                logger.info(f"✅ WebSocket Authenticated: {user.username} (ID: {user.id})")
             else:
-                # logger.warning("❌ WebSocket Authentication Failed: Invalid Token")
+                logger.warning("❌ WebSocket Authentication Failed: Invalid Token")
                 await send({"type": "websocket.close"})
                 return
         else:
-            # logger.warning("❌ WebSocket Authentication Failed: No Token Provided")
+            logger.warning("❌ WebSocket Authentication Failed: No Token Provided")
             await send({"type": "websocket.close"})
             return
 
