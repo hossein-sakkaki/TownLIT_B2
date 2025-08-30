@@ -1,3 +1,5 @@
+# services/redis_online_manager.py
+
 import time
 import os
 import redis.asyncio as redis
@@ -48,11 +50,26 @@ async def set_user_offline(user_id: int, socket_id: str):
 # دریافت لیست همه کاربران آنلاین
 async def get_all_online_users() -> list:
     redis_conn = await get_redis_connection()
-    pattern = "online_users:*"
-    keys = await redis_conn.keys(pattern)
-    user_ids = [int(key.split(":")[1]) for key in keys]
+    keys = await redis_conn.keys("online_users:*")
+    online = []
+    for key in keys:
+        user_id = int(key.split(":")[1])
+        socket_ids = await redis_conn.smembers(f"online_users:{user_id}")
+        has_active = False
+        for socket_id in socket_ids:
+            if await redis_conn.exists(f"online:{user_id}:{socket_id}"):
+                has_active = True
+                break
+            else:
+                await redis_conn.srem(f"online_users:{user_id}", socket_id)
+        if has_active:
+            online.append(user_id)
+        else:
+            # مجموعه خالی/بی‌اعتبار؛ پاکش کن تا زامبی نماند
+            await redis_conn.delete(f"online_users:{user_id}")
     await redis_conn.close()
-    return user_ids
+    return online
+
 
 
 
@@ -68,21 +85,21 @@ async def get_online_status_for_users(user_ids: list) -> dict:
         for socket_id in socket_ids:
             key = f"online:{user_id}:{socket_id}"
             exists = await redis_conn.exists(key)
-
             if exists:
                 active_sockets += 1
             else:
-                # ❌ این سوکت منقضی شده، پس حذفش کن
+                # سوکت منقضی شده → فقط پاکسازی عضویت
                 await redis_conn.srem(f"online_users:{user_id}", socket_id)
+
+        # اگر مجموعه خالی شد، می‌توانی کلید set را هم حذف کنی (اختیاری)
+        if active_sockets == 0:
+            await redis_conn.delete(f"online_users:{user_id}")
 
         result[user_id] = active_sockets > 0
 
-        # 👇 اگر هیچ سوکت معتبری باقی نموند، ثبت آخرین زمان دیده‌شدن
-        if active_sockets == 0:
-            await redis_conn.set(f"last_seen:{user_id}", int(time.time()))
-
     await redis_conn.close()
     return result
+
 
 
 async def get_last_seen(user_id: int) -> int | None:

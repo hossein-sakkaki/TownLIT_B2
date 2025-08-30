@@ -112,10 +112,16 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
             undelivered_messages = await sync_to_async(list)(
                 dialogue.messages.filter(is_delivered=False).exclude(sender=self.user)
             )
+            
             for message in undelivered_messages:
-                await self.mark_message_as_delivered(message)
-
-                content = get_message_content(message, self.user)
+                try:
+                    await self.mark_message_as_delivered(message)
+                    content = await database_sync_to_async(get_message_content)(message, self.user)
+                    is_encrypted = await database_sync_to_async(lambda: message.encryptions.exists())()
+                    ...
+                except Exception as e:
+                    logger.exception("Failed to push an undelivered message on connect: %s", e)
+                    continue
 
                 await self.channel_layer.group_send(
                     f"dialogue_{dialogue.slug}",
@@ -131,7 +137,7 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
                             "email": message.sender.email,
                         },
                         "timestamp": message.timestamp.isoformat(),
-                        "is_encrypted": message.is_encrypted,
+                        "is_encrypted": is_encrypted,
                         "is_delivered": True
                     }
                 )
@@ -192,7 +198,7 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
     async def finalize_disconnect(self):
         self.connected = False
 
-        # ✅ Stop the ping loop
+        # 1) stop ping loop safely
         if hasattr(self, "ping_task"):
             self.ping_task.cancel()
             try:
@@ -200,52 +206,78 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
             except asyncio.CancelledError:
                 pass
 
-        # ✅ Mark user as offline
+        # 2) mark this socket offline (Redis may set last_seen if it was last socket)
         await set_user_offline(self.user.id, self.channel_name)
 
-        # ✅ Leave all dialogue groups
-        for group in self.group_names:
-            await self.channel_layer.group_discard(group, self.channel_name)
+        # 3) snapshot dialogue groups BEFORE discarding, for broadcasting
+        groups = list(getattr(self, "group_names", []))
 
+        # 4) leave all groups
+        for g in groups:
+            await self.channel_layer.group_discard(g, self.channel_name)
         await self.channel_layer.group_discard(f"user_{self.user.id}", self.channel_name)
+        if getattr(self, "device_id", None):
+            await self.channel_layer.group_discard(f"device_{self.device_id}", self.channel_name)
 
-        # ✅ Notify other participants about the disconnection
-        for group in self.group_names:
+        # 5) notify others: went offline (presence event)
+        for g in groups:
             await self.channel_layer.group_send(
-                group,
+                g,
                 {
                     "type": "user_online_status",
                     "event_type": "user_online_status",
-                    "dialogue_slug": group.split("_", 1)[1],
+                    "dialogue_slug": g.split("_", 1)[1],
                     "user_id": self.user.id,
-                    "is_online": False
+                    "is_online": False,
                 }
             )
 
+        # 6) cleanup timers
         if TYPING_TIMEOUTS.get(self.user.id):
             TYPING_TIMEOUTS[self.user.id].cancel()
             del TYPING_TIMEOUTS[self.user.id]
-
         if DISCONNECT_TIMERS.get(self.user.id):
             del DISCONNECT_TIMERS[self.user.id]
 
-        # ✅ Send last seen timestamp to all dialogue participants
-        last_seen_ts = await get_last_seen(self.user.id)
-        if last_seen_ts:
-            last_seen_dt = datetime.fromtimestamp(last_seen_ts)
-            last_seen_display = timesince(last_seen_dt) + " ago"
+        # 7) if truly fully-offline now, broadcast last_seen with epoch
+        try:
+            # re-check presence after cleanup
+            statuses = await get_online_status_for_users([self.user.id])
+            fully_offline = not bool(statuses.get(self.user.id, False))
 
-            for group in self.group_names:
-                await self.channel_layer.group_send(
-                    group,
-                    {
-                        "type": "user_last_seen",
-                        "dialogue_slug": group.split("_", 1)[1],
-                        "user_id": self.user.id,
-                        "last_seen": last_seen_dt.isoformat(),
-                        "last_seen_display": last_seen_display
-                    }
-                )
+            if fully_offline:
+                # read epoch from Redis (set by set_user_offline if last socket)
+                last_seen_ts = await get_last_seen(self.user.id)
+
+                # fallback: set now if still missing
+                if not last_seen_ts:
+                    last_seen_ts = int(time.time())
+                    redis_conn = await get_redis_connection()
+                    await redis_conn.set(f"last_seen:{self.user.id}", last_seen_ts)
+                    await redis_conn.close()
+
+                # build ISO with UTC tz
+                last_seen_dt = datetime.fromtimestamp(last_seen_ts, tz=timezone.utc)
+                # keep legacy display for older clients; frontend should compute itself
+                last_seen_display = timesince(last_seen_dt)  # humanized on backend (optional)
+
+                for g in groups:
+                    await self.channel_layer.group_send(
+                        g,
+                        {
+                            "type": "user_last_seen",
+                            "dialogue_slug": g.split("_", 1)[1],
+                            "user_id": self.user.id,
+                            "is_online": False,                 # <- new
+                            "last_seen_epoch": last_seen_ts,    # <- new (seconds)
+                            "last_seen": last_seen_dt.isoformat(),
+                            "last_seen_display": last_seen_display,
+                        }
+                    )
+        except Exception as e:
+            logger.error(f"[finalize_disconnect] failed to broadcast last_seen: {e}")
+            # swallow to avoid crashing disconnect flow
+            pass
 
 
         
@@ -317,6 +349,11 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
             if data.get("type") == "mark_as_read":
                 await self.mark_message_as_read(data)
                 return
+            
+            if data.get("type") == "mark_as_delivered":
+                await self.handle_mark_as_delivered(data)
+                return
+
 
             if data.get("type") == "request_online_status":
                 dialogue_slug = data.get("dialogue_slug")
@@ -414,13 +451,14 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
 
     # Send All Online Status ---------------------------
     async def send_all_online_statuses(self):
-        online_users = await get_all_online_users()
         dialogues = await sync_to_async(list)(Dialogue.objects.filter(participants=self.user))
         for dialogue in dialogues:
             participants = await sync_to_async(list)(dialogue.participants.all())
-            
+            ids = [p.id for p in participants]
+            online_statuses = await get_online_status_for_users(ids)  # ✅ معتبر و همراه با کلین‌آپ
+
             for participant in participants:
-                is_online = participant.id in online_users
+                is_online = bool(online_statuses.get(participant.id, False))
                 await self.send(text_data=json.dumps({
                     "type": "user_online_status",
                     "event_type": "user_online_status",
@@ -708,7 +746,6 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
         recipient = await sync_to_async(
             lambda: message.dialogue.participants.exclude(id=message.sender.id).first()
         )()
-
         if not recipient:
             return
 
@@ -716,22 +753,29 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
         recipient_online = online_statuses.get(recipient.id, False)
 
         if recipient_online:
+            # idempotent helper (OK if already delivered)
             await mark_message_as_delivered_atomic(message)
 
+            # ✅ notify current socket (whoever is running this - may be sender or recipient)
             await self.send(text_data=json.dumps({
                 "type": "mark_as_delivered",
+                "event_type": "mark_as_delivered",
                 "dialogue_slug": message.dialogue.slug,
                 "message_id": message.id,
+                "user_id": recipient.id,
                 "is_delivered": True
             }))
 
+            # ✅ notify ALL sessions of the sender
             await self.channel_layer.group_send(
                 f"user_{message.sender.id}",
                 {
                     "type": "mark_as_delivered",
+                    "event_type": "mark_as_delivered",
                     "dialogue_slug": message.dialogue.slug,
                     "message_id": message.id,
-                    "user_id": self.user.id,
+                    "user_id": recipient.id,
+                    "is_delivered": True
                 }
             )
 
@@ -744,7 +788,9 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
             "dialogue_slug": event["dialogue_slug"],
             "message_id": event["message_id"],
             "user_id": event["user_id"],
+            "is_delivered": True,
         }))
+
 
          
     # Mark as Read Real-Time Update ----------------------------------------------------------------
@@ -784,6 +830,42 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
     async def mark_as_read(self, event):
         await self.send(text_data=json.dumps(event))
 
+
+    # Mark as Delivered Handler ----------
+    async def handle_mark_as_delivered(self, data):
+        dialogue_slug = data.get("dialogue_slug")
+        message_id = data.get("message_id")
+        if not dialogue_slug or not message_id:
+            return
+
+        # validate membership and load objects
+        dialogue = await sync_to_async(Dialogue.objects.get)(slug=dialogue_slug, participants=self.user)
+        message  = await sync_to_async(Message.objects.get)(id=message_id, dialogue=dialogue)
+
+        # only the recipient can mark delivered
+        if message.sender_id == self.user.id:
+            return  # silently ignore
+
+        # idempotent: skip if already delivered
+        if message.is_delivered:
+            return
+
+        # mark delivered (atomic helper if you have it)
+        await mark_message_as_delivered_atomic(message)
+
+        # notify sender (their all sessions)
+        await self.channel_layer.group_send(
+            f"user_{message.sender_id}",
+            {
+                "type": "mark_as_delivered",
+                "dialogue_slug": dialogue.slug,
+                "message_id": message.id,
+                "user_id": self.user.id,  # recipient
+            }
+        )
+
+        
+    
     # Handle File Messages ----------------------
     async def handle_file_message(self, data):
         dialogue_slug = data.get("dialogue_slug")
@@ -825,6 +907,14 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
         )()
 
         for user_id in participants:
+            
+            
+            # is_encrypted_file معمولاً فیلد مدل است → دسترسی مستقیم OK
+            is_encrypted_file = message.is_encrypted_file
+
+            # ولی is_encrypted پراپرتی است → امنش کن
+            is_encrypted = await database_sync_to_async(lambda: message.encryptions.exists())()
+
             await self.channel_layer.group_send(
                 f"user_{user_id}",
                 {
@@ -836,8 +926,8 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
                     "file_url": file_url,
                     "sender": sender,
                     "timestamp": message.timestamp.isoformat(),
-                    "is_encrypted_file": message.is_encrypted_file,
-                    "is_encrypted": message.is_encrypted,
+                    "is_encrypted_file": is_encrypted_file,
+                    "is_encrypted": is_encrypted,  # ✅
                 }
             )
 
@@ -1209,13 +1299,17 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
 
     # Last Seen -----------------------------------------------------------------
     async def user_last_seen(self, event):
+        # Send both ISO and epoch so frontend can compute relative time consistently
         await self.send(text_data=json.dumps({
             "type": "user_last_seen",
             "dialogue_slug": event["dialogue_slug"],
             "user_id": event["user_id"],
-            "last_seen": event["last_seen"],
-            "last_seen_display": event["last_seen_display"],
+            "is_online": event.get("is_online", False), 
+            "last_seen": event.get("last_seen"),          # ISO datetime or null
+            "last_seen_epoch": event.get("last_seen_epoch"),  # new field (unix ts)
+            "last_seen_display": event.get("last_seen_display"),  # legacy
         }))
+
 
 
     # Group Added ---------------------------------------------------------------

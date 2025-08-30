@@ -20,15 +20,12 @@ from corsheaders.defaults import default_headers
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-
 ENV_FILE = os.getenv('ENV_FILE', '.env')
 load_dotenv(BASE_DIR / ENV_FILE, override=True)
-# load_dotenv(Path(__file__).resolve().parent / '.env', override=True)
 
 
 
 # ---------------------------------------------------------------------------------------
-
 CORS_ALLOW_ALL_ORIGINS = os.getenv('CORS_ALLOW_ALL_ORIGINS', 'False').lower() in ('true', '1', 't')
 
 if not CORS_ALLOW_ALL_ORIGINS:
@@ -38,19 +35,11 @@ else:
     CORS_ALLOWED_ORIGINS = []
 
 
-
-
 FRONTEND_BASE_URL = CORS_ALLOWED_ORIGINS[0] if CORS_ALLOWED_ORIGINS else "http://localhost:3000"
 CORS_ALLOW_CREDENTIALS = os.getenv('CORS_ALLOW_CREDENTIALS', 'True').lower() in ('true', '1', 't')
 
 # ---------------------------------------------------------------------------------------
-
-
 ADMIN_E2E_DEBUG_PASSWORD = "testpassword"
-
-
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/4.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.getenv('SECRET_KEY')
@@ -61,7 +50,7 @@ DEBUG = os.getenv('DEBUG', 'False').lower() in ('true', '1', 't')
 # ----------------------------------------------------------------------------------------------------------------------------
 ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "").split(",")
 CSRF_TRUSTED_ORIGINS = os.getenv("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",")
-# ----------------------------------------------------------------------------------------------------------------------------
+
 
 
 REDIS_URL = os.getenv('REDIS_URL', 'redis://127.0.0.1:6379/0')
@@ -152,7 +141,6 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'django.middleware.common.CommonMiddleware',
     'django_otp.middleware.OTPMiddleware',  # 2FA
     'whitenoise.middleware.WhiteNoiseMiddleware',
     
@@ -172,12 +160,10 @@ CORS_EXPOSE_HEADERS = ['Content-Range', 'Accept-Ranges']
 
 
 # Cookies setting ----------------------------------------------------------------------
-# SESSION_COOKIE_SAMESITE = None
 SESSION_COOKIE_SAMESITE = 'Lax'
-SESSION_COOKIE_SECURE = True   # برای محیط تولید
-# SESSION_COOKIE_SECURE = False  # برای محیط توسعه
-SESSION_COOKIE_HTTPONLY = True 
 CSRF_COOKIE_SECURE = True
+SESSION_COOKIE_SECURE = True
+SESSION_COOKIE_HTTPONLY = True 
 
 
 
@@ -577,14 +563,7 @@ LOGGING = {
 
 
 
-# CSRF_COOKIE_SECURE = True
-# SESSION_COOKIE_SECURE = True
-# SECURE_SSL_REDIRECT = True
-# SECURE_HSTS_SECONDS = 31536000  # مدت زمان اعتبار HSTS (1 سال)
-# SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-# SECURE_HSTS_PRELOAD = True
-# SECURE_BROWSER_XSS_FILTER = True
-# SECURE_CONTENT_TYPE_NOSNIFF = True
+
 
 
 

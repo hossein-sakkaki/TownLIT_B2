@@ -632,15 +632,21 @@ class DialogueViewSet(viewsets.ModelViewSet):
             })
 
         try:
+            
             last_seen_ts = asyncio.run(get_last_seen(participant.id))
             if last_seen_ts:
-                last_seen_dt = datetime.fromtimestamp(last_seen_ts)
+                # ✅ datetime آگاه به منطقه
+                last_seen_dt = datetime.fromtimestamp(last_seen_ts, tz=timezone.utc)
+
                 return Response({
                     'user_id': participant.id,
                     'is_online': False,
-                    'last_seen': last_seen_dt.isoformat(),
-                    # 'last_seen_display': timesince(last_seen_dt) + " ago"
-                    'last_seen_display': timesince(last_seen_dt)
+                    'last_seen': last_seen_dt.isoformat(), 
+                    'last_seen_epoch': last_seen_ts, 
+                    'last_seen_display': timesince( 
+                        last_seen_dt,
+                        timezone.now()
+                    ),
                 })
         except Exception as e:
             print("❌ Error getting last seen:", e)
@@ -1130,33 +1136,55 @@ class MessageViewSet(viewsets.ModelViewSet):
         dialogue_slug = request.data.get("dialogue_slug")
 
         if not message_id or not dialogue_slug:
-            return Response({'error': 'message_id and dialogue_slug are required.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'error': 'message_id and dialogue_slug are required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         try:
             dialogue = get_object_or_404(Dialogue, slug=dialogue_slug, participants=request.user)
             message = get_object_or_404(Message, id=message_id, dialogue=dialogue)
-            
-            if dialogue.slug != dialogue_slug:
-                return Response({'error': 'Invalid dialogue reference.'}, status=403)
 
             user = request.user
-
             if user not in dialogue.participants.all():
-                return Response({'error': 'You are not a participant in this dialogue.'}, status=status.HTTP_403_FORBIDDEN)
+                return Response({'error': 'Not a participant.'}, status=status.HTTP_403_FORBIDDEN)
 
-            if message.sender == user:
-                return Response({'error': 'Sender cannot mark their own message as delivered.'}, status=403)
+            if message.sender_id == user.id:
+                return Response({'error': 'Sender cannot ack delivered.'}, status=status.HTTP_403_FORBIDDEN)
 
-            message.is_delivered = True
-            message.save(update_fields=["is_delivered"])
+            if not message.is_delivered:
+                message.is_delivered = True
+                message.save(update_fields=["is_delivered"])
+
+            # broadcast to sender
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                f"user_{message.sender_id}",
+                {
+                    "type": "mark_as_delivered",
+                    "dialogue_slug": dialogue.slug,
+                    "message_id": message.id,
+                    "user_id": user.id,
+                }
+            )
+
+            # (optional) also to dialogue group
+            async_to_sync(channel_layer.group_send)(
+                f"dialogue_{dialogue.slug}",
+                {
+                    "type": "mark_as_delivered",
+                    "dialogue_slug": dialogue.slug,
+                    "message_id": message.id,
+                    "user_id": user.id,
+                }
+            )
 
             return Response({'message': 'Message marked as delivered.'}, status=status.HTTP_200_OK)
 
-        except Message.DoesNotExist:
-            return Response({'error': 'Message not found.'}, status=status.HTTP_404_NOT_FOUND)
-
+        except Http404:
+            return Response({'error': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
     # Mark As Read  --------------------------------------------------------------------------------------------
