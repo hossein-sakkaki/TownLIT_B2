@@ -51,34 +51,48 @@ DEBUG = os.getenv('DEBUG', 'False').lower() in ('true', '1', 't')
 ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "").split(",")
 CSRF_TRUSTED_ORIGINS = os.getenv("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",")
 
-
-
 REDIS_URL = os.getenv('REDIS_URL', 'redis://127.0.0.1:6379/0')
 SITE_URL = os.getenv("SITE_URL", "https://www.townlit.com")
 EMAIL_LOGO_URL = os.getenv("EMAIL_LOGO_URL", "https://www.townlit.com")
 
+
+# ---- Cookies (read directly from env) ----------------------------------------
+# Valid values: "Lax" | "Strict" | "None"
+SESSION_COOKIE_SAMESITE = os.getenv("SESSION_COOKIE_SAMESITE", "Lax")
+
+# Parse booleans from env: "1|true|yes|on" => True, otherwise False
+CSRF_COOKIE_SECURE = os.getenv("CSRF_COOKIE_SECURE", "false").strip().lower() in ("1", "true", "yes", "on")
+SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "false").strip().lower() in ("1", "true", "yes", "on")
+SESSION_COOKIE_HTTPONLY = os.getenv("SESSION_COOKIE_HTTPONLY", "true").strip().lower() in ("1", "true", "yes", "on")
+
+# Safety: SameSite=None requires Secure (browser rule)
+if SESSION_COOKIE_SAMESITE == "None" and not SESSION_COOKIE_SECURE:
+    import warnings
+    warnings.warn("SESSION_COOKIE_SAMESITE='None' requires SESSION_COOKIE_SECURE=True; cookie may be dropped by browsers.")
+    
+
+# -----------------------------------------------------------------------------
 RESET_LINK_EXPIRATION_MINUTES = int(os.getenv('RESET_LINK_EXPIRATION_MINUTES', 30))
 EMAIL_CODE_EXPIRATION_MINUTES = int(os.getenv('EMAIL_CODE_EXPIRATION_MINUTES', 10))
 PHONE_CODE_EXPIRATION_MINUTES = int(os.getenv("PHONE_CODE_EXPIRATION_MINUTES", 10))
 LITSHIELD_ACCESS_EXPIRATION_SECONDS = int(os.getenv("LITSHIELD_ACCESS_EXPIRATION_SECONDS", 300))
 
-
 # Set to False to disable invite code requirement -----------------------------
 USE_INVITE_CODE = os.getenv("USE_INVITE_CODE", "False").lower() in ("true", "1", "yes")
 
 
-# Ip Info --------------------------------------------------------------
+# Ip Info ---------------------------------------------------------------------
 IPINFO_API_KEY = os.getenv("IPINFO_API_KEY", "")
 
 
-
-
+# ------------------------------------------------------------------------------
 DEFAULT_USER_AVATAR_URL = os.getenv("DEFAULT_USER_AVATAR_URL", "/static/defaults/default-avatar.png")
 DEFAULT_GROUP_AVATAR_URL = os.getenv("DEFAULT_GROUP_AVATAR_URL", "/static/defaults/default-group-avatar.png")
 
 
 
-
+# ✅ Media files
+# DEFAULT_PROFILE_IMAGE = "defaults/default-avatar.png"
 
 
 
@@ -157,13 +171,6 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
     "x-install-id",
 ]
 CORS_EXPOSE_HEADERS = ['Content-Range', 'Accept-Ranges']
-
-
-# Cookies setting ----------------------------------------------------------------------
-SESSION_COOKIE_SAMESITE = 'Lax'
-CSRF_COOKIE_SECURE = True
-SESSION_COOKIE_SECURE = True
-SESSION_COOKIE_HTTPONLY = True 
 
 
 
@@ -510,8 +517,7 @@ STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static')]
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
-# ✅ Media files
-DEFAULT_PROFILE_IMAGE = 'sample/user.png'
+
 
 # ---------------- File Serving Policy ------------------
 SERVE_FILES_PUBLICLY = os.getenv('SERVE_FILES_PUBLICLY', 'False').lower() in ('true', '1', 't')

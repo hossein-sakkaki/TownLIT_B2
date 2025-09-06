@@ -255,10 +255,17 @@ class SocialMediaLinkReadOnlySerializer(serializers.ModelSerializer):
 # CustomUser Serializers -----------------------------------------------------------------------
 class CustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
     label = CustomLabelSerializer(read_only=True)
-    country_display = serializers.CharField(source='get_country_display', read_only=True)
-    country = serializers.CharField(write_only=True)
     is_verified_identity = serializers.SerializerMethodField()
-
+    country = serializers.CharField(write_only=True)
+    country_display = serializers.CharField(
+        source='get_country_display', read_only=True
+    )
+    primary_language_display = serializers.CharField(
+        source='get_primary_language_display', read_only=True
+    )
+    secondary_language_display = serializers.CharField(
+        source='get_secondary_language_display', read_only=True
+    )
     
     class Meta:
         model = CustomUser
@@ -274,12 +281,11 @@ class CustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
             }
         }
 
-    def create(self, instance, validated_data):
+    def create(self, validated_data):
         password = validated_data.pop('password', None)
         instance = self.Meta.model(**validated_data)
         if password is not None:
             instance.set_password(password)
-        # Generate RSA keys for the user upon creation
         instance.generate_rsa_keys()
         instance.save()
         return instance

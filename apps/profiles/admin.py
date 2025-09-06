@@ -80,7 +80,7 @@ admin.site.register(MigrationHistory, MigrationHistoryAdmin)
 # SPIRITUAL SERVICE Admin
 @admin.register(SpiritualService)
 class SpiritualServiceAdmin(admin.ModelAdmin):
-    list_display = ['name', 'color', 'description', 'is_active']
+    list_display = ['name', 'description', 'is_active']
     search_fields = ['name', 'description']
     list_editable = ['is_active']
     list_filter = ['is_active']

@@ -164,9 +164,9 @@ class AuthViewSet(viewsets.ViewSet):
                         existing_user.user_active_code_expiry = expiration_time
                         existing_user.save()
                         
-                        print('--------------------------------------------')
+                        print('----------------------1----------------------')
                         print(active_code)
-                        print('--------------------------------------------')
+                        print('-----------------------1---------------------')
 
                         subject = "Welcome back to TownLIT - Verify Again"
                         context = {
@@ -215,7 +215,7 @@ class AuthViewSet(viewsets.ViewSet):
                     email=ser_data.validated_data['email'],
                 )
                 user.set_password(ser_data.validated_data['password'])
-                user.image_name = settings.DEFAULT_PROFILE_IMAGE
+                user.image_name = settings.DEFAULT_USER_AVATAR_URL
                 user.save()
 
                 missing_policies = []
@@ -246,9 +246,9 @@ class AuthViewSet(viewsets.ViewSet):
                 user.user_active_code_expiry = expiration_time
                 user.save()
                 
-                print('--------------------------------------------')
+                print('----------------------2----------------------')
                 print(active_code)
-                print('--------------------------------------------')
+                print('----------------------2----------------------')
                     
 
                 subject = "Welcome to TownLIT - Activate Your Account!"

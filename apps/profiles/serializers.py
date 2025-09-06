@@ -9,6 +9,7 @@ from .models import (
                 SpiritualGift, SpiritualGiftSurveyQuestion, SpiritualGiftSurveyResponse, MemberSpiritualGifts,
                 SpiritualService
             )
+from validators.files_validator import validate_http_https, soft_date_bounds
 from apps.profilesOrg.serializers import OrganizationSerializer
 from apps.posts.serializers import SimpleOrganizationSerializer, SimpleCustomUserSerializer
 from apps.accounts.serializers import (
@@ -168,53 +169,138 @@ class AcademicRecordSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
-# MIGRATION HISTORY Serializer -----------------------------------------------------------------------------------
-class MigrationHistorySerializer(serializers.ModelSerializer):
-    user = serializers.CharField(source='user.username', read_only=True)  # نمایش نام کاربری به جای ID کاربر
 
-    class Meta:
-        model = MigrationHistory
-        fields = ['user', 'migration_type', 'migration_date']
-
-
-
-# MEMBER SERVICE TYPE Serializers -------------------------------------------------------------
+# Spiritual Service Serializer ----------------------------------------------
 class SpiritualServiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = SpiritualService
-        fields = '__all__'
-        read_only_fields = ['id','is_active']
-        
-        
-# MEMBER SERVICE Serializer -----------------------------------------------------------------------------------
+        fields = ["id", "name", "description", "is_sensitive", "is_active"]
+        read_only_fields = ["id", "is_active"]
+
+
+# Member Service Type Serializer --------------------------------------------
 class MemberServiceTypeSerializer(serializers.ModelSerializer):
     service = SpiritualServiceSerializer(read_only=True)
+    service_id = serializers.PrimaryKeyRelatedField(
+        queryset=SpiritualService.objects.filter(is_active=True),
+        source="service",
+        write_only=True,
+        required=True,
+    )
+
+    # اختیاری: trim و کنترل طول‌ها در سطح سریالایزر
+    history = serializers.CharField(
+        required=False, allow_blank=True, max_length=500
+    )
+    credential_issuer = serializers.CharField(
+        required=False, allow_blank=True, max_length=120
+    )
+    credential_number = serializers.CharField(
+        required=False, allow_blank=True, max_length=80
+    )
+    credential_url = serializers.URLField(
+        required=False, allow_blank=True, validators=[validate_http_https]
+    )
+    issued_at = serializers.DateField(required=False, allow_null=True)
+    expires_at = serializers.DateField(required=False, allow_null=True)
+    remove_document = serializers.BooleanField(write_only=True, required=False, default=False)
 
     class Meta:
         model = MemberServiceType
-        fields = ['id', 'service', 'history', 'document', 'register_date', 'is_approved', 'is_active']
-        read_only_fields = ['id', 'is_active', 'is_approved', 'register_date']
+        fields = [
+            "id",
+            "service", "service_id",
+            "history", "document", "register_date",
+            "is_approved", "is_active",
+            "credential_issuer", "credential_number", "credential_url",
+            "issued_at", "expires_at", "verified_at", "verified_by",
+            "remove_document",  
+        ]
+        read_only_fields = [
+            "id", "is_active", "is_approved", "register_date",
+            "verified_at", "verified_by",
+        ]
+        
+    def to_internal_value(self, data):
+        # trim
+        for f in ["history", "credential_issuer", "credential_number", "credential_url"]:
+            if f in data and isinstance(data[f], str):
+                data[f] = data[f].strip()
 
-    def validate_history(self, value):
-        """Custom validation for history field."""
-        if len(value) > 500:
-            raise serializers.ValidationError("History cannot be longer than 500 characters.")
-        return value
+        # تاریخ‌های خالی → None
+        for df in ["issued_at", "expires_at"]:
+            if df in data and (data[df] == "" or data[df] is None):
+                data[df] = None
 
-    def create(self, validated_data):
-        """Override create method if needed to add additional logic."""
-        return super().create(validated_data)
+        return super().to_internal_value(data)
+    
+    def validate(self, attrs):
+        remove_document_flag = attrs.pop("remove_document", False)
+        self._remove_document_flag = bool(remove_document_flag)
+        service = attrs.get("service") or getattr(self.instance, "service", None)
+        incoming_doc = attrs.get("document", serializers.empty)
+        current_doc  = getattr(self.instance, "document", None) if self.instance else None
+
+        if self._remove_document_flag:
+            effective_doc = None
+        elif incoming_doc is not serializers.empty:
+            effective_doc = incoming_doc
+        else:
+            effective_doc = current_doc
+
+        issuer     = attrs.get("credential_issuer") or getattr(self.instance, "credential_issuer", None)
+        issued_at  = attrs.get("issued_at") or getattr(self.instance, "issued_at", None)
+        expires_at = attrs.get("expires_at") or getattr(self.instance, "expires_at", None)
+
+        # سیاست: سرویس حساس → یا سند، یا (issuer + issued_at)
+        if service and getattr(service, "is_sensitive", False):
+            has_doc = bool(effective_doc)
+            has_endorsement = bool(issuer) and bool(issued_at)
+            if not (has_doc or has_endorsement):
+                raise serializers.ValidationError({
+                    "document": "Provide a PDF credential or issuer & issued date for this sensitive service."
+                })
+
+        if issued_at and expires_at and expires_at < issued_at:
+            raise serializers.ValidationError({"expires_at": "Expiration date cannot be before issue date."})
+        if issued_at:
+            soft_date_bounds(issued_at)
+        if expires_at:
+            soft_date_bounds(expires_at)
+
+        return attrs
 
     def update(self, instance, validated_data):
-        """Override update method if needed."""
-        instance.service = validated_data.get('service', instance.service)
-        instance.history = validated_data.get('history', instance.history)
-        instance.document = validated_data.get('document', instance.document)
-        instance.is_approved = validated_data.get('is_approved', instance.is_approved)
-        instance.is_active = validated_data.get('is_active', instance.is_active)
-        instance.save()
-        return instance
+        if "service" in validated_data and validated_data["service"] != instance.service:
+            raise serializers.ValidationError({"service_id": "Changing service is not allowed."})
 
+        remove_document_flag = getattr(self, "_remove_document_flag", False)
+        new_file = validated_data.get("document", serializers.empty)
+
+        if remove_document_flag and new_file is serializers.empty:
+            if instance.document:
+                instance.document.delete(save=False)
+            instance.document = None
+
+        elif remove_document_flag and new_file is not serializers.empty:
+            if instance.document:
+                instance.document.delete(save=False)
+
+        elif new_file is not serializers.empty and instance.document:
+            instance.document.delete(save=False)
+
+        return super().update(instance, validated_data)
+
+    def create(self, validated_data):
+        validated_data.pop("_remove_document_flag", None)
+        return super().create(validated_data)
+    
+    def _strip(self, v):
+        return v.strip() if isinstance(v, str) else v
+
+
+  
+    
 
 # MEMBER Serializer ------------------------------------------------------------------------------
 class MemberSerializer(serializers.ModelSerializer):
@@ -222,6 +308,8 @@ class MemberSerializer(serializers.ModelSerializer):
     service_types = MemberServiceTypeSerializer(many=True, read_only=True)
     organization_memberships = OrganizationSerializer(many=True, read_only=True)
     academic_record = AcademicRecordSerializer()
+    litcovenant = serializers.SerializerMethodField()
+    spiritual_gifts = serializers.SerializerMethodField()
     
     class Meta:
         model = Member
@@ -230,16 +318,14 @@ class MemberSerializer(serializers.ModelSerializer):
             'spiritual_rebirth_day', 'biography', 'vision', 'denominations_type',
             'show_gifts_in_profile', 'show_fellowship_in_profile', 'hide_confidants', 'is_hidden_by_confidants',
             'register_date', 'identity_verification_status', 'is_verified_identity', 'identity_verified_at', 'is_sanctuary_participant',
-            'is_privacy', 'is_migrated', 'is_active'
+            'is_privacy', 'is_migrated', 'is_active', 'litcovenant', 'spiritual_gifts',
         ]
         read_only_fields = ['register_date', 'is_migrated', 'is_active', 'identity_verification_status', 'identity_verified_at', 'is_verified_identity', 'is_sanctuary_participant']
-        
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        context = kwargs.pop("context", {})
-        if 'context' in kwargs:
-            self.fields["user"] = CustomUserSerializer(context=context)
-
+        self.fields['user'] = CustomUserSerializer(context=self.context)
+        
     def update(self, instance, validated_data):
         custom_user_data = validated_data.pop('user', None)
         if custom_user_data:
@@ -282,6 +368,73 @@ class MemberSerializer(serializers.ModelSerializer):
         if value > timezone.now().date():
             raise serializers.ValidationError({"error": "Spiritual rebirth day cannot be in the future."})
         return value
+
+    def get_litcovenant(self, obj):
+        # اگر اجازه نمایش نیست، اصلاً کوئری نزن
+        if not getattr(obj, 'show_fellowship_in_profile', False):
+            return []
+
+        user = obj.user
+        request = self.context.get('request')
+
+        qs = (
+            Fellowship.objects
+            .filter(Q(from_user=user) | Q(to_user=user), status='Accepted')
+            .select_related(
+                'from_user', 'to_user',
+                'from_user__member_profile', 'to_user__member_profile'  # برای is_verified_identity
+            )
+        )
+
+        hide_confidants = bool(getattr(obj, 'hide_confidants', False))
+        out, seen = [], set()
+        fellowship_ids_map = {}  # user_id -> fellowship_id (برای SimpleCustomUserSerializer)
+
+        for f in qs:
+            if f.from_user_id == user.id:
+                rel_type = f.fellowship_type
+                opposite_user = f.to_user
+            else:
+                rel_type = f.reciprocal_fellowship_type
+                opposite_user = f.from_user
+
+            if hide_confidants and rel_type == "Confidant":
+                continue
+            if rel_type == "Confidant" and not getattr(user, "pin_security_enabled", False):
+                continue
+            if rel_type == "Entrusted" and not getattr(opposite_user, "pin_security_enabled", False):
+                continue
+
+            key = (opposite_user.id, rel_type)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            out.append(f)
+            # برای دریافت fellowship_id داخل SimpleCustomUserSerializer:
+            fellowship_ids_map[opposite_user.id] = f.id
+
+        ctx = {
+            'request': request,
+            'fellowship_ids': fellowship_ids_map,
+        }
+        return FellowshipSerializer(out, many=True, context=ctx).data
+    
+    def get_spiritual_gifts(self, obj):
+        if not getattr(obj, 'show_gifts_in_profile', False):
+            return None
+
+        request = self.context.get('request')
+        msg = (
+            MemberSpiritualGifts.objects
+            .filter(member=obj)
+            .prefetch_related('gifts')
+            .order_by('-created_at')
+            .first()
+        )
+        if not msg:
+            return None
+        return MemberSpiritualGiftsSerializer(msg, context={'request': request}).data
 
 
 # MEMBER Serializer ------------------------------------------------------------------------------
@@ -327,9 +480,11 @@ class LimitedMemberSerializer(serializers.ModelSerializer):
 # MEMBER'S GIFT serializer -----------------------------------------------------------------------------
 # Spritual Gifts
 class SpiritualGiftSerializer(serializers.ModelSerializer):
+    name_display = serializers.CharField(source='get_name_display', read_only=True)
+
     class Meta:
         model = SpiritualGift
-        fields = ['id', 'name', 'description']
+        fields = ['id', 'name', 'name_display', 'description']
         
 
 # Gift Question serializer

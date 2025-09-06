@@ -11,29 +11,39 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
 from rest_framework import serializers
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+
 
 from apps.core.security.decorators import require_litshield_access
 from cryptography.fernet import Fernet
 from django.conf import settings
 cipher_suite = Fernet(settings.FERNET_KEY)
 
-from .services import (
+from apps.profiles.services.symmetric_friendship import (
                     add_symmetric_friendship, remove_symmetric_friendship, 
+                )
+from apps.profiles.services.symmetric_fellowship import (
                     add_symmetric_fellowship, remove_symmetric_fellowship,
+                )
+from apps.profiles.services.gifts_service import (
                     calculate_spiritual_gifts_scores, calculate_top_3_gifts
                 )
+from apps.profiles.services.service_policies import get_policy
 from .models import (
                     Member, GuestUser, Friendship, Fellowship, MigrationHistory,
                     SpiritualGiftSurveyResponse, MemberSpiritualGifts,
                     SpiritualGiftSurveyQuestion, MemberSurveyProgress,
+                    SpiritualService,
                 )
 from .serializers import (
                     FriendshipSerializer, FellowshipSerializer,
                     MemberSerializer, PublicMemberSerializer, LimitedMemberSerializer,
                     GuestUserSerializer, LimitedGuestUserSerializer,
-                    SpiritualGiftSurveyResponseSerializer, SpiritualGiftSurveyQuestionSerializer, MemberSpiritualGiftsSerializer, SpiritualGift
+                    SpiritualGiftSurveyResponseSerializer, SpiritualGiftSurveyQuestionSerializer, MemberSpiritualGiftsSerializer, SpiritualGift,
+                    MemberServiceTypeSerializer, SpiritualServiceSerializer, MemberServiceType
                 )
 from apps.accounts.serializers import SimpleCustomUserSerializer
+from apps.profiles.services.listing import build_friends_list
 
 from validators.user_validators import validate_phone_number
 from django.core.exceptions import ValidationError
@@ -109,9 +119,14 @@ class ProfileMigrationViewSet(viewsets.ViewSet):
 class MemberViewSet(viewsets.ModelViewSet):
     queryset = Member.objects.all()
     permission_classes = [IsAuthenticated]
+    serializer_class = MemberSerializer
 
     def get_queryset(self):
         return self.queryset.filter(is_active=True)
+    
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        return ctx
 
     def retrieve(self, request, *args, **kwargs):
         try:
@@ -514,6 +529,107 @@ The TownLIT Team 🌍
             return Response({"error": "Member not found"}, status=status.HTTP_404_NOT_FOUND)
 
 
+# ---------------------------------------------------------------------------------------------------------
+class MemberServicesViewSet(viewsets.ViewSet):
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get_serializer_context(self):
+        return {"request": self.request}
+    
+    # Services Catalog ------------------------------------------------------------------------------------
+    @action(detail=False, methods=['get'], url_path='services-catalog', permission_classes=[IsAuthenticated])
+    def services_catalog(self, request):
+        qs = SpiritualService.objects.filter(is_active=True).order_by('is_sensitive', 'name')
+        data = SpiritualServiceSerializer(qs, many=True, context=self.get_serializer_context()).data
+        return Response(data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['get'], url_path='my-services', permission_classes=[IsAuthenticated])
+    def my_services(self, request):
+        member = request.user.member_profile
+        qs = (
+            MemberServiceType.objects
+            .filter(member_service_types=member, is_active=True)
+            .select_related('service')
+        )
+        data = MemberServiceTypeSerializer(qs, many=True, context=self.get_serializer_context()).data
+        return Response(data, status=status.HTTP_200_OK)
+
+    @action(
+        detail=False, methods=['post'], url_path='services',
+        parser_classes=[MultiPartParser, FormParser, JSONParser],
+        permission_classes=[IsAuthenticated]
+    )
+    def create_service(self, request):
+        member = request.user.member_profile
+        ser = MemberServiceTypeSerializer(data=request.data, context=self.get_serializer_context())
+        ser.is_valid(raise_exception=True)
+        service = ser.validated_data['service']
+
+        # جلوگیری از ثبت تکراریِ همان service برای همان member
+        already = member.service_types.filter(service=service, is_active=True).exists()
+        if already:
+            return Response({"detail": "This service is already added to your profile."}, status=status.HTTP_400_BAD_REQUEST)
+
+        instance = ser.save()
+        member.service_types.add(instance)
+        out = MemberServiceTypeSerializer(instance, context=self.get_serializer_context()).data
+        return Response(out, status=status.HTTP_201_CREATED)
+
+    @action(
+        detail=False, methods=['patch'], url_path=r'services/(?P<pk>\d+)',
+        parser_classes=[MultiPartParser, FormParser, JSONParser],
+        permission_classes=[IsAuthenticated]
+    )
+    def update_service(self, request, pk=None):
+        member = request.user.member_profile
+        try:
+            instance = (
+                MemberServiceType.objects
+                .select_related('service')
+                .get(pk=pk, is_active=True)
+            )
+        except MemberServiceType.DoesNotExist:
+            return Response({"detail": "Service item not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # مالکیت: باید به همین member لینک شده باشد
+        if not instance.member_service_types.filter(pk=member.pk).exists():
+            return Response({"detail": "You don't have permission to modify this service."}, status=status.HTTP_403_FORBIDDEN)
+
+        data = request.data.copy()
+        data.pop('service_id', None)
+
+        ser = MemberServiceTypeSerializer(instance, data=data, partial=True, context=self.get_serializer_context())
+        ser.is_valid(raise_exception=True)
+        ser.save()
+
+        return Response(ser.data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['delete'], url_path=r'services/(?P<pk>\d+)', permission_classes=[IsAuthenticated])
+    def delete_service(self, request, pk=None):
+        member = request.user.member_profile
+        try:
+            instance = MemberServiceType.objects.get(pk=pk)
+        except MemberServiceType.DoesNotExist:
+            return Response({"detail": "Service item not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if not instance.member_service_types.filter(pk=member.pk).exists():
+            return Response({"detail": "You don't have permission to remove this service."}, status=status.HTTP_403_FORBIDDEN)
+
+        member.service_types.remove(instance)
+        if not instance.member_service_types.exists():
+            instance.is_active = False
+            instance.save(update_fields=["is_active"])
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=False, methods=['get'], url_path='services-policy', permission_classes=[IsAuthenticated])
+    def policy(self, request):
+        service_code = request.query_params.get("service", None)
+        data = get_policy(service_code)
+        return Response(data, status=status.HTTP_200_OK)
+
+
 # MEMBER IDENTITY VERIFICATION Viewset ------------------------------------------------------------------
 class VeriffViewSet(viewsets.ViewSet):
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
@@ -790,31 +906,17 @@ class FriendshipViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Unable to fetch received requests'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     # ------------------------------------------------------------------------------------------------------
-    @action(detail=False, methods=['get'], url_path='friends-list', permission_classes=[IsAuthenticated])
+    @action(detail=False, methods=["get"], url_path="friends-list", permission_classes=[IsAuthenticated])
     def friends_list(self, request):
         try:
-            # Get only one side of the symmetric friendship
-            friends = Friendship.objects.filter(
-                Q(from_user=request.user) | Q(to_user=request.user),
-                status='accepted'
-            ).filter(
-                Q(from_user__id__lt=F('to_user__id')) 
-            )
-
-            # Extract unique friends from the filtered queryset
-            friends_data = []
-            for friendship in friends:
-                if friendship.from_user == request.user:
-                    friends_data.append(friendship.to_user)
-                else:
-                    friends_data.append(friendship.from_user)
-
-            serializer = SimpleCustomUserSerializer(friends_data, many=True, context={'request': request})
-            return Response(serializer.data, status=status.HTTP_200_OK)
+            friends, meta = build_friends_list(request.user, request.query_params)
+            ser = SimpleCustomUserSerializer(friends, many=True, context={"request": request})
+            return Response({"results": ser.data, "meta": meta}, status=status.HTTP_200_OK)
         except Exception as e:
-            logger.error(f"Error in friends_list: {e}")
-            return Response({'error': 'Unable to retrieve friends list'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.exception("Error in friends_list")
+            return Response({"error": "Unable to retrieve friends list"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    # ------------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['get'], url_path='friends-suggestions', permission_classes=[IsAuthenticated])
     def friends_suggestions(self, request):
         """Get friend suggestions for the Friends tab."""
@@ -1039,6 +1141,7 @@ class FellowshipViewSet(viewsets.ModelViewSet):
             "data": serializer.data
         }, status=status.HTTP_201_CREATED, headers=headers)
 
+    # ---------------------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['get'], url_path='search-friends', permission_classes=[IsAuthenticated])
     @require_litshield_access("covenant")
     def search_friends(self, request):
@@ -1083,6 +1186,7 @@ class FellowshipViewSet(viewsets.ModelViewSet):
             logger.error(f"Error in search_friends: {e}")
             return Response({'error': 'Unable to search friends'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    # ---------------------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['get'], url_path='sent-requests', permission_classes=[IsAuthenticated])
     @require_litshield_access("covenant")
     def sent_requests(self, request):
@@ -1094,6 +1198,7 @@ class FellowshipViewSet(viewsets.ModelViewSet):
             logger.error(f"Error during sent_requests: {e}")
             return Response({'error': 'Unable to fetch sent requests'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    # ---------------------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['get'], url_path='received-requests', permission_classes=[IsAuthenticated])
     @require_litshield_access("covenant")
     def received_requests(self, request):
@@ -1105,6 +1210,7 @@ class FellowshipViewSet(viewsets.ModelViewSet):
             logger.error(f"Error during received_requests: {e}")
             return Response({'error': 'Unable to fetch received requests'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    # ---------------------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['get'], url_path='fellowship-list', permission_classes=[IsAuthenticated])
     @require_litshield_access("covenant")
     def fellowship_list(self, request):
@@ -1183,6 +1289,7 @@ class FellowshipViewSet(viewsets.ModelViewSet):
             logger.error(f"Error in fellowship_list: {e}")
             return Response({'error': 'Unable to retrieve fellowship list'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    # ---------------------------------------------------------------------------------------------------------------
     @action(detail=True, methods=['post'], url_path='accept-request', permission_classes=[IsAuthenticated])
     @require_litshield_access("covenant")
     def accept_request(self, request, pk=None):
@@ -1221,6 +1328,7 @@ class FellowshipViewSet(viewsets.ModelViewSet):
             logger.error(f"Unexpected error in accept_request: {e}")
             return Response({'error': 'An unexpected error occurred'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    # ---------------------------------------------------------------------------------------------------------------
     @action(detail=True, methods=['post'], url_path='decline-request', permission_classes=[IsAuthenticated])
     @require_litshield_access("covenant")
     def decline_request(self, request, pk=None):
@@ -1250,6 +1358,7 @@ class FellowshipViewSet(viewsets.ModelViewSet):
             logger.error(f"Unexpected error in decline_request for user {request.user.id}: {e}")
             return Response({'error': 'An unexpected error occurred.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    # ---------------------------------------------------------------------------------------------------------------
     @action(detail=True, methods=['delete'], url_path='cancel-request', permission_classes=[IsAuthenticated])
     @require_litshield_access("covenant")
     def cancel_request(self, request, pk=None):
@@ -1273,6 +1382,7 @@ class FellowshipViewSet(viewsets.ModelViewSet):
             logger.error(f"Unexpected error in cancel_request: {e}")
             return Response({'error': 'An unexpected error occurred'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    # ---------------------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='delete-fellowship', permission_classes=[IsAuthenticated])
     @require_litshield_access("covenant")
     def delete_fellowship(self, request):
@@ -1302,10 +1412,6 @@ class FellowshipViewSet(viewsets.ModelViewSet):
         except Exception as e:
             logger.error(f"Unexpected error in delete_fellowship for user {request.user.id}: {e}")
             return Response({'error': 'An unexpected error occurred.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-
-
 
 
 

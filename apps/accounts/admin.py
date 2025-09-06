@@ -87,7 +87,7 @@ class CustomUserAdmin(UserAdmin):
     readonly_fields = ['register_date', 'last_login', 'email']
     fieldsets = (
         ('Account Info', {'fields': ('mobile_number', 'mobile_verification_code', 'password', 'username', 'registration_id', 'is_account_paused')}),
-        ('Personal info', {'fields': ('name', 'family', 'email', 'last_email_change', 'email_change_tokens', 'gender', 'label', 'birthday', 'country', 'city', 'primary_language', 'secondary_language', 'image_name')}),
+        ('Personal info', {'fields': ('name', 'family', 'email', 'last_email_change', 'email_change_tokens', 'gender', 'label', 'birthday', 'country', 'city', 'primary_language', 'secondary_language', 'image_name', 'register_date')}),
         ('Sanctuary info', {'fields': ('is_suspended', 'reports_count')}),
         ('Expiry date info', {'fields': ('user_active_code_expiry', 'mobile_verification_expiry', 'reset_token_expiration')}),
         # ('Keys & Security', {'fields': ('two_factor_enabled'),}),

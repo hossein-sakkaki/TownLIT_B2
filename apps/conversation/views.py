@@ -9,6 +9,8 @@ from django.shortcuts import get_object_or_404
 import base64
 import os
 from django.db import transaction
+from django.http import Http404
+
 
         
 
@@ -1192,11 +1194,10 @@ class MessageViewSet(viewsets.ModelViewSet):
     def mark_as_read(self, request):
         message_ids = request.data.get("message_ids")
         dialogue_slug = request.data.get("dialogue_slug")
+        user = request.user
 
         if not isinstance(message_ids, list) or not dialogue_slug:
             return Response({'error': 'message_ids (list) and dialogue_slug are required.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        user = request.user
 
         dialogue = get_object_or_404(Dialogue, slug=dialogue_slug, participants=user)
         messages = Message.objects.filter(id__in=message_ids, dialogue=dialogue)
@@ -1207,28 +1208,29 @@ class MessageViewSet(viewsets.ModelViewSet):
 
         return Response({'message': 'Messages marked as read.'}, status=status.HTTP_200_OK)
 
-        
+    # Seen by -----------------------------------------------------------------------------------------
     @action(detail=True, methods=['get'], url_path='seen-by', permission_classes=[IsAuthenticated])
     def seen_by(self, request, pk=None):
-        message = get_object_or_404(Message, pk=pk)
-
+        message = get_object_or_404(
+            Message.objects.select_related('dialogue', 'sender').prefetch_related('seen_by_users'),
+            pk=pk
+        )
         user = request.user
         dialogue = message.dialogue
 
-        # بررسی عضویت در گفتگو
-        if user not in dialogue.participants.all():
+        # Must be a participant
+        if not dialogue.participants.filter(pk=user.pk).exists():
             return Response({'error': 'Access denied.'}, status=403)
 
-        # بررسی نقش: فقط Founder یا Elder مجاز به دیدن لیست دیده‌شده‌ها هستند
-        is_founder = dialogue.is_founder(user)
-        is_elder = dialogue.is_elder(user)
-
-        if not (is_founder or is_elder):
+        # Only founder/elder can see
+        if not (dialogue.is_founder(user) or dialogue.is_elder(user)):
             return Response({'error': 'Permission denied. You are not allowed to view this info.'}, status=403)
 
-        seen_users = message.seen_by_users.all()
-        serializer = SimpleCustomUserSerializer(seen_users, many=True, context={"request": request})
-        return Response(serializer.data)
+        # ✅ Exclude sender and the requesting user
+        seen_qs = message.seen_by_users.exclude(pk=message.sender_id).exclude(pk=request.user.pk).order_by('username')
+
+        serializer = SimpleCustomUserSerializer(seen_qs, many=True, context={"request": request})
+        return Response(serializer.data, status=200)
 
 
     # Soft Delete Message ----------------------------------------------------------------------------------

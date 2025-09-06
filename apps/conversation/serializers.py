@@ -128,12 +128,13 @@ class UpdateGroupInfoSerializer(serializers.Serializer):
 # Message Serializer -------------------------------------------------------------------
 class MessageSerializer(serializers.ModelSerializer):
     sender = SimpleCustomUserSerializer(read_only=True)
-
     content_encrypted = serializers.SerializerMethodField()
     aes_key_encrypted = serializers.SerializerMethodField()
     encrypted_for_device = serializers.SerializerMethodField()
     is_encrypted = serializers.SerializerMethodField()
-
+    
+    seen_count = serializers.SerializerMethodField()
+    seen_count_others = serializers.SerializerMethodField()
 
     image_url = serializers.SerializerMethodField()
     image_download_url = serializers.SerializerMethodField()
@@ -148,7 +149,7 @@ class MessageSerializer(serializers.ModelSerializer):
         model = Message
         fields = [
             'id', 'dialogue', 'sender', 'timestamp', 'edited_at', 'is_edited',
-            'seen_by_users', 'is_delivered',
+            'seen_by_users', 'seen_count', 'seen_count_others', 'is_delivered',
             'content_encrypted', 'aes_key_encrypted', 'encrypted_for_device',
             'image', 'video', 'file', 'audio',
             'image_url','image_download_url',
@@ -157,12 +158,12 @@ class MessageSerializer(serializers.ModelSerializer):
             'audio_url','audio_download_url',
             'is_system', 'system_event',
             'self_destruct_at', 'is_encrypted', 'is_encrypted_file',
+            
         ]
         extra_kwargs = {
             'sender': {'read_only': True},
             'timestamp': {'read_only': True},
         }
-        
         
 
     def get_is_encrypted(self, obj):
@@ -246,7 +247,21 @@ class MessageSerializer(serializers.ModelSerializer):
     def get_file_url(self, obj):             return self._maybe(obj, 'file', download=False)
     def get_file_download_url(self, obj):    return self._maybe(obj, 'file', download=True)
 
+    # --- Seen counters ---
+    def get_seen_count(self, obj):
+        """Number of viewers excluding the sender."""
+        return obj.seen_by_users.exclude(pk=obj.sender_id).count()
 
+    def get_seen_count_others(self, obj):
+        """
+        Number of viewers excluding both the sender and the requesting user.
+        Useful for "Seen by N" in the current user's UI.
+        """
+        request = self.context.get("request")
+        qs = obj.seen_by_users.exclude(pk=obj.sender_id)
+        if request and request.user and request.user.is_authenticated:
+            qs = qs.exclude(pk=request.user.pk)
+        return qs.count()
 
 # User Dialogue Marker Serializer -----------------------------------------------------
 class UserDialogueMarkerSerializer(serializers.ModelSerializer):

@@ -1,8 +1,8 @@
 from django.db import models
 from django.utils import timezone 
 from django.urls import reverse
+from django.conf import settings
 from django.utils.translation import gettext_lazy as _
-from colorfield.fields import ColorField
 from apps.accounts.models import Address
 from apps.posts.models import Testimony
 from apps.profilesOrg.constants import CHURCH_DENOMINATIONS_CHOICES
@@ -121,32 +121,45 @@ class MigrationHistory(models.Model):
         return f'{self.user.username} - {self.migration_type} on {self.migration_date}'
 
 
-# MEMBER SERVICE TYPE Manager -------------------------------------------------------------
+# Spiritual Service ---------------------------------------------------------------------------------------
 class SpiritualService(models.Model):
-    name = models.CharField(max_length=40, choices=SPIRITUAL_MINISTRY_CHOICES, unique=True, verbose_name='Name of Service')
-    color = ColorField(null=True, blank=True, verbose_name='Color Code')
-    description = models.CharField(max_length=300, null=True, blank=True, verbose_name='Description')
-    is_active = models.BooleanField(default=True, verbose_name='Is Active')
+    name = models.CharField(max_length=40, choices=SPIRITUAL_MINISTRY_CHOICES, unique=True, verbose_name="Name of Service")
+    description = models.CharField(max_length=300, null=True, blank=True, verbose_name="Description")
+    is_sensitive = models.BooleanField(default=False, verbose_name="Requires Credential")  # 👈 NEW
+    is_active = models.BooleanField(default=True, verbose_name="Is Active")
 
     class Meta:
         verbose_name = "Spiritual Service"
-        verbose_name_plural = "Spiritual Services" 
-        
+        verbose_name_plural = "Spiritual Services"
+
     def __str__(self):
         return self.name
-    
 
-# MEMBER SERVICE Manager -----------------------------------------------------------------------------------
+# Member Service Type ---------------------------------------------------------------------------------------
 class MemberServiceType(models.Model):
-    DOCUMENT = FileUpload('profiles', 'documents', 'member_service_type')
-    
+    DOCUMENT = FileUpload("profiles", "documents", "member_service_type")
+
     id = models.BigAutoField(primary_key=True)
-    service = models.ForeignKey(SpiritualService, on_delete=models.CASCADE, related_name='service_instances', verbose_name='Service Name')
-    history = models.CharField(max_length=500, null=True, blank=True, verbose_name='History')
-    document = models.FileField(upload_to=DOCUMENT.dir_upload, blank=True, null=True, validators=[validate_pdf_file, validate_no_executable_file], verbose_name='Documents')
-    register_date = models.DateField(default=timezone.now, verbose_name='Register Date')
-    is_approved = models.BooleanField(default=False, verbose_name='Is Approved')
-    is_active = models.BooleanField(default=True, verbose_name='Is Active')
+    service = models.ForeignKey(SpiritualService, on_delete=models.CASCADE, related_name="service_instances", verbose_name="Service Name")
+    history = models.CharField(max_length=500, null=True, blank=True, verbose_name="History")
+    document = models.FileField(upload_to=DOCUMENT.dir_upload, blank=True, null=True,
+                                validators=[validate_pdf_file, validate_no_executable_file],
+                                verbose_name="Documents")
+    # --- credential metadata ---
+    credential_issuer = models.CharField(max_length=120, null=True, blank=True, verbose_name="Credential Issuer")
+    credential_number = models.CharField(max_length=80, null=True, blank=True, verbose_name="Credential Number")
+    credential_url = models.URLField(null=True, blank=True, verbose_name="Credential URL")
+    issued_at = models.DateField(null=True, blank=True, verbose_name="Issued At")
+    expires_at = models.DateField(null=True, blank=True, verbose_name="Expires At")
+    verified_at = models.DateTimeField(null=True, blank=True, verbose_name="Verified At")
+    verified_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="+", verbose_name="Verified By"
+    )
+    # ---------------------------
+    register_date = models.DateField(auto_now_add=True, verbose_name="Register Date")
+    is_approved = models.BooleanField(default=False, verbose_name="Is Approved")
+    is_active = models.BooleanField(default=True, verbose_name="Is Active")
 
     class Meta:
         verbose_name = "MemberServiceType"
@@ -155,8 +168,6 @@ class MemberServiceType(models.Model):
     def __str__(self):
         return self.service.name
 
-    def get_absolute_url(self):
-        return reverse("member_service_type_detail", kwargs={"pk": self.pk})
               
 
 # Member Manager -------------------------------------------------------------------------------------------

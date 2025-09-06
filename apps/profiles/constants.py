@@ -182,57 +182,135 @@ EDUCATION_DEGREE_CHOICES = [
 
 
 # Spiritual Ministry Choices -------------------------------------------------------------
-ADMINISTRATION = 'administration'
-CHARITABLE_WORK = 'charitable_work'
-CHAPLAINCY = 'chaplaincy'
-CHILDRENS_MINISTRY = 'childrens_ministry'
-CHURCH_PLANTING = 'church_planting'
-COUNSELING = 'counseling'
-DISCIPLESHIP = 'discipleship'
-EVANGELISM = 'evangelism'
-HEALING_MINISTRY = 'healing_ministry'
-HOSPITAL_VISITATION = 'hospital_visitation'
-HOSPITALITY = 'hospitality'
-INTERCESSORY_PRAYER = 'intercessory_prayer'
-LEADERSHIP = 'leadership'
-MEDIA_MINISTRY = 'media_ministry'
-MISSIONARY_WORK = 'missionary_work'
-MUSIC_MINISTRY = 'music_ministry'
-OUTREACH_MINISTRY = 'outreach_ministry'
-PASTORING = 'pastoring'
-PRAYER_MINISTRY = 'prayer_ministry'
-SMALL_GROUP_LEADERSHIP = 'small_group_leadership'
-SPIRITUAL_DIRECTION = 'spiritual_direction'
-SUPPORT_GROUP_LEADERSHIP = 'support_group_leadership'
-TEACHING = 'teaching'
-WORSHIP_LEADERSHIP = 'worship_leadership'
-YOUTH_MINISTRY = 'youth_ministry'
-SPIRITUAL_MINISTRY_CHOICES = [
-    (ADMINISTRATION, 'Administration'),
-    (CHARITABLE_WORK, 'Charitable Work'),
-    (CHAPLAINCY, 'Chaplaincy'),
-    (CHILDRENS_MINISTRY, 'Children’s Ministry'),
-    (CHURCH_PLANTING, 'Church Planting'),
-    (COUNSELING, 'Counseling'),
-    (DISCIPLESHIP, 'Discipleship'),
-    (EVANGELISM, 'Evangelism'),
-    (HEALING_MINISTRY, 'Healing Ministry'),
-    (HOSPITAL_VISITATION, 'Hospital Visitation'),
-    (HOSPITALITY, 'Hospitality'),
-    (INTERCESSORY_PRAYER, 'Intercessory Prayer'),
-    (LEADERSHIP, 'Leadership'),
-    (MEDIA_MINISTRY, 'Media Ministry'),
-    (MISSIONARY_WORK, 'Missionary Work'),
-    (MUSIC_MINISTRY, 'Music Ministry'),
-    (OUTREACH_MINISTRY, 'Outreach Ministry'),
-    (PASTORING, 'Pastoring'),
-    (PRAYER_MINISTRY, 'Prayer Ministry'),
-    (SMALL_GROUP_LEADERSHIP, 'Small Group Leadership'),
-    (SPIRITUAL_DIRECTION, 'Spiritual Direction'),
-    (SUPPORT_GROUP_LEADERSHIP, 'Support Group Leadership'),
-    (TEACHING, 'Teaching'),
-    (WORSHIP_LEADERSHIP, 'Worship Leadership'),
-    (YOUTH_MINISTRY, 'Youth Ministry'),
+# ===================== SENSITIVE (مدرک/تاییدیه لازم) =====================
+PASTORING        = "pastoring"
+TEACHING         = "teaching"
+COUNSELING       = "counseling"
+CHAPLAINCY       = "chaplaincy"
+CHILDREN         = "children"
+YOUTH            = "youth"
+SMALLGROUPS      = "smallgroups"
+BIBLESTUDY       = "biblestudy"
+DISCIPLESHIP     = "discipleship"
+MENTORING        = "mentoring"
+SHEPHERDING      = "shepherding"
+MARRIAGE         = "marriage"
+GRIEFCARE        = "griefcare"
+HOSPITAL         = "hospital"
+PRISON           = "prison"
+VISITATION       = "visitation"
+REFUGEE          = "refugee"
+SENIORS          = "seniors"
+SECURITY         = "security"
+RECONCILIATION   = "reconciliation"
+PEACEMAKING      = "peacemaking"
+LEADERSHIP       = "leadership"
+TUTORING         = "tutoring"
+FINANCE          = "finance"
+GOVERNANCE       = "governance"
+
+SENSITIVE_MINISTRY_CHOICES = [
+    (PASTORING, "Pastoring"),
+    (TEACHING, "Teaching"),
+    (COUNSELING, "Counseling"),
+    (CHAPLAINCY, "Chaplaincy"),
+    (CHILDREN, "Children"),
+    (YOUTH, "Youth"),
+    (SMALLGROUPS, "SmallGroups"),
+    (BIBLESTUDY, "BibleStudy"),
+    (DISCIPLESHIP, "Discipleship"),
+    (MENTORING, "Mentoring"),
+    (SHEPHERDING, "Shepherding"),
+    (MARRIAGE, "Marriage"),
+    (GRIEFCARE, "GriefCare"),
+    (HOSPITAL, "Hospital"),
+    (PRISON, "Prison"),
+    (VISITATION, "Visitation"),
+    (REFUGEE, "Refugee"),
+    (SENIORS, "Seniors"),
+    (SECURITY, "Security"),
+    (RECONCILIATION, "Reconciliation"),
+    (PEACEMAKING, "Peacemaking"),
+    (LEADERSHIP, "Leadership"),
+    (TUTORING, "Tutoring"),
+    (FINANCE, "Finance"),
+    (GOVERNANCE, "Governance"),
 ]
 
+# ===================== STANDARD (بدون مدرک) =====================
+ADMINISTRATION   = "administration"
+HOSPITALITY      = "hospitality"
+GREETER          = "greeter"
+WELCOME          = "welcome"
+NEWCOMER         = "newcomer"
+OUTREACH         = "outreach"
+EVANGELISM       = "evangelism"
+MISSIONS         = "missions"
+PRAYER           = "prayer"
+INTERCESSION     = "intercession"
+WORSHIP          = "worship"
+MUSIC            = "music"
+CHOIR            = "choir"
+BAND             = "band"
+AUDIO            = "audio"
+VIDEO            = "video"
+SOUND            = "sound"
+LIGHTING         = "lighting"
+LIVESTREAM       = "livestream"
+PRODUCTION       = "production"
+MEDIA            = "media"
+PHOTOGRAPHY      = "photography"
+DESIGN           = "design"
+IT               = "it"
+COMMUNICATIONS   = "communications"
+EVENTS           = "events"
+LOGISTICS        = "logistics"
+SETUP            = "setup"
+FACILITIES       = "facilities"
+MAINTENANCE      = "maintenance"
+TRANSPORT        = "transport"
+TRANSLATION      = "translation"
+STEWARDSHIP      = "stewardship"
+TRAINING         = "training"
+BENEVOLENCE      = "benevolence"
 
+STANDARD_MINISTRY_CHOICES = [
+    (ADMINISTRATION, "Administration"),
+    (HOSPITALITY, "Hospitality"),
+    (GREETER, "Greeter"),
+    (WELCOME, "Welcome"),
+    (NEWCOMER, "Newcomer"),
+    (OUTREACH, "Outreach"),
+    (EVANGELISM, "Evangelism"),
+    (MISSIONS, "Missions"),
+    (PRAYER, "Prayer"),
+    (INTERCESSION, "Intercession"),
+    (WORSHIP, "Worship"),
+    (MUSIC, "Music"),
+    (CHOIR, "Choir"),
+    (BAND, "Band"),
+    (AUDIO, "Audio"),
+    (VIDEO, "Video"),
+    (SOUND, "Sound"),
+    (LIGHTING, "Lighting"),
+    (LIVESTREAM, "Livestream"),
+    (PRODUCTION, "Production"),
+    (MEDIA, "Media"),
+    (PHOTOGRAPHY, "Photography"),
+    (DESIGN, "Design"),
+    (IT, "IT"),
+    (COMMUNICATIONS, "Communications"),
+    (EVENTS, "Events"),
+    (LOGISTICS, "Logistics"),
+    (SETUP, "Setup"),
+    (FACILITIES, "Facilities"),
+    (MAINTENANCE, "Maintenance"),
+    (TRANSPORT, "Transport"),
+    (TRANSLATION, "Translation"),
+    (STEWARDSHIP, "Stewardship"),
+    (TRAINING, "Training"),
+    (BENEVOLENCE, "Benevolence"),
+]
+
+# === فهرست نهایی برای choices فیلد مدل (همهٔ آیتم‌ها) ===
+SPIRITUAL_MINISTRY_CHOICES = SENSITIVE_MINISTRY_CHOICES + STANDARD_MINISTRY_CHOICES
