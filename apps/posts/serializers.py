@@ -1,10 +1,12 @@
 from rest_framework import serializers
-from django.urls import reverse
 from django.contrib.contenttypes.models import ContentType
 from .models import ( 
                 Reaction, Comment,
                 Resource, ServiceEvent,
                 Testimony, Moment, Pray, Announcement, Lesson, Preach, Worship, MediaContent, Library, Witness, Mission, Conference, FutureConference
+            )
+from common.file_handlers.media_mixins import (
+                AudioFileMixin, VideoFileMixin, TestimonyThumbnailMixin
             )
 from apps.profiles.models import Member
 from apps.accounts.serializers import SimpleCustomUserSerializer
@@ -93,17 +95,44 @@ class ServiceEventSerializer(serializers.ModelSerializer):
 
 
 # TESTIMONY serializers -----------------------------------------------------------------
-class TestimonySerializer(serializers.ModelSerializer):
-    org_tags = SimpleOrganizationSerializer(many=True, read_only=True)
-    user_tags = SimpleCustomUserSerializer(many=True, read_only=True)
-
+class TestimonySerializer(AudioFileMixin, VideoFileMixin, TestimonyThumbnailMixin, serializers.ModelSerializer):
     class Meta:
         model = Testimony
         fields = [
-            'id', 'title', 'content', 'audio', 'video', 'thumbnail_1', 'thumbnail_2',
-            'org_tags', 'user_tags', 'published_at', 'updated_at', 'is_restricted', 'is_hidden', 'is_active', 'slug'
+            'id', 'type', 'title', 'content',
+            'audio', 'video', 'thumbnail',
+            # mixins will add *_key and *_signed_url outputs:
+            # audio_key, audio_signed_url, video_key, video_signed_url,
+            # thumbnail, thumbnail_signed_url,
+            'published_at', 'updated_at', 'is_active',
+            'content_type', 'object_id',
+            'is_converted',
         ]
-        read_only_fields = ['published_at', 'updated_at', 'is_active', 'slug']
+        read_only_fields = ['published_at', 'updated_at', 'is_converted']
+
+    def validate(self, attrs):
+        """Mirror model.clean() at API layer; support partial updates."""
+        instance = self.instance
+        ttype = attrs.get('type') or (instance.type if instance else None)
+
+        # Get effective values (incoming or existing)
+        content = attrs.get('content') if 'content' in attrs else (instance.content if instance else None)
+        audio = attrs.get('audio') if 'audio' in attrs else (instance.audio if instance else None)
+        video = attrs.get('video') if 'video' in attrs else (instance.video if instance else None)
+
+        if ttype == Testimony.TYPE_WRITTEN:
+            if not content or audio or video:
+                raise serializers.ValidationError("Written testimony requires content and no audio/video.")
+        elif ttype == Testimony.TYPE_AUDIO:
+            if not audio or content or video:
+                raise serializers.ValidationError("Audio testimony requires an audio file and no text/video.")
+        elif ttype == Testimony.TYPE_VIDEO:
+            if not video or content or audio:
+                raise serializers.ValidationError("Video testimony requires a video file and no text/audio.")
+        else:
+            raise serializers.ValidationError("Invalid or missing testimony type.")
+
+        return attrs
 
         
 # WITNESS serializers -----------------------------------------------------------------

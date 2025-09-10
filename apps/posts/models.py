@@ -1,8 +1,6 @@
 from django.db import models
 from django.utils import timezone
-from django.db.models.signals import post_save
-from django.dispatch import receiver
-from django.contrib import messages
+
 # import subprocess
 from django.core.exceptions import ValidationError
 from django.contrib.contenttypes.fields import GenericForeignKey
@@ -25,8 +23,7 @@ from apps.profilesOrg.constants import (
                             )
 
 from utils.common.utils import FileUpload, SlugMixin
-
-# from validators.mediaValidators.image_or_video_validators import validate_image_or_video_file # در آینه باید حتما بررسی شود در فیلد به خاطر ویدیو و هم عکس
+from utils.mixins.media_conversion import MediaConversionMixin
 
 from validators.mediaValidators.pdf_validators import validate_pdf_file
 from validators.mediaValidators.audio_validators import validate_audio_file
@@ -193,51 +190,148 @@ class ServiceEvent(SlugMixin):
 
 
 # Testimony Models ------------------------------------------------------------------------------------------------------
-class Testimony(SlugMixin):
-    id = models.BigAutoField(primary_key=True)
+class Testimony(MediaConversionMixin, models.Model):
+    TYPE_AUDIO = 'audio'
+    TYPE_VIDEO = 'video'
+    TYPE_WRITTEN = 'written'
+    FILE_TYPE_CHOICES = (
+        (TYPE_AUDIO, 'Audio'),
+        (TYPE_VIDEO, 'Video'),
+        (TYPE_WRITTEN, 'Written'),
+    )
+
+    # --- Upload roots ---
     THUMBNAIL = FileUpload('posts', 'photos', 'testimony')
     AUDIO = FileUpload('posts', 'audios', 'testimony')
     VIDEO = FileUpload('posts', 'videos', 'testimony')
-    
+
+    id = models.BigAutoField(primary_key=True)
+
+    # NEW: type of testimony (enables one-per-type owner constraint)
+    type = models.CharField(max_length=10, choices=FILE_TYPE_CHOICES, db_index=True, verbose_name='Type')
+
     title = models.CharField(max_length=50, verbose_name='Title')
     content = models.TextField(null=True, blank=True, verbose_name='Testimony Content')
-    
-    audio = models.FileField(upload_to=AUDIO.dir_upload, null=True, blank=True, validators=[validate_audio_file, validate_no_executable_file], verbose_name='Testimony Audio')
-    video = models.FileField(upload_to=VIDEO.dir_upload, null=True, blank=True, validators=[validate_video_file, validate_no_executable_file], verbose_name='Testimony Video')
-    thumbnail_1 = models.ImageField(upload_to=THUMBNAIL.dir_upload, null=True, blank=True, validators=[validate_image_file, validate_image_size, validate_no_executable_file], verbose_name='Thumbnail 1')    #نیاز به دیفالت دارد 
-    thumbnail_2 = models.ImageField(upload_to=THUMBNAIL.dir_upload, null=True, blank=True, validators=[validate_image_file, validate_image_size, validate_no_executable_file], verbose_name='Thumbnail 2')    #نیاز به دیفالت دارد 
-    
-    org_tags = models.ManyToManyField('profilesOrg.Organization', blank=True, related_name='tagged_in_testimonies', db_index=True, verbose_name='Organization Tags')
-    user_tags = models.ManyToManyField(CustomUser, blank=True, related_name='tagged_in_testimonies', db_index=True, verbose_name='User Tags')
 
+    audio = models.FileField(
+        upload_to=AUDIO.dir_upload, null=True, blank=True,
+        validators=[validate_audio_file, validate_no_executable_file],
+        verbose_name='Testimony Audio'
+    )
+    video = models.FileField(
+        upload_to=VIDEO.dir_upload, null=True, blank=True,
+        validators=[validate_video_file, validate_no_executable_file],
+        verbose_name='Testimony Video'
+    )
+    thumbnail = models.ImageField(
+        upload_to=THUMBNAIL.dir_upload, null=True, blank=True,
+        validators=[validate_image_file, validate_image_size, validate_no_executable_file],
+        verbose_name='Thumbnail 1'
+    )
+
+    org_tags = models.ManyToManyField(
+        'profilesOrg.Organization', blank=True, related_name='tagged_in_testimonies', db_index=True,
+        verbose_name='Organization Tags'
+    )
+    user_tags = models.ManyToManyField(
+        CustomUser, blank=True, related_name='tagged_in_testimonies', db_index=True,
+        verbose_name='User Tags'
+    )
+
+    # Polymorphic owner (Member, Organization, …)
     content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
     object_id = models.PositiveIntegerField()
     content_object = GenericForeignKey('content_type', 'object_id')
-    
+
+    # Moderation / visibility
     is_suspended = models.BooleanField(default=False, verbose_name="Is Suspended")
     reports_count = models.IntegerField(default=0, verbose_name="Reports Count")
-    
-    published_at = models.DateTimeField(default=timezone.now, verbose_name='Published Date')
-    updated_at = models.DateTimeField(null=True, blank=True, verbose_name='Updated Date')
     is_restricted = models.BooleanField(default=False, verbose_name='Restricted')
     is_hidden = models.BooleanField(default=False, verbose_name='Is Hidden')
     is_active = models.BooleanField(default=True, verbose_name='Is Active')
-    url_name = 'testimony_detail' 
+
+    # Publishing
+    published_at = models.DateTimeField(default=timezone.now, verbose_name='Published Date')
+    updated_at = models.DateTimeField(null=True, blank=True, verbose_name='Updated Date')
+
+    # Optional flag used by converter tasks (mirrors your OfficialVideo pattern)
+    is_converted = models.BooleanField(default=False)
+
+    url_name = 'testimony_detail'
+
+    # Tell the converter which fields to process and their upload roots
+    media_conversion_config = {
+        "audio": AUDIO,         # -> convert to MP3 (if needed)
+        "video": VIDEO,         # -> convert to multi-HLS (master.m3u8)
+        "thumbnail": THUMBNAIL,  # -> convert to JPG
+    }
+
+    # --- change tracking for re-conversion on updates ---
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._orig_audio = getattr(self.audio, 'name', None)
+        self._orig_video = getattr(self.video, 'name', None)
+        self._orig_thumb = getattr(self.thumbnail, 'name', None)
+
+    def _media_changed(self) -> bool:
+        """Detect if any media field filename changed."""
+        return any([
+            getattr(self.audio, 'name', None) != self._orig_audio,
+            getattr(self.video, 'name', None) != self._orig_video,
+            getattr(self.thumbnail, 'name', None) != self._orig_thumb,
+        ])
+
+    # --- validation rules by type ---
+    def clean(self):
+        """Enforce mutually exclusive fields by type."""
+        if self.type == self.TYPE_WRITTEN:
+            if not self.content or self.audio or self.video:
+                raise ValidationError("Written testimony requires content and no audio/video.")
+        elif self.type == self.TYPE_AUDIO:
+            if not self.audio or self.content or self.video:
+                raise ValidationError("Audio testimony requires an audio file and no text/video.")
+        elif self.type == self.TYPE_VIDEO:
+            if not self.video or self.content or self.audio:
+                raise ValidationError("Video testimony requires a video file and no text/audio.")
 
     def save(self, *args, **kwargs):
+        """Stamp updated_at and schedule conversion when media is new/changed."""
+        is_new = self._state.adding or kwargs.get("force_insert", False)
+
         if self.pk and self.updated_at is None:
             self.updated_at = timezone.now()
+
+        # If media changed, allow reconversion
+        if not is_new and self._media_changed():
+            self.is_converted = False  # let tasks run again
+
         super().save(*args, **kwargs)
-        
+
+        # Trigger conversion if new instance or media changed
+        if (is_new or self._media_changed()) and not getattr(self, "is_converted", False):
+            self.convert_uploaded_media_async()
+
+        # Refresh originals after save
+        self._orig_audio = getattr(self.audio, 'name', None)
+        self._orig_video = getattr(self.video, 'name', None)
+        self._orig_thumb = getattr(self.thumbnail, 'name', None)
+
     def get_slug_source(self):
         return self.title
-        
+
     def __str__(self):
-        return f"{self.title}"
+        return f"{self.title} [{self.type}]"
 
     class Meta:
         verbose_name = "Testimony"
         verbose_name_plural = "Testimonies"
+        constraints = [
+            # One testimony of a given type per owner (content_object)
+            models.UniqueConstraint(
+                fields=['content_type', 'object_id', 'type'],
+                name='uniq_owner_type_testimony'
+            ),
+        ]
 
 
 # Witness Models -----------------------------------------------------------------------------------------------------------

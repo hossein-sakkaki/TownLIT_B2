@@ -2,6 +2,7 @@ from rest_framework import serializers
 from django.db.models import Q
 from django.utils import timezone 
 from django.core.validators import RegexValidator
+from pathlib import Path
 from .models import (
                 Friendship, Fellowship, MemberServiceType,AcademicRecord,
                 Member, GuestUser,
@@ -16,6 +17,7 @@ from apps.accounts.serializers import (
                                 AddressSerializer, SimpleCustomUserSerializer,
                                 CustomUserSerializer, PublicCustomUserSerializer, LimitedCustomUserSerializer, 
                             )
+from common.file_handlers.document_file import DocumentFileMixin
 from apps.profiles.constants import FRIENDSHIP_STATUS_CHOICES, FELLOWSHIP_RELATIONSHIP_CHOICES, RECIPROCAL_FELLOWSHIP_CHOICES, RECIPROCAL_FELLOWSHIP_MAP
 from django.contrib.auth import get_user_model
 
@@ -179,7 +181,7 @@ class SpiritualServiceSerializer(serializers.ModelSerializer):
 
 
 # Member Service Type Serializer --------------------------------------------
-class MemberServiceTypeSerializer(serializers.ModelSerializer):
+class MemberServiceTypeSerializer(DocumentFileMixin, serializers.ModelSerializer):
     service = SpiritualServiceSerializer(read_only=True)
     service_id = serializers.PrimaryKeyRelatedField(
         queryset=SpiritualService.objects.filter(is_active=True),
@@ -188,22 +190,21 @@ class MemberServiceTypeSerializer(serializers.ModelSerializer):
         required=True,
     )
 
-    # اختیاری: trim و کنترل طول‌ها در سطح سریالایزر
-    history = serializers.CharField(
-        required=False, allow_blank=True, max_length=500
-    )
-    credential_issuer = serializers.CharField(
-        required=False, allow_blank=True, max_length=120
-    )
-    credential_number = serializers.CharField(
-        required=False, allow_blank=True, max_length=80
-    )
-    credential_url = serializers.URLField(
-        required=False, allow_blank=True, validators=[validate_http_https]
-    )
+    remove_document = serializers.BooleanField(write_only=True, required=False, default=False)
+
+    # optional: expose status & review_note to client
+    status = serializers.CharField(read_only=True)
+    review_note = serializers.CharField(read_only=True)
+
+    # inputs
+    history = serializers.CharField(required=False, allow_blank=True, max_length=500)
+    credential_issuer = serializers.CharField(required=False, allow_blank=True, max_length=120)
+    credential_number = serializers.CharField(required=False, allow_blank=True, max_length=80)
+    credential_url = serializers.URLField(required=False, allow_blank=True, validators=[validate_http_https])
     issued_at = serializers.DateField(required=False, allow_null=True)
     expires_at = serializers.DateField(required=False, allow_null=True)
-    remove_document = serializers.BooleanField(write_only=True, required=False, default=False)
+
+    signed_fields = { "document": None }  # adds document_key & document_url
 
     class Meta:
         model = MemberServiceType
@@ -211,36 +212,48 @@ class MemberServiceTypeSerializer(serializers.ModelSerializer):
             "id",
             "service", "service_id",
             "history", "document", "register_date",
-            "is_approved", "is_active",
+            "status", "review_note",
+            "is_active",
             "credential_issuer", "credential_number", "credential_url",
-            "issued_at", "expires_at", "verified_at", "verified_by",
-            "remove_document",  
+            "issued_at", "expires_at", "verified_at", "reviewed_at", "reviewed_by",
+            "remove_document",
         ]
         read_only_fields = [
-            "id", "is_active", "is_approved", "register_date",
-            "verified_at", "verified_by",
+            "id", "is_active", "register_date",
+            "status", "review_note", "verified_at", "reviewed_at", "reviewed_by",
         ]
-        
+
+    # -------- normalize inputs --------
     def to_internal_value(self, data):
-        # trim
         for f in ["history", "credential_issuer", "credential_number", "credential_url"]:
             if f in data and isinstance(data[f], str):
                 data[f] = data[f].strip()
-
-        # تاریخ‌های خالی → None
         for df in ["issued_at", "expires_at"]:
             if df in data and (data[df] == "" or data[df] is None):
                 data[df] = None
-
         return super().to_internal_value(data)
-    
+
+    # -------- validate --------
     def validate(self, attrs):
-        remove_document_flag = attrs.pop("remove_document", False)
-        self._remove_document_flag = bool(remove_document_flag)
+        self._remove_document_flag = bool(attrs.pop("remove_document", False))
+
         service = attrs.get("service") or getattr(self.instance, "service", None)
         incoming_doc = attrs.get("document", serializers.empty)
         current_doc  = getattr(self.instance, "document", None) if self.instance else None
 
+        # lock when approved (non-admin users)
+        request = self.context.get("request")
+        is_admin = bool(request and request.user and request.user.is_staff)
+        current_status = getattr(self.instance, "status", None)
+
+        # deny file remove/replace on approved for non-admins
+        if self.instance and current_status == MemberServiceType.Status.APPROVED and not is_admin:
+            if self._remove_document_flag or incoming_doc is not serializers.empty:
+                raise serializers.ValidationError({
+                    "document": "This service is approved. You cannot change or remove its document."
+                })
+
+        # effective doc for policy check
         if self._remove_document_flag:
             effective_doc = None
         elif incoming_doc is not serializers.empty:
@@ -252,7 +265,6 @@ class MemberServiceTypeSerializer(serializers.ModelSerializer):
         issued_at  = attrs.get("issued_at") or getattr(self.instance, "issued_at", None)
         expires_at = attrs.get("expires_at") or getattr(self.instance, "expires_at", None)
 
-        # سیاست: سرویس حساس → یا سند، یا (issuer + issued_at)
         if service and getattr(service, "is_sensitive", False):
             has_doc = bool(effective_doc)
             has_endorsement = bool(issuer) and bool(issued_at)
@@ -263,40 +275,62 @@ class MemberServiceTypeSerializer(serializers.ModelSerializer):
 
         if issued_at and expires_at and expires_at < issued_at:
             raise serializers.ValidationError({"expires_at": "Expiration date cannot be before issue date."})
-        if issued_at:
-            soft_date_bounds(issued_at)
-        if expires_at:
-            soft_date_bounds(expires_at)
 
         return attrs
 
+    # -------- create --------
+    def create(self, validated_data):
+        # set initial status based on service sensitivity
+        service = validated_data["service"]
+        if service.is_sensitive:
+            validated_data["status"] = MemberServiceType.Status.PENDING
+        else:
+            validated_data["status"] = MemberServiceType.Status.ACTIVE
+
+        # ensure not leaking temp flag
+        validated_data.pop("_remove_document_flag", None)
+        return super().create(validated_data)
+
+    # -------- update --------
     def update(self, instance, validated_data):
+        # forbid changing service
         if "service" in validated_data and validated_data["service"] != instance.service:
             raise serializers.ValidationError({"service_id": "Changing service is not allowed."})
 
-        remove_document_flag = getattr(self, "_remove_document_flag", False)
+        remove_flag = getattr(self, "_remove_document_flag", False)
         new_file = validated_data.get("document", serializers.empty)
 
-        if remove_document_flag and new_file is serializers.empty:
+        # --- file handling (unchanged) ---
+        if remove_flag and new_file is serializers.empty:
             if instance.document:
                 instance.document.delete(save=False)
             instance.document = None
-
-        elif remove_document_flag and new_file is not serializers.empty:
+        elif remove_flag and new_file is not serializers.empty:
             if instance.document:
                 instance.document.delete(save=False)
-
+            # keep new file in validated_data
         elif new_file is not serializers.empty and instance.document:
             instance.document.delete(save=False)
 
-        return super().update(instance, validated_data)
+        # --- detect meaningful content changes ---
+        tracked_fields = (
+            "document", "credential_issuer", "credential_number", "credential_url",
+            "issued_at", "expires_at", "history",
+        )
+        content_changed = any(f in validated_data for f in tracked_fields) or remove_flag
 
-    def create(self, validated_data):
-        validated_data.pop("_remove_document_flag", None)
-        return super().create(validated_data)
-    
-    def _strip(self, v):
-        return v.strip() if isinstance(v, str) else v
+        # اگر قبلاً approved/rejected بوده و تغییری رخ داده → فقط status را pending کن
+        # نکته: review_note / reviewed_at / reviewed_by را دست نمی‌زنیم تا ادمین بعدی سابقه را ببیند
+        try:
+            from apps.profiles.models import MemberServiceType
+            was_final = instance.status in {MemberServiceType.Status.APPROVED, MemberServiceType.Status.REJECTED}
+            if was_final and content_changed:
+                validated_data["status"] = MemberServiceType.Status.PENDING
+                # DO NOT clear review_note / reviewed_at / reviewed_by / verified_at
+        except Exception:
+            pass
+
+        return super().update(instance, validated_data)
 
 
   

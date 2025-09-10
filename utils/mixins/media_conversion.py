@@ -42,16 +42,6 @@ class MediaConversionMixin:
                         source_path=source_path,
                         fileupload=fileupload.to_dict(),
                     )
-
-                # elif file_type == "video" and ext != ".mp4":
-                #     convert_video_to_mp4_task.delay(
-                #         model_name=self.__class__.__name__,
-                #         app_label=self._meta.app_label,
-                #         instance_id=self.pk,
-                #         field_name=field_name,
-                #         source_path=source_path,
-                #         fileupload=fileupload.to_dict(),
-                #     )
                     
                 elif file_type == "video":
                     convert_video_to_multi_hls_task.delay(
@@ -62,7 +52,6 @@ class MediaConversionMixin:
                         source_path=source_path,
                         fileupload=fileupload.to_dict(),
                     )
-
 
                 elif file_type == "audio" and ext != ".mp3":
                     convert_audio_to_mp3_task.delay(

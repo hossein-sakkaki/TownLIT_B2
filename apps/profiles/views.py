@@ -527,6 +527,45 @@ The TownLIT Team 🌍
                 return Response({"error": "You are not authorized to change the visibility of this profile."}, status=status.HTTP_403_FORBIDDEN)
         except Member.DoesNotExist:
             return Response({"error": "Member not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+    # My Testimonies Summary -----------------------------------------------------------------
+    @action(detail=False, methods=['get'], url_path='my-testimonies-summary',permission_classes=[IsAuthenticated])
+    def my_testimonies_summary(self, request):
+        """
+        Lightweight proxy to return audio/video/written summary for current member.
+        No CRUD here; use MeTestimonyViewSet for create/update/delete.
+        """
+        from apps.posts.models import Testimony
+        from django.contrib.contenttypes.models import ContentType
+        member = getattr(request.user, 'member_profile', None) or getattr(request.user, 'member', None)
+        if not member:
+            return Response(
+                {"type": "about:blank", "title": "Not Found", "status": 404,
+                 "detail": "Profile not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        ct = ContentType.objects.get_for_model(Member)
+        base_qs = Testimony.objects.filter(content_type=ct, object_id=member.id, is_active=True)
+
+        def pack(ttype):
+            t = base_qs.filter(type=ttype).first()
+            if not t:
+                return {"exists": False}
+            data = {"exists": True, "id": t.id, "title": t.title, "published_at": t.published_at}
+            if ttype == Testimony.TYPE_WRITTEN:
+                data["excerpt"] = (t.content[:140] + '…') if t.content and len(t.content) > 140 else t.content
+            elif ttype == Testimony.TYPE_AUDIO:
+                data["audio_key"] = getattr(t.audio, 'name', None)
+            elif ttype == Testimony.TYPE_VIDEO:
+                data["video_key"] = getattr(t.video, 'name', None)
+            return data
+
+        return Response({
+            "audio":   pack(Testimony.TYPE_AUDIO),
+            "video":   pack(Testimony.TYPE_VIDEO),
+            "written": pack(Testimony.TYPE_WRITTEN),
+        }, status=status.HTTP_200_OK)
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -609,17 +648,21 @@ class MemberServicesViewSet(viewsets.ViewSet):
     def delete_service(self, request, pk=None):
         member = request.user.member_profile
         try:
-            instance = MemberServiceType.objects.get(pk=pk)
+            instance = MemberServiceType.objects.select_related('service').get(pk=pk)
         except MemberServiceType.DoesNotExist:
             return Response({"detail": "Service item not found."}, status=status.HTTP_404_NOT_FOUND)
 
+        # Ownership check: must belong to this member
         if not instance.member_service_types.filter(pk=member.pk).exists():
             return Response({"detail": "You don't have permission to remove this service."}, status=status.HTTP_403_FORBIDDEN)
 
-        member.service_types.remove(instance)
-        if not instance.member_service_types.exists():
-            instance.is_active = False
-            instance.save(update_fields=["is_active"])
+        with transaction.atomic():
+            # 1) remove file from storage (if any) to avoid orphaned objects
+            if instance.document:
+                instance.document.delete(save=False)
+
+            # 2) Hard delete the record; M2M through rows will be removed automatically
+            instance.delete()
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 

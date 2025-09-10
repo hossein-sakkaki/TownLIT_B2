@@ -1,4 +1,3 @@
-
 # Copyright Choices ----------------------------------------------------------------------------
 COPYRIGHT_YES = 'Yes'
 COPYRIGHT_NO = 'No'

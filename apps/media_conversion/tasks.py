@@ -60,15 +60,12 @@ def handle_converted_file_update(model_name: str, app_label: str, instance_id: i
     except Exception as e:
         logger.error(f"❌ Failed to update file field '{field_name}' on {model_name}[{instance_id}]: {e}")
         raise
-
-
     
 
 # Video Convertor Task to HLS --------------------------------------------------------------------------
 @shared_task(queue="video")
 def convert_video_to_multi_hls_task(model_name, app_label, instance_id, field_name, source_path, fileupload):
     try:
-        from django.db import close_old_connections
         close_old_connections()
 
         logger.info(f"🚧 Celery Task triggered for video conversion: {model_name} (id={instance_id})")
@@ -152,5 +149,4 @@ def convert_audio_to_mp3_task(model_name, app_label, instance_id, field_name, so
 
     except Exception as e:
         logger.error(f"❌ convert_audio_to_mp3_task failed for {model_name} (id={instance_id}) – error: {e}")
-
 

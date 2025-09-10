@@ -47,23 +47,6 @@ def convert_video_to_multi_hls(source_path: str, instance, fileupload: FileUploa
             os.makedirs(subdir, exist_ok=True)
             playlist_path = os.path.join(subdir, "playlist.m3u8")
 
-            # command = [
-            #     "ffmpeg", "-y",
-            #     "-i", temp_input_path,
-            #     "-vf", f"scale={resolution}",
-            #     "-c:v", "libx264",
-            #     "-profile:v", "main",        # سازگار با Safari و موبایل
-            #     "-preset", "veryfast",       # تعادل مناسب سرعت و کیفیت
-            #     "-crf", "23",                # کیفیت خوب (رقابتی با شبکه‌های اجتماعی)
-            #     "-c:a", "aac",
-            #     "-b:a", "96k",
-            #     "-ac", "2",
-            #     "-f", "hls",
-            #     "-hls_time", "4",
-            #     "-hls_playlist_type", "vod",
-            #     "-hls_segment_filename", os.path.join(subdir, "segment_%03d.ts"),
-            #     playlist_path
-            # ]
             command = [
                 "ffmpeg", "-y",
                 "-i", temp_input_path,

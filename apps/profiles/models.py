@@ -137,29 +137,39 @@ class SpiritualService(models.Model):
 
 # Member Service Type ---------------------------------------------------------------------------------------
 class MemberServiceType(models.Model):
+    class Status(models.TextChoices):
+        PENDING  = "pending",  "Pending"
+        APPROVED = "approved", "Approved"
+        REJECTED = "rejected", "Rejected"
+        ACTIVE   = "active",   "Active (no approval needed)"  # for non-sensitive
+
     DOCUMENT = FileUpload("profiles", "documents", "member_service_type")
 
     id = models.BigAutoField(primary_key=True)
-    service = models.ForeignKey(SpiritualService, on_delete=models.CASCADE, related_name="service_instances", verbose_name="Service Name")
-    history = models.CharField(max_length=500, null=True, blank=True, verbose_name="History")
-    document = models.FileField(upload_to=DOCUMENT.dir_upload, blank=True, null=True,
-                                validators=[validate_pdf_file, validate_no_executable_file],
-                                verbose_name="Documents")
-    # --- credential metadata ---
-    credential_issuer = models.CharField(max_length=120, null=True, blank=True, verbose_name="Credential Issuer")
-    credential_number = models.CharField(max_length=80, null=True, blank=True, verbose_name="Credential Number")
-    credential_url = models.URLField(null=True, blank=True, verbose_name="Credential URL")
-    issued_at = models.DateField(null=True, blank=True, verbose_name="Issued At")
-    expires_at = models.DateField(null=True, blank=True, verbose_name="Expires At")
-    verified_at = models.DateTimeField(null=True, blank=True, verbose_name="Verified At")
-    verified_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
-        related_name="+", verbose_name="Verified By"
+    service = models.ForeignKey(SpiritualService, on_delete=models.CASCADE, related_name="service_instances")
+    history = models.CharField(max_length=500, null=True, blank=True)
+    document = models.FileField(
+        upload_to=DOCUMENT.dir_upload, blank=True, null=True,
+        validators=[validate_pdf_file, validate_no_executable_file]
     )
-    # ---------------------------
-    register_date = models.DateField(auto_now_add=True, verbose_name="Register Date")
-    is_approved = models.BooleanField(default=False, verbose_name="Is Approved")
-    is_active = models.BooleanField(default=True, verbose_name="Is Active")
+
+    # credential metadata
+    credential_issuer = models.CharField(max_length=120, null=True, blank=True)
+    credential_number = models.CharField(max_length=80, null=True, blank=True)
+    credential_url    = models.URLField(null=True, blank=True)
+    issued_at         = models.DateField(null=True, blank=True)
+    expires_at        = models.DateField(null=True, blank=True)
+
+    # review flow
+    status      = models.CharField(max_length=16, choices=Status.choices, db_index=True)
+    review_note = models.CharField(max_length=300, null=True, blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    verified_at = models.DateTimeField(null=True, blank=True)
+
+    # misc
+    register_date = models.DateField(auto_now_add=True)
+    is_active     = models.BooleanField(default=True)
 
     class Meta:
         verbose_name = "MemberServiceType"
