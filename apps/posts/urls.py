@@ -8,6 +8,7 @@ from apps.posts.views import (
 )
 from apps.posts.views import MeTestimonyViewSet  # owner-scoped
 
+app_name = 'posts'
 router = DefaultRouter()
 
 # ✅ Owner-scoped endpoints (clean + predictable)

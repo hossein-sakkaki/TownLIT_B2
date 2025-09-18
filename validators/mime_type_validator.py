@@ -7,6 +7,7 @@ def validate_file_type(file_name: str, content_type: str) -> str | None:
     Return 'image', 'video', 'audio', or 'file' if the type is accepted.
     Otherwise, return None.
     """
+    ct = (content_type or "").split(";", 1)[0].strip().lower()
     allowed_mime_types = {
         # Images
         "image/jpeg": "image",
@@ -100,7 +101,7 @@ def validate_file_type(file_name: str, content_type: str) -> str | None:
     }
 
     # First check MIME type
-    kind = allowed_mime_types.get(content_type)
+    kind = allowed_mime_types.get(ct)
 
     # Fallback to file extension
     if not kind:

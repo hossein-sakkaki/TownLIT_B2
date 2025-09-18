@@ -3,8 +3,7 @@ import logging
 from django.utils import timezone
 from datetime import timedelta
 from django.db import transaction
-from .models import Friendship, GuestUser, Member
-from .services import remove_symmetric_friendship
+from .models import GuestUser, Member
 from django.contrib.auth import get_user_model
 
 CustomUser = get_user_model()

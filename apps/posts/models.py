@@ -7,7 +7,7 @@ from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from django.urls import reverse
 from uuid import uuid4
-
+from django.db import transaction
 
 from apps.accounts.models import Address
 from .constants import (
@@ -22,17 +22,18 @@ from apps.profilesOrg.constants import (
                                 CHRISTIAN_WOMENS_ORGANIZATION, CHRISTIAN_MENS_ORGANIZATION, CHRISTIAN_CHILDRENS_ORGANIZATION,
                             )
 
-from utils.common.utils import FileUpload, SlugMixin
+from utils.common.utils import FileUpload
 from utils.mixins.media_conversion import MediaConversionMixin
+from utils.mixins.media_autoconvert import MediaAutoConvertMixin
+from utils.mixins.slug_mixin import SlugMixin
 
 from validators.mediaValidators.pdf_validators import validate_pdf_file
 from validators.mediaValidators.audio_validators import validate_audio_file
 from validators.mediaValidators.video_validators import validate_video_file
 from validators.mediaValidators.image_validators import validate_image_file, validate_image_size
 from validators.security_validators import validate_no_executable_file
-
-
-
+import logging
+logger = logging.getLogger(__name__)
 from django.contrib.auth import get_user_model
 
 CustomUser = get_user_model()
@@ -190,7 +191,7 @@ class ServiceEvent(SlugMixin):
 
 
 # Testimony Models ------------------------------------------------------------------------------------------------------
-class Testimony(MediaConversionMixin, models.Model):
+class Testimony(MediaConversionMixin, MediaAutoConvertMixin, SlugMixin):
     TYPE_AUDIO = 'audio'
     TYPE_VIDEO = 'video'
     TYPE_WRITTEN = 'written'
@@ -210,7 +211,7 @@ class Testimony(MediaConversionMixin, models.Model):
     # NEW: type of testimony (enables one-per-type owner constraint)
     type = models.CharField(max_length=10, choices=FILE_TYPE_CHOICES, db_index=True, verbose_name='Type')
 
-    title = models.CharField(max_length=50, verbose_name='Title')
+    title = models.CharField(max_length=50, null=True, blank=True, verbose_name='Title')
     content = models.TextField(null=True, blank=True, verbose_name='Testimony Content')
 
     audio = models.FileField(
@@ -257,13 +258,13 @@ class Testimony(MediaConversionMixin, models.Model):
     # Optional flag used by converter tasks (mirrors your OfficialVideo pattern)
     is_converted = models.BooleanField(default=False)
 
-    url_name = 'testimony_detail'
+    url_name = 'posts:testimony-detail'
 
     # Tell the converter which fields to process and their upload roots
     media_conversion_config = {
-        "audio": AUDIO,         # -> convert to MP3 (if needed)
-        "video": VIDEO,         # -> convert to multi-HLS (master.m3u8)
-        "thumbnail": THUMBNAIL,  # -> convert to JPG
+        "audio":     {"upload": AUDIO,     "kind": "audio"},
+        "video":     {"upload": VIDEO,     "kind": "video"},
+        "thumbnail": {"upload": THUMBNAIL, "kind": "image"},
     }
 
     # --- change tracking for re-conversion on updates ---
@@ -294,31 +295,42 @@ class Testimony(MediaConversionMixin, models.Model):
             if not self.video or self.content or self.audio:
                 raise ValidationError("Video testimony requires a video file and no text/audio.")
 
-    def save(self, *args, **kwargs):
-        """Stamp updated_at and schedule conversion when media is new/changed."""
-        is_new = self._state.adding or kwargs.get("force_insert", False)
+    # --- ensure non-empty title for slug source ---
+    def _ensure_default_title(self):
+        if self.title and self.title.strip():
+            return
+        # Friendly default title
+        type_label = dict(self.FILE_TYPE_CHOICES).get(self.type, self.type).title()
+        owner_name = None
+        try:
+            # Try common owner attributes
+            if hasattr(self.content_object, "user") and getattr(self.content_object.user, "username", None):
+                owner_name = self.content_object.user.username
+            elif hasattr(self.content_object, "name") and self.content_object.name:
+                owner_name = self.content_object.name
+        except Exception:
+            pass
 
-        if self.pk and self.updated_at is None:
-            self.updated_at = timezone.now()
+        if owner_name:
+            self.title = f"{type_label} testimony by {owner_name}"
+        else:
+            self.title = f"{type_label} testimony {timezone.now().strftime('%Y%m%d-%H%M%S')}"
 
-        # If media changed, allow reconversion
-        if not is_new and self._media_changed():
-            self.is_converted = False  # let tasks run again
-
-        super().save(*args, **kwargs)
-
-        # Trigger conversion if new instance or media changed
-        if (is_new or self._media_changed()) and not getattr(self, "is_converted", False):
-            self.convert_uploaded_media_async()
-
-        # Refresh originals after save
-        self._orig_audio = getattr(self.audio, 'name', None)
-        self._orig_video = getattr(self.video, 'name', None)
-        self._orig_thumb = getattr(self.thumbnail, 'name', None)
+    def on_media_converted(self, field_name: str, update_fields: list[str]) -> None:
+        if field_name in ("audio", "video"):
+            if not self.is_active:
+                self.is_active = True
+                update_fields.append("is_active")
 
     def get_slug_source(self):
-        return self.title
+        """Never return empty; SlugMixin relies on this."""
+        if self.title and self.title.strip():
+            return self.title
+        return f"{self.type}-testimony-{(self.published_at or timezone.now()).strftime('%Y%m%d-%H%M%S')}"
 
+    def before_autoconvert_save(self):
+        self._ensure_default_title()
+        
     def __str__(self):
         return f"{self.title} [{self.type}]"
 

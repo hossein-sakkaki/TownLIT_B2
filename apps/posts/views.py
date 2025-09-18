@@ -1,12 +1,14 @@
-from django.shortcuts import render
 from django.utils import timezone
 from django.contrib.contenttypes.models import ContentType
 from django.db.models import Q
+from django.db import transaction, IntegrityError
 
 from rest_framework import status, viewsets
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from rest_framework.exceptions import NotFound
 
 from apps.posts.permissions import IsOwnerOfMemberTestimony
 from apps.profiles.models import Friendship
@@ -32,6 +34,10 @@ from apps.profilesOrg.models import (
                     ChristianCounselingCenter, ChristianWorshipMinistry, ChristianConferenceCenter, ChristianEducationalInstitution, 
                     ChristianChildrenOrganization, ChristianYouthOrganization, ChristianWomensOrganization, ChristianMensOrganization
                 )
+from django.db import IntegrityError, DatabaseError
+
+import logging
+logger = logging.getLogger(__name__)
 from django.contrib.auth import get_user_model
 
 CustomUser = get_user_model()
@@ -123,38 +129,46 @@ class CommentViewSet(viewsets.ModelViewSet):
 class MeTestimonyViewSet(ReactionMixin, CommentMixin, viewsets.GenericViewSet):
     serializer_class = TestimonySerializer
     permission_classes = [IsAuthenticated]
-    queryset = Testimony.objects.all()  # DRF needs a base; we scope in get_queryset()
+    queryset = Testimony.objects.all()
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+    lookup_field = "slug"
+    lookup_url_kwarg = "slug"
 
     def _member(self, request):
-        return getattr(request.user, 'member_profile', None) or getattr(request.user, 'member', None)
+        return getattr(request.user, "member_profile", None) or getattr(request.user, "member", None)
 
     def _owner_qs(self, request):
-        from apps.profiles.models import Member
         member = self._member(request)
         if not member:
             return Testimony.objects.none()
-        ct = ContentType.objects.get_for_model(Member)
-        return Testimony.objects.filter(content_type=ct, object_id=member.id, is_active=True)
+        ct = ContentType.objects.get_for_model(member.__class__)  # ← مهم
+        return Testimony.objects.filter(content_type=ct, object_id=member.id)
 
     def get_queryset(self):
-        # Scope all detail routes to owner
         return self._owner_qs(self.request)
-    
-    # Enable standard detail route for mixins (GET /me/testimonies/<pk>/)
-    def retrieve(self, request, pk=None):
-        obj = self.get_queryset().filter(pk=pk).first()
-        if not obj:
-            return Response({"type": "about:blank", "title": "Not Found", "status": 404, "detail": "Not found."},
-                            status=status.HTTP_404_NOT_FOUND)
-        return Response(self.get_serializer(obj, context={'request': request}).data)
+
+    def get_object(self):
+        qs = self.get_queryset()
+        lookup_val = self.kwargs.get(self.lookup_url_kwarg) or self.kwargs.get("pk")
+        if lookup_val is None:
+            raise NotFound("Missing identifier")
+        obj = qs.filter(slug=lookup_val).first()
+        if obj:
+            return obj
+        if str(lookup_val).isdigit():
+            obj = qs.filter(pk=int(lookup_val)).first()
+            if obj:
+                return obj
+        raise NotFound("Not found")
+
+    def retrieve(self, request, *args, **kwargs):
+        obj = self.get_object()
+        return Response(self.get_serializer(obj, context={"request": request}).data)
 
     # ---------- Summary ----------
     @action(detail=False, methods=['get'], url_path='summary')
     def summary(self, request):
-        """
-        Return minimal info for three cards (audio/video/written).
-        """
-        qs = self._owner_qs(request)
+        qs = self._owner_qs(request).filter(is_active=True)
 
         def pack(ttype):
             t = qs.filter(type=ttype).first()
@@ -163,6 +177,7 @@ class MeTestimonyViewSet(ReactionMixin, CommentMixin, viewsets.GenericViewSet):
             data = {
                 "exists": True,
                 "id": t.id,
+                "slug": t.slug,
                 "title": t.title,
                 "published_at": t.published_at,
                 "is_converted": t.is_converted,
@@ -181,85 +196,88 @@ class MeTestimonyViewSet(ReactionMixin, CommentMixin, viewsets.GenericViewSet):
             "video":   pack(Testimony.TYPE_VIDEO),
             "written": pack(Testimony.TYPE_WRITTEN),
         })
-
+        
     # ---------- Create ----------
     @action(detail=False, methods=['post'], url_path=r'create/(?P<ttype>audio|video|written)')
+    @transaction.atomic
     def create_for_type(self, request, ttype=None):
-        """
-        Create a testimony of the given type for the current member.
-        409 if a testimony of that type already exists.
-        """
-        from apps.profiles.models import Member
         member = self._member(request)
         if not member:
             return Response(
-                {"type": "about:blank", "title": "Not Found", "status": 404, "detail": "Member profile not found."},
+                {"type":"about:blank","title":"Not Found","status":404,"detail":"Member profile not found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        ct = ContentType.objects.get_for_model(Member)
-        exists = Testimony.objects.filter(content_type=ct, object_id=member.id, type=ttype, is_active=True).exists()
-        if exists:
-            return Response(
-                {"type": "about:blank", "title": "Conflict", "status": 409, "detail": "Testimony already exists for this type."},
-                status=status.HTTP_409_CONFLICT,
-            )
+        existing = Testimony.objects.filter(
+            content_type=ContentType.objects.get_for_model(member.__class__),
+            object_id=member.id,
+            type=ttype,
+        ).first()
 
-        payload = request.data.copy()
-        payload.update({"content_type": ct.id, "object_id": member.id, "type": ttype})
+        if existing:
+            if request.query_params.get("replace") in ("1", "true", "yes"):
+                serializer = self.get_serializer(existing, data=request.data, partial=True, context={'request': request})
+                serializer.is_valid(raise_exception=True)
+                obj = serializer.save()  # 👈 فقط ذخیره؛ dispatch نکن
+                return Response(self.get_serializer(obj, context={'request': request}).data, status=status.HTTP_200_OK)
 
-        ser = self.get_serializer(data=payload, context={'request': request})
-        ser.is_valid(raise_exception=True)
-        obj = ser.save()
+            return Response({
+                "type":"about:blank","title":"Conflict","status":409,
+                "detail":"Testimony already exists for this type.",
+                "existing_id": existing.id, "existing_slug": existing.slug,
+            }, status=status.HTTP_409_CONFLICT)
+
+        data = request.data.copy()
+        data['type'] = ttype
+        serializer = self.get_serializer(data=data, context={'request': request, 'ttype': ttype})
+        serializer.is_valid(raise_exception=True)
+
+        obj = serializer.save(
+            content_type=ContentType.objects.get_for_model(member.__class__),
+            object_id=member.id,
+            type=ttype,
+        )
+        logger.info("✅ Created testimony id=%s slug=%s type=%s", obj.id, obj.slug, obj.type)
+
+        try:
+            from django.apps import apps
+            T = apps.get_model('posts','Testimony')
+            logger.info("✅ Created testimony id=%s (exists now? %s)",
+                        obj.id, T.objects.filter(pk=obj.id).exists())
+        except Exception:
+            logger.exception("Post-save debug check failed")
+
         return Response(self.get_serializer(obj, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
-    # ---------- Update (partial) ----------
-    @action(detail=False, methods=['patch'], url_path=r'update/(?P<ttype>audio|video|written)/(?P<pk>\d+)',
-            permission_classes=[IsAuthenticated, IsOwnerOfMemberTestimony])
-    def update_for_type(self, request, ttype=None, pk=None):
-        """
-        Partial update/replace (media/text) for the owned testimony of given type.
-        """
-        obj = self.get_queryset().filter(pk=pk, type=ttype).first()
-        if not obj:
-            return Response({"type": "about:blank", "title": "Not Found", "status": 404, "detail": "Not found."},
-                            status=status.HTTP_404_NOT_FOUND)
-        self.check_object_permissions(request, obj)
 
+    # ---------- Update (partial) ----------
+    @action(detail=False, methods=['patch'],
+            url_path=r'update/(?P<ttype>audio|video|written)/(?P<slug>[-\w]+)')
+    def update_for_type(self, request, ttype=None, slug=None):
+        obj = self.get_queryset().filter(slug=slug, type=ttype).first()
+        if not obj:
+            raise NotFound("Not found")
         ser = self.get_serializer(obj, data=request.data, partial=True, context={'request': request})
         ser.is_valid(raise_exception=True)
         obj = ser.save()
         return Response(self.get_serializer(obj, context={'request': request}).data)
 
     # ---------- Delete ----------
-    @action(detail=False, methods=['delete'], url_path=r'delete/(?P<ttype>audio|video|written)/(?P<pk>\d+)',
-            permission_classes=[IsAuthenticated, IsOwnerOfMemberTestimony])
-    def delete_for_type(self, request, ttype=None, pk=None):
-        """
-        Hard delete (or switch to soft-delete if desired).
-        """
-        obj = self.get_queryset().filter(pk=pk, type=ttype).first()
+    @action(detail=False, methods=['delete'],
+            url_path=r'delete/(?P<ttype>audio|video|written)/(?P<slug>[-\w]+)')
+    def delete_for_type(self, request, ttype=None, slug=None):
+        obj = self.get_queryset().filter(slug=slug, type=ttype).first()
         if not obj:
-            return Response({"type": "about:blank", "title": "Not Found", "status": 404, "detail": "Not found."},
-                            status=status.HTTP_404_NOT_FOUND)
-        self.check_object_permissions(request, obj)
-
+            raise NotFound("Not found")
         obj.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     # ---------- Detail (optional) ----------
-    @action(detail=False, methods=['get'], url_path=r'detail/(?P<pk>\d+)',
-            permission_classes=[IsAuthenticated, IsOwnerOfMemberTestimony])
-    def detail(self, request, pk=None):
-        """
-        Get full serializer output for an owned testimony.
-        Useful for edit screens.
-        """
-        obj = self.get_queryset().filter(pk=pk).first()
+    @action(detail=False, methods=['get'], url_path=r'detail/(?P<slug>[-\w]+)')
+    def detail(self, request, slug=None):
+        obj = self.get_queryset().filter(slug=slug).first()
         if not obj:
-            return Response({"type": "about:blank", "title": "Not Found", "status": 404, "detail": "Not found."},
-                            status=status.HTTP_404_NOT_FOUND)
-        self.check_object_permissions(request, obj)
+            raise NotFound("Not found")
         return Response(self.get_serializer(obj, context={'request': request}).data)
 
 
@@ -366,6 +384,7 @@ class TestimonyViewSet(viewsets.ModelViewSet, CommentMixin, ReactionMixin, Organ
     serializer_class = TestimonySerializer
     permission_classes = [IsAuthenticated]
     lookup_field = 'slug'
+    lookup_url_kwarg = 'slug'
 
     def get_queryset(self):
         queryset = super().get_queryset()
