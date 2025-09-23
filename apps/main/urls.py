@@ -38,5 +38,6 @@ router.register(r'prayers', PrayerViewSet, basename='main-prayers')  # keep URL 
 urlpatterns = router.urls + [
     # S3 media proxy endpoint (keep stable)
     path("media-proxy/", serve_s3_media_file, name="serve-s3-media"),
+    
     # path('', coming_soon_view, name='coming-soon'),  # keep disabled if unused
 ]

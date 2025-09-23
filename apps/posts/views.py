@@ -216,9 +216,13 @@ class MeTestimonyViewSet(ReactionMixin, CommentMixin, viewsets.GenericViewSet):
 
         if existing:
             if request.query_params.get("replace") in ("1", "true", "yes"):
-                serializer = self.get_serializer(existing, data=request.data, partial=True, context={'request': request})
+                payload = {**request.data.dict(), "type": ttype}
+                for k, f in request.FILES.items():
+                    payload[k] = f
+
+                serializer = self.get_serializer(existing, data=payload, partial=True, context={'request': request})
                 serializer.is_valid(raise_exception=True)
-                obj = serializer.save()  # 👈 فقط ذخیره؛ dispatch نکن
+                obj = serializer.save()
                 return Response(self.get_serializer(obj, context={'request': request}).data, status=status.HTTP_200_OK)
 
             return Response({
@@ -226,10 +230,11 @@ class MeTestimonyViewSet(ReactionMixin, CommentMixin, viewsets.GenericViewSet):
                 "detail":"Testimony already exists for this type.",
                 "existing_id": existing.id, "existing_slug": existing.slug,
             }, status=status.HTTP_409_CONFLICT)
+        payload = {**request.data.dict(), "type": ttype}
+        for k, f in request.FILES.items():
+            payload[k] = f
 
-        data = request.data.copy()
-        data['type'] = ttype
-        serializer = self.get_serializer(data=data, context={'request': request, 'ttype': ttype})
+        serializer = self.get_serializer(data=payload, context={'request': request, 'ttype': ttype})
         serializer.is_valid(raise_exception=True)
 
         obj = serializer.save(

@@ -282,28 +282,33 @@ class Testimony(MediaConversionMixin, MediaAutoConvertMixin, SlugMixin):
             getattr(self.thumbnail, 'name', None) != self._orig_thumb,
         ])
 
-    # --- validation rules by type ---
+    # --- validation rules by type ---            
     def clean(self):
-        """Enforce mutually exclusive fields by type."""
         if self.type == self.TYPE_WRITTEN:
             if not self.content or self.audio or self.video:
                 raise ValidationError("Written testimony requires content and no audio/video.")
+            if not self.title or not self.title.strip():
+                raise ValidationError("Written testimony requires a title.")
         elif self.type == self.TYPE_AUDIO:
             if not self.audio or self.content or self.video:
                 raise ValidationError("Audio testimony requires an audio file and no text/video.")
         elif self.type == self.TYPE_VIDEO:
             if not self.video or self.content or self.audio:
                 raise ValidationError("Video testimony requires a video file and no text/audio.")
+        else:
+            raise ValidationError("Invalid testimony type.")
 
     # --- ensure non-empty title for slug source ---
     def _ensure_default_title(self):
+        if self.type == self.TYPE_WRITTEN:
+            return
+
         if self.title and self.title.strip():
             return
-        # Friendly default title
+
         type_label = dict(self.FILE_TYPE_CHOICES).get(self.type, self.type).title()
         owner_name = None
         try:
-            # Try common owner attributes
             if hasattr(self.content_object, "user") and getattr(self.content_object.user, "username", None):
                 owner_name = self.content_object.user.username
             elif hasattr(self.content_object, "name") and self.content_object.name:

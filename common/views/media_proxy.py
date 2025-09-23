@@ -4,6 +4,7 @@ from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework.permissions import AllowAny
 from urllib.parse import unquote, quote
+from django.urls import reverse
 import logging
 import boto3
 from botocore.exceptions import ClientError
@@ -67,10 +68,13 @@ def serve_s3_media_file(request):
                 raw_content = s3_response['Body'].read().decode("utf-8")
                 content_type = "application/x-mpegURL"
 
-
                 base_path = "/".join(key.split("/")[:-1])
-                # proxy_base = request.build_absolute_uri('/media-proxy/')
-                proxy_base = "/media-proxy/"
+
+                # ✅ داینامیک: /api/v1/media-proxy/ (با توجه به include)
+                proxy_base_path = reverse("main:serve-s3-media")  # -> "/api/v1/media-proxy/"
+                # اگر URL کامل لازم داری:
+                # proxy_base = request.build_absolute_uri(proxy_base_path)
+                proxy_base = proxy_base_path
 
                 def fix_line(line):
                     line = line.strip()

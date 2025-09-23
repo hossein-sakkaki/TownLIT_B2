@@ -113,20 +113,28 @@ class TestimonySerializer(AudioFileMixin, VideoFileMixin, TestimonyThumbnailMixi
             'content_type','object_id','is_active',
         ]
 
+    # serializers.py
     def validate(self, attrs):
         instance = self.instance
         ttype = attrs.get('type') or (instance.type if instance else None) or self.context.get('ttype')
 
+        title   = attrs.get('title')   if 'title'   in attrs else (instance.title   if instance else None)
         content = attrs.get('content') if 'content' in attrs else (instance.content if instance else None)
-        audio = attrs.get('audio') if 'audio' in attrs else (instance.audio if instance else None)
-        video = attrs.get('video') if 'video' in attrs else (instance.video if instance else None)
+        audio   = attrs.get('audio')   if 'audio'   in attrs else (instance.audio   if instance else None)
+        video   = attrs.get('video')   if 'video'   in attrs else (instance.video   if instance else None)
 
         if ttype == Testimony.TYPE_WRITTEN:
             if not content or audio or video:
                 raise serializers.ValidationError("Written testimony requires content and no audio/video.")
+            if not title or not str(title).strip():
+                raise serializers.ValidationError({"title": "Title is required for written testimony."})
+            if len(str(title)) > 50:
+                raise serializers.ValidationError({"title": "Max 50 characters."})
+
         elif ttype == Testimony.TYPE_AUDIO:
             if not audio or content or video:
                 raise serializers.ValidationError("Audio testimony requires an audio file and no text/video.")
+
         elif ttype == Testimony.TYPE_VIDEO:
             if not video or content or audio:
                 raise serializers.ValidationError("Video testimony requires a video file and no text/audio.")
@@ -135,6 +143,7 @@ class TestimonySerializer(AudioFileMixin, VideoFileMixin, TestimonyThumbnailMixi
 
         attrs['type'] = ttype
         return attrs
+
 
     def create(self, validated_data):
         validated_data.setdefault('type', self.context.get('ttype'))
