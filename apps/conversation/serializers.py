@@ -266,7 +266,8 @@ class MessageSerializer(serializers.ModelSerializer):
 # User Dialogue Marker Serializer -----------------------------------------------------
 class UserDialogueMarkerSerializer(serializers.ModelSerializer):
     dialogue_id = serializers.IntegerField(source='dialogue.id', read_only=True)
+    dialogue_slug = serializers.CharField(source='dialogue.slug', read_only=True)
 
     class Meta:
         model = UserDialogueMarker
-        fields = ['id', 'user', 'dialogue_id', 'is_sensitive', 'delete_policy']
+        fields = ['id', 'user', 'dialogue_id', 'dialogue_slug', 'is_sensitive', 'delete_policy']

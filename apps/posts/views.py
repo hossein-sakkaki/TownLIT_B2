@@ -124,7 +124,7 @@ class CommentViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(instance)
         return Response(serializer.data, status=status.HTTP_200_OK)
     
-    
+
 # Me Testimony ViewSet -------------------------------------------------------------------
 class MeTestimonyViewSet(ReactionMixin, CommentMixin, viewsets.GenericViewSet):
     serializer_class = TestimonySerializer
