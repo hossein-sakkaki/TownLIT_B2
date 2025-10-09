@@ -363,7 +363,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     show_phone_number = models.BooleanField(default=False, verbose_name="Show Phone Number Publicly")
     show_country = models.BooleanField(default=False, verbose_name="Show Country Publicly")
     show_city = models.BooleanField(default=False, verbose_name="Show City Publicly")
-    
+
     is_account_paused = models.BooleanField(default=False, verbose_name='Is Account Paused')
     
     

@@ -36,3 +36,6 @@ class Command(BaseCommand):
                 f"Successfully seeded SocialMediaType table: {created_count} created, {updated_count} updated."
             )
         )
+
+
+# docker compose exec backend python manage.py seed_social_media

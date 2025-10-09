@@ -11,7 +11,10 @@ from .models import (
                 ChristianChildrenOrganization, ChristianYouthOrganization, ChristianWomensOrganization, ChristianMensOrganization,
                 Service, OrganizationService
             )
-from apps.posts.serializers import SimpleOrganizationSerializer, SimpleMemberSerializer
+from .serializers_min import SimpleOrganizationSerializer
+
+
+from apps.profiles.serializers_min import SimpleMemberSerializer
 from apps.accounts.serializers import AddressSerializer, SocialMediaLinkSerializer
 from apps.store.serializers import StoreSerializer
 
@@ -19,7 +22,7 @@ from django.contrib.auth import get_user_model
 
 CustomUser = get_user_model()
 
-
+    
 # EDUCATION PROGRAM Serializer ---------------------------------------------------------------------
 class EducationProgramSerializer(serializers.ModelSerializer):
     class Meta:

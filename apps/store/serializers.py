@@ -3,7 +3,7 @@ from django.utils import timezone
 
 from .models import Store, ServiceCategory
 from apps.accounts.serializers import AddressSerializer
-from apps.posts.serializers import SimpleOrganizationSerializer
+from apps.profilesOrg.serializers_min import SimpleOrganizationSerializer
 
 
  # SERVICE CATEGORY Serializer -----------------------------------------------------------------------
