@@ -1,28 +1,32 @@
 from rest_framework import serializers
-from django.db.models import Q
+from django.apps import apps
+from django.db.models import Q, Count
 from django.utils import timezone 
 from django.core.validators import RegexValidator
+from django.contrib.contenttypes.models import ContentType
+
 from pathlib import Path
 from .models import (
-                Friendship, Fellowship, MemberServiceType,AcademicRecord,
+                Friendship, Fellowship, MemberServiceType,AcademicRecord, StudyStatus,
                 Member, GuestUser,
                 ClientRequest, Client, Customer, MigrationHistory,
                 SpiritualGift, SpiritualGiftSurveyQuestion, SpiritualGiftSurveyResponse, MemberSpiritualGifts,
                 SpiritualService
             )
+from .helpers import testimonies_for_member
+from apps.profilesOrg.serializers_min import SimpleOrganizationSerializer
+from apps.accounts.models import SocialMediaLink
 from validators.files_validator import validate_http_https, soft_date_bounds
-from apps.profilesOrg.serializers import OrganizationSerializer
-from apps.posts.serializers import SimpleOrganizationSerializer, SimpleCustomUserSerializer
 from apps.accounts.serializers import (
                                 AddressSerializer, SimpleCustomUserSerializer,
                                 CustomUserSerializer, PublicCustomUserSerializer, LimitedCustomUserSerializer, 
+                                SocialMediaLinkReadOnlySerializer
                             )
 from common.file_handlers.document_file import DocumentFileMixin
 from apps.profiles.constants import FRIENDSHIP_STATUS_CHOICES, FELLOWSHIP_RELATIONSHIP_CHOICES, RECIPROCAL_FELLOWSHIP_CHOICES, RECIPROCAL_FELLOWSHIP_MAP
 from django.contrib.auth import get_user_model
 
 CustomUser = get_user_model()
-
 
 
 # FRIENDSHIP Serializer ---------------------------------------------------------------
@@ -71,12 +75,24 @@ class FriendshipSerializer(serializers.ModelSerializer):
             **validated_data
         )
 
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        # hard guard: if any side is deleted, suppress this record
+        try:
+            if instance.from_user.is_deleted or instance.to_user.is_deleted:
+                return None
+        except Exception:
+            pass
+        return rep
 
 # FELLOWSHIP Serializer ---------------------------------------------------------------
 class FellowshipSerializer(serializers.ModelSerializer):
     from_user = SimpleCustomUserSerializer(read_only=True)
     to_user = SimpleCustomUserSerializer(read_only=True)
-    to_user_id = serializers.PrimaryKeyRelatedField(queryset=CustomUser.objects.all(), write_only=True)
+    to_user_id = serializers.PrimaryKeyRelatedField(
+        queryset=CustomUser.objects.filter(is_deleted=False, is_active=True),
+        write_only=True
+    )    
     reciprocal_fellowship_type = serializers.CharField(required=False)
 
     class Meta:
@@ -110,10 +126,20 @@ class FellowshipSerializer(serializers.ModelSerializer):
         fellowship_type = data.get('fellowship_type')
         reciprocal_fellowship_type = RECIPROCAL_FELLOWSHIP_MAP.get(fellowship_type)
 
+        # self-checks
         if from_user == to_user:
             raise serializers.ValidationError({"error": "You cannot send a fellowship request to yourself."})
 
-        existing_fellowship = Fellowship.objects.filter(
+        # ⛔️ deleted guards
+        if getattr(from_user, "is_deleted", False):
+            raise serializers.ValidationError({"error": "Your account is deactivated. Reactivate to manage fellowships."})
+        if getattr(to_user, "is_deleted", False):
+            raise serializers.ValidationError({"error": "You cannot send a fellowship request to a deactivated account."})
+
+        # پایه‌ی کوئری: فقط لبه‌هایی که هیچ‌کدام حذف‌شده نیستند
+        base_qs = Fellowship.objects.filter(from_user__is_deleted=False, to_user__is_deleted=False)
+
+        existing_fellowship = base_qs.filter(
             Q(from_user=from_user, to_user=to_user, fellowship_type=fellowship_type, status='Accepted') |
             Q(from_user=to_user, to_user=from_user, fellowship_type=reciprocal_fellowship_type, status='Accepted')
         ).exists()
@@ -122,7 +148,7 @@ class FellowshipSerializer(serializers.ModelSerializer):
                 "error": f"A fellowship of type '{fellowship_type}' or its reciprocal already exists."
             })
 
-        existing_reciprocal_fellowship = Fellowship.objects.filter(
+        existing_reciprocal_fellowship = base_qs.filter(
             Q(from_user=from_user, to_user=to_user, fellowship_type=reciprocal_fellowship_type, status='Accepted') |
             Q(from_user=to_user, to_user=from_user, fellowship_type=fellowship_type, status='Accepted')
         ).exists()
@@ -130,8 +156,8 @@ class FellowshipSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({
                 "error": f"A reciprocal fellowship of type '{reciprocal_fellowship_type}' already exists."
             })
-            
-        duplicate_fellowship = Fellowship.objects.filter(
+
+        duplicate_fellowship = base_qs.filter(
             from_user=from_user,
             to_user=to_user,
             fellowship_type=fellowship_type,
@@ -142,7 +168,7 @@ class FellowshipSerializer(serializers.ModelSerializer):
                 "error": f"A pending fellowship request as '{fellowship_type}' already exists."
             })
 
-        reciprocal_pending_fellowship = Fellowship.objects.filter(
+        reciprocal_pending_fellowship = base_qs.filter(
             Q(from_user=from_user, to_user=to_user, status='Pending') |
             Q(from_user=to_user, to_user=from_user, status='Pending'),
             fellowship_type=reciprocal_fellowship_type
@@ -151,10 +177,14 @@ class FellowshipSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({
                 "error": f"You cannot send a fellowship request as '{fellowship_type}' because a pending request already exists as '{reciprocal_fellowship_type}'."
             })
+
         return data
 
     def create(self, validated_data):
         to_user = validated_data.pop('to_user_id')
+        if getattr(to_user, "is_deleted", False):
+            raise serializers.ValidationError("Cannot create fellowship with a deactivated account.")
+
         reciprocal_fellowship_type = validated_data.pop('reciprocal_fellowship_type', None)
         return Fellowship.objects.create(
             to_user=to_user,
@@ -162,13 +192,43 @@ class FellowshipSerializer(serializers.ModelSerializer):
             **validated_data
         )
 
+    def to_representation(self, instance):
+        if getattr(instance.from_user, "is_deleted", False) or getattr(instance.to_user, "is_deleted", False):
+            return None
+        return super().to_representation(instance)
+
 
 # ACADEMIC RECORD Serializer --------------------------------------------------------------------------------
+class YearMonthDateField(serializers.DateField):
+    def __init__(self, **kwargs):
+        super().__init__(format="%Y-%m", input_formats=["%Y-%m", "%Y-%m-%d"], **kwargs)
+
+    def to_internal_value(self, value):
+        date = super().to_internal_value(value)
+        # force day=1 to keep month-level precision
+        return date.replace(day=1)
+
 class AcademicRecordSerializer(serializers.ModelSerializer):
-    
+    started_at = YearMonthDateField(required=False, allow_null=True)
+    expected_graduation_at = YearMonthDateField(required=False, allow_null=True)
+    graduated_at = YearMonthDateField(required=False, allow_null=True)
+
+    # (اختیاری) نمایش خلاصه‌ی دوره در خروجی
+    period_display = serializers.ReadOnlyField()
+
     class Meta:
         model = AcademicRecord
-        fields = '__all__'
+        fields = [
+            'id',
+            'education_document_type', 'education_degree', 'school', 'country',
+            'status',
+            'started_at', 'expected_graduation_at', 'graduated_at',
+            'document',
+            'is_theology_related',
+            'is_approved', 'is_active',
+            'period_display',
+        ]
+        read_only_fields = ['document', 'period_display']
 
 
 
@@ -333,14 +393,10 @@ class MemberServiceTypeSerializer(DocumentFileMixin, serializers.ModelSerializer
         return super().update(instance, validated_data)
 
 
-  
-    
-
 # MEMBER Serializer ------------------------------------------------------------------------------
 class MemberSerializer(serializers.ModelSerializer):
     user = CustomUserSerializer(context=None)
     service_types = MemberServiceTypeSerializer(many=True, read_only=True)
-    organization_memberships = OrganizationSerializer(many=True, read_only=True)
     academic_record = AcademicRecordSerializer()
     litcovenant = serializers.SerializerMethodField()
     spiritual_gifts = serializers.SerializerMethodField()
@@ -348,18 +404,30 @@ class MemberSerializer(serializers.ModelSerializer):
     class Meta:
         model = Member
         fields = [
-            'user', 'service_types', 'organization_memberships', 'academic_record', 'testimony',
+            'user', 'service_types', 'organization_memberships', 'academic_record',
             'spiritual_rebirth_day', 'biography', 'vision', 'denominations_type',
             'show_gifts_in_profile', 'show_fellowship_in_profile', 'hide_confidants', 'is_hidden_by_confidants',
             'register_date', 'identity_verification_status', 'is_verified_identity', 'identity_verified_at', 'is_sanctuary_participant',
             'is_privacy', 'is_migrated', 'is_active', 'litcovenant', 'spiritual_gifts',
         ]
-        read_only_fields = ['register_date', 'is_migrated', 'is_active', 'identity_verification_status', 'identity_verified_at', 'is_verified_identity', 'is_sanctuary_participant']
+        read_only_fields = [
+            'register_date', 'is_migrated', 'is_active',
+            'identity_verification_status', 'identity_verified_at',
+            'is_verified_identity', 'is_sanctuary_participant'
+        ]
+
+    def get_fields(self):
+        fields = super().get_fields()
+        # ✅ lazy import to avoid circular imports
+        from apps.profilesOrg.serializers import OrganizationSerializer
+        fields['organization_memberships'] = OrganizationSerializer(many=True, read_only=True)
+        return fields
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        # keep context for nested user
         self.fields['user'] = CustomUserSerializer(context=self.context)
-        
+
     def update(self, instance, validated_data):
         custom_user_data = validated_data.pop('user', None)
         if custom_user_data:
@@ -392,19 +460,19 @@ class MemberSerializer(serializers.ModelSerializer):
         return instance
        
     def validate_biography(self, value):
-        #  Ensure biography does not exceed 300 characters
-        if len(value) > 300:
+        # Ensure biography does not exceed 300 characters
+        if value and len(value) > 300:
             raise serializers.ValidationError({"error": "Biography cannot exceed 300 characters."})
         return value
 
     def validate_spiritual_rebirth_day(self, value):
-        # Validation for spiritual_rebirth_day to ensure it is not in the future
-        if value > timezone.now().date():
+        # Ensure not in the future
+        if value and value > timezone.now().date():
             raise serializers.ValidationError({"error": "Spiritual rebirth day cannot be in the future."})
         return value
 
     def get_litcovenant(self, obj):
-        # اگر اجازه نمایش نیست، اصلاً کوئری نزن
+        # respect visibility flag
         if not getattr(obj, 'show_fellowship_in_profile', False):
             return []
 
@@ -416,13 +484,13 @@ class MemberSerializer(serializers.ModelSerializer):
             .filter(Q(from_user=user) | Q(to_user=user), status='Accepted')
             .select_related(
                 'from_user', 'to_user',
-                'from_user__member_profile', 'to_user__member_profile'  # برای is_verified_identity
+                'from_user__member_profile', 'to_user__member_profile'
             )
         )
 
         hide_confidants = bool(getattr(obj, 'hide_confidants', False))
         out, seen = [], set()
-        fellowship_ids_map = {}  # user_id -> fellowship_id (برای SimpleCustomUserSerializer)
+        fellowship_ids_map = {}
 
         for f in qs:
             if f.from_user_id == user.id:
@@ -445,13 +513,9 @@ class MemberSerializer(serializers.ModelSerializer):
             seen.add(key)
 
             out.append(f)
-            # برای دریافت fellowship_id داخل SimpleCustomUserSerializer:
             fellowship_ids_map[opposite_user.id] = f.id
 
-        ctx = {
-            'request': request,
-            'fellowship_ids': fellowship_ids_map,
-        }
+        ctx = {'request': request, 'fellowship_ids': fellowship_ids_map}
         return FellowshipSerializer(out, many=True, context=ctx).data
     
     def get_spiritual_gifts(self, obj):
@@ -471,45 +535,203 @@ class MemberSerializer(serializers.ModelSerializer):
         return MemberSpiritualGiftsSerializer(msg, context={'request': request}).data
 
 
-# MEMBER Serializer ------------------------------------------------------------------------------
+# helpers ----------------------------------------------------------------
+def _friends_of(user):
+    """
+    Return unique counterpart users for accepted+active friendships.
+    Dedup by other.id so A↔B pair won't appear twice.
+    Prefer latest records by ordering desc.
+    """
+    qs = (
+        Friendship.objects
+        .filter(
+            (Q(from_user=user) | Q(to_user=user)),
+            status='accepted',
+            is_active=True,
+        )
+        .select_related('from_user', 'to_user')
+        .order_by('-created_at', '-id')  # newest first
+    )
+
+    seen_ids = set()
+    out = []
+    for f in qs:
+        other = f.to_user if f.from_user_id == user.id else f.from_user
+        if other.id in seen_ids:
+            continue
+        seen_ids.add(other.id)
+        out.append(other)
+    return out
+
+def _fellowships_visible(member: Member):
+    """
+    Apply your visibility policy:
+    - respect member.show_fellowship_in_profile
+    - respect hide_confidants & pin flags (like your main MemberSerializer)
+    """
+    if not getattr(member, 'show_fellowship_in_profile', False):
+        return Fellowship.objects.none()
+
+    user = member.user
+    qs = (
+        Fellowship.objects
+        .filter(Q(from_user=user) | Q(to_user=user), status='Accepted')
+        .select_related(
+            'from_user', 'to_user',
+            'from_user__member_profile', 'to_user__member_profile'
+        )
+    )
+
+    hide_confidants = bool(getattr(member, 'hide_confidants', False))
+    out_ids = []
+    seen = set()
+
+    for f in qs:
+        if f.from_user_id == user.id:
+            rel_type = f.fellowship_type
+            opposite_user = f.to_user
+        else:
+            rel_type = f.reciprocal_fellowship_type
+            opposite_user = f.from_user
+
+        if hide_confidants and rel_type == "Confidant":
+            continue
+        if rel_type == "Confidant" and not getattr(user, "pin_security_enabled", False):
+            continue
+        if rel_type == "Entrusted" and not getattr(opposite_user, "pin_security_enabled", False):
+            continue
+
+        key = (opposite_user.id, rel_type)
+        if key in seen:
+            continue
+        seen.add(key)
+        out_ids.append(f.id)
+
+    return Fellowship.objects.filter(id__in=out_ids)
+
+def _social_links_for_user(user):
+    """
+    GFK -> content_object = CustomUser
+    """
+    ct = ContentType.objects.get_for_model(type(user))
+    return (
+        SocialMediaLink.objects
+        .filter(content_type=ct, object_id=user.id, is_active=True)
+        .select_related('social_media_type')
+        .order_by('id')
+    )
+
+
+# PUBLIC Member Serializer -----------------------------------------------------------
 class PublicMemberSerializer(serializers.ModelSerializer):
+    # User block (privacy is enforced in PublicCustomUserSerializer)
     user = PublicCustomUserSerializer(read_only=True)
+
+    # Read-only nested
+    service_types = MemberServiceTypeSerializer(many=True, read_only=True)
+    academic_record = serializers.SerializerMethodField()
+    spiritual_gifts = serializers.SerializerMethodField()
+    social_links = serializers.SerializerMethodField()
+    friends = serializers.SerializerMethodField()
+    litcovenant = serializers.SerializerMethodField()
+    
+    testimonies = serializers.SerializerMethodField()
 
     class Meta:
         model = Member
         fields = [
-            'user', 'biography', 'vision', 'service_types', 'denominations_type',
+            'user',
+            'biography', 'vision', 'spiritual_rebirth_day', 'denominations_type',
+            'service_types', 'organization_memberships',   # <-- stays in fields
+            'academic_record', 'spiritual_gifts',
+            'social_links',
+            'friends', 'litcovenant',
+            'testimonies',
+            'show_gifts_in_profile', 'show_fellowship_in_profile', 'hide_confidants',
+            'register_date', 'identity_verification_status', 'is_verified_identity', 'identity_verified_at',
+            'is_sanctuary_participant', 'is_privacy', 'is_hidden_by_confidants', 'is_migrated', 'is_active',
         ]
         read_only_fields = fields
-        
+
+    def get_fields(self):
+        """Attach org memberships with a lazy import to avoid circular imports."""
+        fields = super().get_fields()
+        # ✅ Lazy import here
+        from apps.profilesOrg.serializers import OrganizationSerializer
+        fields['organization_memberships'] = OrganizationSerializer(many=True, read_only=True)
+        return fields
+
     def __init__(self, *args, **kwargs):
-        context = kwargs.get('context', None)
         super().__init__(*args, **kwargs)
-        if context:
-            self.fields['user'] = PublicCustomUserSerializer(context=context)
+        # Keep context for nested user
+        self.fields['user'] = PublicCustomUserSerializer(context=self.context, read_only=True)
+
+    # --- academic record ---
+    def get_academic_record(self, obj: Member):
+        if not obj.academic_record_id:
+            return None
+        return AcademicRecordSerializer(obj.academic_record, context=self.context).data
+
+    # --- spiritual gifts ---
+    def get_spiritual_gifts(self, obj: Member):
+        if not getattr(obj, 'show_gifts_in_profile', False):
+            return None
+        msg = (
+            MemberSpiritualGifts.objects
+            .filter(member=obj)
+            .prefetch_related('gifts')
+            .order_by('-created_at')
+            .first()
+        )
+        if not msg:
+            return None
+        return MemberSpiritualGiftsSerializer(msg, context=self.context).data
+
+    # --- social links (user) ---
+    def get_social_links(self, obj: Member):
+        links_qs = _social_links_for_user(obj.user)
+        return SocialMediaLinkReadOnlySerializer(links_qs, many=True, context=self.context).data
+
+    # --- friends (list of users) ---
+    def get_friends(self, obj: Member):
+        others = _friends_of(obj.user)
+        return SimpleCustomUserSerializer(others, many=True, context=self.context).data
+
+    # --- fellowship (LITCovenant) ---
+    def get_litcovenant(self, obj: Member):
+        qs = _fellowships_visible(obj)
+        return FellowshipSerializer(qs, many=True, context=self.context).data
+
+    # --- testimony ---
+    def get_testimonies(self, obj: Member):
+        from apps.posts.serializers import TestimonySerializer
+        data = testimonies_for_member(obj)
+        # serialize each if present
+        return {
+            'audio':   TestimonySerializer(data['audio'],   context=self.context).data if data['audio']   else None,
+            'video':   TestimonySerializer(data['video'],   context=self.context).data if data['video']   else None,
+            'written': TestimonySerializer(data['written'], context=self.context).data if data['written'] else None,
+        }
 
 
-# LIMITED MEMBER Serializer ------------------------------------------------------------------------------
+# LIMITED Member Serializer -----------------------------------------------------------
 class LimitedMemberSerializer(serializers.ModelSerializer):
+    """
+    Ultra-minimal public view of Member when privacy/visibility is restricted.
+    Only exposes nested LimitedCustomUserSerializer.
+    """
     user = LimitedCustomUserSerializer(read_only=True)
 
     class Meta:
         model = Member
-        fields = [
-            'user', 'biography', 'spiritual_rebirth_day',
-            'register_date',
-        ]
-        read_only_fields = ['user', 'register_date']
-        
+        fields = ['user']  # <-- ONLY user field per policy
+        read_only_fields = fields
+
     def __init__(self, *args, **kwargs):
-        context = kwargs.get('context', None)
         super().__init__(*args, **kwargs)
-        if context:
-            self.fields['user'] = LimitedCustomUserSerializer(context=context)
+        # Keep context for nested user serializer
+        self.fields['user'] = LimitedCustomUserSerializer(context=self.context, read_only=True)
 
-
-
-    
     
 # MEMBER'S GIFT serializer -----------------------------------------------------------------------------
 # Spritual Gifts
@@ -624,10 +846,10 @@ class ClientRequestSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("At least one document should be uploaded.")
         return data
            
-# Client
+# Client ----------------------------------------------------------------------------
 class ClientSerializer(serializers.ModelSerializer):
     user = serializers.PrimaryKeyRelatedField(queryset=CustomUser.objects.all())
-    organization_clients = SimpleOrganizationSerializer(many=True, read_only=True)
+    # lazy: organization_clients را در get_fields اضافه می‌کنیم
     request = ClientRequestSerializer(read_only=True)
 
     class Meta:
@@ -635,7 +857,15 @@ class ClientSerializer(serializers.ModelSerializer):
         fields = ['user', 'organization_clients', 'request', 'register_date', 'is_active', 'slug']
         read_only_fields = ['register_date', 'slug']
 
+    def get_fields(self):
+        fields = super().get_fields()
+        # ✅ Lazy import to avoid circular imports
+        fields['organization_clients'] = SimpleOrganizationSerializer(many=True, read_only=True)
+        return fields
+
     def validate(self, data):
+        # Note: 'request' is read_only; اگر این شرط واقعاً لازم است و از context می‌آید،
+        # بعداً می‌توانی به شکل دیگری چک کنی. فعلاً منطق فعلی حفظ شد.
         if data.get('is_active') and not data.get('request'):
             raise serializers.ValidationError("Active client must have a request.")
         return data

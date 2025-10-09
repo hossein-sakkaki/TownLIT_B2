@@ -326,28 +326,37 @@ class CustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
 class PublicCustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
     label = CustomLabelSerializer(read_only=True)
     is_verified_identity = serializers.SerializerMethodField()
+    country_display = serializers.CharField(source='get_country_display', read_only=True)
+    primary_language_display = serializers.CharField(source='get_primary_language_display', read_only=True)
+    secondary_language_display = serializers.CharField(source='get_secondary_language_display', read_only=True)
 
-    
     class Meta:
         model = CustomUser
         fields = [
-            'email', 'mobile_number', 'name', 'family', 'username', 'birthday', 
-            'gender', 'label', 'country', 'is_verified_identity',
-            'primary_language', 'secondary_language', 'is_active', 'is_member', 'is_suspended'
+            'id', 'name', 'family', 'username', 'gender', 'label', 'is_verified_identity',
+            'country', 'country_display',
+            'primary_language', 'primary_language_display',
+            'secondary_language', 'secondary_language_display',
+            'email', 'mobile_number',
+            'city', 'birthday',
+            'show_email', 'show_phone_number', 'show_country', 'show_city',
+            'registration_started_at', 
+            'is_account_paused', 'is_suspended'
         ]
+        read_only_fields = fields  # visitor is read-only
 
     def to_representation(self, instance):
         rep = super().to_representation(instance)
-
+        # honor privacy flags on CustomUser
         if not getattr(instance, 'show_email', False):
             rep.pop('email', None)
         if not getattr(instance, 'show_phone_number', False):
             rep.pop('mobile_number', None)
         if not getattr(instance, 'show_country', False):
             rep.pop('country', None)
+            rep.pop('country_display', None)
         if not getattr(instance, 'show_city', False):
             rep.pop('city', None)
-
         return rep
 
     def get_is_verified_identity(self, obj):
@@ -357,20 +366,25 @@ class PublicCustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer)
     
 # LIMITED MEMBER Serializer ------------------------------------------------------------------------------
 class LimitedCustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
+    """
+    Ultra-minimal public view of CustomUser.
+    """
     label = CustomLabelSerializer(read_only=True)
     is_verified_identity = serializers.SerializerMethodField()
-
 
     class Meta:
         model = CustomUser
         fields = [
-            'name', 'family', 'username',
-            'gender', 'label', 'is_verified_identity',
-            'primary_language', 'secondary_language', 'is_member',
+            'id', 'name', 'family', 'username', 'gender', 'label',
+            'is_verified_identity', 'is_member', 'is_suspended', 'is_account_paused'
         ]
+        read_only_fields = fields
 
     def get_is_verified_identity(self, obj):
+        # Derive from related member profile if any
         return getattr(getattr(obj, 'member_profile', None), 'is_verified_identity', False)
+
+
 
 
 # Simple CustomUser Serializers For Showing Users ------------------------------------------------
@@ -384,7 +398,6 @@ class SimpleCustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer)
     has_received_request = serializers.SerializerMethodField()
     friendship_id = serializers.SerializerMethodField()
     fellowship_id = serializers.SerializerMethodField()
-
 
     class Meta:
         model = CustomUser
@@ -429,6 +442,26 @@ class SimpleCustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer)
     def get_is_verified_identity(self, obj):
         return getattr(getattr(obj, 'member_profile', None), 'is_verified_identity', False)
 
+
+# Reactivation User Serializers -----------------------------------------------------------------------
+class ReactivationUserSerializer(serializers.ModelSerializer):
+    """
+    Minimal payload for reactivation flow.
+    No PII beyond email/username. No profile/label/locale.
+    """
+    class Meta:
+        model = CustomUser
+        fields = [
+            'id',
+            'email',
+            'username',
+            'is_member',
+            'is_deleted',
+            'deletion_requested_at',
+            # optional hints for FE UX:
+            'two_factor_enabled',
+        ]
+        read_only_fields = fields
 
 
 # User Device Key Serializers -----------------------------------------------------------------------

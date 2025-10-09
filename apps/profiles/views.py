@@ -2,16 +2,18 @@ from django.db.models import Q, F
 from django.db import transaction
 from django.utils import timezone
 from datetime import timedelta
+from django.http import Http404
 
 from django.shortcuts import get_object_or_404
 
 from rest_framework import status
 from rest_framework import viewsets
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.decorators import action
 from rest_framework import serializers
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from rest_framework.exceptions import MethodNotAllowed, PermissionDenied
 
 
 from apps.core.security.decorators import require_litshield_access
@@ -29,6 +31,7 @@ from apps.profiles.services.gifts_service import (
                     calculate_spiritual_gifts_scores, calculate_top_3_gifts
                 )
 from apps.profiles.services.service_policies import get_policy
+from apps.profiles.constants import CONFIDANT
 from .models import (
                     Member, GuestUser, Friendship, Fellowship, MigrationHistory,
                     SpiritualGiftSurveyResponse, MemberSpiritualGifts,
@@ -122,131 +125,118 @@ class MemberViewSet(viewsets.ModelViewSet):
     serializer_class = MemberSerializer
 
     def get_queryset(self):
-        return self.queryset.filter(is_active=True)
-    
+        # If deleted, return no rows (hard stop at the query level)
+        if getattr(self.request.user, "is_deleted", False):
+            return Member.objects.none()
+        return Member.objects.filter(is_active=True, user=self.request.user)
+
+    def list(self, request, *args, **kwargs):
+        raise MethodNotAllowed('GET')
+
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
+        ctx['request'] = self.request
         return ctx
 
     def retrieve(self, request, *args, **kwargs):
-        try:
-            member = self.get_object()
-            # Check if the member is suspended
-            if member.user.is_suspended:
-                return Response({"error": "This profile is suspended and cannot be accessed."}, status=status.HTTP_403_FORBIDDEN)
-            # Check if the profile is hidden
-            if member.is_hidden_by_confidants:
-                return Response({"error": "This profile is currently hidden."}, status=status.HTTP_403_FORBIDDEN)
-            serializer = self.get_serializer(member, context={'request': request})
-            return Response(serializer.data)
-        except Member.DoesNotExist:
-            return Response({"error": "Member not found"}, status=status.HTTP_404_NOT_FOUND)
+        # Block deleted accounts from reading "self" profile
+        if getattr(request.user, "is_deleted", False):
+            return Response(
+                {"error": "Your account is deactivated. Reactivate first to access your profile."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        member = self.get_object()
+        if member.user_id != request.user.id:
+            raise PermissionDenied("You can only access your own profile here.")
+        if member.user.is_suspended:
+            return Response({"error": "Your profile is suspended and cannot be accessed by you."},
+                            status=status.HTTP_403_FORBIDDEN)
+        if member.is_hidden_by_confidants:
+            return Response({"error": "Your profile is currently hidden and cannot be accessed by you."},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        serializer = self.get_serializer(member)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=['get'], url_path='my-profile', permission_classes=[IsAuthenticated])
     def my_profile(self, request):
-        user = request.user
-        try:
-            member = user.member_profile
-            if member.user.is_suspended:
-                return Response({"error": "Your profile is suspended and cannot be accessed by you."}, status=status.HTTP_403_FORBIDDEN)
-            if member.is_hidden_by_confidants:
-                return Response({"error": "Your profile is currently hidden and cannot be accessed by you."}, status=status.HTTP_403_FORBIDDEN)
-            
-            serializer = MemberSerializer(member, context={'request': request})
-            return Response(serializer.data, status=status.HTTP_200_OK)
-        
-        except Member.DoesNotExist:
-            return Response({"error": "Profile not found. Please complete your profile registration."}, status=status.HTTP_404_NOT_FOUND)
-        except AttributeError:
-            # یعنی کاربر member اصلاً ندارد!
-            return Response({"error": "Profile not found. Please complete your profile registration...."}, status=status.HTTP_404_NOT_FOUND)
-            
-    # Update Profile ------------------------------------------------------------------------------------------------    
-    @action(detail=False, methods=['post'], url_path='update-profile', permission_classes=[IsAuthenticated])
-    def update_profile(self, request):        
+        # Block deleted accounts here too
+        if getattr(request.user, "is_deleted", False):
+            return Response(
+                {"error": "Your account is deactivated. Reactivate first to access your profile."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         try:
             member = request.user.member_profile
-            serializer = MemberSerializer(member, data=request.data, partial=True)
-            if serializer.is_valid():
-                updated_member = serializer.save()
-                return Response({
-                    "message": "Profile updated successfully.",
-                    "user": MemberSerializer(updated_member).data
-                }, status=status.HTTP_200_OK)
+        except (Member.DoesNotExist, AttributeError):
+            return Response({"error": "Profile not found. Please complete your profile registration."},
+                            status=status.HTTP_404_NOT_FOUND)
 
-            raise serializers.ValidationError({"error": "Invalid data. Please check the provided fields.", "details": serializer.errors})
+        if member.user.is_suspended:
+            return Response({"error": "Your profile is suspended and cannot be accessed by you."},
+                            status=status.HTTP_403_FORBIDDEN)
+        if member.is_hidden_by_confidants:
+            return Response({"error": "Your profile is currently hidden and cannot be accessed by you."},
+                            status=status.HTTP_403_FORBIDDEN)
 
-        except Member.DoesNotExist:
-            # Return a clear error when no profile is found for the user
-            return Response({"error": "Profile not found. Please create a profile first."}, status=status.HTTP_404_NOT_FOUND)
-        except serializers.ValidationError as e:
-            return Response({"error": "Validation error occurred."}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            # Handle any unexpected exceptions
-            return Response({"error": "An unexpected error occurred.",},status=status.HTTP_500_INTERNAL_SERVER_ERROR)    
-        
-    # Update Profile Image ------------------------------------------------------------------------------------------------
+        serializer = self.get_serializer(member)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], url_path='update-profile', permission_classes=[IsAuthenticated])
+    def update_profile(self, request):
+        # Block updates for deleted accounts
+        if getattr(request.user, "is_deleted", False):
+            return Response(
+                {"error": "Your account is deactivated. Reactivate first to update your profile."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        try:
+            member = request.user.member_profile
+        except (Member.DoesNotExist, AttributeError):
+            return Response({"error": "Profile not found. Please create a profile first."},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        serializer = self.get_serializer(member, data=request.data, partial=True)
+        if not serializer.is_valid():
+            return Response({"error": "Invalid data. Please check the provided fields.",
+                             "details": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        updated_member = serializer.save()
+        payload = MemberSerializer(updated_member, context={'request': request}).data
+        return Response({
+            "message": "Profile updated successfully.",
+            "member": payload,
+            "user": payload,  # (تدریجاً deprecate)
+        }, status=status.HTTP_200_OK)
+
     @action(detail=False, methods=['post'], url_path='update-profile-image', permission_classes=[IsAuthenticated])
     def update_profile_image(self, request):
+        # Block avatar changes for deleted accounts
+        if getattr(request.user, "is_deleted", False):
+            return Response(
+                {"error": "Your account is deactivated. Reactivate first to change your profile image."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        profile_image = request.FILES.get('profile_image')
+        if not profile_image:
+            return Response({"error": "No profile image uploaded"}, status=status.HTTP_400_BAD_REQUEST)
+
         try:
-            profile_image = request.FILES.get('profile_image')
-            if not profile_image:
-                return Response({"error": "No profile image uploaded"}, status=status.HTTP_400_BAD_REQUEST)
-            
             member = request.user.member_profile
-            custom_user = member.user
-            custom_user.image_name = profile_image
-            custom_user.save()
-            
-            return Response({"message": "Profile image updated successfully.", "data": MemberSerializer(member).data}, status=status.HTTP_200_OK)
-
-        except Member.DoesNotExist:
+        except (Member.DoesNotExist, AttributeError):
             return Response({"error": "Profile not found"}, status=status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+        custom_user = member.user
+        custom_user.image_name = profile_image
+        custom_user.save(update_fields=["image_name"])
 
-    # View Member Profile ------------------------------------------------------------------------------------------------
-    @action(detail=False, methods=['get'], url_path='profile/(?P<username>[^/.]+)', permission_classes=[IsAuthenticated])
-    def view_member_profile(self, request, username=None):
-        try:
-            member = Member.objects.get(user__username=username)
-
-            # بررسی حالت مسدودیت پروفایل
-            if member.user.is_suspended:
-                return Response({"error": "This profile is suspended."}, status=status.HTTP_403_FORBIDDEN)
-
-            # بررسی حالت مخفی بودن توسط اشخاص مورد اعتماد
-            if member.is_hidden_by_confidants:
-                confidants = Fellowship.objects.filter(
-                    to_user=member.user,
-                    fellowship_type="Confidant",
-                    status="Accepted"
-                ).values_list("from_user", flat=True)
-
-                # اگر کاربر مورد اعتماد است
-                if request.user.id in confidants:
-                    serializer = PublicMemberSerializer(member, context={'request': request})
-                else:
-                    serializer = LimitedMemberSerializer(member, context={'request': request})
-
-            # بررسی حالت محدودیت
-            elif member.is_privacy:
-                if Friendship.objects.filter(from_user=request.user, to_user=member.user).exists():
-                    serializer = PublicMemberSerializer(member, context={'request': request})
-                else:
-                    serializer = LimitedMemberSerializer(member, context={'request': request})
-
-            # حالت عادی
-            else:
-                serializer = PublicMemberSerializer(member, context={'request': request})
-
-            return Response(serializer.data, status=status.HTTP_200_OK)
-
-        except Member.DoesNotExist:
-            return Response({"error": "Member not found"}, status=status.HTTP_404_NOT_FOUND)
-
-
+        data = MemberSerializer(member, context={'request': request}).data
+        return Response({"message": "Profile image updated successfully.", "member": data, "user": data},
+                        status=status.HTTP_200_OK)
 
     # Request Email Actions -------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='request-email-change', permission_classes=[IsAuthenticated])
@@ -568,6 +558,113 @@ The TownLIT Team 🌍
         }, status=status.HTTP_200_OK)
 
 
+# Visitor Profile ViewSet ---------------------------------------------------------------------------------------
+class VisitorProfileViewSet(viewsets.ViewSet):
+    """
+    Public-facing profile with privacy gates.
+    """
+    permission_classes = [AllowAny]
+
+    # --- helpers -------------------------------------------------
+    def _get_member(self, username: str):
+        try:
+            return (
+                Member.objects.select_related("user", "academic_record")
+                .prefetch_related("service_types", "organization_memberships")
+                .filter(
+                    user__username=username,
+                    is_active=True,
+                )
+                # NULL-safe filter to avoid excluding legacy rows
+                .filter(Q(user__is_deleted=False) | Q(user__is_deleted__isnull=True))
+                .get()
+            )
+        except Member.DoesNotExist:
+            raise Http404
+
+
+    def _is_friend(self, viewer, owner_user) -> bool:
+        # True if there's an accepted friendship in either direction
+        if not viewer or not viewer.is_authenticated:
+            return False
+        return Friendship.objects.filter(
+            Q(from_user=viewer, to_user=owner_user) | Q(from_user=owner_user, to_user=viewer),
+            status="accepted",
+            is_active=True,
+        ).exists()
+
+    def _is_confidant(self, viewer, member: Member) -> bool:
+        """
+        True iff the profile owner (member.user) has designated the current viewer
+        as a 'Confidant' and that fellowship is accepted.
+        - Direction matters: owner -> viewer must be CONFIDANT.
+        - Status is checked case-insensitively for robustness.
+        """
+        if not viewer or not viewer.is_authenticated:
+            return False
+
+        owner = member.user
+        return Fellowship.objects.filter(
+            from_user=owner,
+            to_user=viewer,
+            fellowship_type=CONFIDANT,
+            status__iexact='accepted',
+        ).exists()
+
+    # --- action --------------------------------------------------
+    @action(detail=False, methods=["get"], url_path=r'profile/(?P<username>[^/]+)')
+    def profile(self, request, username=None):
+        """
+        GET /profiles/members/profile/<username>/
+
+        Policy:
+          - Deleted         -> 404 (no data)
+          - Suspended       -> Limited only (non-punitive)
+          - Paused          -> Limited only
+          - Hidden-by-conf. -> Limited; confidant sees Public
+          - Privacy-on      -> Limited; friend sees Public
+          - Default         -> Public
+        """
+        member = self._get_member(username)
+        user = member.user
+
+        # 0) Hard-deleted => pretend not found
+        if getattr(user, "is_deleted", False):
+            return Response({"error": "Member not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        viewer = request.user if request.user.is_authenticated else None
+
+        # 1) Suspended => Limited only (protective, not punitive)
+        if getattr(user, "is_suspended", False):
+            data = LimitedMemberSerializer(member, context={"request": request}).data
+            return Response(data, status=status.HTTP_200_OK)
+
+        # 2) Paused => Limited only
+        if getattr(user, "is_account_paused", False):
+            data = LimitedMemberSerializer(member, context={"request": request}).data
+            return Response(data, status=status.HTTP_200_OK)
+
+        # 3) Hidden by confidants => Limited; confidant can see Public
+        if getattr(member, "is_hidden_by_confidants", False):
+            if self._is_confidant(viewer, member):
+                data = PublicMemberSerializer(member, context={"request": request}).data
+            else:
+                data = LimitedMemberSerializer(member, context={"request": request}).data
+            return Response(data, status=status.HTTP_200_OK)
+
+        # 4) Privacy-on => Limited; friend can see Public
+        if getattr(member, "is_privacy", False):
+            if self._is_friend(viewer, user):
+                data = PublicMemberSerializer(member, context={"request": request}).data
+            else:
+                data = LimitedMemberSerializer(member, context={"request": request}).data
+            return Response(data, status=status.HTTP_200_OK)
+
+        # 5) Default => Public
+        data = PublicMemberSerializer(member, context={"request": request}).data
+        return Response(data, status=status.HTTP_200_OK)
+
+
 # ---------------------------------------------------------------------------------------------------------
 class MemberServicesViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
@@ -803,9 +900,13 @@ class FriendshipViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        return Friendship.objects.filter(
-            Q(to_user=user) | Q(from_user=user)
-        ).order_by('-created_at')
+        return (
+            Friendship.objects
+            .filter(Q(to_user=user) | Q(from_user=user))
+            # exclude any edge where either endpoint is deleted
+            .filter(from_user__is_deleted=False, to_user__is_deleted=False)
+            .order_by('-created_at')
+        )
             
     def perform_create(self, serializer):
         try:
@@ -814,6 +915,10 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                 raise serializers.ValidationError({"to_user_id": "This field is required."})
 
             to_user = serializer.validated_data['to_user_id']
+
+            if getattr(to_user, "is_deleted", False):
+                raise serializers.ValidationError("You cannot send a friend request to a deactivated account.")
+
             if to_user == self.request.user:
                 logger.warning(f"User {self.request.user.id} tried to send a friend request to themselves.")
                 raise serializers.ValidationError("You cannot send a friend request to yourself.")
@@ -871,13 +976,18 @@ class FriendshipViewSet(viewsets.ModelViewSet):
             return Response([], status=status.HTTP_200_OK)
 
         try:
-            # username، name، family، email
-            users = CustomUser.objects.select_related("member_profile").filter(
-                Q(username__icontains=query) |
-                Q(name__icontains=query) |
-                Q(family__icontains=query) |
-                Q(email__icontains=query)
-            ).exclude(id=request.user.id).distinct()
+            users = (
+                CustomUser.objects.select_related("member_profile")
+                .filter(
+                    Q(username__icontains=query) |
+                    Q(name__icontains=query) |
+                    Q(family__icontains=query) |
+                    Q(email__icontains=query)
+                )
+                .exclude(id=request.user.id)
+                .filter(is_deleted=False)
+                .distinct()
+            )
 
             # پگینیشن قابل تنظیم
             paginator = ConfigurablePagination(page_size=20, max_page_size=100)
@@ -929,9 +1039,12 @@ class FriendshipViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='sent-requests', permission_classes=[IsAuthenticated])
     def sent_requests(self, request):
         try:
-            # Get list of sent friend requests.
-            sent_requests = Friendship.objects.filter(from_user=request.user, status='pending')
-            serializer = self.get_serializer(sent_requests, many=True)
+            qs = (
+                Friendship.objects
+                .filter(from_user=request.user, status='pending')
+                .filter(to_user__is_deleted=False)  # exclude deleted receivers
+            )
+            serializer = self.get_serializer(qs, many=True)
             return Response(serializer.data, status=status.HTTP_200_OK)
         except Exception as e:
             logger.error(f"Error during sent_requests: {e}")
@@ -940,9 +1053,12 @@ class FriendshipViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='received-requests', permission_classes=[IsAuthenticated])
     def received_requests(self, request):
         try:
-            # Get list of received friend requests.
-            received_requests = Friendship.objects.filter(to_user=request.user, status='pending')
-            serializer = self.get_serializer(received_requests, many=True)
+            qs = (
+                Friendship.objects
+                .filter(to_user=request.user, status='pending')
+                .filter(from_user__is_deleted=False)  # exclude deleted senders
+            )
+            serializer = self.get_serializer(qs, many=True)
             return Response(serializer.data, status=status.HTTP_200_OK)
         except Exception as e:
             logger.error(f"Error during received_requests: {e}")
@@ -952,9 +1068,28 @@ class FriendshipViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["get"], url_path="friends-list", permission_classes=[IsAuthenticated])
     def friends_list(self, request):
         try:
-            friends, meta = build_friends_list(request.user, request.query_params)
-            ser = SimpleCustomUserSerializer(friends, many=True, context={"request": request})
-            return Response({"results": ser.data, "meta": meta}, status=status.HTTP_200_OK)
+            user = request.user
+            # accepted & active edges excluding any deleted endpoint
+            edges = (
+                Friendship.objects
+                .filter(
+                    Q(from_user=user) | Q(to_user=user),
+                    status='accepted',
+                    is_active=True,
+                )
+                .filter(from_user__is_deleted=False, to_user__is_deleted=False)
+                .values('from_user_id', 'to_user_id')
+            )
+
+            # collect counterpart ids
+            counterpart_ids = set()
+            for e in edges:
+                fid, tid = e['from_user_id'], e['to_user_id']
+                counterpart_ids.add(tid if fid == user.id else fid)
+
+            friends_qs = CustomUser.objects.filter(id__in=counterpart_ids, is_deleted=False)
+            ser = SimpleCustomUserSerializer(friends_qs, many=True, context={"request": request})
+            return Response({"results": ser.data, "meta": {"count": len(counterpart_ids)}}, status=status.HTTP_200_OK)
         except Exception as e:
             logger.exception("Error in friends_list")
             return Response({"error": "Unable to retrieve friends list"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -969,11 +1104,6 @@ class FriendshipViewSet(viewsets.ModelViewSet):
         serializer = SimpleCustomUserSerializer(suggestions, many=True, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
-
-
-
-
-
     @action(detail=False, methods=['get'], url_path='requests-suggestions', permission_classes=[IsAuthenticated])
     def requests_suggestions(self, request):
         """Get friend suggestions for the Requests tab."""
@@ -983,13 +1113,6 @@ class FriendshipViewSet(viewsets.ModelViewSet):
         serializer = SimpleCustomUserSerializer(suggestions, many=True, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
     
-    
-    
-    
-    
-    
-    
-
     @action(detail=True, methods=['post'], url_path='accept-friend-request', permission_classes=[IsAuthenticated])
     def accept_friend_request(self, request, pk=None):
         try:
@@ -997,6 +1120,9 @@ class FriendshipViewSet(viewsets.ModelViewSet):
             if friendship.to_user != request.user:
                 logger.warning(f"User {request.user.id} tried to accept a friendship not directed to them.")
                 return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+
+            if getattr(friendship.from_user, "is_deleted", False):
+                return Response({'error': 'This request is no longer valid (sender deactivated).'}, status=status.HTTP_400_BAD_REQUEST)
 
             if friendship.status == 'pending':
                 friendship.status = 'accepted'
@@ -1112,35 +1238,31 @@ class FriendshipViewSet(viewsets.ModelViewSet):
             return Response({'error': 'An unexpected error occurred.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # FELLOWSHIP View --------------------------------------------------------------------------------------------
 class FellowshipViewSet(viewsets.ModelViewSet):
     queryset = Fellowship.objects.all()
     serializer_class = FellowshipSerializer
     permission_classes = [IsAuthenticated]
 
+    # --- helper: serialize list and drop None items ---
+    def _serialize_nonnull(self, qs):
+        """
+        Serialize a queryset of Fellowships and drop None items
+        (produced by child.to_representation when endpoints are deleted).
+        """
+        ser = self.get_serializer(qs, many=True, context=self.get_serializer_context())
+        # DRF already evaluated .data -> list; filter out None
+        return [item for item in ser.data if item is not None]
+
     def get_queryset(self):
         user = self.request.user
-        return Fellowship.objects.filter(
-            Q(from_user=user) | Q(to_user=user)
-        ).order_by('-created_at')
-
+        return (
+            Fellowship.objects
+            .select_related("from_user", "to_user")
+            .filter(Q(from_user=user) | Q(to_user=user))
+            .filter(from_user__is_deleted=False, to_user__is_deleted=False)
+            .order_by('-created_at')
+        )
     
     def perform_create(self, serializer):
         try:
@@ -1151,26 +1273,37 @@ class FellowshipViewSet(viewsets.ModelViewSet):
             fellowship_type = serializer.validated_data['fellowship_type']
             reciprocal_fellowship_type = serializer.validated_data.get('reciprocal_fellowship_type')
 
+            # hard guards
+            if getattr(self.request.user, "is_deleted", False):
+                raise serializers.ValidationError({"error": "Your account is deactivated. Reactivate to manage fellowships."})
+            if getattr(to_user, "is_deleted", False):
+                raise serializers.ValidationError({"error": "You cannot send a fellowship request to a deactivated account."})
+
             if to_user == self.request.user:
                 raise serializers.ValidationError({"error": "You cannot send a fellowship request to yourself."})
 
-            # Check for existing pending requests
-            existing_request = Fellowship.objects.filter(
-                from_user=self.request.user,
-                to_user=to_user,
-                fellowship_type=fellowship_type,
-                status='Pending'
+            # pending dup check (exclude deleted endpoints)
+            existing_request = (
+                Fellowship.objects
+                .filter(
+                    from_user=self.request.user,
+                    to_user=to_user,
+                    fellowship_type=fellowship_type,
+                    status='Pending',
+                    from_user__is_deleted=False,
+                    to_user__is_deleted=False,
+                )
             )
             if existing_request.exists():
                 raise serializers.ValidationError({"error": "A similar fellowship request already exists."})
 
-            # Save the main fellowship relationship
             serializer.save(from_user=self.request.user, reciprocal_fellowship_type=reciprocal_fellowship_type)
-            
+
         except serializers.ValidationError as e:
             raise e
-        except Exception as e:
+        except Exception:
             raise serializers.ValidationError({"error": "An unexpected error occurred."})
+
 
     @require_litshield_access("covenant")
     def create(self, request, *args, **kwargs):
@@ -1193,35 +1326,34 @@ class FellowshipViewSet(viewsets.ModelViewSet):
             return Response([], status=status.HTTP_200_OK)
 
         try:
-            # Get all accepted friendships involving the current user
-            friendships = Friendship.objects.filter(
-                Q(from_user=request.user) | Q(to_user=request.user),
-                status='accepted'
+            # accepted friendships excluding deleted endpoints
+            friendships = (
+                Friendship.objects
+                .filter(Q(from_user=request.user) | Q(to_user=request.user), status='accepted')
+                .filter(from_user__is_deleted=False, to_user__is_deleted=False)
+                .values('from_user_id', 'to_user_id')
             )
 
-            # Extract the list of friend users (excluding the current user)
+            # collect counterpart ids
             friend_ids = []
-            for friendship in friendships:
-                if friendship.from_user_id == request.user.id:
-                    friend_ids.append(friendship.to_user_id)
-                else:
-                    friend_ids.append(friendship.from_user_id)
+            for e in friendships:
+                fid, tid = e['from_user_id'], e['to_user_id']
+                friend_ids.append(tid if fid == request.user.id else fid)
 
-            # Query users among the friend list by username, email, name, or family
-            friends = CustomUser.objects.filter(
-                id__in=friend_ids
-            ).filter(
-                Q(username__icontains=query) |
-                Q(email__icontains=query) |
-                Q(name__icontains=query) |
-                Q(family__icontains=query)
-            ).distinct()
+            friends = (
+                CustomUser.objects
+                .filter(id__in=friend_ids, is_deleted=False)  # exclude deleted friends
+                .filter(
+                    Q(username__icontains=query) |
+                    Q(email__icontains=query) |
+                    Q(name__icontains=query) |
+                    Q(family__icontains=query)
+                )
+                .distinct()
+            )
 
-            # Paginate the results
             paginator = ConfigurablePagination(page_size=20, max_page_size=100)
             paginated_friends = paginator.paginate_queryset(friends, request)
-
-            # Serialize the results
             serializer = SimpleCustomUserSerializer(paginated_friends, many=True, context={'request': request})
             return paginator.get_paginated_response(serializer.data)
 
@@ -1229,29 +1361,46 @@ class FellowshipViewSet(viewsets.ModelViewSet):
             logger.error(f"Error in search_friends: {e}")
             return Response({'error': 'Unable to search friends'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+
     # ---------------------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['get'], url_path='sent-requests', permission_classes=[IsAuthenticated])
     @require_litshield_access("covenant")
     def sent_requests(self, request):
         try:
-            sent_requests = Fellowship.objects.filter(from_user=request.user, status='Pending')
-            serializer = self.get_serializer(sent_requests, many=True)
-            return Response(serializer.data, status=status.HTTP_200_OK)
+            qs = (
+                Fellowship.objects
+                .select_related("to_user", "from_user")
+                .filter(from_user=request.user, status='Pending')
+                # defense-in-depth (already handled in serializer, but cheap filter too)
+                .filter(from_user__is_deleted=False, to_user__is_deleted=False)
+                .order_by('-created_at')
+            )
+            clean = self._serialize_nonnull(qs)
+            return Response(clean, status=status.HTTP_200_OK)
         except Exception as e:
             logger.error(f"Error during sent_requests: {e}")
             return Response({'error': 'Unable to fetch sent requests'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 
     # ---------------------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['get'], url_path='received-requests', permission_classes=[IsAuthenticated])
     @require_litshield_access("covenant")
     def received_requests(self, request):
         try:
-            received_requests = Fellowship.objects.filter(to_user=request.user, status='Pending')
-            serializer = self.get_serializer(received_requests, many=True)
-            return Response(serializer.data, status=status.HTTP_200_OK)
+            qs = (
+                Fellowship.objects
+                .select_related("to_user", "from_user")
+                .filter(to_user=request.user, status='Pending')
+                .filter(from_user__is_deleted=False, to_user__is_deleted=False)
+                .order_by('-created_at')
+            )
+            clean = self._serialize_nonnull(qs)
+            return Response(clean, status=status.HTTP_200_OK)
         except Exception as e:
             logger.error(f"Error during received_requests: {e}")
             return Response({'error': 'Unable to fetch received requests'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
     # ---------------------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['get'], url_path='fellowship-list', permission_classes=[IsAuthenticated])
@@ -1259,73 +1408,65 @@ class FellowshipViewSet(viewsets.ModelViewSet):
     def fellowship_list(self, request):
         try:
             user = request.user
-            fellowships = Fellowship.objects.filter(
-                Q(from_user=user) | Q(to_user=user),
-                status='Accepted'
+            fellowships = (
+                Fellowship.objects
+                .select_related("from_user", "to_user", "from_user__member_profile", "to_user__member_profile")
+                .filter(Q(from_user=user) | Q(to_user=user), status='Accepted')
+                .filter(from_user__is_deleted=False, to_user__is_deleted=False)
             )
 
             processed_relationships = set()
             result = []
 
-            # ⛔️ اگر کاربر hide_confidants=True داشته باشد، روابط Confidant را نادیده بگیر
             should_hide_confidants = getattr(user.member_profile, "hide_confidants", False)
 
             for fellowship in fellowships:
                 if fellowship.from_user == user:
                     opposite_user = fellowship.to_user
                     relationship_type = fellowship.fellowship_type
-                    other_user = fellowship.from_user
-                elif fellowship.to_user == user:
+                else:
                     opposite_user = fellowship.from_user
                     relationship_type = fellowship.reciprocal_fellowship_type
-                    other_user = fellowship.to_user
-                else:
+
+                # skip deleted counterpart (defense in depth)
+                if getattr(opposite_user, "is_deleted", False):
                     continue
 
-                # ⛔️ پرش روابط Confidant در صورت فعال بودن مخفی‌سازی
                 if should_hide_confidants and relationship_type == "Confidant":
                     continue
 
-                # ✅ اگر رابطه از نوع Confidant است، فقط اگر همان کاربر PIN فعال دارد اجازه نمایش بده
                 if relationship_type == "Confidant":
                     if not getattr(user, "pin_security_enabled", False):
                         continue
 
-                # ✅ اگر رابطه از نوع Entrusted است، باید شخص مقابل که او را Confidant کرده PIN نداشته باشد
                 if relationship_type == "Entrusted":
                     try:
-                        confidant_user = opposite_user  # طرف مقابل من او را Confidant کرده
-                        if not getattr(confidant_user, "pin_security_enabled", False):
+                        if not getattr(opposite_user, "pin_security_enabled", False):
                             continue
                     except Exception:
-                        continue   
+                        continue
 
+                key = (opposite_user.id, relationship_type)
+                if key in processed_relationships:
+                    continue
 
-                relationship_key = (opposite_user.id, relationship_type)
-                if relationship_key not in processed_relationships:
+                is_hidden_by_confidants = (
+                    getattr(getattr(opposite_user, "member_profile", None), "is_hidden_by_confidants", None)
+                    if relationship_type == "Entrusted" else None
+                )
 
-                    is_hidden_by_confidants = (
-                        opposite_user.member_profile.is_hidden_by_confidants
-                        if hasattr(opposite_user, 'member_profile') and relationship_type == "Entrusted"
-                        else None
-                    )
+                user_data = SimpleCustomUserSerializer(
+                    opposite_user,
+                    context={'request': request, 'fellowship_ids': {opposite_user.id: fellowship.id}}
+                ).data
 
-                    user_data = SimpleCustomUserSerializer(
-                        opposite_user,
-                        context={
-                            'request': request,
-                            'fellowship_ids': {opposite_user.id: fellowship.id}
-                        }
-                    ).data
+                result.append({
+                    'user': user_data,
+                    'relationship_type': relationship_type,
+                    'is_hidden_by_confidants': is_hidden_by_confidants,
+                })
+                processed_relationships.add(key)
 
-                    result.append({
-                        'user': user_data,
-                        'relationship_type': relationship_type,
-                        'is_hidden_by_confidants': is_hidden_by_confidants,
-                    })
-                    processed_relationships.add(relationship_key)
-
-            logger.info(f"Processed fellowship list for user {user.id}: {result}")
             return Response(result, status=status.HTTP_200_OK)
 
         except Exception as e:
@@ -1338,22 +1479,21 @@ class FellowshipViewSet(viewsets.ModelViewSet):
     def accept_request(self, request, pk=None):
         try:
             fellowship = self.get_object()
-            
             if fellowship.to_user != request.user:
-                logger.warning(f"User {request.user.id} tried to accept a fellowship not directed to them.")
                 return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+
+            # block if requester is deleted now
+            if getattr(fellowship.from_user, "is_deleted", False):
+                return Response({'error': 'This request is no longer valid (requester deactivated).'}, status=status.HTTP_400_BAD_REQUEST)
 
             reciprocal_fellowship_type = request.data.get('reciprocalFellowshipType')
             if not reciprocal_fellowship_type:
-                logger.warning("Missing reciprocalFellowshipType in request data.")
                 return Response({'error': 'Reciprocal fellowship type is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
             if fellowship.status == 'Pending':
                 fellowship.status = 'Accepted'
                 fellowship.save()
-                logger.info(f"Fellowship {fellowship.id} accepted by user {request.user.id}.")
 
-                # Add reciprocal fellowship
                 add_symmetric_fellowship(
                     from_user=fellowship.from_user,
                     to_user=fellowship.to_user,
@@ -1362,14 +1502,14 @@ class FellowshipViewSet(viewsets.ModelViewSet):
                 )
                 return Response({'message': 'Fellowship accepted'}, status=status.HTTP_200_OK)
 
-            logger.info(f"Fellowship {fellowship.id} already processed or invalid status.")
             return Response({'error': 'Invalid request or already processed'}, status=status.HTTP_400_BAD_REQUEST)
+
         except Fellowship.DoesNotExist:
-            logger.error(f"Fellowship with id {pk} not found.")
             return Response({'error': 'Fellowship request not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             logger.error(f"Unexpected error in accept_request: {e}")
             return Response({'error': 'An unexpected error occurred'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
     # ---------------------------------------------------------------------------------------------------------------
     @action(detail=True, methods=['post'], url_path='decline-request', permission_classes=[IsAuthenticated])

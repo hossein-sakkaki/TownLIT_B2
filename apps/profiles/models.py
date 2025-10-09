@@ -3,7 +3,9 @@ from django.utils import timezone
 from django.urls import reverse
 from django.conf import settings
 from django.utils.translation import gettext_lazy as _
+from django.contrib.contenttypes.fields import GenericRelation
 from apps.accounts.models import Address
+from django.core.exceptions import ValidationError
 from apps.posts.models import Testimony
 from apps.profilesOrg.constants import CHURCH_DENOMINATIONS_CHOICES
 from apps.profiles.gift_constants import GIFT_CHOICES, GIFT_DESCRIPTIONS, GIFT_LANGUAGE_CHOICES, ANSWER_CHOICES
@@ -81,29 +83,124 @@ class Fellowship(models.Model):
 
 
 # ACADEMIC RECORD Manager --------------------------------------------------------------------------------
+class StudyStatus(models.TextChoices):
+    IN_PROGRESS = "in_progress", _("In Progress")
+    COMPLETED   = "completed",   _("Completed")
+    ON_HOLD     = "on_hold",     _("On Hold")
+    DROPPED     = "dropped",     _("Dropped")
+
 class AcademicRecord(models.Model):
     DOCUMENT = FileUpload('profiles', 'documents', 'academic_record')
 
     id = models.BigAutoField(primary_key=True)
-    education_document_type = models.CharField(max_length=50, choices=EDUCATION_DOCUMENT_TYPE_CHOICES, verbose_name='Education Document Type')
-    education_degree = models.CharField(max_length=100, choices=EDUCATION_DEGREE_CHOICES, verbose_name='Education Degree')  
+    education_document_type = models.CharField(
+        max_length=50, choices=EDUCATION_DOCUMENT_TYPE_CHOICES,
+        verbose_name='Education Document Type'
+    )
+    education_degree = models.CharField(
+        max_length=100, choices=EDUCATION_DEGREE_CHOICES,
+        verbose_name='Education Degree'
+    )
     school = models.CharField(max_length=100, verbose_name='School')
     country = models.CharField(max_length=100, verbose_name='Country')
-    graduation_year = models.PositiveIntegerField(blank=True, null=True, verbose_name='Graduation Year')    
-    document = models.FileField(upload_to=DOCUMENT.dir_upload, blank=True, null=True, validators=[validate_pdf_file, validate_no_executable_file], verbose_name='Document')
-    is_teology_related = models.BooleanField(default=False, verbose_name='Teology Related')
+
+    started_at = models.DateField(null=True, blank=True, verbose_name='Started At (YYYY-MM-01)')
+    expected_graduation_at = models.DateField(null=True, blank=True, verbose_name='Expected Graduation (YYYY-MM-01)')
+    graduated_at = models.DateField(null=True, blank=True, verbose_name='Graduated At (YYYY-MM-01)')
+    status = models.CharField(
+        max_length=20, choices=StudyStatus.choices, default=StudyStatus.IN_PROGRESS,
+        verbose_name='Study Status'
+    )
+    document = models.FileField(
+        upload_to=DOCUMENT.dir_upload, null=True, blank=True,
+        validators=[validate_pdf_file, validate_no_executable_file],
+        verbose_name='Document'
+    )
+
+    is_theology_related = models.BooleanField(default=False, verbose_name='Theology Related')
     is_approved = models.BooleanField(default=False, verbose_name='Is Approved')
     is_active = models.BooleanField(default=True, verbose_name='Is Active')
 
     class Meta:
         verbose_name = "Academic Record"
         verbose_name_plural = "Academic Records"
-        
+        ordering = ['-started_at', '-graduated_at', '-expected_graduation_at', '-id']
+
     def __str__(self):
         return f"{self.education_degree}"
 
     def get_absolute_url(self):
         return reverse("academic_record_detail", kwargs={"pk": self.pk})
+
+    # ── Helpers ───────────────────────────────────────────
+    @staticmethod
+    def _ensure_first_of_month(value):
+        """If a Date is provided, force day=1 (we keep month-level precision)."""
+        if value and value.day != 1:
+            return value.replace(day=1)
+        return value
+
+    def clean(self):
+        errors = {}
+
+        # Normalize to day=1 (month-level precision)
+        self.started_at = self._ensure_first_of_month(self.started_at)
+        self.expected_graduation_at = self._ensure_first_of_month(self.expected_graduation_at)
+        self.graduated_at = self._ensure_first_of_month(self.graduated_at)
+
+        # Temporal order checks
+        if self.started_at and self.expected_graduation_at:
+            if self.expected_graduation_at < self.started_at:
+                errors["expected_graduation_at"] = _("Expected graduation cannot be before start date.")
+        if self.started_at and self.graduated_at:
+            if self.graduated_at < self.started_at:
+                errors["graduated_at"] = _("Graduation date cannot be before start date.")
+
+        # Status logic
+        if self.status == StudyStatus.COMPLETED:
+            # Completed requires graduated_at; expected is optional (but should be ≤ graduated_at if present)
+            if not self.graduated_at:
+                errors["graduated_at"] = _("Graduated date is required when status is 'Completed'.")
+        elif self.status == StudyStatus.IN_PROGRESS:
+            # In progress should NOT have graduated_at
+            if self.graduated_at:
+                errors["graduated_at"] = _("Remove graduation date for 'In Progress' status.")
+        elif self.status == StudyStatus.DROPPED:
+            # Dropped shouldn't have a graduation date
+            if self.graduated_at:
+                errors["graduated_at"] = _("Do not set graduation date when status is 'Dropped'.")
+        # ON_HOLD: no strict extra rule
+
+        if errors:
+            raise ValidationError(errors)
+
+    @property
+    def period_display(self) -> str:
+        """Human-friendly period for UI, e.g. '2021 Sep – present (expected 2025 Jun)'."""
+        def ym(d):
+            return d.strftime("%Y %b") if d else "—"
+        if self.status == StudyStatus.IN_PROGRESS:
+            start = ym(self.started_at)
+            exp = ym(self.expected_graduation_at) if self.expected_graduation_at else None
+            tail = f" (expected {exp})" if exp else ""
+            return f"{start} – present{tail}"
+        if self.status == StudyStatus.COMPLETED and self.started_at and self.graduated_at:
+            return f"{ym(self.started_at)} – {ym(self.graduated_at)}"
+        if self.status == StudyStatus.DROPPED:
+            # اگر شروع داشته ولی قطع شده (بدون graduation)
+            base = f"{ym(self.started_at)} – dropped"
+            return base
+        if self.status == StudyStatus.ON_HOLD:
+            base = f"{ym(self.started_at)} – on hold"
+            if self.expected_graduation_at:
+                base += f" (expected {ym(self.expected_graduation_at)})"
+            return base
+        # fallback
+        if self.graduated_at:
+            return f"graduated {ym(self.graduated_at)}"
+        if self.started_at:
+            return f"since {ym(self.started_at)}"
+        return "—"
 
 
 # Migration History --------------------------------------------------------------------------------------
@@ -201,6 +298,12 @@ class Member(SlugMixin):
     hide_confidants = models.BooleanField(default=False, verbose_name='Hide Confidants in setting')
     
     testimony = models.ForeignKey(Testimony, on_delete=models.CASCADE, null=True, blank=True, related_name='member_testimonies', verbose_name='Member Testimony')
+    testimonies = GenericRelation(
+        Testimony,
+        related_query_name='owner_member',
+        content_type_field='content_type',
+        object_id_field='object_id'
+    )
     register_date = models.DateField(default=timezone.now, verbose_name='Register Date')
 
     identity_document = models.FileField(upload_to=FILE.dir_upload, null=True, blank=True, validators=[validate_pdf_file, validate_no_executable_file], verbose_name='Identity Document')
@@ -231,6 +334,7 @@ class Member(SlugMixin):
 
     def __str__(self):
         return self.user.username
+    
 
 
 # GUESTUSER Manager -------------------------------------------------------------------------------------------
