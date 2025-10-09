@@ -10,42 +10,14 @@ from common.file_handlers.media_mixins import (
             )
 from apps.profiles.models import Member
 from apps.accounts.serializers import SimpleCustomUserSerializer
-from apps.profilesOrg.models import Organization
+from apps.profilesOrg.serializers_min import SimpleOrganizationSerializer
+from .serializers_owner_min import build_owner_union_from_content_object
+
 import logging
 logger = logging.getLogger(__name__)
 from django.contrib.auth import get_user_model
 
 CustomUser = get_user_model()
-
-
-# SIMPLE MEMBER & ORGANIZATION Serializers ------------------------------------------------------------------------    
-class SimpleMemberSerializer(serializers.ModelSerializer):
-    profile_image = serializers.SerializerMethodField()
-    class Meta:
-        model = Member
-        fields = ['id', 'profile_image','slug']
-        read_only_fields = ['id', 'slug']
-        
-    def get_profile_image(self, obj):
-        request = self.context.get('request')
-        if obj.id.image_name:
-            return request.build_absolute_uri(obj.id.image_name.url) if request else obj.id.image_name.url
-        return None
-
-
-class SimpleOrganizationSerializer(serializers.ModelSerializer):
-    organization_logo = serializers.SerializerMethodField()
-
-    class Meta:
-        model = Organization
-        fields = ['id', 'org_name', 'organization_logo', 'slug']
-        read_only_fields = ['id','slug']
-
-    def get_organization_logo(self, obj):
-        request = self.context.get('request')
-        if obj.logo:
-            return request.build_absolute_uri(obj.logo.url) if request else obj.logo.url
-        return None
 
 
 # BASE REACTION Serializer ---------------------------------------------------------------------
@@ -99,6 +71,7 @@ class ServiceEventSerializer(serializers.ModelSerializer):
 # TESTIMONY serializers -----------------------------------------------------------------
 class TestimonySerializer(AudioFileMixin, VideoFileMixin, TestimonyThumbnailMixin, serializers.ModelSerializer):
     is_active = serializers.BooleanField(read_only=True)
+    owner = serializers.SerializerMethodField(read_only=True)
     
     class Meta:
         model = Testimony
@@ -106,12 +79,20 @@ class TestimonySerializer(AudioFileMixin, VideoFileMixin, TestimonyThumbnailMixi
             'id','slug','type','title','content',
             'audio','video','thumbnail',
             'published_at','updated_at','is_active',
-            'content_type','object_id','is_converted'
+            'content_type','object_id','is_converted',
+            'owner',
         ]
         read_only_fields = [
             'published_at','updated_at','is_converted','slug',
             'content_type','object_id','is_active',
+            'owner',
         ]
+
+    # Build a small, public owner union from GFK
+    def get_owner(self, obj):
+        # Ensure request in context for absolute URLs
+        return build_owner_union_from_content_object(obj, context=self.context)
+
 
     # serializers.py
     def validate(self, attrs):
@@ -143,7 +124,6 @@ class TestimonySerializer(AudioFileMixin, VideoFileMixin, TestimonyThumbnailMixi
 
         attrs['type'] = ttype
         return attrs
-
 
     def create(self, validated_data):
         validated_data.setdefault('type', self.context.get('ttype'))

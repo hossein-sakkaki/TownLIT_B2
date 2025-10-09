@@ -1,3 +1,5 @@
+# apps/profiles/constants.py
+
 # Friendship status Choices -------------------------------------------------------------------------------
 PENDING = 'pending'
 ACCEPTED = 'accepted'

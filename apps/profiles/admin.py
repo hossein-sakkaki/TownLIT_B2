@@ -57,7 +57,11 @@ class FriendshipAdmin(admin.ModelAdmin):
 class AcademicRecordInline(admin.TabularInline):
     model = AcademicRecord
     extra = 1
-    fields = ['education_document_type', 'education_degree', 'school', 'country', 'graduation_year', 'document', 'is_teology_related']
+    fields = [
+        'education_document_type', 'education_degree', 'school', 'country',
+        'status', 'started_at', 'expected_graduation_at', 'graduated_at',
+        'document', 'is_theology_related',
+    ]
     readonly_fields = ['document']
     show_change_link = True
 
@@ -65,11 +69,16 @@ class AcademicRecordInline(admin.TabularInline):
 # AcademicRecord Admin --------------------------------------------------------------------
 @admin.register(AcademicRecord)
 class AcademicRecordAdmin(admin.ModelAdmin):
-    list_display = ['education_document_type', 'education_degree', 'school', 'country', 'graduation_year', 'is_teology_related']
-    list_filter = ['education_degree', 'country', 'graduation_year', 'is_teology_related']
-    search_fields = ['school', 'country', 'graduation_year']
+    list_display = [
+        'education_document_type', 'education_degree', 'school', 'country',
+        'status', 'period_display', 'is_theology_related'
+    ]
+    list_filter = [
+        'education_degree', 'country', 'status', 'is_theology_related'
+    ]
+    search_fields = ['school', 'country', 'education_degree']
     readonly_fields = ['document']
-    ordering = ['graduation_year']
+    ordering = ['-started_at', '-graduated_at', '-expected_graduation_at', '-id']
 
 
 # MIGRATION HISTORY Admin ------------------------------------------------------------

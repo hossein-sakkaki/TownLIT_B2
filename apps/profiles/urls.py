@@ -11,7 +11,8 @@ from .views import (
     SpiritualGiftSurveyViewSet,
     SpiritualGiftSurveyQuestionViewSet,
     MemberSpiritualGiftsViewSet,
-    MemberServicesViewSet,   # ← new ViewSet holding service-related @actions
+    MemberServicesViewSet,
+    VisitorProfileViewSet,
 )
 
 # -------------------------------
@@ -43,10 +44,20 @@ services_policy  = MemberServicesViewSet.as_view({'get': 'policy'})
 # -------------------------------
 custom_paths = [
     # existing custom endpoints
-    path('members/profile/<str:username>/', MemberViewSet.as_view({'get': 'view_member_profile'}), name='profile-detail'),
-    path('guestusers/<int:pk>/',            GuestUserViewSet.as_view({'get': 'view_guest_profile'}), name='guestuser-detail'),
-    path('veriff/create/',                  VeriffViewSet.as_view({'post': 'create_verification_session'}), name='create-verification-session'),
-    path('veriff/status/',                  VeriffViewSet.as_view({'get': 'get_verification_status'}), name='get-verification-status'),
+    path(
+        'members/profile/<str:username>/',
+        VisitorProfileViewSet.as_view({'get': 'profile'}),
+        name='profile-detail'
+    ),    
+    path('guestusers/<int:pk>/',            
+         GuestUserViewSet.as_view({'get': 'view_guest_profile'}), 
+         name='guestuser-detail'),
+    path('veriff/create/',                  
+         VeriffViewSet.as_view({'post': 'create_verification_session'}), 
+         name='create-verification-session'),
+    path('veriff/status/',                  
+         VeriffViewSet.as_view({'get': 'get_verification_status'}), 
+         name='get-verification-status'),
 
     # member services (match frontend BASE_PATH = "/profiles/members")
     path('members/services-catalog/', services_catalog, name='member-services-catalog'),

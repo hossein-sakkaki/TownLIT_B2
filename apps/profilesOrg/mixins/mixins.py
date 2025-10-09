@@ -7,7 +7,8 @@ from rest_framework.permissions import IsAuthenticated
 
 from apps.profiles.models import Member
 from apps.profilesOrg.models import Organization
-from apps.posts.serializers import SimpleMemberSerializer, SimpleOrganizationSerializer, SimpleCustomUserSerializer
+from apps.posts.serializers import SimpleOrganizationSerializer, SimpleCustomUserSerializer
+from apps.profiles.serializers_min import SimpleMemberSerializer
 from common.permissions import IsFullAccessAdmin
 from django.contrib.auth import get_user_model
 

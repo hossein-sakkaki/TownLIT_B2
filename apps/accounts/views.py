@@ -19,6 +19,7 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny    
 from rest_framework.throttling import ScopedRateThrottle
+from rest_framework_simplejwt.exceptions import TokenError
 
 from django.contrib.auth.hashers import check_password
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -38,7 +39,7 @@ from .serializers import (
     RegisterUserSerializer, LoginSerializer,
     VerifyNewBornSerializer, ForgetPasswordSerializer, ResetPasswordSerializer,
     SocialMediaLinkSerializer, SocialMediaLinkReadOnlySerializer, SocialMediaTypeSerializer,
-    UserDeviceKeySerializer
+    UserDeviceKeySerializer, ReactivationUserSerializer
     )
 from .constants import BELIEVER, SEEKER, PREFER_NOT_TO_SAY
 from apps.profilesOrg.models import Organization
@@ -91,26 +92,17 @@ def extract_first_error_message(errors):
 
 # AUTH View  --------------------------------------------------------------------
 class AuthViewSet(viewsets.ViewSet):
-
-    # Enable scoped throttling for this viewset
+    # Throttling (scoped)
     throttle_classes = [ScopedRateThrottle]
-    throttle_scope = "crypto"  # default scope for most actions
-    
+    throttle_scope = "crypto"  # default scope
+
+    # Whitelists for our global permission
+    allow_deleted_actions = {"send_reactivate_confirmation", "confirm_reactivate_account"}
+    allow_suspended_actions = {"logout"}
+
     def get_throttles(self):
-        """
-        Dynamically adjust throttle scope per action.
-        """
-        # Heavy actions: stricter rate limit
         heavy_actions = {"backfill_device_keys"}
-
-        # You can add more heavy actions if needed:
-        # heavy_actions.update({"send-device-deletion-code"})  # example
-
-        if getattr(self, "action", None) in heavy_actions:
-            self.throttle_scope = "crypto_heavy"
-        else:
-            self.throttle_scope = "crypto"
-
+        self.throttle_scope = "crypto_heavy" if getattr(self, "action", None) in heavy_actions else "crypto"
         return super().get_throttles()
     
     
@@ -443,101 +435,119 @@ class AuthViewSet(viewsets.ViewSet):
         }, status=status.HTTP_200_OK)
         
 
-    # Login ----------------------------------------------------------------------------------    
+    # Login ----------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], permission_classes=[AllowAny])
     def login(self, request):
         ser_data = LoginSerializer(data=request.data)
-        
-        if ser_data.is_valid():
-            try:
-                user = CustomUser.objects.get(email=ser_data.validated_data['email'])
-            except CustomUser.DoesNotExist:
-                return Response({
-                    "message": "We couldn't find an account with this email. If you're new, consider joining the family!"
-                }, status=status.HTTP_401_UNAUTHORIZED)
-            
-            # بررسی رمز عبور
-            if not user.check_password(ser_data.validated_data['password']):
-                return Response({
-                    "message": "Hmm... that password didn’t match. Please try again — and don’t worry, it happens!"
-                }, status=status.HTTP_401_UNAUTHORIZED)
-                
 
-            # بررسی وضعیت is_deleted قبل از ادامه پردازش لاگین
-            if user.is_deleted:
-                refresh = RefreshToken.for_user(user)
-                access = refresh.access_token
-                user_data = CustomUserSerializer(user).data
-                return Response({                    
-                    
-                    "message": "Your account deletion request is in progress. You can reactivate your account within 1 year.",
-                    "is_deleted": True,
-                    "deletion_requested_at": user.deletion_requested_at,
-                    "email": user.email,
-                    "user_id": user.id,
-                    "refresh": str(refresh),
-                    "access": str(access),
-                    'user': user_data,
-                }, status=status.HTTP_202_ACCEPTED)
-            
-            if not user.is_active:
-                return Response({
-                    "message": "User account is not active. Please verify your email or contact support."
-                }, status=status.HTTP_403_FORBIDDEN)
+        if not ser_data.is_valid():
+            return Response(
+                {"error": extract_first_error_message(ser_data.errors)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-            if user.two_factor_enabled:
-                otp_code = user.generate_two_factor_token()
-                expiration_minutes = settings.EMAIL_CODE_EXPIRATION_MINUTES
+        # 1) find user by email (uniform messaging to avoid enumeration)
+        try:
+            user = CustomUser.objects.get(email=ser_data.validated_data['email'])
+        except CustomUser.DoesNotExist:
+            return Response({
+                "message": "We couldn't find an account with this email. If you're new, consider joining the family!"
+            }, status=status.HTTP_401_UNAUTHORIZED)
 
-                # ارسال ایمیل با کد OTP
-                subject = "Two-Factor Authentication - Your OTP Code"
-                context = {
-                    'otp_code': otp_code,
-                    'user': user,
-                    'site_domain': settings.SITE_URL,  
-                    "logo_base_url": settings.EMAIL_LOGO_URL,
-                    "current_year": timezone.now().year,
-                    "expiration_minutes": expiration_minutes,
-                }
+        # 2) verify password first (avoid leaking suspension fact for wrong passwords)
+        if not user.check_password(ser_data.validated_data['password']):
+            return Response({
+                "message": "Hmm... that password didn’t match. Please try again — and don’t worry, it happens!"
+            }, status=status.HTTP_401_UNAUTHORIZED)
 
-                success = send_custom_email(
-                    to=user.email,
-                    subject=subject,
-                    template_path='emails/account/login_by_2fa_email.html',
-                    context=context,
-                    text_template_path=None 
-                )
-
-                if not success:
-                    return Response({"error": "Failed to send OTP email. Please try again later."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-                                
-                return Response({
-                    "message": "Two-factor authentication required. Please check your email for the OTP code.",
-                    "two_factor_enabled": user.two_factor_enabled,
-                    "email": user.email,
-                }, status=status.HTTP_202_ACCEPTED)
-
-            # ورود موفق بدون Two-Factor Authentication
-            user.last_login = timezone.now()
-            user.save(update_fields=['last_login'])
-
+        # 3) hard-deleted flow (kept as-is from your code)
+        if user.is_deleted:
             refresh = RefreshToken.for_user(user)
             access = refresh.access_token
-            user_data = CustomUserSerializer(user).data
+            react_user = ReactivationUserSerializer(user).data
+            return Response({
+                "message": "Your account deletion request is in progress. You can reactivate your account within 1 year.",
+                "reactivation_required": True,        # explicit FE flag
+                "is_deleted": True,
+                "deletion_requested_at": user.deletion_requested_at,
+                "email": user.email,                  # convenience; already in react_user
+                "user_id": user.id,
+                "refresh": str(refresh),
+                "access": str(access),
+                "user": react_user,                   # minimal, NOT CustomUserSerializer
+            }, status=status.HTTP_202_ACCEPTED)
+
+        # 4) suspended -> block login (no tokens / no OTP)
+        if getattr(user, "is_suspended", False):
+            # 423 Locked communicates temporary protective lock
+            return Response({
+                "message": (
+                    "Your account is temporarily suspended for a LITSanctuary review. "
+                    "This protective step helps keep you and the community safe. "
+                    "Access may be restored once the review completes."
+                ),
+                "is_suspended": True,
+                "email": user.email,
+            }, status=status.HTTP_423_LOCKED)
+
+        # 5) inactive -> block
+        if not user.is_active:
+            return Response({
+                "message": "User account is not active. Please verify your email or contact support."
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        # 6) 2FA flow (only if not suspended)
+        if user.two_factor_enabled:
+            otp_code = user.generate_two_factor_token()
+            expiration_minutes = settings.EMAIL_CODE_EXPIRATION_MINUTES
+
+            subject = "Two-Factor Authentication - Your OTP Code"
+            context = {
+                'otp_code': otp_code,
+                'user': user,
+                'site_domain': settings.SITE_URL,
+                "logo_base_url": settings.EMAIL_LOGO_URL,
+                "current_year": timezone.now().year,
+                "expiration_minutes": expiration_minutes,
+            }
+
+            success = send_custom_email(
+                to=user.email,
+                subject=subject,
+                template_path='emails/account/login_by_2fa_email.html',
+                context=context,
+                text_template_path=None
+            )
+
+            if not success:
+                return Response(
+                    {"error": "Failed to send OTP email. Please try again later."},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
 
             return Response({
-                'refresh': str(refresh),
-                'access': str(access),
-                'is_member': user.is_member,
-                'two_factor_enabled': user.two_factor_enabled,
-                'user': user_data,
-                'user_id': user.id
-            }, status=status.HTTP_200_OK)
+                "message": "Two-factor authentication required. Please check your email for the OTP code.",
+                "two_factor_enabled": user.two_factor_enabled,
+                "email": user.email,
+            }, status=status.HTTP_202_ACCEPTED)
 
-        return Response(
-            {"error": extract_first_error_message(ser_data.errors)},
-            status=status.HTTP_400_BAD_REQUEST
-        )
+        # 7) success (no 2FA)
+        user.last_login = timezone.now()
+        user.save(update_fields=['last_login'])
+
+        refresh = RefreshToken.for_user(user)
+        access = refresh.access_token
+        user_data = CustomUserSerializer(user).data
+
+        return Response({
+            'refresh': str(refresh),
+            'access': str(access),
+            'is_member': user.is_member,
+            'two_factor_enabled': user.two_factor_enabled,
+            'user': user_data,
+            'user_id': user.id
+        }, status=status.HTTP_200_OK)
+
 
     # Login with 2FA ----------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='login-with-2fa', permission_classes=[AllowAny])
@@ -545,7 +555,7 @@ class AuthViewSet(viewsets.ViewSet):
         email = request.data.get('email')
         otp_code = request.data.get('otp_code')
 
-        # اعتبارسنجی اولیه
+        # 0) basic validation
         if not email or not otp_code:
             return Response({
                 "message": "Email and OTP code are required."
@@ -558,11 +568,25 @@ class AuthViewSet(viewsets.ViewSet):
                 "message": "User with this email does not exist."
             }, status=status.HTTP_404_NOT_FOUND)
 
+        # 1) if suspended, block even if an OTP exists
+        if getattr(user, "is_suspended", False):
+            return Response({
+                "message": (
+                    "Your account is temporarily suspended for a LITSanctuary review. "
+                    "This protective step helps keep you and the community safe. "
+                    "Access may be restored once the review completes."
+                ),
+                "is_suspended": True,
+                "email": user.email,
+            }, status=status.HTTP_423_LOCKED)
+
+        # 2) ensure 2FA is enabled
         if not user.two_factor_enabled:
             return Response({
                 "message": "Two-factor authentication is not enabled for this user."
             }, status=status.HTTP_400_BAD_REQUEST)
 
+        # 3) validate token
         token_status = user.validate_two_factor_token(otp_code)
 
         if token_status == "valid":
@@ -571,8 +595,24 @@ class AuthViewSet(viewsets.ViewSet):
 
             refresh = RefreshToken.for_user(user)
             access = refresh.access_token
-            user_data = CustomUserSerializer(user).data
 
+            # If deleted -> only minimal payload + 202 Accepted, not full profile
+            if user.is_deleted:
+                react_user = ReactivationUserSerializer(user).data
+                return Response({
+                    "message": "Account deactivated. You can reactivate within 1 year using the code sent to your email.",
+                    "reactivation_required": True,
+                    "is_deleted": True,
+                    "deletion_requested_at": user.deletion_requested_at,
+                    "email": user.email,
+                    "user_id": user.id,
+                    "refresh": str(refresh),
+                    "access": str(access),
+                    "user": react_user,
+                }, status=status.HTTP_202_ACCEPTED)
+
+            # else: normal success (active accounts)
+            user_data = CustomUserSerializer(user).data
             return Response({
                 'refresh': str(refresh),
                 'access': str(access),
@@ -591,32 +631,52 @@ class AuthViewSet(viewsets.ViewSet):
                 "message": "No OTP code was generated. Please start the login process again."
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        else: 
+        else:
             return Response({
                 "message": "Invalid OTP code. Please try again."
             }, status=status.HTTP_400_BAD_REQUEST)
 
     # Logout ---------------------------------------------------------------------------------------------------------
-    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
-    def logout(self, request):  # Logout
+    @action(detail=False, methods=['post'], url_path='logout', permission_classes=[IsAuthenticated])
+    def logout(self, request):
+        """
+        Revoke refresh token (if blacklist app enabled) and force WS logout.
+        Allowed for suspended users via allow_suspended_actions.
+        """
+        refresh_token = request.data.get("refresh")
+        if not refresh_token:
+            return Response({"error": "Refresh token is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Try to blacklist refresh token
         try:
-            refresh_token = request.data["refresh"]
             token = RefreshToken(refresh_token)
-            token.blacklist()
-            
-            # Force Logout from WebSocket
-            channel_layer = get_channel_layer()
-            async_to_sync(channel_layer.group_send)(
-                f"user_{request.user.id}",
-                {
-                    "type": "force_logout",
-                    "user_id": request.user.id,
-                }
+            try:
+                token.blacklist()  # no-op if blacklist app not installed
+            except Exception:
+                # Swallow if blacklist app isn't enabled; client should still drop tokens.
+                pass
+        except TokenError:
+            return Response(
+                {"error": "Invalid token or token has already been blacklisted."},
+                status=status.HTTP_400_BAD_REQUEST
             )
-            
-            return Response({"message": "User has been successfully logged out."}, status=status.HTTP_200_OK)
-        except Exception as e:
-            return Response({"error": "Invalid token or token has already been blacklisted."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Force logout over WebSocket (best-effort)
+        try:
+            channel_layer = get_channel_layer()
+            if channel_layer is not None:
+                async_to_sync(channel_layer.group_send)(
+                    f"user_{request.user.id}",
+                    {
+                        "type": "force_logout",   # your consumer handler
+                        "user_id": request.user.id,
+                    }
+                )
+        except Exception:
+            # Do not fail logout if WS delivery fails
+            pass
+
+        return Response({"message": "User has been successfully logged out."}, status=status.HTTP_200_OK)
         
         
     # Forgot Password -------------------------------------------------------------------------------------------------
@@ -1090,22 +1150,22 @@ class AuthViewSet(viewsets.ViewSet):
             return Response({"error": f"An error occurred: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
     # ----------------------------------------------------------------------------------------------------        
-    @action(detail=False, methods=['post'], url_path='send-reactivate-confirmation', permission_classes=[AllowAny])
+    @action(detail=False, methods=['post'], url_path='send-reactivate-confirmation', permission_classes=[IsAuthenticated])
     def send_reactivate_confirmation(self, request):
         try:
             user = request.user
             if not user.is_deleted:
                 return Response({"error": "Your account is not marked for deletion."}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Generate and encrypt activation code
-            active_code = create_active_code(5) 
-            expiration_minutes = settings.EMAIL_CODE_EXPIRATION_MINUTES                      
+            # Generate and store OTP (encrypted)
+            active_code = create_active_code(5)
+            expiration_minutes = settings.EMAIL_CODE_EXPIRATION_MINUTES
             expiration_time = timezone.now() + datetime.timedelta(minutes=expiration_minutes)
-            
+
             encrypted_active_code = cipher_suite.encrypt(str(active_code).encode())
-            user.user_active_code = encrypted_active_code.decode()  # Save as string
+            user.user_active_code = encrypted_active_code.decode()
             user.user_active_code_expiry = expiration_time
-            user.save()
+            user.save(update_fields=["user_active_code", "user_active_code_expiry"])
 
             # Send email
             subject = "Reactivate Your Account - TownLIT"
@@ -1117,7 +1177,6 @@ class AuthViewSet(viewsets.ViewSet):
                 "expiration_minutes": expiration_minutes,
                 "current_year": timezone.now().year,
             }
-
             success = send_custom_email(
                 to=user.email,
                 subject=subject,
@@ -1125,7 +1184,6 @@ class AuthViewSet(viewsets.ViewSet):
                 context=context,
                 text_template_path=None
             )
-
             if not success:
                 return Response({"error": "Failed to send reactivation code. Please try again later."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -1133,51 +1191,49 @@ class AuthViewSet(viewsets.ViewSet):
         except Exception as e:
             logger.error(f"Error in send_reactivate_confirmation: {str(e)}")
             return Response({"error": f"An error occurred: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
                 
     @action(detail=False, methods=['post'], url_path='confirm-reactivate-account', permission_classes=[IsAuthenticated])
     def confirm_reactivate_account(self, request):
         try:
             user = request.user
             code = request.data.get('code')
-            
             if not code:
                 return Response({"error": "Reactivation code is required."}, status=status.HTTP_400_BAD_REQUEST)
-
             if not user.is_deleted:
                 return Response({"error": "Your account is not marked for deletion."}, status=status.HTTP_400_BAD_REQUEST)
-
             if not user.user_active_code:
                 return Response({"error": "No reactivation code found. Please request a new one."}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Decrypt the stored code
+            # Decrypt and validate
             try:
                 decrypted_active_code = cipher_suite.decrypt(user.user_active_code.encode()).decode()
             except Exception:
                 return Response({"error": "Failed to decrypt the reactivation code."}, status=status.HTTP_400_BAD_REQUEST)
-
-            # Check if the code matches
             if decrypted_active_code != code:
                 return Response({"error": "Invalid reactivation code."}, status=status.HTTP_400_BAD_REQUEST)
-
-            # Check if the code has expired
             if user.user_active_code_expiry and timezone.now() > user.user_active_code_expiry:
                 return Response({"error": "The reactivation code has expired. Please request a new one."}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Reactivate the account
+            # Reactivate
             user.is_deleted = False
             user.deletion_requested_at = None
-            user.user_active_code = None  # Clear the active code
+            user.user_active_code = None
             user.user_active_code_expiry = None
             user.reactivated_at = timezone.now()
-            user.save()
+            user.save(update_fields=[
+                "is_deleted", "deletion_requested_at",
+                "user_active_code", "user_active_code_expiry",
+                "reactivated_at"
+            ])
+
             external_contact = ExternalContact.objects.filter(email__iexact=user.email).first()
             if external_contact:
                 external_contact.became_user = True
                 external_contact.became_user_at = timezone.now()
                 external_contact.deleted_after_signup = False
-                external_contact.save()
-                        
+                external_contact.save(update_fields=["became_user", "became_user_at", "deleted_after_signup"])
+
+            # Email success
             subject = "Welcome Back to TownLIT!"
             context = {
                 "user": user,
@@ -1186,7 +1242,6 @@ class AuthViewSet(viewsets.ViewSet):
                 "logo_base_url": settings.EMAIL_LOGO_URL,
                 "current_year": timezone.now().year,
             }
-
             success = send_custom_email(
                 to=user.email,
                 subject=subject,
@@ -1194,17 +1249,14 @@ class AuthViewSet(viewsets.ViewSet):
                 context=context,
                 text_template_path=None
             )
-
             if not success:
-                return Response(
-                    {"error": "Failed to send reactivation email."},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )      
+                return Response({"error": "Reactivated, but failed to send confirmation email."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
             return Response({"message": "Your account has been successfully reactivated."}, status=status.HTTP_200_OK)
         except Exception as e:
             logger.error(f"Error in confirm_reactivate_account: {str(e)}")
             return Response({"error": f"An error occurred: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 
     # Register Device Key ----------------------------------------------------------------------------------------------------

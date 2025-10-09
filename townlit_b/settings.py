@@ -273,9 +273,18 @@ SENDER_VERIFIED_GRACE_MINUTES = int(os.getenv("SENDER_VERIFIED_GRACE_MINUTES", "
 
 # -------------------------------------------------------------------------------------------------------------------
 REST_FRAMEWORK = {
+    # --- Auth ---
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ],
+
+    # --- Permissions ---
+    # Global gate: blocks authenticated users if is_suspended/is_deleted unless view sets allow_* flags.
+    'DEFAULT_PERMISSION_CLASSES': [
+        'apps.core.permissions.DenyIfDeletedOrSuspended',
+    ],
+
+    # --- Renderers / Parsers ---
     "DEFAULT_RENDERER_CLASSES": (
         "rest_framework.renderers.JSONRenderer",
     ),
@@ -284,12 +293,15 @@ REST_FRAMEWORK = {
         'rest_framework.parsers.FormParser',
         'rest_framework.parsers.MultiPartParser',
     ],
-    
-    # ✅ Enable scoped throttling
+
+    # --- Exceptions ---
+    # Unified error payload (code/message/status) incl. 423 Locked for suspended accounts.
+    "EXCEPTION_HANDLER": "apps.core.exceptions.custom_exception_handler",
+
+    # --- Throttling ---
     "DEFAULT_THROTTLE_CLASSES": [
         "rest_framework.throttling.ScopedRateThrottle",
     ],
-    
     "DEFAULT_THROTTLE_RATES": {
         # Read from env; strings like "30/min" or "200/hour"
         "crypto": CRYPTO_THROTTLE_RATE,
