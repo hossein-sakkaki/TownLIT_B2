@@ -8,6 +8,7 @@ from apps.accounts.models import Address
 from django.core.exceptions import ValidationError
 from apps.posts.models import Testimony
 from apps.profilesOrg.constants import CHURCH_DENOMINATIONS_CHOICES
+from apps.profilesOrg.constants_denominations import CHURCH_BRANCH_CHOICES, CHURCH_FAMILY_CHOICES_ALL, FAMILIES_BY_BRANCH
 from apps.profiles.gift_constants import GIFT_CHOICES, GIFT_DESCRIPTIONS, GIFT_LANGUAGE_CHOICES, ANSWER_CHOICES
 from .constants import (
                             FRIENDSHIP_STATUS_CHOICES, EDUCATION_DOCUMENT_TYPE_CHOICES, 
@@ -291,7 +292,20 @@ class Member(SlugMixin):
     vision = models.CharField(max_length=500, null=True, blank=True, verbose_name='Vision')
     spiritual_rebirth_day = models.DateField(auto_now=False, auto_now_add=False, null=True, blank=True, verbose_name='Spiritual Rebirth Days')
     academic_record = models.OneToOneField(AcademicRecord, on_delete=models.SET_NULL, null=True, blank=True, related_name="member_academic_record")
-    denominations_type = models.CharField(max_length=40, choices=CHURCH_DENOMINATIONS_CHOICES, null=True, blank=True, verbose_name='Denominations Type')
+    # denominations_type = models.CharField(max_length=40, choices=CHURCH_DENOMINATIONS_CHOICES, null=True, blank=True, verbose_name='Denominations Type')
+
+    denomination_branch = models.CharField(
+        max_length=40,
+        choices=CHURCH_BRANCH_CHOICES,
+        null=False, blank=False,
+        verbose_name='Denomination Branch'
+    )
+    denomination_family = models.CharField(
+        max_length=60,
+        choices=CHURCH_FAMILY_CHOICES_ALL,
+        null=True, blank=True,                     
+        verbose_name='Denomination Family (Optional)'
+    )
     
     show_gifts_in_profile = models.BooleanField(default=True, verbose_name=_("Show Gifts in Profile"), help_text=_("Allow gifts to be visible on the profile page."))
     show_fellowship_in_profile = models.BooleanField(default=True, verbose_name='Show Fellowship in Profile')
@@ -327,6 +341,17 @@ class Member(SlugMixin):
 
     def managed_organizations(self):
         return self.organization_adminships.all()
+
+    def clean(self):
+        # Enforce: family (if provided) must belong to the selected branch
+        branch = self.denomination_branch
+        family = self.denomination_family
+        if family:
+            allowed = FAMILIES_BY_BRANCH.get(branch, set())
+            if family not in allowed:
+                raise ValidationError({
+                    "denomination_family": "Selected family does not belong to the chosen branch."
+                })
     
     class Meta:
         verbose_name = "2. Member"

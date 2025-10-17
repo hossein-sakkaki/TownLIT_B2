@@ -35,6 +35,10 @@ from apps.profiles.constants import (
     SPIRITUAL_MINISTRY_CHOICES,
 )
 
+from apps.profilesOrg.constants_denominations import (
+    CHURCH_BRANCH_CHOICES, CHURCH_FAMILY_CHOICES_ALL, FAMILIES_BY_BRANCH
+)
+
 # Import organizations
 from apps.profilesOrg.constants import (
     ORGANIZATION_TYPE_CHOICES,
@@ -157,7 +161,9 @@ CHOICES_MAP = {
     'education_degree': EDUCATION_DEGREE_CHOICES,
 
     # Organizations constants
-    'organization_type': ORGANIZATION_TYPE_CHOICES,
+    "church_denominations_branch": CHURCH_BRANCH_CHOICES,
+    "church_denominations_family": CHURCH_FAMILY_CHOICES_ALL,
+    # 'organization_type': ORGANIZATION_TYPE_CHOICES,
     'access_level': ACCESS_LEVEL_CHOICES,
     'price_type': PRICE_TYPE_CHOICES,
     'institution_type': INSTITUTION_TYPE_CHOICES,

@@ -9,6 +9,7 @@ from .models import (
     Prayer,
     VideoCategory, VideoSeries, OfficialVideo, VideoViewLog
     )
+from common.file_handlers.media_mixins import VideoFileMixin, ThumbnailFileMixin
 
 
 
@@ -117,29 +118,29 @@ class VideoSeriesSerializer(serializers.ModelSerializer):
         
         
 # Official Video Serializer -------------------------------------
-class OfficialVideoSerializer(serializers.ModelSerializer):
+class OfficialVideoSerializer(VideoFileMixin, ThumbnailFileMixin, serializers.ModelSerializer):
     category = VideoCategorySerializer(read_only=True)
     series = VideoSeriesSerializer(read_only=True)
     time_since_publish = serializers.SerializerMethodField()
     parent_id = serializers.PrimaryKeyRelatedField(
-        source="parent", queryset=OfficialVideo.objects.all(), required=False, allow_null=True
+        source="parent", queryset=OfficialVideo.objects.all(),
+        required=False, allow_null=True
     )
     children_count = serializers.SerializerMethodField()
-
-    video_url = serializers.SerializerMethodField()
-    thumbnail_url = serializers.SerializerMethodField()
-    video_file_path = serializers.SerializerMethodField()
 
     class Meta:
         model = OfficialVideo
         fields = [
-            'id', 'title', 'description', 'language',
+            # model fields
+            'id', 'slug', 'title', 'description', 'language',
             'category', 'series', 'episode_number',
-            'video_url', 'thumbnail_url', 'video_file_path', 'view_count',
-            'is_active', 'publish_date', 'created_at', 'slug',
-            'time_since_publish', 'parent_id', 'children_count',
-            'is_converted',
+            'video', 'thumbnail',                 # ← میکسین‌ها از این‌ها خروجی می‌سازند
+            'view_count', 'is_active', 'publish_date', 'created_at',
+            'parent_id', 'children_count', 'is_converted',
+            # computed
+            'time_since_publish',
         ]
+        read_only_fields = ['slug', 'created_at', 'view_count', 'is_converted']
 
     def get_time_since_publish(self, obj):
         return timesince(obj.publish_date, timezone.now()) if obj.publish_date else None
@@ -147,17 +148,6 @@ class OfficialVideoSerializer(serializers.ModelSerializer):
     def get_children_count(self, obj):
         return obj.children.count()
 
-    def get_video_url(self, obj):
-        return get_file_url(str(obj.video_file.name)) if obj.video_file else None
-
-    def get_video_file_path(self, obj):
-        path = str(obj.video_file.name) if obj.video_file else None
-        print("✅ [get_video_file_path CALLED] =>", path)
-        return path
-
-    def get_thumbnail_url(self, obj):
-        return get_file_url(str(obj.thumbnail.name)) if obj.thumbnail else None
-    
 
 class OfficialVideoCreateUpdateSerializer(serializers.ModelSerializer):
     parent = serializers.PrimaryKeyRelatedField(queryset=OfficialVideo.objects.all(), required=False, allow_null=True)
