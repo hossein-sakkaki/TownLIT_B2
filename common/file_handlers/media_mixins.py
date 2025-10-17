@@ -41,10 +41,10 @@ class VideoFileMixin(BaseS3URLMixin):
         return rep
 
 
-class TestimonyThumbnailMixin(BaseS3URLMixin):
+class ThumbnailFileMixin(BaseS3URLMixin):
     """Signed/public URL for single `thumbnail` field."""
     signed_fields = {
-        'thumbnail': getattr(settings, 'DEFAULT_TESTIMONY_THUMB_URL', None),
+        'thumbnail': getattr(settings, 'DEFAULT_THUMB_LACEHOLDER_URL', None),
     }
 
     def to_representation(self, instance):
