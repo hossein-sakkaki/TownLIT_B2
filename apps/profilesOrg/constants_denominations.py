@@ -25,7 +25,7 @@ METHODISM = 'methodism'
 BAPTIST = 'baptist'  # fixed
 PRESBYTERIANISM = 'presbyterianism'
 PENTECOSTALISM = 'pentecostalism'
-ADVENTISM = 'adventism'
+ADVENTISM = 'adventism'  # mainstream SDA only (not fringe offshoots)
 ANABAPTISM = 'anabaptism'
 CONGREGATIONALISM = 'congregationalism'
 PIETIST_MORAVIAN = 'pietist_moravian'
@@ -34,6 +34,7 @@ RESTORATIONIST_STONE_CAMPBELL = 'restorationist_stone_campbell'
 WESLEYAN_HOLINESS = 'wesleyan_holiness'
 EVANGELICAL_NONDENOM = 'evangelical_nondenominational'
 CHARISMATIC_NONDENOM = 'charismatic_nondenominational'
+BRETHREN_PLYMOUTH = 'brethren_plymouth'  # NEW
 
 PROTESTANT_FAMILY_CHOICES = [
     (ANGLICANISM, 'Anglican'),
@@ -49,6 +50,7 @@ PROTESTANT_FAMILY_CHOICES = [
     (QUAKER_FRIENDS, 'Friends (Quaker)'),
     (RESTORATIONIST_STONE_CAMPBELL, 'Restorationist (Stone-Campbell)'),
     (ADVENTISM, 'Adventist'),
+    (BRETHREN_PLYMOUTH, 'Brethren (Plymouth Brethren)'),  # NEW
     (PENTECOSTALISM, 'Pentecostal'),
     (CHARISMATIC_NONDENOM, 'Charismatic (Non-denominational)'),
     (EVANGELICAL_NONDENOM, 'Evangelical (Non-denominational)'),
@@ -83,6 +85,7 @@ EO_GEORGIAN = 'eo_georgian'
 EO_ANTIOCHIAN = 'eo_antiochian'
 EO_OCA = 'eo_oca'
 EO_OTHER_AUTOCEPHALOUS = 'eo_other_autocephalous'
+# (Optional) EO_UKRAINIAN = 'eo_ukrainian'  # if you want to expose explicitly
 
 EASTERN_ORTHODOX_FAMILY_CHOICES = [
     (EO_GREEK, 'Eastern Orthodox – Greek'),
@@ -93,6 +96,7 @@ EASTERN_ORTHODOX_FAMILY_CHOICES = [
     (EO_GEORGIAN, 'Eastern Orthodox – Georgian'),
     (EO_ANTIOCHIAN, 'Eastern Orthodox – Antiochian'),
     (EO_OCA, 'Eastern Orthodox – Orthodox Church in America'),
+    # (EO_UKRAINIAN, 'Eastern Orthodox – Ukrainian'),
     (EO_OTHER_AUTOCEPHALOUS, 'Eastern Orthodox – Other Autocephalous'),
 ]
 
@@ -124,10 +128,12 @@ CHURCH_OF_THE_EAST_FAMILY_CHOICES = [
 
 # --- Old Catholic families (optional) ---
 OC_UTRECHT = 'oc_union_of_utrecht'
+OC_SCRANTON = 'oc_union_of_scranton'  # NEW
 OC_OTHER = 'oc_other_old_catholic'
 
 OLD_CATHOLIC_FAMILY_CHOICES = [
     (OC_UTRECHT, 'Old Catholic – Union of Utrecht'),
+    (OC_SCRANTON, 'Old Catholic – Union of Scranton'),  # NEW
     (OC_OTHER, 'Old Catholic – Other Old Catholic'),
 ]
 

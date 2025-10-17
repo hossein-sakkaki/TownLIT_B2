@@ -1,21 +1,24 @@
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from asgiref.sync import sync_to_async
 from channels.db import database_sync_to_async
+from typing import Dict, Tuple
+import asyncio
 import json
 import base64
+import time
+from contextlib import suppress
 from urllib.parse import parse_qs
 from datetime import datetime
 from apps.conversation.models import Message, Dialogue, MessageEncryption
 from apps.accounts.models import UserDeviceKey
 from django.contrib.auth import get_user_model
-import asyncio
 from django.utils import timezone
 from django.utils.timesince import timesince
 from .utils import get_message_content
 from services.redis_online_manager import (
     set_user_online, set_user_offline, 
     get_all_online_users, get_online_status_for_users,
-    refresh_user_connection, get_last_seen
+    refresh_user_connection, get_last_seen, get_redis_connection
 )
 from apps.accounts.services.sender_verification import is_sender_device_verified
 from services.message_atomic_utils import (
@@ -31,7 +34,7 @@ logger = logging.getLogger(__name__)
 User = get_user_model()
 
 TYPING_TIMEOUTS = {}
-DISCONNECT_TIMERS = {}
+DISCONNECT_TIMERS: Dict[Tuple[int, str], asyncio.Task] = {}
 
 
 
@@ -63,10 +66,11 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
             await self.close(code=4403)  # Forbidden-like
             return
 
-        # ✅ Cancel previous disconnect timer if reconnected
-        if DISCONNECT_TIMERS.get(self.user.id):
-            DISCONNECT_TIMERS[self.user.id].cancel()
-            del DISCONNECT_TIMERS[self.user.id]
+        # ✅ Cancel any pending disconnect timer for THIS exact connection
+        key = self._disc_key()
+        if DISCONNECT_TIMERS.get(key):
+            DISCONNECT_TIMERS[key].cancel()
+            del DISCONNECT_TIMERS[key]
 
         # ✅ Mark user online
         await set_user_online(self.user.id, self.channel_name)
@@ -94,7 +98,10 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
 
         await self.accept()
 
-        asyncio.create_task(self.start_ping())
+        # Create and keep a reference to ping task so we can cancel it on disconnect
+        self.ping_task = asyncio.create_task(self.start_ping())
+
+        # Notify presence after websocket is accepted
         await self.notify_user_online()
         await self.send_all_online_statuses()
 
@@ -176,26 +183,43 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
 
     # Disconnect ---------------------------------------------------
     async def disconnect(self, close_code):
-        # ✅ بررسی خروج واقعی (اگر کاربر لاگ‌اوت کرده است)
+        # Immediately stop background loops
+        self.connected = False
+
+        # Cancel ping task ASAP
+        if hasattr(self, "ping_task"):
+            self.ping_task.cancel()
+            from contextlib import suppress
+            with suppress(asyncio.CancelledError):
+                await self.ping_task
+
         if getattr(self, "force_logout_triggered", False):
             await self.finalize_disconnect()
             return
 
-        # ✅ لغو تایمر قطع اتصال اگر از قبل وجود دارد
-        if DISCONNECT_TIMERS.get(self.user.id):
-            DISCONNECT_TIMERS[self.user.id].cancel()
-            del DISCONNECT_TIMERS[self.user.id]
+        # --- use per-connection key ---
+        key = self._disc_key()
 
-        # ✅ تابع داخلی برای تأخیر در قطع اتصال
+        # Clear any previous timer for THIS connection
+        if DISCONNECT_TIMERS.get(key):
+            DISCONNECT_TIMERS[key].cancel()
+            del DISCONNECT_TIMERS[key]
+
         async def delayed_disconnect():
             await asyncio.sleep(10)
+            # Only finalize if this connection did not come back
             if not getattr(self, "connected", False):
                 await self.finalize_disconnect()
 
-        DISCONNECT_TIMERS[self.user.id] = asyncio.create_task(delayed_disconnect())
+        DISCONNECT_TIMERS[key] = asyncio.create_task(delayed_disconnect())
+
+
 
     # Finalize Disconnect -----------------------------------------
     async def finalize_disconnect(self):
+        if getattr(self, "_finalized", False):
+            return
+        self._finalized = True
         self.connected = False
 
         # 1) stop ping loop safely
@@ -236,8 +260,11 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
         if TYPING_TIMEOUTS.get(self.user.id):
             TYPING_TIMEOUTS[self.user.id].cancel()
             del TYPING_TIMEOUTS[self.user.id]
-        if DISCONNECT_TIMERS.get(self.user.id):
-            del DISCONNECT_TIMERS[self.user.id]
+
+        key = self._disc_key()
+        if DISCONNECT_TIMERS.get(key):
+            DISCONNECT_TIMERS[key].cancel()
+            del DISCONNECT_TIMERS[key]
 
         # 7) if truly fully-offline now, broadcast last_seen with epoch
         try:
@@ -279,27 +306,38 @@ class DialogueConsumer(AsyncJsonWebsocketConsumer):
             # swallow to avoid crashing disconnect flow
             pass
 
-
         
     # Start Ping ---------------------------
     async def start_ping(self):
         try:
             while self.connected:
-                online_statuses = await get_online_status_for_users([self.user.id])
-                if online_statuses.get(self.user.id, False):
-                    await self.send(text_data=json.dumps({
-                        "type": "ping",
-                        "timestamp": datetime.now().isoformat()
-                    }))
+                # If presence says online, send a lightweight ping
+                try:
+                    online_statuses = await get_online_status_for_users([self.user.id])
+                    if online_statuses.get(self.user.id, False):
+                        await self.send(text_data=json.dumps({
+                            "type": "ping",
+                            "timestamp": datetime.now().isoformat()
+                        }))
+                except Exception as send_err:
+                    # Socket likely closed; stop the loop to avoid 'send after close'
+                    logger.warning("[start_ping] send failed, stopping ping loop: %s", send_err)
+                    break
+
                 await asyncio.sleep(30)
         except asyncio.CancelledError:
-            # ✅ وظیفه‌ی پینگ کنسل شده
+            # Task canceled on disconnect; this is expected
             pass
         except Exception as e:
-            logger.error(f"[start_ping] Unexpected error: {e}")
+            # Any unexpected error: log once and exit loop
+            logger.error("[start_ping] Unexpected error (exiting): %s", e)
 
+    # -----------------------------------------------------------
+    def _disc_key(self) -> Tuple[int, str]:
+        """Unique key for this specific websocket connection."""
+        return (self.user.id, self.channel_name)
 
-    # Receive ---------------------------
+    # Receive ---------------------------------------------------
     async def receive(self, text_data):
         try:
             data = json.loads(text_data)
