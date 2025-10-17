@@ -9,7 +9,7 @@ from pathlib import Path
 
 from common.aws.s3_utils import get_file_url
 from apps.posts.models import Moment, Pray
-from apps.profiles.admin_forms import MemberServiceTypeAdminForm
+from apps.profiles.admin_forms import MemberServiceTypeAdminForm, MemberAdminForm
 from .models import (
                 AcademicRecord,
                 Friendship, MigrationHistory,
@@ -118,27 +118,99 @@ class PrayInline(GenericTabularInline):
 # Member Admin
 @admin.register(Member)
 class MemberAdmin(admin.ModelAdmin):
-    list_display = ['user', 'spiritual_rebirth_day', 'is_migrated', 'is_active', 'is_privacy', 'register_date', 'identity_verification_status', 'is_verified_identity', 'is_sanctuary_participant','is_hidden_by_confidants', 'show_fellowship_in_profile', 'hide_confidants']
-    list_filter = ['is_migrated', 'is_active', 'is_privacy', 'register_date']
-    search_fields = ['user__username', 'biography', 'vision', 'service_types__service__name']
+    # Use custom form that validates and filters family by branch
+    form = MemberAdminForm
+
+    # --- Columns in changelist ---
+    list_display = [
+        'user',
+        'denomination_branch',        # ← NEW
+        'denomination_family',        # ← NEW
+        'spiritual_rebirth_day',
+        'is_migrated',
+        'is_active',
+        'is_privacy',
+        'register_date',
+        'identity_verification_status',
+        'is_verified_identity',
+        'is_sanctuary_participant',
+        'is_hidden_by_confidants',
+        'show_fellowship_in_profile',
+        'hide_confidants',
+    ]
+
+    # --- Filters on right side ---
+    list_filter = [
+        'denomination_branch',        # ← NEW
+        'denomination_family',        # ← NEW
+        'is_migrated',
+        'is_active',
+        'is_privacy',
+        'register_date',
+        'identity_verification_status',
+        'is_verified_identity',
+        'is_sanctuary_participant',
+    ]
+
+    # --- Search fields ---
+    search_fields = [
+        'user__username',
+        'biography',
+        'vision',
+        'service_types__service__name',
+        'denomination_branch',        # ← helpful for quick find
+        'denomination_family',
+    ]
+
     autocomplete_fields = ['user', 'testimony']
     filter_horizontal = ['service_types', 'organization_memberships']
+
+    # --- Fieldsets for edit page ---
     fieldsets = (
-        ('Personal Info', {'fields': ('user', 'biography', 'vision', 'spiritual_rebirth_day', 'denominations_type', 'show_gifts_in_profile','show_fellowship_in_profile', 'hide_confidants')}),
+        ('Personal Info', {
+            'fields': (
+                'user',
+                'biography',
+                'vision',
+                'spiritual_rebirth_day',
+                # Old field removed: 'denominations_type'
+                'denomination_branch',       # ← NEW (required)
+                'denomination_family',       # ← NEW (optional)
+                'show_gifts_in_profile',
+                'show_fellowship_in_profile',
+                'hide_confidants',
+            )
+        }),
         ('Services', {'fields': ('service_types', 'academic_record')}),
         ('Organizations & Memberships', {'fields': ('organization_memberships',)}),
         ('Testimonies & Moments', {'fields': ('testimony',)}),
-        ('Status', {'fields': ('is_migrated', 'is_active', 'is_privacy', 'identity_verification_status', 'identity_verified_at', 'is_verified_identity', 'is_sanctuary_participant', 'is_hidden_by_confidants')}),
+        ('Status', {
+            'fields': (
+                'is_migrated',
+                'is_active',
+                'is_privacy',
+                'identity_verification_status',
+                'identity_verified_at',
+                'is_verified_identity',
+                'is_sanctuary_participant',
+                'is_hidden_by_confidants',
+            )
+        }),
         ('Dates', {'fields': ('register_date',)}),
     )
+
+    # If you still need inlines, keep them (sample from your code)
     # inlines = [OrganizationManagerInMemberInline]
-    inlines = [MomentInline, PrayInline]
-    
+    # Example you had:
+    # inlines = [MomentInline, PrayInline]
+
     def get_form(self, request, obj=None, **kwargs):
+        # Keep reference if needed by other admin hooks
         request._obj_ = obj
         return super().get_form(request, obj, **kwargs)
 
     def managed_organizations_display(self, obj):
+        # Optional helper column if you want to add it to list_display
         return ', '.join([org.org_name for org in obj.managed_organizations()])
     managed_organizations_display.short_description = 'Managed Organizations'
 

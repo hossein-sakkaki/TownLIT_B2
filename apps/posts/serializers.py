@@ -6,7 +6,7 @@ from .models import (
                 Testimony, Moment, Pray, Announcement, Lesson, Preach, Worship, MediaContent, Library, Witness, Mission, Conference, FutureConference
             )
 from common.file_handlers.media_mixins import (
-                AudioFileMixin, VideoFileMixin, TestimonyThumbnailMixin
+                AudioFileMixin, VideoFileMixin, ThumbnailFileMixin
             )
 from apps.profiles.models import Member
 from apps.accounts.serializers import SimpleCustomUserSerializer
@@ -69,7 +69,7 @@ class ServiceEventSerializer(serializers.ModelSerializer):
 
 
 # TESTIMONY serializers -----------------------------------------------------------------
-class TestimonySerializer(AudioFileMixin, VideoFileMixin, TestimonyThumbnailMixin, serializers.ModelSerializer):
+class TestimonySerializer(AudioFileMixin, VideoFileMixin, ThumbnailFileMixin, serializers.ModelSerializer):
     is_active = serializers.BooleanField(read_only=True)
     owner = serializers.SerializerMethodField(read_only=True)
     

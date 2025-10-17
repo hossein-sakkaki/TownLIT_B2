@@ -1607,15 +1607,19 @@ class MemberSpiritualGiftsViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         member = self.request.user.member_profile
         return MemberSpiritualGifts.objects.filter(member=member)
-    
+
     @action(detail=False, methods=['get'], url_path='spiritual-gifts', permission_classes=[IsAuthenticated])
     def get_spiritual_gifts_for_member(self, request):
         member = request.user.member_profile
-        member_spiritual_gifts = MemberSpiritualGifts.objects.filter(member=member).first()
-        if member_spiritual_gifts:
-            serializer = self.get_serializer(member_spiritual_gifts)
-            return Response(serializer.data)
-        return Response({'message': "You haven't completed the Spiritual Gifts Discovery program yet. Click the button below to get started!"}, status=404)
+        msg = "You haven't completed the Spiritual Gifts Discovery program yet. Click the button below to get started!"
+        obj = MemberSpiritualGifts.objects.filter(member=member).first()
+        if not obj:
+            return Response(
+                {"gifts": [], "created_at": None, "message": msg},
+                status=status.HTTP_200_OK   # یا 204 بدون بدنه (اما 200 با اسکیمای ثابت بهتر است)
+            )
+        serializer = self.get_serializer(obj)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=['post'], url_path='submit-survey', permission_classes=[IsAuthenticated])
     def submit_survey(self, request):

@@ -31,6 +31,7 @@ from .serializers import (
         OfficialVideoCreateUpdateSerializer, VideoViewLogSerializer
     )
 from utils.common.ip import get_client_ip
+from apps.profilesOrg.constants_denominations import FAMILIES_BY_BRANCH
 
 from .choicemap import CHOICES_MAP
 from utils.email.email_tools import send_custom_email
@@ -212,14 +213,23 @@ class StaticChoiceViewSet(viewsets.ViewSet):
         
         if choices is None:
             return Response({"error": f"Choice '{choice_name}' not found."}, status=404)
-        
+
+        if choice_name == "church_denominations_family":
+            branch = request.query_params.get("branch")
+            if branch:
+                families = FAMILIES_BY_BRANCH.get(branch)
+                if families:
+                    # filter global list by those keys
+                    choices = [c for c in choices if c[0] in families]
+                else:
+                    choices = []  # unknown branch → empty
+
         # ✅ Conditionally filter 'fellowship_relationship' choices
         if choice_name == "fellowship_relationship":
             user = request.user
             if user.is_authenticated:
                 # pin_security_enabled is on CustomUser
                 if not getattr(user, "pin_security_enabled", False):
-                    print("Filtering out 'Confidant' from choices...")
                     choices = [choice for choice in choices if choice[0] != "Confidant"]
 
         return Response(choices)
@@ -311,6 +321,7 @@ class VideoSeriesViewSet(viewsets.ReadOnlyModelViewSet):
     
 
 class OfficialVideoViewSet(viewsets.ModelViewSet):
+    lookup_field = "slug"
     queryset = OfficialVideo.objects.filter(is_active=True, publish_date__lte=timezone.now())
     serializer_class = OfficialVideoSerializer
     permission_classes = [AllowAny]

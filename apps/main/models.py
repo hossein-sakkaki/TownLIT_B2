@@ -259,11 +259,11 @@ class OfficialVideo(MediaConversionMixin, models.Model):
     
     episode_number = models.PositiveIntegerField(null=True, blank=True, verbose_name="Episode Number")
     view_count = models.PositiveIntegerField(default=0, verbose_name="View Count")
-    
-    video_file = models.FileField(
-                        upload_to=VIDEO.dir_upload, 
-                        validators=[validate_video_file, validate_no_executable_file], 
-                        verbose_name="Video File" )
+    video = models.FileField(
+                        upload_to=VIDEO.dir_upload,
+                        validators=[validate_video_file, validate_no_executable_file],
+                        verbose_name="Video File",
+    )
     thumbnail = models.FileField(
                         upload_to=THUMBNAIL.dir_upload, 
                         validators=[validate_image_file, validate_image_size, validate_no_executable_file], 
@@ -275,9 +275,8 @@ class OfficialVideo(MediaConversionMixin, models.Model):
     slug = models.SlugField(max_length=255, unique=True, blank=True, verbose_name="Slug")
     is_converted = models.BooleanField(default=False)
 
-    # ✅ تنظیم مسیرهای تبدیل برای فایل‌ها
     media_conversion_config = {
-        "video_file": VIDEO,
+        "video": VIDEO,
         "thumbnail": THUMBNAIL,
     }
     
@@ -289,10 +288,8 @@ class OfficialVideo(MediaConversionMixin, models.Model):
     def save(self, *args, **kwargs):
         if not self.slug:
             self.slug = slugify(self.title)
-
         is_new = self._state.adding or kwargs.get("force_insert", False)
         super().save(*args, **kwargs)
-
         if is_new and not getattr(self, "is_converted", False):
             self.convert_uploaded_media_async()
 
