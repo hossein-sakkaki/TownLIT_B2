@@ -121,36 +121,6 @@ def convert_video_to_multi_hls_task(model_name, app_label, instance_id, field_na
         raise
         
         
-
-# @shared_task(queue="video")
-# def convert_video_to_multi_hls_task(model_name, app_label, instance_id, field_name, source_path, fileupload):
-#     try:
-#         close_old_connections()
-#         logger.info(f"🚧 Celery Task triggered for video conversion: {model_name} (id={instance_id})")
-
-#         instance = get_instance(app_label, model_name, instance_id, retries=3, delay=0.2)
-#         upload = FileUpload(**fileupload)
-
-#         relative_path = convert_video_to_multi_hls(source_path, instance, upload)
-#         setattr(instance, field_name, relative_path)
-
-#         update_fields = [field_name]
-#         if hasattr(instance, "is_converted"):
-#             instance.is_converted = True
-#             update_fields.append("is_converted")
-
-#         instance.save(update_fields=update_fields)
-#         logger.info(f"✅ HLS conversion complete: {relative_path}")
-
-#         if source_path and default_storage.exists(source_path):
-#             default_storage.delete(source_path)
-#             logger.info(f"🗑️ Deleted original uploaded file: {source_path}")
-
-#     except Exception as e:
-#         logger.error(f"❌ convert_video_to_multi_hls_task failed for {model_name} (id={instance_id}) – error: {e}")
-
-    
-    
 # ------------------ IMAGE -----------------------------------------------
 @shared_task(queue="video")
 def convert_image_to_jpg_task(model_name, app_label, instance_id, field_name, source_path, fileupload):
