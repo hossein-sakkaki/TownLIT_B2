@@ -1,11 +1,9 @@
 from rest_framework import serializers
 from django.apps import apps
-from django.db.models import Q, Count
+from django.db.models import Q
 from django.utils import timezone 
 from django.core.validators import RegexValidator
-from django.contrib.contenttypes.models import ContentType
-
-from pathlib import Path
+from django.db.models.functions import Lower
 from .models import (
                 Friendship, Fellowship, MemberServiceType,AcademicRecord, StudyStatus,
                 Member, GuestUser,
@@ -13,7 +11,15 @@ from .models import (
                 SpiritualGift, SpiritualGiftSurveyQuestion, SpiritualGiftSurveyResponse, MemberSpiritualGifts,
                 SpiritualService
             )
-from .helpers import testimonies_for_member
+from .helpers import (
+    testimonies_for_member,
+    social_links_for_user,
+    fellowships_visible,
+    randomized_friends_for_member,
+    journey_weights_for,
+    friends_queryset_for
+)
+
 from apps.profilesOrg.serializers_min import SimpleOrganizationSerializer
 from apps.accounts.models import SocialMediaLink
 from validators.files_validator import validate_http_https, soft_date_bounds
@@ -394,6 +400,41 @@ class MemberServiceTypeSerializer(DocumentFileMixin, serializers.ModelSerializer
         return super().update(instance, validated_data)
 
 
+class FriendsBlockMixin:
+    """Reusable friends getter for serializers with Member obj + request in context."""
+    def _build_friends_payload(self, member_obj):
+        request = self.context.get("request")
+        q = getattr(request, "query_params", {}) if request else {}
+
+        random_flag = str(q.get("random", "1")) == "1"
+        daily_flag  = str(q.get("daily",  "0")) == "1"
+        seed        = q.get("seed")
+
+        try:
+            limit = int(q.get("limit")) if q.get("limit") is not None else None
+        except (TypeError, ValueError):
+            limit = None
+
+        if not random_flag:
+            qs = friends_queryset_for(member_obj.user).annotate(
+                username_lower=Lower('username')
+            ).order_by('username_lower')
+            if isinstance(limit, int) and limit > 0:
+                qs = qs[:limit]
+            return SimpleCustomUserSerializer(qs, many=True, context=self.context).data
+
+        base_ids = list(friends_queryset_for(member_obj.user).values_list("id", flat=True))
+        j_weights = journey_weights_for(member_obj.user, base_ids)
+
+        ordered = randomized_friends_for_member(
+            member_obj.user,
+            daily=daily_flag,
+            seed=seed,
+            limit=limit,
+            journey_weight_map=j_weights,
+        )
+        return SimpleCustomUserSerializer(ordered, many=True, context=self.context).data
+
 # MEMBER Serializer ------------------------------------------------------------------------------
 def _titleize_slug(value: str) -> str:
     # Fallback: "roman_catholicism" -> "Roman Catholicism"
@@ -401,12 +442,14 @@ def _titleize_slug(value: str) -> str:
         return value
     return value.replace("_", " ").title()
 
-class MemberSerializer(serializers.ModelSerializer):
+class MemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
     user = CustomUserSerializer(context=None)
     service_types = MemberServiceTypeSerializer(many=True, read_only=True)
     academic_record = AcademicRecordSerializer()
     litcovenant = serializers.SerializerMethodField()
     spiritual_gifts = serializers.SerializerMethodField()
+
+    friends = serializers.SerializerMethodField()
 
     # Editable fields (kept as before)
     denomination_branch = serializers.ChoiceField(choices=CHURCH_BRANCH_CHOICES)
@@ -431,7 +474,9 @@ class MemberSerializer(serializers.ModelSerializer):
 
             'show_gifts_in_profile', 'show_fellowship_in_profile', 'hide_confidants', 'is_hidden_by_confidants',
             'register_date', 'identity_verification_status', 'is_verified_identity', 'identity_verified_at', 'is_sanctuary_participant',
-            'is_privacy', 'is_migrated', 'is_active', 'litcovenant', 'spiritual_gifts',
+            'is_privacy', 'is_migrated', 'is_active', 
+            'litcovenant', 'spiritual_gifts',
+             'friends',
         ]
         read_only_fields = [
             'register_date', 'is_migrated', 'is_active',
@@ -587,96 +632,13 @@ class MemberSerializer(serializers.ModelSerializer):
             return None
         return MemberSpiritualGiftsSerializer(msg, context={'request': self.context.get('request')}).data
     
-
-# helpers ----------------------------------------------------------------
-def _friends_of(user):
-    """
-    Return unique counterpart users for accepted+active friendships.
-    Dedup by other.id so A↔B pair won't appear twice.
-    Prefer latest records by ordering desc.
-    """
-    qs = (
-        Friendship.objects
-        .filter(
-            (Q(from_user=user) | Q(to_user=user)),
-            status='accepted',
-            is_active=True,
-        )
-        .select_related('from_user', 'to_user')
-        .order_by('-created_at', '-id')  # newest first
-    )
-
-    seen_ids = set()
-    out = []
-    for f in qs:
-        other = f.to_user if f.from_user_id == user.id else f.from_user
-        if other.id in seen_ids:
-            continue
-        seen_ids.add(other.id)
-        out.append(other)
-    return out
-
-def _fellowships_visible(member: Member):
-    """
-    Apply your visibility policy:
-    - respect member.show_fellowship_in_profile
-    - respect hide_confidants & pin flags (like your main MemberSerializer)
-    """
-    if not getattr(member, 'show_fellowship_in_profile', False):
-        return Fellowship.objects.none()
-
-    user = member.user
-    qs = (
-        Fellowship.objects
-        .filter(Q(from_user=user) | Q(to_user=user), status='Accepted')
-        .select_related(
-            'from_user', 'to_user',
-            'from_user__member_profile', 'to_user__member_profile'
-        )
-    )
-
-    hide_confidants = bool(getattr(member, 'hide_confidants', False))
-    out_ids = []
-    seen = set()
-
-    for f in qs:
-        if f.from_user_id == user.id:
-            rel_type = f.fellowship_type
-            opposite_user = f.to_user
-        else:
-            rel_type = f.reciprocal_fellowship_type
-            opposite_user = f.from_user
-
-        if hide_confidants and rel_type == "Confidant":
-            continue
-        if rel_type == "Confidant" and not getattr(user, "pin_security_enabled", False):
-            continue
-        if rel_type == "Entrusted" and not getattr(opposite_user, "pin_security_enabled", False):
-            continue
-
-        key = (opposite_user.id, rel_type)
-        if key in seen:
-            continue
-        seen.add(key)
-        out_ids.append(f.id)
-
-    return Fellowship.objects.filter(id__in=out_ids)
-
-def _social_links_for_user(user):
-    """
-    GFK -> content_object = CustomUser
-    """
-    ct = ContentType.objects.get_for_model(type(user))
-    return (
-        SocialMediaLink.objects
-        .filter(content_type=ct, object_id=user.id, is_active=True)
-        .select_related('social_media_type')
-        .order_by('id')
-    )
+    # --- friends (randomized, seedable, future-weighted) ---
+    def get_friends(self, obj):  # one-liner
+        return self._build_friends_payload(obj)
 
 
 # PUBLIC Member Serializer -----------------------------------------------------------
-class PublicMemberSerializer(serializers.ModelSerializer):
+class PublicMemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
     # --- user (privacy handled in PublicCustomUserSerializer) ---
     user = PublicCustomUserSerializer(read_only=True)
 
@@ -696,52 +658,40 @@ class PublicMemberSerializer(serializers.ModelSerializer):
     denomination_branch_label = serializers.SerializerMethodField()
     denomination_family_label = serializers.SerializerMethodField()
 
-    # --- BACKWARD COMPAT: keep old field name as read-only mirror of "family" ---
+    # --- BACKWARD COMPAT ---
     denominations_type = serializers.SerializerMethodField()
 
     class Meta:
         model = Member
         fields = [
-            # identity
             'user',
-
-            # profile basics
             'biography', 'vision', 'spiritual_rebirth_day',
-
-            # denomination (new model fields)
             'denomination_branch', 'denomination_branch_label',
             'denomination_family', 'denomination_family_label',
-
-            # backward-compat (old field name, read-only)
             'denominations_type',
-
-            # relations/blocks
             'service_types', 'organization_memberships',
             'academic_record', 'spiritual_gifts',
             'social_links', 'friends', 'litcovenant', 'testimonies',
-
-            # flags/dates (public-safe)
             'show_gifts_in_profile', 'show_fellowship_in_profile', 'hide_confidants',
             'register_date', 'identity_verification_status', 'is_verified_identity', 'identity_verified_at',
             'is_sanctuary_participant', 'is_privacy', 'is_hidden_by_confidants', 'is_migrated', 'is_active',
         ]
-        read_only_fields = fields  # public serializer is fully read-only
+        read_only_fields = fields
 
     def get_fields(self):
-        """Attach org memberships lazily to avoid circular imports."""
+        # Lazy import to avoid circular deps
         fields = super().get_fields()
-        from apps.profilesOrg.serializers import OrganizationSerializer  # lazy import
+        from apps.profilesOrg.serializers import OrganizationSerializer
         fields['organization_memberships'] = OrganizationSerializer(many=True, read_only=True)
         return fields
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # keep request context for nested serializers
+        # Keep request context for nested serializers
         self.fields['user'] = PublicCustomUserSerializer(context=self.context, read_only=True)
 
-    # ----- labels for branch/family (uses model's get_*_display) -----
+    # --- labels ---
     def get_denomination_branch_label(self, obj: Member):
-        # Human label via choices; fallback to title-cased slug
         try:
             label = obj.get_denomination_branch_display()
             return label or _titleize_slug(obj.denomination_branch or "")
@@ -749,7 +699,6 @@ class PublicMemberSerializer(serializers.ModelSerializer):
             return _titleize_slug(obj.denomination_branch or "")
 
     def get_denomination_family_label(self, obj: Member):
-        # Human label via choices; fallback to title-cased slug (or None)
         if not obj.denomination_family:
             return None
         try:
@@ -758,19 +707,16 @@ class PublicMemberSerializer(serializers.ModelSerializer):
         except Exception:
             return _titleize_slug(obj.denomination_family)
 
-
-    # ----- backward-compat: mirror old "denominations_type" (READ-ONLY) -----
     def get_denominations_type(self, obj: Member):
-        # For legacy clients: expose current family slug (or None)
         return obj.denomination_family or None
 
-    # ----- academic record -----
+    # --- academic record ---
     def get_academic_record(self, obj: Member):
         if not obj.academic_record_id:
             return None
         return AcademicRecordSerializer(obj.academic_record, context=self.context).data
 
-    # ----- spiritual gifts (respect visibility flag) -----
+    # --- spiritual gifts ---
     def get_spiritual_gifts(self, obj: Member):
         if not getattr(obj, 'show_gifts_in_profile', False):
             return None
@@ -787,22 +733,21 @@ class PublicMemberSerializer(serializers.ModelSerializer):
         from apps.profiles.serializers import MemberSpiritualGiftsSerializer
         return MemberSpiritualGiftsSerializer(msg, context=self.context).data
 
-    # ----- social links (user) -----
+    # --- social links ---
     def get_social_links(self, obj: Member):
-        links_qs = _social_links_for_user(obj.user)
+        links_qs = social_links_for_user(obj.user)
         return SocialMediaLinkReadOnlySerializer(links_qs, many=True, context=self.context).data
 
-    # ----- friends (list of users) -----
-    def get_friends(self, obj: Member):
-        others = _friends_of(obj.user)
-        return SimpleCustomUserSerializer(others, many=True, context=self.context).data
-
-    # ----- fellowship (LITCovenant) -----
+    # --- friends (randomized, seedable, future-weighted) ---
+    def get_friends(self, obj):  # one-liner
+        return self._build_friends_payload(obj)
+    
+    # --- litcovenant ---
     def get_litcovenant(self, obj: Member):
-        qs = _fellowships_visible(obj)
+        qs = fellowships_visible(obj)
         return FellowshipSerializer(qs, many=True, context=self.context).data
 
-    # ----- testimonies (audio/video/written) -----
+    # --- testimonies ---
     def get_testimonies(self, obj: Member):
         from apps.posts.serializers import TestimonySerializer
         data = testimonies_for_member(obj)
