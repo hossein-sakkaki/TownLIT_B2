@@ -1,9 +1,9 @@
-from django.db.models import Q, F
+from django.db.models import Q, Case, When, Value, IntegerField
+from django.db.models.functions import Lower, Substr
 from django.db import transaction
 from django.utils import timezone
 from datetime import timedelta
 from django.http import Http404
-
 from django.shortcuts import get_object_or_404
 
 from rest_framework import status
@@ -14,7 +14,6 @@ from rest_framework.decorators import action
 from rest_framework import serializers
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.exceptions import MethodNotAllowed, PermissionDenied
-
 
 from apps.core.security.decorators import require_litshield_access
 from cryptography.fernet import Fernet
@@ -1067,9 +1066,17 @@ class FriendshipViewSet(viewsets.ModelViewSet):
     # ------------------------------------------------------------------------------------------------------
     @action(detail=False, methods=["get"], url_path="friends-list", permission_classes=[IsAuthenticated])
     def friends_list(self, request):
+        """
+        Return user's friends ordered alphabetically by username with special rules:
+        1) A–Z first (case-insensitive),
+        2) then any other starting char,
+        3) usernames starting with '_' go last.
+        Supports ?limit=NN. Ignores random/daily/seed in this endpoint.
+        """
         try:
             user = request.user
-            # accepted & active edges excluding any deleted endpoint
+
+            # Collect accepted, active friendship edges involving this user
             edges = (
                 Friendship.objects
                 .filter(
@@ -1081,16 +1088,47 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                 .values('from_user_id', 'to_user_id')
             )
 
-            # collect counterpart ids
+            # Compute counterpart IDs (the "other" user in each edge)
             counterpart_ids = set()
+            uid = user.id
             for e in edges:
                 fid, tid = e['from_user_id'], e['to_user_id']
-                counterpart_ids.add(tid if fid == user.id else fid)
+                counterpart_ids.add(tid if fid == uid else fid)
 
             friends_qs = CustomUser.objects.filter(id__in=counterpart_ids, is_deleted=False)
+
+            # Annotate first char and ranking group
+            # group = 0 for [A-Za-z], 1 for others, 2 for leading '_'
+            first_char = Substr('username', 1, 1)
+            group = Case(
+                When(**{'%s' % 'username__startswith': '_'}, then=Value(2)),
+                When(**{'%s__regex' % 'username': r'^[A-Za-z]'}, then=Value(0)),
+                default=Value(1),
+                output_field=IntegerField()
+            )
+
+            friends_qs = friends_qs.annotate(
+                sort_group=group,
+                username_lower=Lower('username'),
+                first_char_annot=first_char,  # useful if you need to debug
+            ).order_by('sort_group', 'username_lower')
+
+            # Optional limit
+            limit = request.query_params.get('limit')
+            if limit:
+                try:
+                    lim = max(0, int(limit))
+                    if lim:
+                        friends_qs = friends_qs[:lim]
+                except ValueError:
+                    pass  # ignore bad limit
+
             ser = SimpleCustomUserSerializer(friends_qs, many=True, context={"request": request})
-            return Response({"results": ser.data, "meta": {"count": len(counterpart_ids)}}, status=status.HTTP_200_OK)
-        except Exception as e:
+            return Response(
+                {"results": ser.data, "meta": {"count": len(counterpart_ids)}},
+                status=status.HTTP_200_OK
+            )
+        except Exception:
             logger.exception("Error in friends_list")
             return Response({"error": "Unable to retrieve friends list"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
