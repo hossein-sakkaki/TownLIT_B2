@@ -126,7 +126,7 @@ def generate_presigned_url(
         logger.error(f"Error generating signed URL for {key}: {e}")
         return None
 
-
+# ---------------- Safe URL resolver ----------------
 def get_file_url(
     key: str,
     default_url: Optional[str] = None,

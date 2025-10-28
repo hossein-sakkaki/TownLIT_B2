@@ -16,7 +16,7 @@ from .constants import (
                             IDENTITY_VERIFICATION_STATUS_CHOICES, NOT_SUBMITTED,
                             CUSTOMER_DEACTIVATION_REASON_CHOICES,
                             FELLOWSHIP_RELATIONSHIP_CHOICES, RECIPROCAL_FELLOWSHIP_CHOICES, FELLOWSHIP_STATUS_CHOICES,
-                            SPIRITUAL_MINISTRY_CHOICES,
+                            STANDARD_MINISTRY_CHOICES,
                         )
 from validators.user_validators import validate_phone_number
 from validators.mediaValidators.pdf_validators import validate_pdf_file
@@ -221,7 +221,7 @@ class MigrationHistory(models.Model):
 
 # Spiritual Service ---------------------------------------------------------------------------------------
 class SpiritualService(models.Model):
-    name = models.CharField(max_length=40, choices=SPIRITUAL_MINISTRY_CHOICES, unique=True, verbose_name="Name of Service")
+    name = models.CharField(max_length=40, choices=STANDARD_MINISTRY_CHOICES, unique=True, verbose_name="Name of Service")
     description = models.CharField(max_length=300, null=True, blank=True, verbose_name="Description")
     is_sensitive = models.BooleanField(default=False, verbose_name="Requires Credential")  # 👈 NEW
     is_active = models.BooleanField(default=True, verbose_name="Is Active")
@@ -288,8 +288,8 @@ class Member(SlugMixin):
     service_types = models.ManyToManyField(MemberServiceType, blank=True, db_index=True, related_name='member_service_types', verbose_name='Service Types')
     organization_memberships = models.ManyToManyField('profilesOrg.Organization', blank=True, db_index=True, related_name='memberships', verbose_name='Organization Memberships')
     
-    biography = models.CharField(max_length=300, null=True, blank=True, verbose_name='Biography')
-    vision = models.CharField(max_length=500, null=True, blank=True, verbose_name='Vision')
+    biography = models.CharField(max_length=1000, null=True, blank=True, verbose_name='Biography')
+    vision = models.CharField(max_length=1000, null=True, blank=True, verbose_name='Vision')
     spiritual_rebirth_day = models.DateField(auto_now=False, auto_now_add=False, null=True, blank=True, verbose_name='Spiritual Rebirth Days')
     academic_record = models.OneToOneField(AcademicRecord, on_delete=models.SET_NULL, null=True, blank=True, related_name="member_academic_record")
     # denominations_type = models.CharField(max_length=40, choices=CHURCH_DENOMINATIONS_CHOICES, null=True, blank=True, verbose_name='Denominations Type')
