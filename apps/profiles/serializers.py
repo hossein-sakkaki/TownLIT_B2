@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.apps import apps
+from django.http import QueryDict
 from django.db.models import Q
 from django.utils import timezone 
 from django.core.validators import RegexValidator
@@ -17,9 +18,9 @@ from .helpers import (
     fellowships_visible,
     randomized_friends_for_member,
     journey_weights_for,
-    friends_queryset_for
+    friends_queryset_for,
+    humanize_service_code,
 )
-
 from apps.profilesOrg.serializers_min import SimpleOrganizationSerializer
 from apps.accounts.models import SocialMediaLink
 from validators.files_validator import validate_http_https, soft_date_bounds
@@ -30,7 +31,7 @@ from apps.accounts.serializers import (
                             )
 from common.file_handlers.document_file import DocumentFileMixin
 from apps.profilesOrg.constants_denominations import CHURCH_BRANCH_CHOICES, CHURCH_FAMILY_CHOICES_ALL, FAMILIES_BY_BRANCH
-from apps.profiles.constants import FRIENDSHIP_STATUS_CHOICES, FELLOWSHIP_RELATIONSHIP_CHOICES, RECIPROCAL_FELLOWSHIP_CHOICES, RECIPROCAL_FELLOWSHIP_MAP
+from apps.profiles.constants import FRIENDSHIP_STATUS_CHOICES, FELLOWSHIP_RELATIONSHIP_CHOICES, RECIPROCAL_FELLOWSHIP_CHOICES, RECIPROCAL_FELLOWSHIP_MAP, STANDARD_MINISTRY_CHOICES
 from django.contrib.auth import get_user_model
 
 CustomUser = get_user_model()
@@ -241,10 +242,37 @@ class AcademicRecordSerializer(serializers.ModelSerializer):
 
 # Spiritual Service Serializer ----------------------------------------------
 class SpiritualServiceSerializer(serializers.ModelSerializer):
+    # short, stable display label for UI
+    name_display = serializers.SerializerMethodField()
+
     class Meta:
         model = SpiritualService
-        fields = ["id", "name", "description", "is_sensitive", "is_active"]
-        read_only_fields = ["id", "is_active"]
+        fields = ["id", "name", "name_display", "is_sensitive"]  # add other fields as needed
+
+    def get_name_display(self, obj):
+        """
+        Prefer model choices display; else map from constant; else humanize fallback.
+        """
+        # 1) If model field has choices -> use get_FOO_display()
+        if hasattr(obj, "get_name_display"):
+            try:
+                disp = obj.get_name_display()
+                if disp:
+                    return str(disp)
+            except Exception:
+                pass
+
+        # 2) Map by constant list (safe for i18n)
+        try:
+            mapping = dict(STANDARD_MINISTRY_CHOICES)
+            label = mapping.get(getattr(obj, "name", None))
+            if label:
+                return str(label)
+        except Exception:
+            pass
+
+        # 3) Fallback: Title-case + keep acronyms upper-case
+        return humanize_service_code(getattr(obj, "name", "") or "") 
 
 
 # Member Service Type Serializer --------------------------------------------
@@ -292,12 +320,23 @@ class MemberServiceTypeSerializer(DocumentFileMixin, serializers.ModelSerializer
 
     # -------- normalize inputs --------
     def to_internal_value(self, data):
+        # Make a mutable copy; QueryDict is immutable by default
+        if isinstance(data, QueryDict):
+            data = data.copy()
+
+        # Trim simple string fields (no list handling needed here)
         for f in ["history", "credential_issuer", "credential_number", "credential_url"]:
-            if f in data and isinstance(data[f], str):
-                data[f] = data[f].strip()
+            val = data.get(f, None)
+            if isinstance(val, str):
+                data[f] = val.strip()
+
+        # Normalize empty dates -> None (let DRF parse None)
         for df in ["issued_at", "expires_at"]:
-            if df in data and (data[df] == "" or data[df] is None):
+            val = data.get(df, None)
+            if val in ("", None):
                 data[df] = None
+
+        # Hand off to DRF for standard parsing/validation
         return super().to_internal_value(data)
 
     # -------- validate --------
@@ -400,6 +439,7 @@ class MemberServiceTypeSerializer(DocumentFileMixin, serializers.ModelSerializer
         return super().update(instance, validated_data)
 
 
+# -----------------------------------------------------------------------
 class FriendsBlockMixin:
     """Reusable friends getter for serializers with Member obj + request in context."""
     def _build_friends_payload(self, member_obj):
@@ -560,13 +600,20 @@ class MemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
                 raise serializers.ValidationError({"denomination_family": "Family not allowed for selected branch."})
         return data
 
-    # --- simple field validations (unchanged) ---
+    # --- simple field validations ---
     def validate_biography(self, value):
-        # Ensure biography does not exceed 300 characters
-        if value and len(value) > 300:
-            raise serializers.ValidationError({"error": "Biography cannot exceed 300 characters."})
+        # ensure biography <= 1000 chars
+        if value and len(value) > 1000:
+            raise serializers.ValidationError({"error": "Biography cannot exceed 1000 characters."})
         return value
 
+    def validate_vision(self, value):
+        # ensure vision <= 1000 chars
+        if value and len(value) > 1000:
+            raise serializers.ValidationError({"error": "Vision cannot exceed 1000 characters."})
+        return value
+
+    # -------------------------------
     def validate_spiritual_rebirth_day(self, value):
         # Ensure not in the future
         if value and value > timezone.now().date():

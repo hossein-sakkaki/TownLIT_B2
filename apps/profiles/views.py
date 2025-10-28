@@ -27,7 +27,7 @@ from apps.profiles.services.symmetric_fellowship import (
                     add_symmetric_fellowship, remove_symmetric_fellowship,
                 )
 from apps.profiles.services.gifts_service import (
-                    calculate_spiritual_gifts_scores, calculate_top_3_gifts
+                    calculate_spiritual_gifts_scores, calculate_top_4_gifts
                 )
 from apps.profiles.services.service_policies import get_policy
 from apps.profiles.constants import CONFIDANT
@@ -53,10 +53,9 @@ from utils.common.utils import create_veriff_session, get_veriff_status, create_
 from utils.email.email_tools import send_custom_email
 from django.template.loader import render_to_string
 from services.friendship_suggestions import suggest_friends_for_friends_tab, suggest_friends_for_requests_tab
-import logging
 from django.contrib.auth import get_user_model
 from apps.core.pagination import ConfigurablePagination
-
+import logging, traceback
 CustomUser = get_user_model()
 logger = logging.getLogger(__name__)
 
@@ -671,7 +670,7 @@ class MemberServicesViewSet(viewsets.ViewSet):
 
     def get_serializer_context(self):
         return {"request": self.request}
-    
+
     # Services Catalog ------------------------------------------------------------------------------------
     @action(detail=False, methods=['get'], url_path='services-catalog', permission_classes=[IsAuthenticated])
     def services_catalog(self, request):
@@ -679,6 +678,7 @@ class MemberServicesViewSet(viewsets.ViewSet):
         data = SpiritualServiceSerializer(qs, many=True, context=self.get_serializer_context()).data
         return Response(data, status=status.HTTP_200_OK)
 
+    # ---------------------------------------------------------------
     @action(detail=False, methods=['get'], url_path='my-services', permission_classes=[IsAuthenticated])
     def my_services(self, request):
         member = request.user.member_profile
@@ -690,27 +690,60 @@ class MemberServicesViewSet(viewsets.ViewSet):
         data = MemberServiceTypeSerializer(qs, many=True, context=self.get_serializer_context()).data
         return Response(data, status=status.HTTP_200_OK)
 
+    # ---------------------------------------------------------------
     @action(
         detail=False, methods=['post'], url_path='services',
         parser_classes=[MultiPartParser, FormParser, JSONParser],
         permission_classes=[IsAuthenticated]
     )
+    @transaction.atomic  # ensure all-or-nothing on errors
     def create_service(self, request):
-        member = request.user.member_profile
+        """Create a MemberServiceType and attach it to current member."""
+        # light start log (helpful for tracing, not noisy)
+        logger.info("member.services:create start ct=%s keys=%s",
+                    request.content_type, list(request.data.keys()))
+
+        # resolve member
+        member = getattr(request.user, "member_profile", None)
+        if not member:
+            logger.warning("member.services:create no-member-profile user_id=%s", request.user.id)
+            return Response({"detail": "Member profile not found for current user."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # ensure M2M manager exists
+        if not hasattr(member, "service_types"):
+            logger.error("member.services:create missing M2M 'service_types' on Member id=%s", member.id)
+            return Response({"detail": "Server configuration error."},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # validate input
         ser = MemberServiceTypeSerializer(data=request.data, context=self.get_serializer_context())
-        ser.is_valid(raise_exception=True)
-        service = ser.validated_data['service']
+        if not ser.is_valid():
+            logger.info("member.services:create invalid payload errors=%s", ser.errors)
+            return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        # جلوگیری از ثبت تکراریِ همان service برای همان member
-        already = member.service_types.filter(service=service, is_active=True).exists()
-        if already:
-            return Response({"detail": "This service is already added to your profile."}, status=status.HTTP_400_BAD_REQUEST)
+        # prevent duplicates for this member
+        service = ser.validated_data["service"]
+        if member.service_types.filter(service=service, is_active=True).exists():
+            logger.info("member.services:create duplicate service member_id=%s service_id=%s", member.id, service.id)
+            return Response({"detail": "This service is already added to your profile."},
+                            status=status.HTTP_400_BAD_REQUEST)
 
-        instance = ser.save()
-        member.service_types.add(instance)
+        # create + attach
+        try:
+            instance = ser.save()  # status set by serializer based on is_sensitive
+            member.service_types.add(instance)
+        except Exception as e:
+            logger.exception("member.services:create persistence failed member_id=%s", member.id)
+            return Response({"detail": "Failed to create service item."},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # response
         out = MemberServiceTypeSerializer(instance, context=self.get_serializer_context()).data
+        logger.info("member.services:create ok member_id=%s mst_id=%s", member.id, instance.id)
         return Response(out, status=status.HTTP_201_CREATED)
 
+    # ---------------------------------------------------------------
     @action(
         detail=False, methods=['patch'], url_path=r'services/(?P<pk>\d+)',
         parser_classes=[MultiPartParser, FormParser, JSONParser],
@@ -740,6 +773,7 @@ class MemberServicesViewSet(viewsets.ViewSet):
 
         return Response(ser.data, status=status.HTTP_200_OK)
 
+    # ---------------------------------------------------------------
     @action(detail=False, methods=['delete'], url_path=r'services/(?P<pk>\d+)', permission_classes=[IsAuthenticated])
     def delete_service(self, request, pk=None):
         member = request.user.member_profile
@@ -762,6 +796,7 @@ class MemberServicesViewSet(viewsets.ViewSet):
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    # ---------------------------------------------------------------
     @action(detail=False, methods=['get'], url_path='services-policy', permission_classes=[IsAuthenticated])
     def policy(self, request):
         service_code = request.query_params.get("service", None)
@@ -1654,7 +1689,7 @@ class MemberSpiritualGiftsViewSet(viewsets.ModelViewSet):
         if not obj:
             return Response(
                 {"gifts": [], "created_at": None, "message": msg},
-                status=status.HTTP_200_OK   # یا 204 بدون بدنه (اما 200 با اسکیمای ثابت بهتر است)
+                status=status.HTTP_200_OK  
             )
         serializer = self.get_serializer(obj)
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -1684,10 +1719,11 @@ class MemberSpiritualGiftsViewSet(viewsets.ModelViewSet):
                 member_spiritual_gifts.survey_results = scores
                 member_spiritual_gifts.save()
 
-                top_3_gifts = calculate_top_3_gifts(scores)
+                top_4_gifts = calculate_top_4_gifts(scores)  # was: calculate_top_3_gifts
                 member_spiritual_gifts.gifts.clear()
 
-                for gift_name in top_3_gifts:
+                # unchanged unpacking pattern (handles list when boundary tie happens)
+                for gift_name in top_4_gifts:
                     if isinstance(gift_name, list):
                         for sub_gift in gift_name:
                             gift = SpiritualGift.objects.get(name=sub_gift)

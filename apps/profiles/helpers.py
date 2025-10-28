@@ -7,12 +7,12 @@ from datetime import date
 
 from django.db.models import Q
 from django.utils import timezone
+from rest_framework import serializers
 
 from django.contrib.contenttypes.models import ContentType
 from apps.posts.models import Testimony
 from apps.accounts.models import CustomUser, SocialMediaLink
 from apps.profiles.models import Member, Fellowship, Friendship
-
 
 
 
@@ -237,3 +237,17 @@ def journey_weights_for(user: CustomUser, friend_ids: Iterable[int]) -> Dict[int
     """
     # TODO: when Journey is implemented, compute participation and produce weights.
     return {}
+
+
+ACRONYMS = {"it", "ai", "tv"}  # extend if needed
+
+def humanize_service_code(code: str) -> str:
+    """Title-case with acronym preservation; fallback if no display label found."""
+    if not code:
+        return ""
+    s = code.replace("_", " ").strip()
+    parts = []
+    for p in s.split():
+        lp = p.lower()
+        parts.append(lp.upper() if lp in ACRONYMS else (p[:1].upper() + p[1:].lower()))
+    return " ".join(parts)

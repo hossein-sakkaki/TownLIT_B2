@@ -316,3 +316,45 @@ STANDARD_MINISTRY_CHOICES = [
 
 # === فهرست نهایی برای choices فیلد مدل (همهٔ آیتم‌ها) ===
 SPIRITUAL_MINISTRY_CHOICES = SENSITIVE_MINISTRY_CHOICES + STANDARD_MINISTRY_CHOICES
+
+
+# ----------------------------------------------------------
+from django.utils.translation import gettext_lazy as _
+STANDARD_MINISTRY_CHOICES = [
+    ("administration", _("Administration")),
+    ("hospitality",    _("Hospitality")),
+    ("greeter",        _("Greeter")),
+    ("welcome",        _("Welcome")),
+    ("newcomer",       _("Newcomer")),
+    ("outreach",       _("Outreach")),
+    ("evangelism",     _("Evangelism")),
+    ("missions",       _("Missions")),
+    ("prayer",         _("Prayer")),
+    ("intercession",   _("Intercession")),
+    ("worship",        _("Worship")),
+    ("music",          _("Music")),
+    ("choir",          _("Choir")),
+    ("band",           _("Band")),
+    ("audio",          _("Audio")),
+    ("video",          _("Video")),
+    ("sound",          _("Sound")),
+    ("lighting",       _("Lighting")),
+    ("livestream",     _("Livestream")),
+    ("production",     _("Production")),
+    ("media",          _("Media")),
+    ("photography",    _("Photography")),
+    ("design",         _("Design")),
+    ("it",             _("IT")),            # keep acronym
+    ("communications", _("Communications")),
+    ("events",         _("Events")),
+    ("logistics",      _("Logistics")),
+    ("setup",          _("Setup")),
+    ("facilities",     _("Facilities")),
+    ("maintenance",    _("Maintenance")),
+    ("transport",      _("Transport")),
+    ("translation",    _("Translation")),
+    ("stewardship",    _("Stewardship")),
+    ("training",       _("Training")),
+    ("benevolence",    _("Benevolence")),
+]
+

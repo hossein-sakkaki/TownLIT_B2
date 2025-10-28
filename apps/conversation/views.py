@@ -4,7 +4,8 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.utils import timezone
-from django.db.models import Count, Q
+from django.db.models import Max, Q, Value, DateTimeField
+from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404
 import base64
 import os
@@ -82,13 +83,31 @@ class DialogueViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     lookup_field = 'slug'
     
+    def _base_qs(self):
+        # base filter for current user and not deleted
+        return (Dialogue.objects
+                .filter(participants=self.request.user)
+                .exclude(deleted_by_users=self.request.user))
+
+    def _with_last_activity(self, qs):
+        # annotate last non-system message timestamp (falls back to created_at)
+        return (qs
+                .annotate(
+                    last_msg_ts=Max(
+                        'messages__timestamp',
+                        filter=Q(messages__is_system=False)
+                    ),
+                    last_activity=Coalesce('last_msg_ts', 'created_at')  # fallback
+                )
+                .order_by('-last_activity', '-created_at')  # newest activity first
+                .prefetch_related('participants', 'participants_roles', 'marked_users')
+        )
+
     def get_queryset(self):
-        return Dialogue.objects.filter(
-            participants=self.request.user
-        ).exclude(
-            deleted_by_users=self.request.user
-        ).prefetch_related('participants', 'participants_roles', 'marked_users')
-        
+        # used by default list/retrieve
+        base = self._base_qs()
+        return self._with_last_activity(base)
+
     # ---------------------------------------
     @action(detail=False, methods=["post"], url_path="enter-chat")
     @require_litshield_access("conversation")
@@ -96,16 +115,15 @@ class DialogueViewSet(viewsets.ModelViewSet):
         user = request.user
         device_id = request.data.get("device_id")
 
-        dialogues = Dialogue.objects.filter(participants=user).exclude(deleted_by_users=user)
+        # reuse same ordering as list(): DRY + consistent order
+        dialogues = self._with_last_activity(self._base_qs())
+
         serializer = DialogueSerializer(
             dialogues,
             many=True,
             context={"request": request, "device_id": device_id}
         )
-
-        return Response({
-            "dialogues": serializer.data
-        }, status=status.HTTP_200_OK)
+        return Response({"dialogues": serializer.data}, status=status.HTTP_200_OK)
         
     # ---------------------------------------
     @action(detail=True, methods=["get"], url_path="keys", permission_classes=[IsAuthenticated])
