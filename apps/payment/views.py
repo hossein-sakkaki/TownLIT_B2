@@ -184,7 +184,7 @@ class PaymentShoppingCartViewSet(viewsets.ModelViewSet):
 
 
 
-
+# PAYMENT PROCESS VIEWSET -----------------------------------------------------------------
 class PaymentProcessViewSet(PaymentMixin, GenericViewSet):
     queryset = Payment.objects.all()
     permission_classes = [AllowAny]
