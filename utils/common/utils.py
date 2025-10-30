@@ -80,49 +80,39 @@ def create_active_code(count):
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 from django.conf import settings
+import logging
+
+logger = logging.getLogger(__name__)
 
 def send_email(subject, message, html_content, to):
-    # Initialize the SES client
     ses_client = boto3.client(
         'ses',
-        region_name=settings.AWS_SES_REGION_NAME,
-        aws_access_key_id=settings.AWS_SES_ACCESS_KEY_ID,
-        aws_secret_access_key=settings.AWS_SES_SECRET_ACCESS_KEY,
+        region_name=getattr(settings, "AWS_SES_REGION_NAME", None),
+        aws_access_key_id=getattr(settings, "AWS_SES_ACCESS_KEY_ID", None),
+        aws_secret_access_key=getattr(settings, "AWS_SES_SECRET_ACCESS_KEY", None),
     )
-
     if isinstance(to, str):
         to = [to]
 
-    # Prepare the email parameters
     try:
         response = ses_client.send_email(
-            Source=settings.AWS_SES_EMAIL_FROM,  # Verified email address
-            Destination={
-                'ToAddresses': to,
-            },
+            Source=getattr(settings, "AWS_SES_EMAIL_FROM", ""),
+            Destination={'ToAddresses': to},
             Message={
-                'Subject': {
-                    'Data': subject,
-                    'Charset': 'UTF-8',
-                },
+                'Subject': {'Data': subject, 'Charset': 'UTF-8'},
                 'Body': {
-                    'Text': {
-                        'Data': message,
-                        'Charset': 'UTF-8',
-                    },
-                    'Html': {
-                        'Data': html_content,
-                        'Charset': 'UTF-8',
-                    },
+                    'Text': {'Data': message, 'Charset': 'UTF-8'},
+                    'Html': {'Data': html_content, 'Charset': 'UTF-8'},
                 },
             },
-            ReturnPath=settings.AWS_SES_RETURN_PATH,
+            ReturnPath=getattr(settings, "AWS_SES_RETURN_PATH", getattr(settings, "AWS_SES_EMAIL_FROM", "")),
         )
-        print(f"Email sent successfully: {response['MessageId']}")
+        logger.info("SES sent email: msg_id=%s to=%s", response.get("MessageId"), to)
         return True
     except (BotoCoreError, ClientError) as error:
-        print(f"An error occurred while sending the email: {error}")
+        logger.error("SES send_email error to=%s: %s", to, error, exc_info=True)
         return False
+    
 
 # SEND ACTIVE CODE by AWS SMS ------------------------------------------
 def send_sms(phone_number, message):

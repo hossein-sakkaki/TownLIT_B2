@@ -1,4 +1,5 @@
-from django.template.loader import render_to_string
+# utils/email/email_tools.py
+from django.template.loader import render_to_string, TemplateDoesNotExist
 from django.utils.html import strip_tags
 from utils.common.utils import send_email
 import logging
@@ -9,22 +10,29 @@ def send_custom_email(to, subject, template_path, context=None, text_template_pa
     context = context or {}
 
     try:
-        # HTML content
-        html_content = render_to_string(template_path, context)
+        # Try HTML template
+        try:
+            html_content = render_to_string(template_path, context)
+        except TemplateDoesNotExist:
+            logger.warning("Email template not found: %s (fallback to minimal HTML)", template_path)
+            # minimal fallback
+            html_content = f"<html><body><pre>{strip_tags(str(context))}</pre></body></html>"
 
         # Plain text fallback
         if text_template_path:
-            text_content = render_to_string(text_template_path, context)
+            try:
+                text_content = render_to_string(text_template_path, context)
+            except TemplateDoesNotExist:
+                logger.warning("Text template not found: %s (fallback to strip_tags)", text_template_path)
+                text_content = strip_tags(html_content)
         else:
-            text_content = strip_tags(html_content)  # استخراج متن ساده از HTML
+            text_content = strip_tags(html_content)
 
-        # ارسال واقعی
         success = send_email(subject, text_content, html_content, to)
-
         if not success:
-            logger.warning(f"❌ Email not sent to {to}. Check SES or SMTP logs.")
+            logger.warning("❌ Email not sent to %s. Check SES/SMTP logs.", to)
         return success
 
     except Exception as e:
-        logger.error(f"❌ Failed to send email to {to}: {e}", exc_info=True)
+        logger.exception("❌ Failed to send email to %s: %s", to, e)
         return False
