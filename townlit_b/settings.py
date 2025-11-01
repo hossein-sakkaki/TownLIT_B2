@@ -120,6 +120,7 @@ INSTALLED_APPS = [
     'ckeditor_uploader',
     'django_celery_beat',   # Celery
     'django_cleanup.apps.CleanupConfig', # Cleanup older files
+    "django_extensions",
     
     # 2FA
     'django_otp',

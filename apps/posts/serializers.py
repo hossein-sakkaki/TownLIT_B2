@@ -1,5 +1,7 @@
 from rest_framework import serializers
+from django.apps import apps
 from django.contrib.contenttypes.models import ContentType
+import traceback
 from .models import ( 
                 Reaction, Comment,
                 Resource, ServiceEvent,
@@ -12,7 +14,7 @@ from apps.profiles.models import Member
 from apps.accounts.serializers import SimpleCustomUserSerializer
 from apps.profilesOrg.serializers_min import SimpleOrganizationSerializer
 from .serializers_owner_min import build_owner_union_from_content_object
-
+from apps.posts.constants import REACTION_TYPE_CHOICES
 import logging
 logger = logging.getLogger(__name__)
 from django.contrib.auth import get_user_model
@@ -22,12 +24,101 @@ CustomUser = get_user_model()
 
 # BASE REACTION Serializer ---------------------------------------------------------------------
 class ReactionSerializer(serializers.ModelSerializer):
-    content_type = serializers.SlugRelatedField(slug_field='model', queryset=ContentType.objects.all())
+    """
+    Serializer for Reaction model.
+    Supports flexible content_type input: "testimony", "posts.testimony", or numeric id.
+    """
+
+    # write-only input fields
+    content_type = serializers.CharField(write_only=True)
+    object_id = serializers.IntegerField()
+    reaction_type = serializers.ChoiceField(choices=[c[0] for c in REACTION_TYPE_CHOICES])
+    message = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=80)
+
+    # read-only output fields
+    id = serializers.IntegerField(read_only=True)
+    timestamp = serializers.DateTimeField(read_only=True)
+    name = serializers.SerializerMethodField(read_only=True)
+    content_type_label = serializers.SerializerMethodField(read_only=True)
+
     class Meta:
         model = Reaction
-        fields = ['id', 'name', 'reaction_type', 'message', 'content_type', 'object_id', 'timestamp']
-    
+        fields = [
+            'id',
+            'name',
+            'reaction_type',
+            'message',
+            'content_type',
+            'object_id',
+            'timestamp',
+            'content_type_label',
+        ]
+        read_only_fields = ['id', 'name', 'timestamp', 'content_type_label']
+
+    # --- READ helpers ---
+    def get_name(self, obj):
+        """Return minimal user info for front-end."""
+        u = obj.name
+        return {'id': u.id, 'username': getattr(u, 'username', None)}
+
+    def get_content_type_label(self, obj):
+        """Return lowercased model name for readability."""
+        return obj.content_type.model
+
+    # --- INTERNAL helper: resolve CT string to object ---
+    def _resolve_content_type(self, raw: str) -> ContentType:
+        """
+        Supports:
+        - numeric id
+        - 'app_label.model'
+        - plain model name (scans installed apps)
+        """
+        raw = str(raw).strip()
+
+        # numeric id
+        if raw.isdigit():
+            return ContentType.objects.get(pk=int(raw))
+
+        # 'app_label.model'
+        if '.' in raw:
+            app_label, model = raw.split('.', 1)
+            return ContentType.objects.get(app_label=app_label, model=model)
+
+        # bare model name
+        ct = ContentType.objects.filter(model=raw).first()
+        if ct:
+            return ct
+
+        # fallback: brute-force scan across all installed apps
+        for m in apps.get_models():
+            if m._meta.model_name == raw:
+                return ContentType.objects.get_for_model(m)
+
+        raise serializers.ValidationError({'content_type': 'Invalid content type'})
+
+    # --- VALIDATION ---
+    def validate(self, attrs):
+        # resolve ContentType
+        ct = self._resolve_content_type(attrs['content_type'])
+        attrs['content_type'] = ct
+
+        # ensure target object exists
+        model_class = ct.model_class()
+        if not model_class.objects.filter(pk=attrs['object_id']).exists():
+            raise serializers.ValidationError({'object_id': 'Target object not found'})
+
+        # normalize empty message to None
+        msg = attrs.get('message')
+        if msg is not None and msg.strip() == '':
+            attrs['message'] = None
+
+        return attrs
+
+    # --- CREATE ---
     def create(self, validated_data):
+        """Assign current user as `name` (actor) automatically."""
+        user = self.context['request'].user
+        validated_data['name'] = user
         return Reaction.objects.create(**validated_data)
 
 
@@ -70,39 +161,84 @@ class ServiceEventSerializer(serializers.ModelSerializer):
 
 # TESTIMONY serializers -----------------------------------------------------------------
 class TestimonySerializer(AudioFileMixin, VideoFileMixin, ThumbnailFileMixin, serializers.ModelSerializer):
+    """Unified serializer for written/audio/video testimonies with GFK + Reaction support."""
+
     is_active = serializers.BooleanField(read_only=True)
     owner = serializers.SerializerMethodField(read_only=True)
-    
+
+    # ✅ For Reactions system
+    content_type = serializers.SerializerMethodField(read_only=True)
+    object_id = serializers.SerializerMethodField(read_only=True)
+
+
     class Meta:
         model = Testimony
         fields = [
-            'id','slug','type','title','content',
-            'audio','video','thumbnail',
-            'published_at','updated_at','is_active',
-            'content_type','object_id','is_converted',
-            'owner',
+            'id', 'slug',
+            'type', 'title',
+            'content', 'audio', 'video',
+            'thumbnail', 'published_at', 'updated_at', 'is_active',
+            'content_type', 'object_id',
+            'is_converted', 'owner',
         ]
         read_only_fields = [
-            'published_at','updated_at','is_converted','slug',
-            'content_type','object_id','is_active',
-            'owner',
+            'id', 'slug',
+            'published_at', 'updated_at', 'is_active',
+            'content_type', 'object_id',
+            'is_converted', 'owner',
         ]
 
-    # Build a small, public owner union from GFK
+    def get_object_id(self, obj):
+        return getattr(obj, "object_id", None)
+    
+    # ✅ Safely serialize "app.model" string for Reaction API
+    def get_content_type(self, obj):
+        """
+        Return 'app_label.model' string used by Reaction API.
+        Works for Member/Organization or standalone Testimony.
+        Never raises.
+        """
+        try:
+            # 1️⃣ Primary source: GFK content_type field itself
+            if getattr(obj, "content_type_id", None):
+                ct = getattr(obj, "content_type", None)
+                if ct and getattr(ct, "app_label", None):
+                    return f"{ct.app_label}.{ct.model}"
+
+            # 2️⃣ If linked object exists (e.g., member or org)
+            target = getattr(obj, "content_object", None)
+            if target is not None:
+                try:
+                    ct = ContentType.objects.get_for_model(target.__class__)
+                    return f"{ct.app_label}.{ct.model}"
+                except Exception as inner_e:
+                    logger.warning("⚠️ Failed inner get_for_model for Testimony id=%s: %s", getattr(obj, "id", None), inner_e)
+
+            # 3️⃣ Fallback: model itself (Testimony)
+            ct = ContentType.objects.get_for_model(obj.__class__)
+            return f"{ct.app_label}.{ct.model}"
+
+        except Exception as e:
+            logger.error("🔥 get_content_type failed for Testimony id=%s:\n%s", getattr(obj, "id", None), traceback.format_exc())
+            return None
+
+    # ✅ Safe owner builder (never crashes)
     def get_owner(self, obj):
-        # Ensure request in context for absolute URLs
-        return build_owner_union_from_content_object(obj, context=self.context)
+        try:
+            return build_owner_union_from_content_object(obj, context=self.context)
+        except Exception as e:
+            logger.warning("⚠️ get_owner failed for Testimony id=%s: %s", getattr(obj, "id", None), e)
+            return None
 
-
-    # serializers.py
+    # ✅ Validation logic (unchanged)
     def validate(self, attrs):
         instance = self.instance
         ttype = attrs.get('type') or (instance.type if instance else None) or self.context.get('ttype')
 
-        title   = attrs.get('title')   if 'title'   in attrs else (instance.title   if instance else None)
+        title = attrs.get('title') if 'title' in attrs else (instance.title if instance else None)
         content = attrs.get('content') if 'content' in attrs else (instance.content if instance else None)
-        audio   = attrs.get('audio')   if 'audio'   in attrs else (instance.audio   if instance else None)
-        video   = attrs.get('video')   if 'video'   in attrs else (instance.video   if instance else None)
+        audio = attrs.get('audio') if 'audio' in attrs else (instance.audio if instance else None)
+        video = attrs.get('video') if 'video' in attrs else (instance.video if instance else None)
 
         if ttype == Testimony.TYPE_WRITTEN:
             if not content or audio or video:
@@ -119,22 +255,31 @@ class TestimonySerializer(AudioFileMixin, VideoFileMixin, ThumbnailFileMixin, se
         elif ttype == Testimony.TYPE_VIDEO:
             if not video or content or audio:
                 raise serializers.ValidationError("Video testimony requires a video file and no text/audio.")
+
         else:
             raise serializers.ValidationError("Invalid or missing testimony type.")
 
         attrs['type'] = ttype
         return attrs
 
+    # ✅ Create with context defaults
     def create(self, validated_data):
         validated_data.setdefault('type', self.context.get('ttype'))
         validated_data.setdefault('content_type', self.context.get('content_type'))
         validated_data.setdefault('object_id', self.context.get('object_id'))
         validated_data.pop('is_active', None)
+
         inst = Testimony.objects.create(**validated_data)
         try:
             exists_now = Testimony.objects.filter(pk=inst.pk).exists()
-            logger.info("✅ Testimony saved: id=%s type=%s slug=%s (exists_now=%s, db_alias=%s)",
-                        inst.pk, inst.type, inst.slug, exists_now, getattr(inst._state, "db", None))
+            logger.info(
+                "✅ Testimony saved: id=%s type=%s slug=%s (exists_now=%s, db_alias=%s)",
+                inst.pk,
+                inst.type,
+                inst.slug,
+                exists_now,
+                getattr(inst._state, "db", None),
+            )
         except Exception:
             logger.exception("Post-create existence check failed for id=%s", inst.pk)
 
@@ -142,7 +287,6 @@ class TestimonySerializer(AudioFileMixin, VideoFileMixin, ThumbnailFileMixin, se
 
     def update(self, instance, validated_data):
         return super().update(instance, validated_data)
-
         
 # WITNESS serializers -----------------------------------------------------------------
 class WitnessSerializer(serializers.ModelSerializer):

@@ -27,7 +27,7 @@ def testimonies_for_member(member):
       'written': Testimony|None,
     }
     """
-    ct = ContentType.objects.get_for_model(member.__class__)  # امن‌تر از type(member)
+    ct = ContentType.objects.get_for_model(member.__class__)
     base_qs = (Testimony.objects
                .filter(content_type=ct, object_id=member.id, **VISIBLE_FILTERS))
 

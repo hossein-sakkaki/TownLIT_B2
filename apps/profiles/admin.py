@@ -162,7 +162,7 @@ class MemberAdmin(admin.ModelAdmin):
         'denomination_family',
     ]
 
-    autocomplete_fields = ['user', 'testimony']
+    autocomplete_fields = ['user']
     filter_horizontal = ['service_types', 'organization_memberships']
 
     # --- Fieldsets for edit page ---
@@ -183,7 +183,6 @@ class MemberAdmin(admin.ModelAdmin):
         }),
         ('Services', {'fields': ('service_types', 'academic_record')}),
         ('Organizations & Memberships', {'fields': ('organization_memberships',)}),
-        ('Testimonies & Moments', {'fields': ('testimony',)}),
         ('Status', {
             'fields': (
                 'is_migrated',

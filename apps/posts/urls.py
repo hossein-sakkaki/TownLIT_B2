@@ -4,17 +4,21 @@ from apps.posts.views import (
     TestimonyViewSet, MomentViewSet, PrayViewSet, AnnouncementViewSet,
     WitnessViewSet, PreachViewSet, LessonViewSet, WorshipViewSet,
     MediaContentViewSet, MissionViewSet, LibraryViewSet, ServiceEventViewSet,
-    ConferenceViewSet, FutureConferenceViewSet
+    ConferenceViewSet, FutureConferenceViewSet,
+    ReactionViewSet, MeTestimonyViewSet
 )
-from apps.posts.views import MeTestimonyViewSet  # owner-scoped
+
 
 app_name = 'posts'
 router = DefaultRouter()
 
-# ✅ Owner-scoped endpoints (clean + predictable)
+# owner-scoped
 router.register(r'me/testimonies', MeTestimonyViewSet, basename='me-testimonies')
 
-# Public/organizational resources
+# centralized reactions
+router.register(r'reactions', ReactionViewSet, basename='reaction')
+
+# public/organizational resources
 router.register(r'testimonies', TestimonyViewSet, basename='testimony')
 router.register(r'moments', MomentViewSet, basename='moment')
 router.register(r'prayers', PrayViewSet, basename='prayer')
@@ -29,6 +33,5 @@ router.register(r'missions', MissionViewSet, basename='mission')
 router.register(r'service-events', ServiceEventViewSet, basename='service-event')
 router.register(r'conferences', ConferenceViewSet, basename='conference')
 router.register(r'future-conferences', FutureConferenceViewSet, basename='future-conference')
-
 
 urlpatterns = router.urls
