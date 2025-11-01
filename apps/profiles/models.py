@@ -311,7 +311,6 @@ class Member(SlugMixin):
     show_fellowship_in_profile = models.BooleanField(default=True, verbose_name='Show Fellowship in Profile')
     hide_confidants = models.BooleanField(default=False, verbose_name='Hide Confidants in setting')
     
-    testimony = models.ForeignKey(Testimony, on_delete=models.CASCADE, null=True, blank=True, related_name='member_testimonies', verbose_name='Member Testimony')
     testimonies = GenericRelation(
         Testimony,
         related_query_name='owner_member',

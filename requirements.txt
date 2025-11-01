@@ -107,3 +107,4 @@ whitenoise==6.9.0
 yarl==1.9.4
 zope.interface==7.2
 django-otp==1.6.0
+django-extensions==3.2.3

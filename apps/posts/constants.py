@@ -16,6 +16,9 @@ GRATITUDE = 'gratitude'
 AMEN = 'amen'
 ENCOURAGEMENT = 'encouragement'
 EMPATHY = 'empathy'
+FAITHFIRE = 'faithfire'
+SUPPORT = 'support'
+
 REACTION_TYPE_CHOICES = [
     (LIKE, 'Like'),
     (BLESS, 'Bless'),
@@ -23,6 +26,8 @@ REACTION_TYPE_CHOICES = [
     (AMEN, 'Amen'),
     (ENCOURAGEMENT, 'Encouragement'),
     (EMPATHY, 'Empathy'),
+    (FAITHFIRE, 'FaithFire'),
+    (SUPPORT, 'Support'),
 ]
 
 

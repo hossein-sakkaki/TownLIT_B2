@@ -43,15 +43,27 @@ CustomUser = get_user_model()
 # Reaction Models ---------------------------------------------------------------------------------
 class Reaction(models.Model):
     id = models.BigAutoField(primary_key=True)
-    name = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='user_reactions', verbose_name='Name')
-    reaction_type = models.CharField(max_length=20, choices=REACTION_TYPE_CHOICES, verbose_name='Reaction Type')
-    message = models.CharField(max_length=80, blank=True, null=True, verbose_name='Reaction Message')
-    
+    name = models.ForeignKey(
+        CustomUser,
+        on_delete=models.CASCADE,
+        related_name='user_reactions',
+        verbose_name='Name'
+    )
+    reaction_type = models.CharField(
+        max_length=20,
+        choices=REACTION_TYPE_CHOICES,
+        verbose_name='Reaction Type'
+    )
+    message = models.CharField(
+        max_length=100, blank=True, null=True, verbose_name='Reaction Message'
+    )
+
     content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
     object_id = models.PositiveIntegerField()
     content_object = GenericForeignKey('content_type', 'object_id')
-    
+
     timestamp = models.DateTimeField(default=timezone.now, verbose_name='Timestamp')
+
     def __str__(self):
         return f'{self.name.username} reacted with {self.reaction_type}'
 
@@ -59,6 +71,10 @@ class Reaction(models.Model):
         verbose_name = "_Reaction"
         verbose_name_plural = "_Reactions"
         unique_together = ('name', 'reaction_type', 'content_type', 'object_id')
+        indexes = [
+            models.Index(fields=['content_type', 'object_id']),
+            models.Index(fields=['name', 'content_type', 'object_id']),
+        ]
     
     
 # Comment Models ------------------------------------------------------------------------------------------------------------

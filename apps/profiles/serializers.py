@@ -801,7 +801,10 @@ class PublicMemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
         return {
             'audio':   TestimonySerializer(data['audio'],   context=self.context).data if data['audio']   else None,
             'video':   TestimonySerializer(data['video'],   context=self.context).data if data['video']   else None,
-            'written': TestimonySerializer(data['written'], context=self.context).data if data['written'] else None,
+            'written': TestimonySerializer(
+                data['written'],
+                context={'request': self.context.get('request')}
+            ).data if data['written'] else None,
         }
 
 

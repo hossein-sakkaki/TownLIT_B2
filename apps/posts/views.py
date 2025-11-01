@@ -1,12 +1,13 @@
 from django.utils import timezone
 from django.contrib.contenttypes.models import ContentType
+from django.db import models
 from django.db.models import Q
 from django.db import transaction, IntegrityError
 
-from rest_framework import status, viewsets
+from rest_framework import status, viewsets, mixins
 from rest_framework.response import Response
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.exceptions import NotFound
 
@@ -26,7 +27,7 @@ from .models import (
                     Worship, MediaContent, Library, Mission, Conference, FutureConference
                 )
 from apps.posts.mixins.mixins import (
-                    ReactionMixin, CommentMixin,
+                    CommentMixin,
                     MemberActionMixin, GuestUserActionMixin, OrganizationActionMixin, ResourceManagementMixin
                 )
 from apps.profilesOrg.models import (
@@ -34,6 +35,7 @@ from apps.profilesOrg.models import (
                     ChristianCounselingCenter, ChristianWorshipMinistry, ChristianConferenceCenter, ChristianEducationalInstitution, 
                     ChristianChildrenOrganization, ChristianYouthOrganization, ChristianWomensOrganization, ChristianMensOrganization
                 )
+from apps.accounts.serializers import SimpleCustomUserSerializer
 from django.db import IntegrityError, DatabaseError
 
 import logging
@@ -44,35 +46,223 @@ CustomUser = get_user_model()
 
 
 # REACTIONS Viewset --------------------------------------------------------------------------
-class ReactionViewSet(viewsets.ModelViewSet):
-    queryset = Reaction.objects.all()
+class ReactionViewSet(
+    mixins.CreateModelMixin,
+    mixins.DestroyModelMixin,
+    mixins.ListModelMixin,
+    viewsets.GenericViewSet,
+):
+    """
+    Centralized reactions endpoint.
+    POST /posts/reactions/ (toggle)
+    GET  /posts/reactions/?content_type=testimony&object_id=42
+    GET  /posts/reactions/summary/?content_type=testimony&object_id=42
+    DELETE /posts/reactions/<id>/  (owner-only)
+    """
+    queryset = Reaction.objects.all().select_related('name', 'content_type')
     serializer_class = ReactionSerializer
-    permission_classes = [IsAuthenticated]
-    
+    permission_classes = [IsAuthenticated]  # default
+
     def get_queryset(self):
-        content_type = self.request.query_params.get('content_type')
-        object_id = self.request.query_params.get('object_id')
-        if content_type and object_id:
+        qs = super().get_queryset()
+        ct = self.request.query_params.get('content_type')
+        oid = self.request.query_params.get('object_id')
+
+        if ct and oid:
+            # allow id, app.model, or model
             try:
-                content_type_instance = ContentType.objects.get(model=content_type)
-                return Reaction.objects.filter(
-                    content_type=content_type_instance, object_id=object_id
-                )
+                if str(ct).isdigit():
+                    cto = ContentType.objects.get(pk=int(ct))
+                elif '.' in str(ct):
+                    app_label, model = str(ct).split('.', 1)
+                    cto = ContentType.objects.get(app_label=app_label, model=model)
+                else:
+                    cto = ContentType.objects.get(model=str(ct))
             except ContentType.DoesNotExist:
                 return Reaction.objects.none()
-        return super().get_queryset()
 
-    def update(self, request, *args, **kwargs):
-        instance = self.get_object()
-        if instance.name_id != request.user.id:
-            return Response({"error": "You are not allowed to edit this reaction"}, status=status.HTTP_403_FORBIDDEN)
-        return super().update(request, *args, **kwargs)
+            qs = qs.filter(content_type=cto, object_id=oid)
 
-    def destroy(self, request, *args, **kwargs):
-        instance = self.get_object()
-        if instance.name_id != request.user.id:
-            return Response({"error": "You are not allowed to delete this reaction"}, status=status.HTTP_403_FORBIDDEN)
-        return super().destroy(request, *args, **kwargs)
+        return qs.order_by('-timestamp')
+
+    def perform_destroy(self, instance):
+        # only owner can delete
+        if instance.name_id != self.request.user.id:
+            raise PermissionError("Forbidden")
+        return super().perform_destroy(instance)
+
+    def create(self, request, *args, **kwargs):
+        """
+        Toggle logic (single reaction per user per object):
+        - If same reaction exists → delete → 204
+        - Else remove any previous reaction for same object, then create new → 201
+        """
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user = request.user
+        ct = serializer.validated_data['content_type']
+        oid = serializer.validated_data['object_id']
+        rtype = serializer.validated_data['reaction_type']
+
+        # 1️⃣ Check if the same reaction already exists → toggle off
+        existing_same = Reaction.objects.filter(
+            name=user, content_type=ct, object_id=oid, reaction_type=rtype
+        ).first()
+
+        if existing_same:
+            existing_same.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        # 2️⃣ Delete all other reactions by this user for the same object
+        Reaction.objects.filter(
+            name=user, content_type=ct, object_id=oid
+        ).exclude(reaction_type=rtype).delete()
+
+        # 3️⃣ Create the new reaction
+        instance = serializer.save()
+        out = self.get_serializer(instance)
+        return Response(out.data, status=status.HTTP_201_CREATED)
+
+
+
+    @action(detail=False, methods=['get'], url_path='summary', permission_classes=[AllowAny])
+    def summary(self, request):
+        """Count per reaction_type for a given object."""
+        ct = request.query_params.get('content_type')
+        oid = request.query_params.get('object_id')
+
+        if not ct or not oid:
+            return Response({'detail': 'content_type and object_id required'}, status=400)
+
+        # resolve CT
+        try:
+            if str(ct).isdigit():
+                cto = ContentType.objects.get(pk=int(ct))
+            elif '.' in str(ct):
+                app_label, model = str(ct).split('.', 1)
+                cto = ContentType.objects.get(app_label=app_label, model=model)
+            else:
+                cto = ContentType.objects.get(model=str(ct))
+        except ContentType.DoesNotExist:
+            return Response({'detail': 'Invalid content type'}, status=400)
+
+        # aggregate counts
+        qs = (
+            Reaction.objects.filter(content_type=cto, object_id=oid)
+            .values('reaction_type')
+            .annotate(count=models.Count('id'))
+        )
+        return Response(list(qs), status=200)
+
+    @action(detail=False, methods=['get'], url_path='mine', permission_classes=[IsAuthenticated])
+    def mine(self, request):
+        """List current user's reactions (optional helper)."""
+        qs = self.get_queryset().filter(name=request.user)
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            ser = self.get_serializer(page, many=True)
+            return self.get_paginated_response(ser.data)
+        ser = self.get_serializer(qs, many=True)
+        return Response(ser.data)
+    
+    # existing methods (get_queryset, create, etc.) --------------------------------------------
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="with-message",
+        permission_classes=[IsAuthenticated],  # 🔒 فقط کاربران واردشده
+    )
+    def with_message(self, request):
+        """
+        🔒 Returns all reactions that include messages (owner-only view).
+        Query params:
+        ?content_type=posts.testimony&object_id=42
+        [&reaction_type=bless]
+        """
+        ct_param = request.query_params.get("content_type")
+        obj_id = request.query_params.get("object_id")
+        rtype = request.query_params.get("reaction_type")
+
+        # --- Validate input ---
+        if not ct_param or not obj_id:
+            return Response(
+                {"detail": "content_type and object_id required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # --- Resolve ContentType ---
+        try:
+            if str(ct_param).isdigit():
+                cto = ContentType.objects.get(pk=int(ct_param))
+            elif "." in str(ct_param):
+                app_label, model = str(ct_param).split(".", 1)
+                cto = ContentType.objects.get(app_label=app_label, model=model)
+            else:
+                cto = ContentType.objects.get(model=str(ct_param))
+        except ContentType.DoesNotExist:
+            return Response({"detail": "Invalid content type"}, status=400)
+
+        # --- Verify ownership ---
+        model_cls = cto.model_class()
+        try:
+            target_obj = model_cls.objects.get(pk=obj_id)
+        except model_cls.DoesNotExist:
+            return Response({"detail": "Target object not found"}, status=404)
+
+        user = request.user
+        owner_id = None
+
+        # Try multiple patterns for ownership
+        for attr in ["name_id", "owner_id", "user_id", "member_user_id", "org_owner_user_id"]:
+            if hasattr(target_obj, attr):
+                owner_id = getattr(target_obj, attr)
+                if owner_id:
+                    break
+
+        # Related owner object fallback
+        if not owner_id:
+            for rel in ["name", "owner", "member_user", "org_owner_user"]:
+                if hasattr(target_obj, rel):
+                    rel_obj = getattr(target_obj, rel)
+                    if hasattr(rel_obj, "id"):
+                        owner_id = rel_obj.id
+                        break
+
+        # Organization owners M2M fallback
+        if not owner_id and hasattr(target_obj, "org_owners"):
+            if target_obj.org_owners.filter(id=user.id).exists():
+                owner_id = user.id
+
+        # Final check
+        if owner_id != user.id:
+            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+        # --- Query only reactions with messages ---
+        qs = (
+            Reaction.objects.filter(content_type=cto, object_id=obj_id)
+            .exclude(message__isnull=True)
+            .exclude(message__exact="")
+            .select_related("name")
+            .order_by("-timestamp")
+        )
+        if rtype:
+            qs = qs.filter(reaction_type=rtype)
+
+        # --- Use serializer for user info ---
+        serializer_context = {"request": request}
+        data = []
+        for r in qs[:200]:  # limit to avoid heavy payloads
+            user_data = SimpleCustomUserSerializer(r.name, context=serializer_context).data
+            data.append({
+                "id": r.id,
+                "reaction_type": r.reaction_type,
+                "message": r.message,
+                "timestamp": r.timestamp,
+                "user": user_data,  # ✅ serialized user
+            })
+
+        return Response(data, status=status.HTTP_200_OK)
 
 
 # COMMENT & RE_COMMENT Viewset -----------------------------------------------------------------
@@ -126,7 +316,7 @@ class CommentViewSet(viewsets.ModelViewSet):
     
 
 # Me Testimony ViewSet -------------------------------------------------------------------
-class MeTestimonyViewSet(ReactionMixin, CommentMixin, viewsets.GenericViewSet):
+class MeTestimonyViewSet(CommentMixin, viewsets.GenericViewSet):
     serializer_class = TestimonySerializer
     permission_classes = [IsAuthenticated]
     queryset = Testimony.objects.all()
@@ -145,7 +335,8 @@ class MeTestimonyViewSet(ReactionMixin, CommentMixin, viewsets.GenericViewSet):
         return Testimony.objects.filter(content_type=ct, object_id=member.id)
 
     def get_queryset(self):
-        return self._owner_qs(self.request)
+        return self._owner_qs(self.request).select_related("content_type")
+
 
     def get_object(self):
         qs = self.get_queryset()
@@ -163,7 +354,17 @@ class MeTestimonyViewSet(ReactionMixin, CommentMixin, viewsets.GenericViewSet):
 
     def retrieve(self, request, *args, **kwargs):
         obj = self.get_object()
-        return Response(self.get_serializer(obj, context={"request": request}).data)
+        return Response(
+            self.get_serializer(
+                obj,
+                context={
+                    'request': request,
+                    'content_type': getattr(obj, 'content_type', None),
+                    'object_id': getattr(obj, 'object_id', None),
+                },
+            ).data
+        )
+
 
     # ---------- Summary ----------
     @action(detail=False, methods=['get'], url_path='summary')
@@ -278,17 +479,32 @@ class MeTestimonyViewSet(ReactionMixin, CommentMixin, viewsets.GenericViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     # ---------- Detail (optional) ----------
-    @action(detail=False, methods=['get'], url_path=r'detail/(?P<slug>[-\w]+)')
-    def detail(self, request, slug=None):
-        obj = self.get_queryset().filter(slug=slug).first()
-        if not obj:
-            raise NotFound("Not found")
-        return Response(self.get_serializer(obj, context={'request': request}).data)
+    # def detail(self, request, slug=None):
+    #     obj = self.get_queryset().filter(slug=slug).first()
+    #     if not obj:
+    #         raise NotFound("Not found")
+
+    #     try:
+    #         data = self.get_serializer(
+    #             obj,
+    #             context={
+    #                 'request': request,
+    #                 'content_type': getattr(obj, 'content_type', None),
+    #                 'object_id': getattr(obj, 'object_id', None),
+    #             },
+    #         ).data
+    #         return Response(data)
+    #     except Exception as e:
+    #         import traceback
+    #         print("🔥 Serializer error:", e)
+    #         traceback.print_exc()
+    #         return Response({"error": str(e)}, status=500)
+
 
 
 
 # SERVICE EVENT ViewSet ---------------------------------------------------------------------------------------------------
-class ServiceEventViewSet(viewsets.ModelViewSet, CommentMixin, ReactionMixin, OrganizationActionMixin):
+class ServiceEventViewSet(viewsets.ModelViewSet, CommentMixin, OrganizationActionMixin):
     queryset = ServiceEvent.objects.all()
     serializer_class = ServiceEventSerializer
     permission_classes = [IsAuthenticated]
@@ -384,7 +600,7 @@ class ServiceEventViewSet(viewsets.ModelViewSet, CommentMixin, ReactionMixin, Or
 
 
 # TESTIMONY Viewset --------------------------------------------------------------------------
-class TestimonyViewSet(viewsets.ModelViewSet, CommentMixin, ReactionMixin, OrganizationActionMixin):
+class TestimonyViewSet(OrganizationActionMixin, viewsets.ModelViewSet):
     queryset = Testimony.objects.all()
     serializer_class = TestimonySerializer
     permission_classes = [IsAuthenticated]
@@ -501,7 +717,7 @@ class TestimonyViewSet(viewsets.ModelViewSet, CommentMixin, ReactionMixin, Organ
 
 
 # Witness ViewSet ---------------------------------------------------------------------------------------------------
-class WitnessViewSet(viewsets.ModelViewSet, CommentMixin, ReactionMixin, OrganizationActionMixin):
+class WitnessViewSet(viewsets.ModelViewSet, CommentMixin, OrganizationActionMixin):
     queryset = Witness.objects.all()
     serializer_class = WitnessSerializer
     permission_classes = [IsAuthenticated]
@@ -564,7 +780,7 @@ class WitnessViewSet(viewsets.ModelViewSet, CommentMixin, ReactionMixin, Organiz
 
 
 # Moment ViewSet ---------------------------------------------------------------------------------------------------
-class MomentViewSet(viewsets.ModelViewSet, CommentMixin, ReactionMixin, MemberActionMixin, GuestUserActionMixin, OrganizationActionMixin):
+class MomentViewSet(viewsets.ModelViewSet, CommentMixin, MemberActionMixin, GuestUserActionMixin, OrganizationActionMixin):
     queryset = Moment.objects.all()
     serializer_class = MomentSerializer
     permission_classes = [IsAuthenticated]
@@ -662,7 +878,7 @@ class MomentViewSet(viewsets.ModelViewSet, CommentMixin, ReactionMixin, MemberAc
 
 
 # Pray ViewSet ---------------------------------------------------------------------------------------------------
-class PrayViewSet(viewsets.ModelViewSet, CommentMixin, ReactionMixin, MemberActionMixin):
+class PrayViewSet(viewsets.ModelViewSet, CommentMixin, MemberActionMixin):
     queryset = Pray.objects.all()
     serializer_class = PraySerializer
     permission_classes = [IsAuthenticated]
@@ -717,7 +933,7 @@ class PrayViewSet(viewsets.ModelViewSet, CommentMixin, ReactionMixin, MemberActi
 
 
 # Announcement ViewSet ---------------------------------------------------------------------------------------------------
-class AnnouncementViewSet(viewsets.ModelViewSet, CommentMixin, ReactionMixin, OrganizationActionMixin):
+class AnnouncementViewSet(viewsets.ModelViewSet, CommentMixin, OrganizationActionMixin):
     queryset = Announcement.objects.all()
     serializer_class = AnnouncementSerializer
     permission_classes = [IsAuthenticated]
@@ -771,7 +987,7 @@ class AnnouncementViewSet(viewsets.ModelViewSet, CommentMixin, ReactionMixin, Or
 
 
 # LESSON ViewSet -----------------------------------------------------------------------------------------------------
-class LessonViewSet(viewsets.ModelViewSet, CommentMixin, ReactionMixin, OrganizationActionMixin):
+class LessonViewSet(viewsets.ModelViewSet, CommentMixin, OrganizationActionMixin):
     queryset = Lesson.objects.all()
     serializer_class = LessonSerializer
     permission_classes = [IsAuthenticated]
@@ -893,7 +1109,7 @@ class LessonViewSet(viewsets.ModelViewSet, CommentMixin, ReactionMixin, Organiza
 
 
 # Preach ViewSet ---------------------------------------------------------------------------------------------------
-class PreachViewSet(viewsets.ModelViewSet, CommentMixin, ReactionMixin, OrganizationActionMixin):
+class PreachViewSet(viewsets.ModelViewSet, CommentMixin, OrganizationActionMixin):
     queryset = Preach.objects.all()
     serializer_class = PreachSerializer
     permission_classes = [IsAuthenticated]
@@ -1013,7 +1229,7 @@ class PreachViewSet(viewsets.ModelViewSet, CommentMixin, ReactionMixin, Organiza
 
 
 # Worship ViewSet ---------------------------------------------------------------------------------------------------
-class WorshipViewSet(viewsets.ModelViewSet, CommentMixin, ReactionMixin, OrganizationActionMixin, ResourceManagementMixin):
+class WorshipViewSet(viewsets.ModelViewSet, CommentMixin, OrganizationActionMixin, ResourceManagementMixin):
     queryset = Worship.objects.all()
     serializer_class = WorshipSerializer
     permission_classes = [IsAuthenticated]
@@ -1134,7 +1350,7 @@ class WorshipViewSet(viewsets.ModelViewSet, CommentMixin, ReactionMixin, Organiz
 
 
 # Media Content ViewSet ---------------------------------------------------------------------------------------------------
-class MediaContentViewSet(viewsets.ModelViewSet, CommentMixin, ReactionMixin, OrganizationActionMixin):
+class MediaContentViewSet(viewsets.ModelViewSet, CommentMixin, OrganizationActionMixin):
     queryset = MediaContent.objects.all()
     serializer_class = MediaContentSerializer
     permission_classes = [IsAuthenticated]
@@ -1255,7 +1471,7 @@ class MediaContentViewSet(viewsets.ModelViewSet, CommentMixin, ReactionMixin, Or
 
 
 # Library ViewSet ---------------------------------------------------------------------------------------------------
-class LibraryViewSet(viewsets.ModelViewSet, CommentMixin, ReactionMixin, OrganizationActionMixin):
+class LibraryViewSet(viewsets.ModelViewSet, CommentMixin, OrganizationActionMixin):
     queryset = Library.objects.all()
     serializer_class = LibrarySerializer
     permission_classes = [IsAuthenticated]
@@ -1376,7 +1592,7 @@ class LibraryViewSet(viewsets.ModelViewSet, CommentMixin, ReactionMixin, Organiz
 
 
 # Mission ViewSet ---------------------------------------------------------------------------------------------------
-class MissionViewSet(viewsets.ModelViewSet, CommentMixin, ReactionMixin, OrganizationActionMixin):
+class MissionViewSet(viewsets.ModelViewSet, CommentMixin, OrganizationActionMixin):
     queryset = Mission.objects.all()
     serializer_class = MissionSerializer
     permission_classes = [IsAuthenticated]
@@ -1497,7 +1713,7 @@ class MissionViewSet(viewsets.ModelViewSet, CommentMixin, ReactionMixin, Organiz
 
 
 # Conference ViewSet ---------------------------------------------------------------------------------------------------
-class ConferenceViewSet(viewsets.ModelViewSet, CommentMixin, ReactionMixin, OrganizationActionMixin, ResourceManagementMixin):
+class ConferenceViewSet(viewsets.ModelViewSet, CommentMixin, OrganizationActionMixin, ResourceManagementMixin):
     queryset = Conference.objects.all()
     serializer_class = ConferenceSerializer
     permission_classes = [IsAuthenticated]
@@ -1640,7 +1856,7 @@ class ConferenceViewSet(viewsets.ModelViewSet, CommentMixin, ReactionMixin, Orga
 
 
 # Future Conference ViewSet ---------------------------------------------------------------------------------------------------
-class FutureConferenceViewSet(viewsets.ModelViewSet, CommentMixin, ReactionMixin, OrganizationActionMixin):
+class FutureConferenceViewSet(viewsets.ModelViewSet, CommentMixin, OrganizationActionMixin):
     queryset = FutureConference.objects.all()
     serializer_class = FutureConferenceSerializer
     permission_classes = [IsAuthenticated]

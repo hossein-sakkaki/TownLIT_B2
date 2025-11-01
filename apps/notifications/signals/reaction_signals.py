@@ -1,103 +1,122 @@
+# apps/notifications/signals/reaction_signals.py
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.contrib.contenttypes.models import ContentType
-from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
-from django.urls import reverse
-from apps.notifications.models import Notification
+from channels.layers import get_channel_layer
 from apps.posts.models import Reaction
 from utils.common.utils import send_push_notification
 import logging
 
 logger = logging.getLogger(__name__)
 
+try:
+    from apps.notifications.models import Notification
+except Exception:
+    Notification = None
+    logger.warning("⚠️ Notification model not available — skipping DB notification creation.")
 
 
-# Standard Notification for new reaction
+# --- Helper to safely build a message based on reaction type ---
+def _reaction_message(username: str, reaction_type: str) -> str:
+    mapping = {
+        "bless": f"{username} sent you a blessing.",
+        "gratitude": f"{username} expressed gratitude.",
+        "amen": f"{username} said Amen to your post.",
+        "encouragement": f"{username} sent you encouragement.",
+        "empathy": f"{username} expressed empathy.",
+    }
+    return mapping.get(reaction_type, f"{username} reacted to your post.")
+
+
+# -----------------------------------------------------------------
+# 1️⃣ Standard DB Notification (safe if notifications not yet active)
+# -----------------------------------------------------------------
 @receiver(post_save, sender=Reaction)
 def create_reaction_notification(sender, instance, created, **kwargs):
-    if created:
-        notification_type = None
-        message = None
+    if not created or Notification is None:
+        return
 
-        if instance.reaction_type == 'bless':
-            notification_type = 'new_bless'
-            message = f"{instance.name.username} sent you a blessing."
-        elif instance.reaction_type == 'gratitude':
-            notification_type = 'new_gratitude'
-            message = f"{instance.name.username} expressed gratitude."
-        elif instance.reaction_type == 'amen':
-            notification_type = 'new_amen'
-            message = f"{instance.name.username} said Amen to your post."
-        elif instance.reaction_type == 'encouragement':
-            notification_type = 'new_encouragement'
-            message = f"{instance.name.username} sent you encouragement."
-        elif instance.reaction_type == 'empathy':
-            notification_type = 'new_empathy'
-            message = f"{instance.name.username} expressed empathy."
+    try:
+        content_object = getattr(instance, "content_object", None)
+        to_user = getattr(content_object, "user", None)
+        if not to_user:
+            return  # skip if no valid user target
 
-        content_object = instance.content_object
-        link = content_object.get_absolute_url()
+        # Build safe link
+        try:
+            link = content_object.get_absolute_url()
+        except Exception:
+            link = None
 
-        if notification_type:
-            Notification.objects.create(
-                user=content_object.user,
-                message=message,
-                notification_type=notification_type,
-                content_type=ContentType.objects.get_for_model(sender),
-                object_id=instance.id,
-                link=link
-            )
+        message = _reaction_message(instance.name.username, instance.reaction_type)
+        notification_type = f"new_{instance.reaction_type}"
 
-# Push Notification for new reaction
+        Notification.objects.create(
+            user=to_user,
+            message=message,
+            notification_type=notification_type,
+            content_type=ContentType.objects.get_for_model(sender),
+            object_id=instance.id,
+            link=link,
+        )
+
+    except Exception as e:
+        logger.warning(f"⚠️ Skipped DB notification for Reaction id={instance.id}: {e}")
+
+
+# -----------------------------------------------------------------
+# 2️⃣ Push Notification (Firebase / FCM)
+# -----------------------------------------------------------------
 @receiver(post_save, sender=Reaction)
 def send_reaction_push_notification(sender, instance, created, **kwargs):
-    if created:
-        to_user = instance.content_object.user
-        if to_user.registration_id:
-            message = None
+    if not created:
+        return
 
-            if instance.reaction_type == 'bless':
-                message = f"{instance.name.username} sent you a blessing."
-            elif instance.reaction_type == 'gratitude':
-                message = f"{instance.name.username} expressed gratitude."
-            elif instance.reaction_type == 'amen':
-                message = f"{instance.name.username} said Amen to your post."
-            elif instance.reaction_type == 'encouragement':
-                message = f"{instance.name.username} sent you encouragement."
-            elif instance.reaction_type == 'empathy':
-                message = f"{instance.name.username} expressed empathy."
+    try:
+        content_object = getattr(instance, "content_object", None)
+        to_user = getattr(content_object, "user", None)
+        if not to_user or not getattr(to_user, "registration_id", None):
+            return  # no push token, skip
 
-            send_push_notification(
-                registration_id=to_user.registration_id,
-                message_title="New Reaction",
-                message_body=message
-            )
+        message = _reaction_message(instance.name.username, instance.reaction_type)
 
-# Real-time Notification for new reaction
+        send_push_notification(
+            registration_id=to_user.registration_id,
+            message_title="New Reaction",
+            message_body=message,
+        )
+        logger.info(f"✅ Push notification queued to user {to_user.id}: {message}")
+
+    except Exception as e:
+        logger.warning(f"⚠️ Skipped push notification for Reaction id={instance.id}: {e}")
+
+
+# -----------------------------------------------------------------
+# 3️⃣ Real-Time Notification (Channels / WebSocket)
+# -----------------------------------------------------------------
 @receiver(post_save, sender=Reaction)
 def send_reaction_real_time_notification(sender, instance, created, **kwargs):
-    if created:
-        channel_layer = get_channel_layer()
-        to_user = instance.content_object.user
+    if not created:
+        return
 
-        message = None
-        if instance.reaction_type == 'bless':
-            message = f"{instance.name.username} sent you a blessing."
-        elif instance.reaction_type == 'gratitude':
-            message = f"{instance.name.username} expressed gratitude."
-        elif instance.reaction_type == 'amen':
-            message = f"{instance.name.username} said Amen to your post."
-        elif instance.reaction_type == 'encouragement':
-            message = f"{instance.name.username} sent you encouragement."
-        elif instance.reaction_type == 'empathy':
-            message = f"{instance.name.username} expressed empathy."
+    try:
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            return
+
+        content_object = getattr(instance, "content_object", None)
+        to_user = getattr(content_object, "user", None)
+        if not to_user:
+            return
+
+        message = _reaction_message(instance.name.username, instance.reaction_type)
 
         async_to_sync(channel_layer.group_send)(
             f"user_{to_user.id}",
-            {
-                "type": "send_notification",
-                "message": message,
-            }
+            {"type": "send_notification", "message": message},
         )
-        logger.info(f"Real-time notification sent to user {to_user.id}: {message}")
+        logger.info(f"💬 Real-time notification sent to user {to_user.id}: {message}")
+
+    except Exception as e:
+        logger.warning(f"⚠️ Skipped real-time notification for Reaction id={instance.id}: {e}")

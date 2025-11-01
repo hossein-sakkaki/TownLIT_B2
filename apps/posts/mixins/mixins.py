@@ -16,57 +16,176 @@ from apps.posts.serializers import (
 from apps.profilesOrg.models import Organization
 from common.permissions import IsFullAccessAdmin, IsLimitedAccessAdmin
 
+from django.db import transaction
+from django.db.models import Count
 
 
-# REACTIONS Mixin ----------------------------------------------------------------------------
+# REACTION Mixin ----------------------------------------------------------------------------
 class ReactionMixin:
-    # Mixin for handling reactions related to any model with GenericForeignKey.        
-    @action(detail=True, methods=['get', 'post'], url_path='reactions', permission_classes=[IsAuthenticated])
+    """
+    Generic reaction handling mixin for any model that supports GenericForeignKey.
+    Requires: `get_object()` in the ViewSet returning the target instance.
+
+    Adds these endpoints automatically:
+      - GET/POST  <slug>/reactions/           → list or toggle user's reaction
+      - DELETE    <slug>/remove-reaction/     → remove user reaction
+      - GET       <slug>/reactions-summary/   → aggregated counts by type
+    """
+
+    # -----------------------------------------------------------------------
+    @action(
+        detail=True,
+        methods=["get", "post"],
+        url_path="reactions",
+        permission_classes=[IsAuthenticated],
+    )
+    @transaction.atomic
     def reactions(self, request, slug=None):
+        """
+        GET  → Return all reactions for this object.
+        POST → Add or toggle user's reaction (with optional message).
+        """
         instance = self.get_object()
         try:
             content_type = ContentType.objects.get_for_model(instance)
         except ContentType.DoesNotExist:
-            return Response({"error": "Invalid content type"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"type": "about:blank", "title": "Invalid content type", "status": 400},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        if request.method == 'GET':
-            # Retrieve all reactions for this object
-            reactions = Reaction.objects.filter(content_type=content_type, object_id=instance.id)
-            serializer = ReactionSerializer(reactions, many=True)
+        # -------------------------------------------------------------------
+        # GET — List all reactions for this object
+        # -------------------------------------------------------------------
+        if request.method == "GET":
+            reactions = (
+                Reaction.objects.filter(content_type=content_type, object_id=instance.id)
+                .select_related("name")
+                .order_by("-timestamp")
+            )
+            serializer = ReactionSerializer(reactions, many=True, context={"request": request})
             return Response(serializer.data, status=status.HTTP_200_OK)
 
-        if request.method == 'POST':
-            # Check if the reaction already exists for the current user
-            existing_reaction = Reaction.objects.filter(
-                content_type=content_type, object_id=instance.id, name=request.user
-            ).first()
-            if existing_reaction:
-                return Response({"error": "You have already reacted to this content."}, status=status.HTTP_400_BAD_REQUEST)
+        # -------------------------------------------------------------------
+        # POST — Add or toggle user's reaction
+        # -------------------------------------------------------------------
+        reaction_type = request.data.get("reaction_type")
+        message = (request.data.get("message") or "").strip() or None
 
-            # Add a new reaction to this object
-            serializer = ReactionSerializer(data=request.data)
-            if serializer.is_valid():
-                try:
-                    serializer.save(content_type=content_type, object_id=instance.id)
-                    return Response(serializer.data, status=status.HTTP_201_CREATED)
-                except Exception as e:
-                    return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)        
-        
-    @action(detail=True, methods=['delete'], url_path='remove-reaction', permission_classes=[IsAuthenticated])
+        if not reaction_type:
+            return Response(
+                {"type": "about:blank", "title": "Missing reaction_type", "status": 400},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # If the same reaction already exists → toggle off (remove)
+        existing = Reaction.objects.filter(
+            content_type=content_type,
+            object_id=instance.id,
+            name=request.user,
+            reaction_type=reaction_type,
+        ).first()
+
+        if existing:
+            existing.delete()
+            return Response(
+                {"status": "removed", "reaction_type": reaction_type},
+                status=status.HTTP_204_NO_CONTENT,
+            )
+
+        # Optional: remove any different reaction type by the same user (single reaction rule)
+        Reaction.objects.filter(
+            content_type=content_type,
+            object_id=instance.id,
+            name=request.user
+        ).exclude(reaction_type=reaction_type).delete()
+
+        # Create the new reaction
+        serializer = ReactionSerializer(
+            data={
+                "reaction_type": reaction_type,
+                "message": message,
+                "content_type": content_type.model,  # serializer expects slug name
+                "object_id": instance.id,
+            },
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save(name=request.user)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    # -----------------------------------------------------------------------
+    @action(
+        detail=True,
+        methods=["delete"],
+        url_path="remove-reaction",
+        permission_classes=[IsAuthenticated],
+    )
     def remove_reaction(self, request, slug=None):
+        """
+        DELETE → Remove the current user's reaction(s) for this object.
+        """
         instance = self.get_object()
         try:
             content_type = ContentType.objects.get_for_model(instance)
         except ContentType.DoesNotExist:
-            return Response({"error": "Invalid content type"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"type": "about:blank", "title": "Invalid content type", "status": 400},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
+        deleted_count, _ = Reaction.objects.filter(
+            content_type=content_type,
+            object_id=instance.id,
+            name=request.user,
+        ).delete()
+
+        if not deleted_count:
+            return Response(
+                {
+                    "type": "about:blank",
+                    "title": "Reaction not found",
+                    "detail": "No reaction to remove for this user",
+                    "status": 404,
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    # -----------------------------------------------------------------------
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="reactions-summary",
+        permission_classes=[IsAuthenticated],
+    )
+    def reactions_summary(self, request, slug=None):
+        """
+        GET → Return a count summary of reactions grouped by type.
+        Example response:
+          [
+            {"reaction_type": "like", "count": 5},
+            {"reaction_type": "bless", "count": 3}
+          ]
+        """
+        instance = self.get_object()
         try:
-            reaction = Reaction.objects.get(content_type=content_type, object_id=instance.id, name=request.user)
-            reaction.delete()
-            return Response({"message": "Reaction removed successfully"}, status=status.HTTP_204_NO_CONTENT)
-        except Reaction.DoesNotExist:
-            return Response({"error": "Reaction not found or you don't have permission to remove it"}, status=status.HTTP_404_NOT_FOUND)
+            content_type = ContentType.objects.get_for_model(instance)
+        except ContentType.DoesNotExist:
+            return Response(
+                {"type": "about:blank", "title": "Invalid content type", "status": 400},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        summary = (
+            Reaction.objects.filter(content_type=content_type, object_id=instance.id)
+            .values("reaction_type")
+            .annotate(count=Count("id"))
+            .order_by("reaction_type")
+        )
+        return Response(list(summary), status=status.HTTP_200_OK)
+    
 
 
 # COMMENT Mixin -------------------------------------------------------------------------------
