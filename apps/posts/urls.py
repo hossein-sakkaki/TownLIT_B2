@@ -1,13 +1,22 @@
 # apps/posts/urls.py
 from rest_framework.routers import DefaultRouter
-from apps.posts.views import (
-    TestimonyViewSet, MomentViewSet, PrayViewSet, AnnouncementViewSet,
-    WitnessViewSet, PreachViewSet, LessonViewSet, WorshipViewSet,
-    MediaContentViewSet, MissionViewSet, LibraryViewSet, ServiceEventViewSet,
-    ConferenceViewSet, FutureConferenceViewSet,
-    ReactionViewSet, MeTestimonyViewSet
-)
+from apps.posts.views.moments import MomentViewSet
+from apps.posts.views.prayers import PrayViewSet
+from apps.posts.views.announcements import AnnouncementViewSet
+from apps.posts.views.witnesses import WitnessViewSet
+from apps.posts.views.preaches import PreachViewSet
+from apps.posts.views.lessons import LessonViewSet
+from apps.posts.views.worships import WorshipViewSet
+from apps.posts.views.media_contents import MediaContentViewSet
+from apps.posts.views.libraries import LibraryViewSet
+from apps.posts.views.missions import MissionViewSet
+from apps.posts.views.service_events import ServiceEventViewSet
+from apps.posts.views.conferences import ConferenceViewSet
+from apps.posts.views.future_conferences import FutureConferenceViewSet
 
+from apps.posts.views.testimonies import TestimonyViewSet, MeTestimonyViewSet
+from apps.posts.views.reactions import ReactionViewSet
+from apps.posts.views.comments import CommentViewSet
 
 app_name = 'posts'
 router = DefaultRouter()
@@ -17,6 +26,9 @@ router.register(r'me/testimonies', MeTestimonyViewSet, basename='me-testimonies'
 
 # centralized reactions
 router.register(r'reactions', ReactionViewSet, basename='reaction')
+
+# centralized comments ✅ NEW
+router.register(r'comments', CommentViewSet, basename='comment')
 
 # public/organizational resources
 router.register(r'testimonies', TestimonyViewSet, basename='testimony')

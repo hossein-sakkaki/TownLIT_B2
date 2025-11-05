@@ -220,8 +220,6 @@ class AcademicRecordSerializer(serializers.ModelSerializer):
     started_at = YearMonthDateField(required=False, allow_null=True)
     expected_graduation_at = YearMonthDateField(required=False, allow_null=True)
     graduated_at = YearMonthDateField(required=False, allow_null=True)
-
-    # (اختیاری) نمایش خلاصه‌ی دوره در خروجی
     period_display = serializers.ReadOnlyField()
 
     class Meta:
@@ -796,7 +794,7 @@ class PublicMemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
 
     # --- testimonies ---
     def get_testimonies(self, obj: Member):
-        from apps.posts.serializers import TestimonySerializer
+        from apps.posts.serializers.testimonies import TestimonySerializer
         data = testimonies_for_member(obj)
         return {
             'audio':   TestimonySerializer(data['audio'],   context=self.context).data if data['audio']   else None,

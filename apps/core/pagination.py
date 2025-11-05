@@ -1,3 +1,4 @@
+# apps/core/pagination.py
 from rest_framework.pagination import PageNumberPagination
 
 class ConfigurablePagination(PageNumberPagination):
