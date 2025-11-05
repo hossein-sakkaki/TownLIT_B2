@@ -239,7 +239,7 @@ class MemberServiceType(models.Model):
         PENDING  = "pending",  "Pending"
         APPROVED = "approved", "Approved"
         REJECTED = "rejected", "Rejected"
-        ACTIVE   = "active",   "Active (no approval needed)"  # for non-sensitive
+        ACTIVE   = "active",   "Active (no approval needed)" 
 
     DOCUMENT = FileUpload("profiles", "documents", "member_service_type")
 
@@ -292,7 +292,6 @@ class Member(SlugMixin):
     vision = models.CharField(max_length=1000, null=True, blank=True, verbose_name='Vision')
     spiritual_rebirth_day = models.DateField(auto_now=False, auto_now_add=False, null=True, blank=True, verbose_name='Spiritual Rebirth Days')
     academic_record = models.OneToOneField(AcademicRecord, on_delete=models.SET_NULL, null=True, blank=True, related_name="member_academic_record")
-    # denominations_type = models.CharField(max_length=40, choices=CHURCH_DENOMINATIONS_CHOICES, null=True, blank=True, verbose_name='Denominations Type')
 
     denomination_branch = models.CharField(
         max_length=40,

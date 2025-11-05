@@ -555,6 +555,23 @@ The TownLIT Team 🌍
             "written": pack(Testimony.TYPE_WRITTEN),
         }, status=status.HTTP_200_OK)
 
+    @action(detail=False, methods=['delete'], url_path='delete-academic-record', permission_classes=[IsAuthenticated])
+    def delete_academic_record(self, request):
+        """Allow user to delete their academic record."""
+        try:
+            member = request.user.member_profile
+        except (Member.DoesNotExist, AttributeError):
+            return Response({"error": "Profile not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if not member.academic_record:
+            return Response({"message": "No academic record found to delete."}, status=status.HTTP_200_OK)
+
+        # حذف رکورد از DB
+        member.academic_record.delete()
+        member.academic_record = None
+        member.save(update_fields=["academic_record"])
+
+        return Response({"message": "Academic record deleted successfully."}, status=status.HTTP_200_OK)
 
 # Visitor Profile ViewSet ---------------------------------------------------------------------------------------
 class VisitorProfileViewSet(viewsets.ViewSet):

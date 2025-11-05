@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from .models import PaymentSubscription, PaymentDonation, PaymentAdvertisement, PaymentInvoice, PaymentShoppingCart, Pricing, Payment
-from apps.posts.serializers import SimpleOrganizationSerializer, SimpleCustomUserSerializer
+from apps.profilesOrg.serializers import SimpleOrganizationSerializer
+from apps.accounts.serializers import SimpleCustomUserSerializer
 
 
 

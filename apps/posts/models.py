@@ -82,26 +82,33 @@ class Comment(models.Model):
     id = models.BigAutoField(primary_key=True)
     name = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='user_comments', verbose_name='Name')
     comment = models.TextField(blank=True, null=True, verbose_name='Comment')
-    
-    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
-    object_id = models.PositiveIntegerField()
+
+    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE, db_index=True)
+    object_id = models.PositiveIntegerField(db_index=True)
     content_object = GenericForeignKey('content_type', 'object_id')
-    
-    recomment = models.ForeignKey('self', on_delete=models.CASCADE, blank=True, null=True, related_name='responses', verbose_name='Recomment')
-    
+
+    # parent (single-level reply)
+    recomment = models.ForeignKey('self', on_delete=models.CASCADE, blank=True, null=True,
+                                  related_name='responses', verbose_name='Recomment', db_index=True)
+
     published_at = models.DateTimeField(default=timezone.now, verbose_name='Published Time')
     is_active = models.BooleanField(default=True, null=True, blank=True)
-
-    def __str__(self):
-        return f"Comment by {self.name.username}"
 
     class Meta:
         verbose_name = "_Comment"
         verbose_name_plural = "_Comments"
         ordering = ['-published_at']
+        indexes = [
+            models.Index(fields=["content_type", "object_id"]),
+            models.Index(fields=["recomment"]),
+        ]
 
-    def get_absolute_url(self):
-        return reverse("comment_detail", kwargs={"pk": self.pk})
+    def __str__(self):
+        return f"Comment by {self.name.username}"
+
+    @property
+    def is_reply(self) -> bool:
+        return self.recomment_id is not None
     
     
 # Resource Models -----------------------------------------------------------------------------------------------------------
