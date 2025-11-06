@@ -25,4 +25,4 @@ class InstanceTargetMixin(serializers.Serializer):
         return self._build_instance_target(obj)
 
     def get_reaction_target(self, obj):
-        return self._build_instance_target(obj)
+        return self._build_instance_target(obj) 

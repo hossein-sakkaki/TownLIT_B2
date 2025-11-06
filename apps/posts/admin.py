@@ -1,14 +1,21 @@
+# apps/posts/admin.py
 from django.contrib import admin
+from django.contrib.admin import SimpleListFilter
+from django.contrib.contenttypes.models import ContentType
+from django.urls import reverse
+from django.utils.html import format_html
+from django.utils.safestring import mark_safe
+from django.db.models import Q
 from .models import (
-                Reaction, Comment, Resource, ServiceEvent,
-                Testimony, Witness, Moment, Pray, Announcement, Lesson, Preach, Worship, MediaContent,
-                Library, Mission, Conference, FutureConference 
-            )
+    Reaction, Comment, Resource, ServiceEvent,
+    Testimony, Witness, Moment, Pray, Announcement, Lesson, Preach, Worship, MediaContent,
+    Library, Mission, Conference, FutureConference
+)
 
+# -------------------- Common mixins & helpers --------------------
 
-
-# Admin mixin for common methods -----------------------------------------------------------------
 class MarkActiveMixin:
+    # Bulk toggle for is_active
     def make_inactive(self, request, queryset):
         queryset.update(is_active=False)
         self.message_user(request, "Selected items have been marked as inactive.")
@@ -20,38 +27,338 @@ class MarkActiveMixin:
     make_active.short_description = "Mark selected items as active"
 
 
-# Reactions Admin ---------------------------------------------------------------------------------
+def admin_change_link_for_instance(obj):
+    """
+    Build a safe admin change link for any model instance.
+    Returns plain text if no link can be built.
+    """
+    try:
+        opts = obj._meta
+        url = reverse(f"admin:{opts.app_label}_{opts.model_name}_change", args=[obj.pk])
+        label = str(obj)
+        return format_html('<a href="{}">{}</a>', url, label)
+    except Exception:
+        return str(obj)
+
+
+def admin_change_link_for_ct_and_pk(ct, pk):
+    """
+    Build admin link from ContentType + object_id (GFK).
+    Returns plain text if target not found.
+    """
+    try:
+        model_class = ct.model_class()
+        if not model_class:
+            return f"{ct.app_label}.{ct.model}#{pk}"
+        target = model_class.objects.filter(pk=pk).first()
+        if not target:
+            return f"{ct.app_label}.{ct.model}#{pk}"
+        return admin_change_link_for_instance(target)
+    except Exception:
+        return f"{ct.app_label}.{ct.model}#{pk}"
+
+
+# -------------------- Filters (content target, flags) --------------------
+
+class ContentAppFilter(SimpleListFilter):
+    """Filter by target content_type app_label."""
+    title = "Content App"
+    parameter_name = "ct_app"
+
+    def lookups(self, request, model_admin):
+        qs = ContentType.objects.filter(
+            Q(app_label="posts") | Q(app_label="profiles") | Q(app_label="profilesOrg")
+        ).order_by("app_label", "model")
+        # unique app labels
+        apps = sorted(set(qs.values_list("app_label", flat=True)))
+        return [(a, a) for a in apps]
+
+    def queryset(self, request, queryset):
+        val = self.value()
+        if val:
+            return queryset.filter(content_type__app_label=val)
+        return queryset
+
+
+class ContentModelFilter(SimpleListFilter):
+    """Filter by target content_type model name."""
+    title = "Content Model"
+    parameter_name = "ct_model"
+
+    def lookups(self, request, model_admin):
+        qs = ContentType.objects.filter(
+            Q(app_label="posts") | Q(app_label="profiles") | Q(app_label="profilesOrg")
+        ).order_by("app_label", "model")
+        return [ (f"{ct.app_label}.{ct.model}", f"{ct.app_label}.{ct.model}") for ct in qs ]
+
+    def queryset(self, request, queryset):
+        val = self.value()
+        if val:
+            try:
+                app, model = val.split(".", 1)
+                return queryset.filter(content_type__app_label=app, content_type__model=model)
+            except ValueError:
+                return queryset
+        return queryset
+
+
+class HasMessageFilter(SimpleListFilter):
+    """Reaction: has/non-empty message."""
+    title = "Has message"
+    parameter_name = "has_msg"
+
+    def lookups(self, request, model_admin):
+        return [("yes", "Yes"), ("no", "No")]
+
+    def queryset(self, request, queryset):
+        val = self.value()
+        if val == "yes":
+            return queryset.filter(~Q(message=""), message__isnull=False)
+        if val == "no":
+            return queryset.filter(Q(message="") | Q(message__isnull=True))
+        return queryset
+
+
+class HasRecommentFilter(SimpleListFilter):
+    """Comment: is a reply or has a parent."""
+    title = "Is reply"
+    parameter_name = "is_reply"
+
+    def lookups(self, request, model_admin):
+        return [("yes", "Yes"), ("no", "No")]
+
+    def queryset(self, request, queryset):
+        val = self.value()
+        if val == "yes":
+            return queryset.filter(recomment__isnull=False)
+        if val == "no":
+            return queryset.filter(recomment__isnull=True)
+        return queryset
+
+
+# -------------------- Filter for OfficialVideo --------------------
+class OfficialVideoFilter(SimpleListFilter):
+    """Filter to show only items related to OfficialVideo."""
+    title = "Official Video only"
+    parameter_name = "is_official_video"
+
+    def lookups(self, request, model_admin):
+        return [("yes", "Yes (OfficialVideo)"), ("no", "No (Others)")]
+
+    def queryset(self, request, queryset):
+        val = self.value()
+        if val == "yes":
+            return queryset.filter(
+                content_type__app_label="main",
+                content_type__model="officialvideo"
+            )
+        elif val == "no":
+            return queryset.exclude(
+                content_type__app_label="main",
+                content_type__model="officialvideo"
+            )
+        return queryset
+
+
+# -------------------- Reaction Admin --------------------
 @admin.register(Reaction)
 class ReactionAdmin(admin.ModelAdmin):
-    list_display = ('name', 'reaction_type', 'content_type', 'object_id', 'timestamp')
-    search_fields = ('name__username', 'reaction_type')
-    list_filter = ('reaction_type', 'timestamp', 'content_type')
-    
-    
-# Comment Admin ------------------------------------------------------------------------------------
-@admin.register(Comment)
-class CommentAdmin(admin.ModelAdmin, MarkActiveMixin):
-    list_display = ['name', 'comment_summary', 'content_object', 'recomment_summary', 'published_at', 'is_active']
-    list_filter = ['is_active', 'published_at', 'content_type']
-    search_fields = ['name__username', 'comment', 'recomment__comment']
-    date_hierarchy = 'published_at'
-    
-    def comment_summary(self, obj):
-        return obj.comment[:50] + "..." if len(obj.comment) > 50 else obj.comment
-    comment_summary.short_description = 'Comment'
+    """Fast, searchable, and target-aware admin for reactions."""
 
-    def recomment_summary(self, obj):
-        if obj.recomment:
-            return obj.recomment.comment[:50] + "..." if len(obj.recomment.comment) > 50 else obj.recomment.comment
-        return "No Recomment"
-    recomment_summary.short_description = 'Recomment'
-    
-    # Display the content object related to the comment (e.g., Moment or Testimony)
-    def content_object(self, obj):
-        """Displays the content object (Moment, Testimony, etc.) the comment is associated with."""
-        return obj.content_object
-    content_object.short_description = 'Related Object'
-    
+    list_display = (
+        "user_link",
+        "reaction_badge",
+        "target_link",
+        "target_type",  # ✅ added
+        "message_snippet",
+        "timestamp",
+    )
+    list_display_links = ("user_link", "reaction_badge", "target_link")
+
+    list_filter = (
+        "reaction_type",
+        ContentAppFilter,
+        ContentModelFilter,
+        HasMessageFilter,
+        OfficialVideoFilter,  # ✅ added
+        "timestamp",
+    )
+
+    search_fields = (
+        "name__username",
+        "name__email",
+        "name__name",
+        "name__family",
+        "reaction_type",
+        "message",
+        "object_id",
+    )
+
+    autocomplete_fields = ("name",)
+    list_select_related = ("name", "content_type")
+    ordering = ("-timestamp",)
+    date_hierarchy = "timestamp"
+    list_per_page = 50
+
+    # --- Display helpers ---
+    @admin.display(description="User", ordering="name__username")
+    def user_link(self, obj):
+        u = getattr(obj, "name", None)
+        return admin_change_link_for_instance(u) if u else "-"
+
+    @admin.display(description="Reaction", ordering="reaction_type")
+    def reaction_badge(self, obj):
+        color = {
+            "like": "#C40233",
+            "bless": "#F6C860",
+            "gratitude": "#3BAA75",
+            "amen": "#A23BEC",
+            "encouragement": "#0F52BA",
+            "empathy": "#48D1CC",
+            "faithfire": "#D73F09",
+            "support": "#7A5CA2",
+        }.get(getattr(obj, "reaction_type", ""), "#2B2C30")
+        t = getattr(obj, "reaction_type", "") or "—"
+        return mark_safe(
+            f'<span style="display:inline-block;padding:.15rem .4rem;border-radius:6px;'
+            f'background:rgba(0,0,0,.04);border:1px solid rgba(0,0,0,.06);'
+            f'color:{color};font-weight:600;">{t}</span>'
+        )
+
+    @admin.display(description="Target", ordering="content_type")
+    def target_link(self, obj):
+        ct = getattr(obj, "content_type", None)
+        pk = getattr(obj, "object_id", None)
+        if ct and pk:
+            return admin_change_link_for_ct_and_pk(ct, pk)
+        return "-"
+
+    @admin.display(description="Target Type")
+    def target_type(self, obj):
+        ct = getattr(obj, "content_type", None)
+        return f"{ct.app_label}.{ct.model}" if ct else "-"
+
+    @admin.display(description="Message")
+    def message_snippet(self, obj):
+        msg = getattr(obj, "message", "") or ""
+        if not msg:
+            return "—"
+        return (msg[:60] + "…") if len(msg) > 60 else msg
+
+    # --- Actions (anti-spam / hygiene) ---
+    actions = ("clear_empty_messages", "remove_suspicious_links")
+
+    @admin.action(description="Clear empty/whitespace messages")
+    def clear_empty_messages(self, request, queryset):
+        updated = queryset.filter(
+            Q(message__isnull=True) | Q(message="") | Q(message__regex=r"^\s+$")
+        ).update(message="")
+        self.message_user(request, f"Cleared {updated} message(s).")
+
+    @admin.action(description="Remove messages that contain links (anti-spam)")
+    def remove_suspicious_links(self, request, queryset):
+        qs = queryset.filter(
+            Q(message__icontains="http://")
+            | Q(message__icontains="https://")
+            | Q(message__iregex=r"\bwww\.")
+        )
+        count = 0
+        for r in qs:
+            r.message = ""
+            r.save(update_fields=["message"])
+            count += 1
+        self.message_user(request, f"Removed links from {count} reaction(s).")
+
+
+# -------------------- Comment Admin --------------------
+@admin.register(Comment)
+class CommentAdmin(MarkActiveMixin, admin.ModelAdmin):
+    """Powerful moderation panel for comments with GFK target insight."""
+
+    list_display = (
+        "user_link",
+        "comment_summary",
+        "target_link",
+        "target_type",  # ✅ added
+        "is_reply_flag",
+        "published_at",
+        "is_active",
+    )
+    list_display_links = ("user_link", "comment_summary", "target_link")
+
+    list_filter = (
+        "is_active",
+        HasRecommentFilter,
+        ContentAppFilter,
+        ContentModelFilter,
+        OfficialVideoFilter,  # ✅ added
+        "published_at",
+    )
+
+    search_fields = (
+        "name__username",
+        "name__email",
+        "name__name",
+        "name__family",
+        "comment",
+        "recomment__comment",
+        "object_id",
+    )
+
+    date_hierarchy = "published_at"
+    list_select_related = ("name", "recomment", "content_type")
+    autocomplete_fields = ("name", "recomment")
+    ordering = ("-published_at",)
+    list_per_page = 50
+    actions = ("make_active", "make_inactive", "remove_links_in_comments")
+
+    # --- Display helpers ---
+    @admin.display(description="User", ordering="name__username")
+    def user_link(self, obj):
+        u = getattr(obj, "name", None)
+        return admin_change_link_for_instance(u) if u else "-"
+
+    @admin.display(description="Comment")
+    def comment_summary(self, obj):
+        text = getattr(obj, "comment", "") or ""
+        return (text[:80] + "…") if len(text) > 80 else text or "—"
+
+    @admin.display(description="Is reply?")
+    def is_reply_flag(self, obj):
+        return bool(getattr(obj, "recomment_id", None))
+    is_reply_flag.boolean = True
+
+    @admin.display(description="Target")
+    def target_link(self, obj):
+        ct = getattr(obj, "content_type", None)
+        pk = getattr(obj, "object_id", None)
+        if ct and pk:
+            return admin_change_link_for_ct_and_pk(ct, pk)
+        return "-"
+
+    @admin.display(description="Target Type")
+    def target_type(self, obj):
+        ct = getattr(obj, "content_type", None)
+        return f"{ct.app_label}.{ct.model}" if ct else "-"
+
+    # --- Actions (anti-spam / hygiene) ---
+    @admin.action(description="Remove links from selected comments (anti-spam)")
+    def remove_links_in_comments(self, request, queryset):
+        qs = queryset.filter(
+            Q(comment__icontains="http://")
+            | Q(comment__icontains="https://")
+            | Q(comment__iregex=r"\bwww\.")
+        )
+        count = 0
+        for c in qs:
+            safe = c.comment
+            for pat in ["http://", "https://"]:
+                safe = safe.replace(pat, "")
+            c.comment = safe
+            c.save(update_fields=["comment"])
+            count += 1
+        self.message_user(request, f"Sanitized {count} comment(s).")
+
     
 # Resource Admin -----------------------------------------------------------------------------------
 @admin.register(Resource)
