@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from django.utils.timesince import timesince
 from django.utils import timezone
+from django.contrib.contenttypes.models import ContentType
 
 from common.aws.s3_utils import get_file_url
 from .models import (
@@ -10,6 +11,7 @@ from .models import (
     VideoCategory, VideoSeries, OfficialVideo, VideoViewLog
     )
 from common.file_handlers.media_mixins import VideoFileMixin, ThumbnailFileMixin
+from common.serializers.targets import InstanceTargetMixin
 
 
 
@@ -118,7 +120,7 @@ class VideoSeriesSerializer(serializers.ModelSerializer):
         
         
 # Official Video Serializer -------------------------------------
-class OfficialVideoSerializer(VideoFileMixin, ThumbnailFileMixin, serializers.ModelSerializer):
+class OfficialVideoSerializer(InstanceTargetMixin, VideoFileMixin, ThumbnailFileMixin, serializers.ModelSerializer):
     category = VideoCategorySerializer(read_only=True)
     series = VideoSeriesSerializer(read_only=True)
     time_since_publish = serializers.SerializerMethodField()
@@ -128,25 +130,62 @@ class OfficialVideoSerializer(VideoFileMixin, ThumbnailFileMixin, serializers.Mo
     )
     children_count = serializers.SerializerMethodField()
 
+    # ✅ Flat convenience fields (useful for clients/logging)
+    content_type = serializers.SerializerMethodField(read_only=True)
+    content_type_id = serializers.SerializerMethodField(read_only=True)
+    object_id = serializers.SerializerMethodField(read_only=True)
+
+    # NOTE:
+    # - `comment_target` and `reaction_target` come from InstanceTargetMixin:
+    #   both return: { content_type, content_type_id, object_id }
+
     class Meta:
         model = OfficialVideo
         fields = [
             # model fields
             'id', 'slug', 'title', 'description', 'language',
             'category', 'series', 'episode_number',
-            'video', 'thumbnail',                 # ← میکسین‌ها از این‌ها خروجی می‌سازند
+            'video', 'thumbnail',                 # ← your mixins generate *_signed_url / *_url from these
             'view_count', 'is_active', 'publish_date', 'created_at',
             'parent_id', 'children_count', 'is_converted',
+
             # computed
             'time_since_publish',
+
+            # targets (consumed by InteractionPanel extractors)
+            'comment_target', 'reaction_target',
+
+            # flat convenience (optional but handy)
+            'content_type', 'content_type_id', 'object_id',
         ]
         read_only_fields = ['slug', 'created_at', 'view_count', 'is_converted']
 
+    # ----- computed -----
     def get_time_since_publish(self, obj):
+        # Human-readable delta since publish (e.g., "3 days")
         return timesince(obj.publish_date, timezone.now()) if obj.publish_date else None
 
     def get_children_count(self, obj):
+        # Count direct children (episodes in a series tree)
         return obj.children.count()
+
+    # ----- flat CT helpers (mirror of targets) -----
+    def _ct(self, obj):
+        # Get ContentType once (concrete_model=False to keep proxy consistency if needed)
+        return ContentType.objects.get_for_model(obj.__class__, for_concrete_model=False)
+
+    def get_content_type(self, obj):
+        # e.g. "main.officialvideo"
+        ct = self._ct(obj)
+        return f"{ct.app_label}.{ct.model}"
+
+    def get_content_type_id(self, obj):
+        # numeric ContentType id
+        return self._ct(obj).id
+
+    def get_object_id(self, obj):
+        # primary key of the instance
+        return obj.pk
 
 
 class OfficialVideoCreateUpdateSerializer(serializers.ModelSerializer):

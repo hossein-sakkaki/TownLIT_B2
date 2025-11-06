@@ -242,9 +242,6 @@ class SocialMediaLink(models.Model):
     def __str__(self):
         return self.link
 
-
-
-
     
 # CUSTOMUSER Manager ----------------------------------------------
 class CustomUser(AbstractBaseUser, PermissionsMixin):
