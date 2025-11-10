@@ -9,8 +9,9 @@ django.setup()
 from django.core.asgi import get_asgi_application
 from channels.routing import ProtocolTypeRouter, URLRouter
 from apps.main.middleware import JWTAuthMiddlewareStack
-from apps.conversation import routing as conversation_routing
 import apps.posts.routing as posts_routing
+from apps.conversation import routing as conversation_routing
+from apps.notifications import routing as notifications_routing
 import apps.main.routing as main_routing
 
 # ✅ Initialize the Django ASGI application for handling HTTP requests
@@ -31,6 +32,7 @@ application = ProtocolTypeRouter({
             conversation_routing.websocket_urlpatterns  # WebSocket routes for the conversation app
             + main_routing.websocket_urlpatterns  # WebSocket routes for the main app
             + posts_routing.websocket_urlpatterns
+            + notifications_routing.websocket_urlpatterns
         )
     ),
 })

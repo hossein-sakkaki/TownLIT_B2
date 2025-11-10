@@ -349,6 +349,40 @@ class AuthViewSet(viewsets.ViewSet):
             {"message": extract_first_error_message(ser_data.errors)},
             status=status.HTTP_400_BAD_REQUEST
         )
+    
+    # Verify Password (for sensitive operations) ---------------------------------------------------
+    @action(detail=False, methods=["post"], url_path="verify-password", permission_classes=[IsAuthenticated])
+    def verify_password(self, request):
+        """
+        Verify the user's current password before allowing sensitive operations (e.g. reset key).
+        Expected body:
+            { "password": "current_password" }
+
+        Returns:
+            200 OK  → { "valid": true }
+            400 Bad Request → { "valid": false, "error": "Invalid password" }
+        """
+        user = request.user
+        password = request.data.get("password", "")
+
+        if not password:
+            return Response(
+                {"valid": False, "error": "Password is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Use Django's built-in password checker (hashed verification)
+        from django.contrib.auth.hashers import check_password
+
+        if check_password(password, user.password):
+            return Response({"valid": True}, status=status.HTTP_200_OK)
+
+        # Wrong password: minimal info (no hints)
+        return Response(
+            {"valid": False, "error": "Invalid password."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
 
     @action(detail=False, methods=['post'], url_path='choose-path', permission_classes=[AllowAny])
     def choose_path(self, request):  # Answer the category questions

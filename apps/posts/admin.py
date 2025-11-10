@@ -2,6 +2,10 @@
 from django.contrib import admin
 from django.contrib.admin import SimpleListFilter
 from django.contrib.contenttypes.models import ContentType
+import csv
+from django.http import HttpResponse
+from django.db import models
+from django.forms import Textarea
 from django.urls import reverse
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
@@ -169,7 +173,7 @@ class ReactionAdmin(admin.ModelAdmin):
         "user_link",
         "reaction_badge",
         "target_link",
-        "target_type",  # ✅ added
+        "target_type",
         "message_snippet",
         "timestamp",
     )
@@ -190,15 +194,25 @@ class ReactionAdmin(admin.ModelAdmin):
         "name__name",
         "name__family",
         "reaction_type",
-        "message",
         "object_id",
     )
+
+    formfield_overrides = {
+        models.TextField: {
+            "widget": Textarea(attrs={
+                "rows": 3,
+                "style": "font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; line-height:1.4;"
+            })
+        }
+    }
 
     autocomplete_fields = ("name",)
     list_select_related = ("name", "content_type")
     ordering = ("-timestamp",)
     date_hierarchy = "timestamp"
     list_per_page = 50
+    actions = ("clear_empty_messages", "remove_suspicious_links", "export_csv_secure")
+
 
     # --- Display helpers ---
     @admin.display(description="User", ordering="name__username")
@@ -269,6 +283,27 @@ class ReactionAdmin(admin.ModelAdmin):
             count += 1
         self.message_user(request, f"Removed links from {count} reaction(s).")
 
+    @admin.action(description="Export selected as CSV (decrypted)")
+    def export_csv_secure(self, request, queryset):
+        if not request.user.is_superuser:
+            self.message_user(request, "Only superusers can export decrypted CSV.", level="error")
+            return
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="reactions.csv"'
+        writer = csv.writer(response)
+        writer.writerow(["id", "user", "reaction_type", "message", "content_type", "object_id", "timestamp"])
+        for r in queryset.select_related("name", "content_type"):
+            writer.writerow([
+                r.id,
+                getattr(r.name, "username", ""),
+                r.reaction_type,
+                r.message or "",                     # decrypted by field
+                f"{r.content_type.app_label}.{r.content_type.model}" if r.content_type_id else "",
+                r.object_id,
+                r.timestamp.isoformat(),
+            ])
+        return response
+
 
 # -------------------- Comment Admin --------------------
 @admin.register(Comment)
@@ -300,17 +335,24 @@ class CommentAdmin(MarkActiveMixin, admin.ModelAdmin):
         "name__email",
         "name__name",
         "name__family",
-        "comment",
-        "recomment__comment",
         "object_id",
     )
+
+    formfield_overrides = {
+        models.TextField: {
+            "widget": Textarea(attrs={
+                "rows": 6,
+                "style": "font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; line-height:1.5;"
+            })
+        }
+    }
 
     date_hierarchy = "published_at"
     list_select_related = ("name", "recomment", "content_type")
     autocomplete_fields = ("name", "recomment")
     ordering = ("-published_at",)
     list_per_page = 50
-    actions = ("make_active", "make_inactive", "remove_links_in_comments")
+    actions = ("make_active", "make_inactive", "remove_links_in_comments", "export_csv_secure")
 
     # --- Display helpers ---
     @admin.display(description="User", ordering="name__username")
@@ -358,6 +400,28 @@ class CommentAdmin(MarkActiveMixin, admin.ModelAdmin):
             c.save(update_fields=["comment"])
             count += 1
         self.message_user(request, f"Sanitized {count} comment(s).")
+
+    @admin.action(description="Export selected as CSV (decrypted)")
+    def export_csv_secure(self, request, queryset):
+        if not request.user.is_superuser:
+            self.message_user(request, "Only superusers can export decrypted CSV.", level="error")
+            return
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="comments.csv"'
+        writer = csv.writer(response)
+        writer.writerow(["id", "user", "is_reply", "comment", "content_type", "object_id", "published_at", "is_active"])
+        for c in queryset.select_related("name", "content_type", "recomment"):
+            writer.writerow([
+                c.id,
+                getattr(c.name, "username", ""),
+                bool(c.recomment_id),
+                c.comment or "",                      # decrypted by field
+                f"{c.content_type.app_label}.{c.content_type.model}" if c.content_type_id else "",
+                c.object_id,
+                c.published_at.isoformat(),
+                c.is_active,
+            ])
+        return response
 
     
 # Resource Admin -----------------------------------------------------------------------------------

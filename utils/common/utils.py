@@ -1,5 +1,6 @@
 import logging
 logger = logging.getLogger(__name__)
+from django.conf import settings
 
 
 # MAIN URL ------------------------------------------------------------------
@@ -79,7 +80,6 @@ def create_active_code(count):
 # SEND ACTIVE CODE by AWS EMAIL ------------------------------------------
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
-from django.conf import settings
 import logging
 
 logger = logging.getLogger(__name__)
@@ -141,17 +141,6 @@ def generate_reset_token(length=30):
     token = secrets.token_urlsafe(length)
     return token
 
-
-# Push Notification ---------------------------------------------------------
-from pyfcm import FCMNotification
-def send_push_notification(registration_id, message_title, message_body):
-    push_service = FCMNotification(api_key=settings.FCM_API_KEY)
-    result = push_service.notify_single_device(
-        registration_id=registration_id,
-        message_title=message_title,
-        message_body=message_body
-    )
-    return result
 
 # Slug Mixin -----------------------------------------------------------------
 from django.db import models, IntegrityError, transaction
@@ -235,7 +224,6 @@ class SlugMixin(models.Model):
 
 # Identity Verification Engine --------------------------------------------------
 import requests
-from django.conf import settings
 
 VERIFF_API_KEY = settings.VERIFF_API_KEY
 VERIFF_API_URL = 'https://api.veriff.me/v1/sessions'

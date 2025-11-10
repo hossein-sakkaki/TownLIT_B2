@@ -1,5 +1,6 @@
 from django.db import models
 from django.utils import timezone
+from django_cryptography.fields import encrypt
 
 # import subprocess
 from django.core.exceptions import ValidationError
@@ -54,9 +55,7 @@ class Reaction(models.Model):
         choices=REACTION_TYPE_CHOICES,
         verbose_name='Reaction Type'
     )
-    message = models.CharField(
-        max_length=100, blank=True, null=True, verbose_name='Reaction Message'
-    )
+    message = encrypt(models.TextField(blank=True, null=True, verbose_name='Reaction Message'))
 
     content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
     object_id = models.PositiveIntegerField()
@@ -81,7 +80,7 @@ class Reaction(models.Model):
 class Comment(models.Model):
     id = models.BigAutoField(primary_key=True)
     name = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='user_comments', verbose_name='Name')
-    comment = models.TextField(blank=True, null=True, verbose_name='Comment')
+    comment = encrypt(models.TextField(blank=True, null=True, verbose_name='Comment'))
 
     content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE, db_index=True)
     object_id = models.PositiveIntegerField(db_index=True)

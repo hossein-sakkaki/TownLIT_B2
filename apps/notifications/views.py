@@ -1,6 +1,8 @@
 from rest_framework import viewsets, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.decorators import action
+from django.utils import timezone
 
 from .models import UserNotificationPreference, Notification
 from .serializers import UserNotificationPreferenceSerializer, NotificationSerializer
@@ -14,18 +16,29 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return Notification.objects.filter(user=self.request.user).order_by('-created_at')
+        return Notification.objects.filter(user=self.request.user).select_related(
+            'actor', 'target_content_type', 'action_content_type'
+        ).order_by('-created_at')
 
-    def update(self, request, *args, **kwargs):
-        partial = kwargs.pop('partial', False)
-        instance = self.get_object()
-        data = request.data.copy()
-        data['is_read'] = True
-        serializer = self.get_serializer(instance, data=data, partial=partial)
-        serializer.is_valid(raise_exception=True)
-        self.perform_update(serializer)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+    @action(detail=True, methods=['patch'])
+    def mark_read(self, request, pk=None):
+        notif = self.get_object()
+        ser = NotificationMarkReadSerializer(notif, data={'is_read': True}, partial=True)
+        ser.is_valid(raise_exception=True)
+        ser.save()
+        return Response(NotificationSerializer(notif).data)
 
+    @action(detail=False, methods=['post'])
+    def mark_all_read(self, request):
+        qs = self.get_queryset().filter(is_read=False)
+        now = timezone.now()
+        qs.update(is_read=True, read_at=now)
+        return Response({"updated": qs.count()})
+
+    @action(detail=False, methods=['get'])
+    def unread_count(self, request):
+        cnt = self.get_queryset().filter(is_read=False).count()
+        return Response({"unread": cnt})
 
 
 # User Notification Preference ViewSet -----------------------------------------------

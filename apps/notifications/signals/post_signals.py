@@ -14,7 +14,8 @@ from apps.notifications.models import Notification
 from apps.posts.models import (
     Moment, Testimony, Pray, Announcement, Lesson, Preach, Worship, Witness, Library
 )
-from utils.common.utils import send_push_notification
+from utils.common.push_notification import send_push_notification
+
 
 
 POST_MODELS = (Moment, Testimony, Pray, Announcement, Lesson, Preach, Worship, Witness, Library)

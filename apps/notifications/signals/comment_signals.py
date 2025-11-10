@@ -1,149 +1,91 @@
+# apps/notifications/signals/comment_signals.py
+
 from django.db.models.signals import post_save
 from django.dispatch import receiver
-from django.urls import reverse
 from django.contrib.contenttypes.models import ContentType
-from django.conf import settings
-from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 
-from apps.notifications.models import Notification
 from apps.posts.models import Comment
+from apps.notifications.services import create_and_dispatch_notification
 
-import logging
-logger = logging.getLogger(__name__)
-
-# --- helpers ------------------------------------------------------------
-
-def _resolve_target_object(ct, oid):
-    """Return target object of the comment, or None on failure."""
-    try:
-        return ct.get_object_for_this_type(pk=oid)
-    except Exception:
-        logger.debug("Failed to resolve target object for comment", extra={"ct_id": ct.id if ct else None, "oid": oid})
-        return None
-
-def _resolve_author_user(obj):
-    """
-    Try to find a user-like field on the target object.
-    Common candidates: user, owner, author, created_by, name (if FK to user).
-    Return user or None.
-    """
-    if obj is None:
-        return None
+def _resolve_owner(obj):
     for attr in ("user", "owner", "author", "created_by", "name"):
-        val = getattr(obj, attr, None)
-        # if it's a FK to user, it should have id/username
-        if val is not None and hasattr(val, "id"):
-            return val
+        v = getattr(obj, attr, None)
+        if v is not None and hasattr(v, "id"):
+            return v
     return None
 
-def _feature_enabled():
-    return getattr(settings, "ENABLE_COMMENT_NOTIFICATIONS", False)
-
-def _safe_reverse(*args, **kwargs):
-    try:
-        return reverse(*args, **kwargs)
-    except Exception:
-        return None
-
-# --- unified receiver ---------------------------------------------------
-
-@receiver(post_save, sender=Comment)
+@receiver(post_save, sender=Comment, dispatch_uid="notif_on_comment_create_v1")
 def on_comment_created(sender, instance: Comment, created, **kwargs):
-    # TEMP kill switch
-    if not _feature_enabled():
-        return
-
     if not created:
         return
 
-    # Resolve target for this comment
-    target = _resolve_target_object(instance.content_type, instance.object_id)
-    post_author = _resolve_author_user(target)
+    actor = getattr(instance, "name", None)  # author FK (CustomUser)
+    if not actor:
+        return
 
-    # Basic message/link
-    link = _safe_reverse('Comment_detail', kwargs={'pk': instance.pk})
-    # If your URL name differs or not ready, gracefully skip linking:
-    # link = link or f"/comments/{instance.pk}"  # optional fallback
-
+    target = None
     try:
-        if instance.recomment is None:
-            # New root comment
-            if post_author and post_author != instance.name:
-                Notification.objects.create(
-                    user=post_author,
-                    message=f"{instance.name.username} commented on your post.",
-                    notification_type='new_comment',
-                    content_type=ContentType.objects.get_for_model(sender),
-                    object_id=instance.id,
-                    link=link
-                )
-        else:
-            # New reply
-            parent = instance.recomment
-            parent_target = _resolve_target_object(parent.content_type, parent.object_id)
-            parent_post_author = _resolve_author_user(parent_target)
-            original_comment_author = parent.name
-
-            if original_comment_author and original_comment_author != instance.name:
-                Notification.objects.create(
-                    user=original_comment_author,
-                    message=f"{instance.name.username} replied to your comment.",
-                    notification_type='new_recomment',
-                    content_type=ContentType.objects.get_for_model(sender),
-                    object_id=instance.id,
-                    link=link
-                )
-
-            if parent_post_author and parent_post_author not in (instance.name, original_comment_author):
-                Notification.objects.create(
-                    user=parent_post_author,
-                    message=f"{instance.name.username} replied to a comment on your post.",
-                    notification_type='new_recomment',
-                    content_type=ContentType.objects.get_for_model(sender),
-                    object_id=instance.id,
-                    link=link
-                )
+        # Comment has (content_type, object_id)
+        target = instance.content_type.get_object_for_this_type(pk=instance.object_id)
     except Exception:
-        # Don't crash comment creation for notification issues
-        logger.exception("Failed to create standard notifications for comment")
+        target = None
 
-    # Optional: push + realtime (guarded)
+    post_owner = _resolve_owner(target)
+
+    # Build link to comment detail if available
+    link = None
     try:
-        channel_layer = get_channel_layer()
-        if not channel_layer:
-            return
-
-        users_to_notify = []
-        if instance.recomment is None:
-            if post_author and post_author != instance.name:
-                users_to_notify.append(post_author)
-        else:
-            parent = instance.recomment
-            parent_target = _resolve_target_object(parent.content_type, parent.object_id)
-            parent_post_author = _resolve_author_user(parent_target)
-            original_comment_author = parent.name
-
-            if original_comment_author and original_comment_author != instance.name:
-                users_to_notify.append(original_comment_author)
-            if parent_post_author and parent_post_author not in (instance.name, original_comment_author):
-                users_to_notify.append(parent_post_author)
-
-        for user in users_to_notify:
-            # real-time WS
-            try:
-                async_to_sync(channel_layer.group_send)(
-                    f"user_{user.id}",
-                    {
-                        "type": "send_notification",
-                        "message": (
-                            f"{instance.name.username} commented on your post."
-                            if instance.recomment is None
-                            else f"{instance.name.username} replied to your comment."
-                        ),
-                    }
-                )
-            except Exception:
-                logger.debug("WS notify failed (ignored)", exc_info=True)
+        if hasattr(instance, "get_absolute_url"):
+            link = instance.get_absolute_url()
     except Exception:
-        logger.debug("Realtime notify section failed (ignored)", exc_info=True)
+        pass
+
+    if instance.recomment is None:
+        # Root comment on a post-like object
+        if post_owner and post_owner.id != actor.id:
+            create_and_dispatch_notification(
+                recipient=post_owner,
+                actor=actor,
+                notif_type="new_comment",
+                message=f"{actor.username} commented on your post.",
+                target_obj=target,
+                action_obj=instance,
+                link=link,
+            )
+    else:
+        # Reply to another comment
+        parent = instance.recomment
+        original_comment_author = getattr(parent, "name", None)
+
+        # Notify original comment author (not self)
+        if original_comment_author and original_comment_author.id != actor.id:
+            create_and_dispatch_notification(
+                recipient=original_comment_author,
+                actor=actor,
+                notif_type="new_reply",
+                message=f"{actor.username} replied to your comment.",
+                target_obj=parent,          # target = parent comment thread
+                action_obj=instance,        # action = new reply
+                link=link,
+            )
+
+        # Optionally notify post owner if distinct from both
+        parent_target = None
+        try:
+            parent_target = parent.content_type.get_object_for_this_type(pk=parent.object_id)
+        except Exception:
+            parent_target = None
+
+        parent_post_owner = _resolve_owner(parent_target)
+        if parent_post_owner and parent_post_owner.id not in (actor.id, getattr(original_comment_author, "id", None)):
+            create_and_dispatch_notification(
+                recipient=parent_post_owner,
+                actor=actor,
+                notif_type="new_reply",
+                message=f"{actor.username} replied to a comment on your post.",
+                target_obj=parent_target,
+                action_obj=instance,
+                link=link,
+            )

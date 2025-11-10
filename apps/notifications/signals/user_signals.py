@@ -5,7 +5,7 @@
 # from asgiref.sync import async_to_sync
 # from django.urls import reverse
 # from apps.notifications.models import UserNotificationPreference, NOTIFICATION_TYPES
-# from utils.common.utils import send_push_notification
+# from utils.common.push_notification import send_push_notification
 # from django.contrib.auth import get_user_model
 
 # CustomUser = get_user_model()
