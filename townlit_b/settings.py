@@ -96,7 +96,7 @@ DEFAULT_GROUP_AVATAR_URL = os.getenv("DEFAULT_GROUP_AVATAR_URL", "/static/defaul
 
 
 
-
+DJANGO_CRYPTO_KEY = os.getenv("DJANGO_CRYPTO_KEY") 
 
 # Application definition
 
@@ -109,6 +109,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django_cryptography',
     
     'rest_framework',
     'rest_framework_simplejwt',
@@ -455,7 +456,7 @@ CELERY_RESULT_SERIALIZER = 'json'
 
 # Celery Task Tracking
 CELERY_TASK_TRACK_STARTED = True
-CELERY_TASK_TIME_LIMIT = 30 * 60
+CELERY_TASK_TIME_LIMIT = 30 * 60 
 CELERY_TASK_ALWAYS_EAGER = False
 CELERY_ACKS_LATE = True
 CELERY_TASK_DEFAULT_QUEUE = 'default'

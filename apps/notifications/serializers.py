@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from django.utils import timezone
 from .models import UserNotificationPreference, Notification
 
 # User Notification Preference Serializer -----------------------------------------------------
@@ -26,3 +27,16 @@ class NotificationSerializer(serializers.ModelSerializer):
             'created_at', 'is_read', 'content_type', 'object_id', 'content_object', 'link'
         ]
         read_only_fields = ['id', 'user', 'created_at', 'content_type', 'object_id', 'content_object', 'notification_type_display']
+
+
+class NotificationMarkReadSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notification
+        fields = ['is_read']
+
+    def update(self, instance, validated_data):
+        # Mark read + timestamp
+        instance.is_read = True
+        instance.read_at = timezone.now()
+        instance.save(update_fields=['is_read', 'read_at'])
+        return instance

@@ -8,6 +8,8 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.exceptions import NotFound
+import logging
+logger = logging.getLogger(__name__)
 
 from apps.posts.models import Testimony
 from apps.posts.serializers.testimonies import TestimonySerializer
@@ -157,7 +159,18 @@ class MeTestimonyViewSet(CommentMixin, viewsets.GenericViewSet):
         except Exception:
             logger.exception("Post-save debug check failed")
 
-        return Response(self.get_serializer(obj, context={'request': request}).data, status=status.HTTP_201_CREATED)
+        return Response(
+            self.get_serializer(
+                obj,
+                context={
+                    'request': request,
+                    'content_type': obj.content_type,
+                    'object_id': obj.object_id,
+                    'ttype': ttype,
+                }
+            ).data,
+            status=status.HTTP_201_CREATED,
+        )
 
 
     # ---------- Update (partial) ----------

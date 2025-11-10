@@ -144,12 +144,12 @@ class ReactionViewSet(
         detail=False,
         methods=["get"],
         url_path="with-message",
-        permission_classes=[IsAuthenticated],  # 🔒 owner-only view
+        permission_classes=[IsAuthenticated],
     )
     def with_message(self, request):
         """
-        🔒 Returns all reactions that include messages (owner-only).
-        ?content_type=app.model&object_id=42[&reaction_type=...]
+        🔒 Owner-only: list reactions that include user messages for a given object.
+        GET ?content_type=app.model|id|model&object_id=42[&reaction_type=...]
         """
         ct_param = request.query_params.get("content_type")
         obj_id = request.query_params.get("object_id")
@@ -158,7 +158,7 @@ class ReactionViewSet(
         if not ct_param or not obj_id:
             return Response({"detail": "content_type and object_id required"}, status=400)
 
-        # --- Resolve ContentType ---
+        # --- Resolve ContentType safely (accept id, app.model, or model) ---
         try:
             if str(ct_param).isdigit():
                 cto = ContentType.objects.get(pk=int(ct_param))
@@ -170,49 +170,55 @@ class ReactionViewSet(
         except ContentType.DoesNotExist:
             return Response({"detail": "Invalid content type"}, status=400)
 
-        # --- Load target object ---
+        # --- Guard: model_class() may be None for swapped/proxy/unavailable models ---
         model_cls = cto.model_class()
+        if model_cls is None:
+            return Response({"detail": "Target model is unavailable"}, status=400)
+
+        # --- Cast object_id to int when possible (fallback to raw for non-int PKs) ---
         try:
-            target_obj = model_cls.objects.get(pk=obj_id)
+            obj_pk = int(obj_id)
+        except (TypeError, ValueError):
+            obj_pk = obj_id
+
+        # --- Load target object with a safe DoesNotExist branch ---
+        try:
+            target_obj = model_cls._default_manager.get(pk=obj_pk)
         except model_cls.DoesNotExist:
             return Response({"detail": "Target object not found"}, status=404)
 
-        # --- 🔑 Resolve real owner (handles GFK like Testimony.content_object) ---
+        # --- Resolve real owner's user_id (handles common FK patterns + GFK drill-down) ---
         def resolve_owner_user_id(obj):
-            """
-            Return integer user_id who owns the object.
-            - If object has content_object (GFK): drill into it.
-            - Member      -> member.user_id
-            - Has user_id/name_id/owner_id  -> use it
-            - Organization -> check org_owners M2M for current user
-            """
             base = obj
-            # If GFK exists, dive into real target
+            # If object wraps another via GFK, drill into the real target
             if hasattr(base, "content_object") and getattr(base, "content_object") is not None:
                 base = base.content_object
 
-            # Direct user-like foreign keys
+            # Common direct *_id fields
             for fk in ("user_id", "name_id", "owner_id", "member_user_id", "org_owner_user_id"):
                 if hasattr(base, fk):
                     val = getattr(base, fk)
                     if isinstance(val, int):
                         return val
 
-            # Member model: user OneToOne (common case)
+            # Member model (user OneToOne)
             if base.__class__.__name__.lower() == "member" and hasattr(base, "user_id"):
                 return getattr(base, "user_id", None)
 
-            # Related object with id (name/owner objects)
+            # Related objects exposing .id
             for rel in ("name", "owner", "member_user", "org_owner_user"):
                 if hasattr(base, rel):
                     rel_obj = getattr(base, rel)
                     if getattr(rel_obj, "id", None):
                         return rel_obj.id
 
-            # Organization owners M2M (grant access if requester is among owners)
+            # Organization owners M2M (grant if requester is among owners)
             if hasattr(base, "org_owners"):
-                if base.org_owners.filter(id=request.user.id).exists():
-                    return request.user.id
+                try:
+                    if base.org_owners.filter(id=request.user.id).exists():
+                        return request.user.id
+                except Exception:
+                    pass
 
             return None
 
@@ -220,29 +226,30 @@ class ReactionViewSet(
         if owner_id != request.user.id:
             return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
 
-        # --- Only reactions WITH messages ---
+        # --- Reactions WITH messages only ---
+        # Store empty messages as NULL at write-time; then filter by isnull=False here.
         qs = (
             Reaction.objects
-            .filter(content_type=cto, object_id=obj_id)
+            .filter(content_type=cto, object_id=obj_pk)
             .exclude(message__isnull=True)
-            .exclude(message__exact="")
             .select_related("name")
             .order_by("-timestamp")
         )
         if rtype:
             qs = qs.filter(reaction_type=rtype)
 
-        # --- Serialize minimal payload (user via SimpleCustomUserSerializer) ---
-        serializer_context = {"request": request}
-        data = []
+        # --- Build minimal payload; skip whitespace-only after decryption (safety) ---
+        items = []
         for r in qs[:200]:
-            user_data = SimpleCustomUserSerializer(r.name, context=serializer_context).data
-            data.append({
+            if not (r.message or "").strip():
+                continue
+            user_data = SimpleCustomUserSerializer(r.name, context={"request": request}).data
+            items.append({
                 "id": r.id,
                 "reaction_type": r.reaction_type,
-                "message": r.message,
-                "timestamp": r.timestamp,
+                "message": r.message,      # transparently decrypted by field
+                "timestamp": r.timestamp,  # DRF handles datetime serialization
                 "user": user_data,
             })
 
-        return Response(data, status=200)
+        return Response(items, status=200)

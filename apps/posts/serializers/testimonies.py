@@ -4,12 +4,7 @@ from django.contrib.contenttypes.models import ContentType
 import traceback
 import logging
 
-from apps.posts.models import (
-    Reaction, Comment,
-    Resource, ServiceEvent,
-    Testimony, Moment, Pray, Announcement, Lesson, Preach, Worship,
-    MediaContent, Library, Witness, Mission, Conference, FutureConference
-)
+from apps.posts.models import Testimony
 from common.file_handlers.media_mixins import (
     AudioFileMixin, VideoFileMixin, ThumbnailFileMixin
 )
@@ -20,7 +15,6 @@ from .serializers_owner_min import build_owner_union_from_content_object
 from apps.posts.constants import REACTION_TYPE_CHOICES
 from django.contrib.auth import get_user_model
 
-# ✅ میکسین هدف‌های ایتمی (per-item targets)
 from common.serializers.targets import InstanceTargetMixin
 
 logger = logging.getLogger(__name__)
@@ -29,7 +23,7 @@ CustomUser = get_user_model()
 
 # TESTIMONY serializers -----------------------------------------------------------------
 class TestimonySerializer(
-    InstanceTargetMixin,                 # ✅ اضافه شد: comment_target / reaction_target
+    InstanceTargetMixin, 
     AudioFileMixin,
     VideoFileMixin,
     ThumbnailFileMixin,
@@ -51,13 +45,8 @@ class TestimonySerializer(
             'type', 'title',
             'content', 'audio', 'video',
             'thumbnail', 'published_at', 'updated_at', 'is_active',
-
-            # --- legacy targets (حفظِ رفتار قبلی) ---
             'content_type', 'object_id',
-
-            # --- per-item targets (جدید/پیشنهادی برای فرانت) ---
             'comment_target', 'reaction_target',
-
             'is_converted', 'owner',
         ]
         read_only_fields = [
@@ -116,7 +105,7 @@ class TestimonySerializer(
             logger.warning("⚠️ get_owner failed for Testimony id=%s: %s", getattr(obj, "id", None), e)
             return None
 
-    # --- Validation (بدون تغییر منطقی) ---
+    # --- Validation  ---
     def validate(self, attrs):
         instance = self.instance
         ttype = attrs.get('type') or (instance.type if instance else None) or self.context.get('ttype')
@@ -148,7 +137,7 @@ class TestimonySerializer(
         attrs['type'] = ttype
         return attrs
 
-    # --- Create (همان رفتار قبلی + setdefault با context) ---
+    # --- Create  ---
     def create(self, validated_data):
         validated_data.setdefault('type', self.context.get('ttype'))
         validated_data.setdefault('content_type', self.context.get('content_type'))
