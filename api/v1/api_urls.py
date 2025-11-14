@@ -1,7 +1,6 @@
 # api/v1/api_urls.py
 from django.urls import include, path
 
-
 urlpatterns = [
     path('', include('apps.main.urls')),
     path('accounts/', include('apps.accounts.urls')),
@@ -18,4 +17,5 @@ urlpatterns = [
     path('payment/', include('apps.payment.urls')),
     path('warehouse/', include('apps.warehouse.urls')),
     path('security/', include('apps.core.security.urls')),
+    path('notifications/', include('apps.notifications.urls')),
 ]

@@ -6,10 +6,10 @@ class NotificationsConfig(AppConfig):
     name = 'apps.notifications'
     
     def ready(self):
-        import apps.notifications.signals.post_signals
         import apps.notifications.signals.comment_signals
         import apps.notifications.signals.reaction_signals
-        import apps.notifications.signals.friend_signals
-        import apps.notifications.signals.manager_signals
-        # import apps.notifications.signals.user_signals
+        import apps.notifications.signals.friendship_signals 
+        import apps.notifications.signals.fellowship_signals
+        import apps.notifications.signals.common_signals
+
 

@@ -6,4 +6,4 @@ class MainConfig(AppConfig):
     name = 'apps.main'
 
     def ready(self):
-        import apps.products.signals.signals
+        import apps.main.signals

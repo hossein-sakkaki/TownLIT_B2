@@ -22,7 +22,7 @@ from django.db.models import Q
 # ----------------------------------------------
 # 👤 MeTestimonyViewSet  (Member-owned testimonies)
 # ----------------------------------------------
-class MeTestimonyViewSet(CommentMixin, viewsets.GenericViewSet):
+class MeTestimonyViewSet(viewsets.GenericViewSet):
     serializer_class = TestimonySerializer
     permission_classes = [IsAuthenticated]
     queryset = Testimony.objects.all()

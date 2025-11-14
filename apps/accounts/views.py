@@ -457,8 +457,8 @@ class AuthViewSet(viewsets.ViewSet):
         
         refresh = RefreshToken.for_user(user)
         access = refresh.access_token
-        user_data = CustomUserSerializer(user).data
-        
+        user_data = CustomUserSerializer(user, context={"request": request}).data
+
         return Response({
             'refresh': str(refresh),
             'access': str(access),
@@ -498,17 +498,17 @@ class AuthViewSet(viewsets.ViewSet):
         if user.is_deleted:
             refresh = RefreshToken.for_user(user)
             access = refresh.access_token
-            react_user = ReactivationUserSerializer(user).data
+            react_user = ReactivationUserSerializer(user, context={"request": request}).data
             return Response({
                 "message": "Your account deletion request is in progress. You can reactivate your account within 1 year.",
-                "reactivation_required": True,        # explicit FE flag
+                "reactivation_required": True, 
                 "is_deleted": True,
                 "deletion_requested_at": user.deletion_requested_at,
-                "email": user.email,                  # convenience; already in react_user
+                "email": user.email,
                 "user_id": user.id,
                 "refresh": str(refresh),
                 "access": str(access),
-                "user": react_user,                   # minimal, NOT CustomUserSerializer
+                "user": react_user,
             }, status=status.HTTP_202_ACCEPTED)
 
         # 4) suspended -> block login (no tokens / no OTP)
@@ -571,7 +571,7 @@ class AuthViewSet(viewsets.ViewSet):
 
         refresh = RefreshToken.for_user(user)
         access = refresh.access_token
-        user_data = CustomUserSerializer(user).data
+        user_data = CustomUserSerializer(user, context={"request": request}).data
 
         return Response({
             'refresh': str(refresh),
@@ -632,7 +632,7 @@ class AuthViewSet(viewsets.ViewSet):
 
             # If deleted -> only minimal payload + 202 Accepted, not full profile
             if user.is_deleted:
-                react_user = ReactivationUserSerializer(user).data
+                react_user = ReactivationUserSerializer(user, context={"request": request}).data
                 return Response({
                     "message": "Account deactivated. You can reactivate within 1 year using the code sent to your email.",
                     "reactivation_required": True,
@@ -646,7 +646,8 @@ class AuthViewSet(viewsets.ViewSet):
                 }, status=status.HTTP_202_ACCEPTED)
 
             # else: normal success (active accounts)
-            user_data = CustomUserSerializer(user).data
+            user_data = CustomUserSerializer(user, context={"request": request}).data
+
             return Response({
                 'refresh': str(refresh),
                 'access': str(access),
@@ -801,7 +802,7 @@ class AuthViewSet(viewsets.ViewSet):
 
             refresh = RefreshToken.for_user(user)
             access = refresh.access_token
-            user_data = CustomUserSerializer(user).data
+            user_data = CustomUserSerializer(user, context={"request": request}).data
 
             return Response({
                 "refresh": str(refresh),

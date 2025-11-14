@@ -4,45 +4,53 @@ from django.urls import reverse
 
 from apps.accounts.models import CustomUser
 from apps.accounts.serializers import CustomLabelSerializer
-from common.file_handlers.profile_image import ProfileImageMixin
 from common.file_handlers.org_logo import OrganizationLogoMixin
 from apps.profilesOrg.models import Organization  
 from apps.profiles.models import Member  
-from django.contrib.contenttypes.models import ContentType
 
-# ---- Owner (User) ----
-class OwnerMinCustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
-    """
-    Minimal, public owner shape for a CustomUser.
-    - Provides `profile_image_url` via ProfileImageMixin (image_name -> *_url)
-    - Includes `label` and `is_verified_identity`
-    """
+# ------------------------------ Owner (User) ------------------------------
+class OwnerMinCustomUserSerializer(serializers.ModelSerializer):
     label = CustomLabelSerializer(read_only=True)
     is_verified_identity = serializers.SerializerMethodField()
+    avatar_url = serializers.SerializerMethodField()
     profile_url = serializers.SerializerMethodField()
 
     class Meta:
         model = CustomUser
         fields = [
-            "id", "username", "name", "family",
-            "label", "is_verified_identity",
-            # profile_image_url comes from ProfileImageMixin (rename in mixin)
+            "id",
+            "username",
+            "name",
+            "family",
+            "label",
+            "is_verified_identity",
+            "avatar_url",
             "profile_url",
         ]
         read_only_fields = fields
 
     def get_is_verified_identity(self, obj):
-        return getattr(getattr(obj, "member_profile", None), "is_verified_identity", False)
+        mp = getattr(obj, "member_profile", None)
+        return getattr(mp, "is_verified_identity", False)
 
     def get_profile_url(self, obj):
-        # Use your existing user absolute-url logic if any; otherwise reverse by username
-        try:
-            return obj.get_absolute_url()
-        except Exception:
-            # Fallback: build a URL pattern you support, e.g. /u/<username>/
-            request = self.context.get("request")
-            url = f"/u/{obj.username}/"
-            return request.build_absolute_uri(url) if request else url
+        request = self.context.get("request")
+        path = f"/u/{obj.username}/"
+        return request.build_absolute_uri(path) if request else path
+
+    def get_avatar_url(self, user):
+        request = self.context.get("request")
+        if not user:
+            return None
+        
+        # Build relative path first (this is correct)
+        path = reverse("main:main-avatar-detail", args=[user.id])
+
+        # Convert to absolute if request exists
+        if request:
+            return request.build_absolute_uri(path)
+
+        return path
 
 
 # ---- Owner (Organization) ----
@@ -80,17 +88,10 @@ class OwnerMinOrganizationSerializer(OrganizationLogoMixin, serializers.ModelSer
 
 
 
-def build_owner_union_from_content_object(obj, context=None) -> dict | None:
-    """
-    Return a union dict with normalized owner:
-      - {"kind": "customUser",   "data": OwnerMinCustomUserSerializer(...).data}
-      - {"kind": "organization", "data": OwnerMinOrganizationSerializer(...).data}
-      - None if cannot resolve
-    """
-    # Prefer generic relation if present
+def build_owner_union_from_content_object(obj, context=None):
     target = getattr(obj, "content_object", None)
 
-    # Fallback: resolve via content_type/object_id
+    # Fallback via content_type/object_id
     if target is None:
         ct = getattr(obj, "content_type", None)
         oid = getattr(obj, "object_id", None)
@@ -105,16 +106,20 @@ def build_owner_union_from_content_object(obj, context=None) -> dict | None:
     if target is None:
         return None
 
-    # Member -> map to target.user (CustomUser)
+    # ---- Direct CustomUser ----
+    if isinstance(target, CustomUser):
+        data = OwnerMinCustomUserSerializer(instance=target, context=context).data
+        return {"kind": "customUser", "data": data}
+
+    # ---- Member → User ----
     if isinstance(target, Member):
         cu = target.user
         data = OwnerMinCustomUserSerializer(instance=cu, context=context).data
         return {"kind": "customUser", "data": data}
 
-    # Organization -> map as organization owner
+    # ---- Organization ----
     if isinstance(target, Organization):
         data = OwnerMinOrganizationSerializer(instance=target, context=context).data
         return {"kind": "organization", "data": data}
 
-    # Unknown
     return None

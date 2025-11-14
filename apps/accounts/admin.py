@@ -80,7 +80,7 @@ class FriendshipInline(admin.TabularInline):
 class CustomUserAdmin(UserAdmin):
     form = UserChangeForm
     add_form = UserCreationForm
-    list_display = ['email', 'name', 'family', 'username', 'gender', 'label', 'pin_security_enabled', 'two_factor_enabled', 'is_member', 'is_active', 'is_admin', 'is_suspended', 'is_deleted', 'reports_count', 'is_account_paused', 'register_date', 'profile_image_thumbnail']
+    list_display = ['id','email', 'name', 'family', 'username', 'gender', 'label', 'pin_security_enabled', 'two_factor_enabled', 'is_member', 'is_active', 'is_admin', 'is_suspended', 'is_deleted', 'reports_count', 'is_account_paused', 'register_date', 'profile_image_thumbnail']
     list_filter = ['is_active', 'is_admin', 'gender', 'label', 'register_date']
     list_editable = ['is_active', 'is_admin', 'is_member'] 
     search_fields = ['username', 'mobile_number', 'name']

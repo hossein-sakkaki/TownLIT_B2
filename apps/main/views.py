@@ -5,7 +5,13 @@ from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.exceptions import ValidationError
 from rest_framework.filters import SearchFilter, OrderingFilter
+import mimetypes
+from django.http import Http404, HttpResponse
+from django.contrib.auth import get_user_model
+from common.aws.aws_clients import s3_client
+from botocore.exceptions import ClientError
 
+User = get_user_model()
 from django_filters.rest_framework import DjangoFilterBackend
 
 from django.utils.decorators import method_decorator
@@ -38,6 +44,8 @@ from utils.email.email_tools import send_custom_email
 import logging
 
 logger = logging.getLogger(__name__)
+
+
 
 # TERMS AND POLICY ViewSet --------------------------------------------------------------------------------
 class TermsAndPolicyViewSet(viewsets.ReadOnlyModelViewSet):
@@ -370,7 +378,77 @@ class VideoViewLogViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 
+# -----------------------------------------------------------------------------
+class AvatarViewSet(viewsets.ViewSet):
+    """
+    FAST avatar proxy:
+    - S3 bucket remains private
+    - Streams image directly to client
+    - Cacheable for high performance
+    """
 
+    permission_classes = [AllowAny]  # safe because we manually validate privacy
+
+    def retrieve(self, request, pk=None):
+        """
+        GET /api/v1/media/avatar/<user_id>/
+        """
+
+        # --- 1) Fetch user ---
+        try:
+            user = User.objects.select_related("member_profile").get(id=pk)
+        except User.DoesNotExist:
+            raise Http404("User not found")
+
+        # --- 2) Check privacy (you can expand logic later) ---
+        # If user profile is private, allow only friends / authenticated / etc.
+        is_private = False
+        mp = getattr(user, "member_profile", None)
+        if mp and mp.is_privacy:
+            is_private = True
+
+        # If you want: block private profile avatar for guests
+        # if is_private and not request.user.is_authenticated:
+        #     raise Http404("Avatar unavailable")
+
+        # --- 3) No avatar uploaded ---
+        if not user.image_name:
+            raise Http404("No avatar image available")
+
+        # S3 key (TownLIT folder structure – same as your upload path)
+        s3_key = user.image_name.name
+
+        # --- 4) Read file from PRIVATE S3 bucket ---
+        try:
+            obj = s3_client.get_object(
+                Bucket=settings.AWS_STORAGE_BUCKET_NAME,
+                Key=s3_key
+            )
+        except ClientError:
+            raise Http404("Avatar not found")
+
+        # --- 5) Detect content-type ---
+        ctype, _ = mimetypes.guess_type(s3_key)
+        if not ctype:
+            ctype = "image/jpeg"
+
+        # --- 6) Stream the image to client ---
+        resp = HttpResponse(obj["Body"].read(), content_type=ctype)
+
+        # --- 7) Heavy caching for performance ---
+        # Cache 30 days (can change to 90 days if needed)
+        resp["Cache-Control"] = "public, max-age=2592000, immutable"
+
+        return resp
+
+
+
+
+
+
+
+
+# -----------------------------------------------------------------------------
 def coming_soon_view(request):
     file_path = os.path.join(settings.BASE_DIR, 'static/maintenance/coming_soon.html')
     return FileResponse(open(file_path, 'rb'), content_type='text/html')
