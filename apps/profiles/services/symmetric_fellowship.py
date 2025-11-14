@@ -64,29 +64,58 @@ def add_symmetric_fellowship(from_user, to_user, fellowship_type, reciprocal_fel
         return False
 
 
-def remove_symmetric_fellowship(from_user, to_user, relationship_type):
+def remove_symmetric_fellowship(from_user, to_user, relationship_type) -> bool:
+    """
+    Unpair an accepted fellowship in both directions.
+    Strategy:
+      - Lock both rows.
+      - Choose ONE row as the "notifying row" -> set status='Cancelled' + save() to trigger signal.
+      - Delete notifying row and the reciprocal row.
+      - If main row missing but reciprocal exists, flip the logic.
+    Returns True on success (even if some sides were already missing).
+    """
     try:
         with transaction.atomic():
-            # Delete the main relationship
-            main_deleted = Fellowship.objects.filter(
-                from_user=from_user,
-                to_user=to_user,
-                fellowship_type=relationship_type,
-                status='Accepted'
-            ).delete()
-            logger.info(f"Main fellowship removed: {from_user} -> {to_user} ({relationship_type})")
+            # Lock both directions if they exist
+            main = (Fellowship.objects
+                    .select_for_update()
+                    .filter(from_user=from_user,
+                            to_user=to_user,
+                            fellowship_type=relationship_type,
+                            status='Accepted')
+                    .first())
 
-            # Delete the reciprocal relationship
-            reciprocal_deleted = Fellowship.objects.filter(
-                from_user=to_user,
-                to_user=from_user,
-                reciprocal_fellowship_type=relationship_type,
-                status='Accepted'
-            ).delete()
-            logger.info(f"Reciprocal fellowship removed: {to_user} -> {from_user} ({relationship_type})")
+            reciprocal = (Fellowship.objects
+                          .select_for_update()
+                          .filter(from_user=to_user,
+                                  to_user=from_user,
+                                  reciprocal_fellowship_type=relationship_type,
+                                  status='Accepted')
+                          .first())
 
-        return True
+            # If neither exists, nothing to do
+            if not main and not reciprocal:
+                logger.info("No active fellowship rows to remove.")
+                return True
+
+            # Prefer to notify via 'main'. If missing, notify via 'reciprocal'.
+            notifying = main or reciprocal
+            other = reciprocal if notifying is main else main
+
+            # 1) Trigger exactly one notification burst
+            notifying.status = 'Cancelled'
+            notifying.save(update_fields=['status'])  # ✅ post_save → sends notif to both sides
+
+            # 2) Cleanup: delete notifying row
+            notifying.delete()
+
+            # 3) Cleanup: delete the other side quietly (no save → no duplicate notif)
+            if other:
+                other.delete()
+
+            logger.info(f"Fellowship unpaired: {from_user.id} ↔ {to_user.id} ({relationship_type})")
+            return True
+
     except Exception as e:
-        logger.error(f"Error while removing symmetric fellowship: {e}")
+        logger.error(f"Error while removing symmetric fellowship: {e}", exc_info=True)
         return False
-

@@ -1236,18 +1236,23 @@ class MessageViewSet(viewsets.ModelViewSet):
         user = request.user
         dialogue = message.dialogue
 
-        # Must be a participant
         if not dialogue.participants.filter(pk=user.pk).exists():
             return Response({'error': 'Access denied.'}, status=403)
 
-        # Only founder/elder can see
         if not (dialogue.is_founder(user) or dialogue.is_elder(user)):
-            return Response({'error': 'Permission denied. You are not allowed to view this info.'}, status=403)
+            return Response({'error': 'Permission denied.'}, status=403)
 
-        # ✅ Exclude sender and the requesting user
-        seen_qs = message.seen_by_users.exclude(pk=message.sender_id).exclude(pk=request.user.pk).order_by('username')
+        seen_qs = (
+            message.seen_by_users
+            .exclude(pk=message.sender_id)
+            .exclude(pk=request.user.pk)
+            .select_related("label", "member_profile")       # ← Optimization
+            .order_by("username")
+        )
 
-        serializer = SimpleCustomUserSerializer(seen_qs, many=True, context={"request": request})
+        serializer = SimpleCustomUserSerializer(
+            seen_qs, many=True, context={"request": request}
+        )
         return Response(serializer.data, status=200)
 
 

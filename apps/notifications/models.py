@@ -7,6 +7,7 @@ from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from django.db.models import Index
 from django.core.validators import MinLengthValidator
+from django.core.exceptions import ObjectDoesNotExist
 from django.db.models.functions import Now
 from django.contrib.auth import get_user_model
 
@@ -75,6 +76,40 @@ class Notification(models.Model):
     def __str__(self):
         return f"Notif<{self.id}> to {self.user_id}: {self.message[:50]}"
 
+    # -------- Helper methods for safety / cleanup --------
+
+    def get_target_safe(self):
+        """
+        Safely return target object (or None if deleted / missing).
+        """
+        if not self.target_content_type or not self.target_object_id:
+            return None
+        try:
+            return self.target_object
+        except ObjectDoesNotExist:
+            return None
+
+    def is_target_unavailable(self) -> bool:
+        """
+        Determine if the target is effectively unavailable to users.
+        - Missing object
+        - OR flagged as inactive/hidden/suspended/restricted
+        """
+        obj = self.get_target_safe()
+        if obj is None:
+            return True  # missing target → treat as unavailable
+
+        is_active = getattr(obj, "is_active", True)
+        is_hidden = getattr(obj, "is_hidden", False)
+        is_suspended = getattr(obj, "is_suspended", False)
+        is_restricted = getattr(obj, "is_restricted", False)
+
+        return (
+            is_active is False
+            or is_hidden is True
+            or is_suspended is True
+            or is_restricted is True
+        )
 
 # -----------------------------------------------------------------------------
 class NotificationLog(models.Model):

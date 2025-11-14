@@ -1022,13 +1022,28 @@ class FriendshipViewSet(viewsets.ModelViewSet):
     # ------------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['get'], url_path='search-users', permission_classes=[IsAuthenticated])
     def search_users(self, request):
+        """
+        Fast user search with:
+        - optimized queryset (select_related + only)
+        - pagination
+        - friend status (friend / sent request / received request)
+        - excluding deleted users and self
+        """
         query = request.query_params.get('q', '').strip()
         if not query:
             return Response([], status=status.HTTP_200_OK)
 
         try:
+            # --- Optimized user lookup ---
             users = (
-                CustomUser.objects.select_related("member_profile")
+                CustomUser.objects
+                .select_related("label", "member_profile")  # preload relations for serializer
+                .only(
+                    "id", "username", "name", "family", "email",
+                    "label__id", "label__name",
+                    "member_profile__id",
+                    "image_name",
+                )
                 .filter(
                     Q(username__icontains=query) |
                     Q(name__icontains=query) |
@@ -1040,51 +1055,63 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                 .distinct()
             )
 
-            # پگینیشن قابل تنظیم
+            # --- Pagination (configurable) ---
             paginator = ConfigurablePagination(page_size=20, max_page_size=100)
             paginated_users = paginator.paginate_queryset(users, request)
 
-            # یافتن دوستان کنونی کاربر برای مشخص‌کردن ارتباط
-            friends = Friendship.objects.filter(
-                Q(from_user=request.user, status='accepted') |
-                Q(to_user=request.user, status='accepted')
-            )
-            friend_ids = set(friends.values_list('from_user', flat=True)) | set(friends.values_list('to_user', flat=True))
-            
-            # درخواست‌هایی که کاربر جاری ارسال کرده (برای request_sent)
+            # ============================================================
+            #           FRIENDSHIPS + REQUESTS STATUS LOOKUPS
+            # ============================================================
+
+            # --- Build friend ID set (fast lookup) ---
+            friend_edges = Friendship.objects.filter(
+                Q(from_user=request.user, status="accepted") |
+                Q(to_user=request.user, status="accepted")
+            ).values("from_user", "to_user")
+
+            friend_ids = set()
+            uid = request.user.id
+            for e in friend_edges:
+                fu, tu = e["from_user"], e["to_user"]
+                friend_ids.add(tu if fu == uid else fu)
+
+            # --- Pending requests sent by current user ---
             sent_requests = Friendship.objects.filter(
                 from_user=request.user,
-                status='pending'
-            ).values('to_user', 'id')
+                status="pending"
+            ).values("to_user", "id")
 
-            # درخواست‌هایی که کاربر جاری دریافت کرده (برای has_received_request)
+            sent_request_map = {item["to_user"]: item["id"] for item in sent_requests}
+
+            # --- Pending requests received by current user ---
             received_requests = Friendship.objects.filter(
                 to_user=request.user,
-                status='pending'
-            ).values('from_user', 'id')
+                status="pending"
+            ).values("from_user", "id")
 
-            # آماده‌سازی دیکشنری‌های سریع lookup
-            sent_request_map = {item['to_user']: item['id'] for item in sent_requests}
-            received_request_map = {item['from_user']: item['id'] for item in received_requests}
+            received_request_map = {item["from_user"]: item["id"] for item in received_requests}
 
-            # سریالایزر با friend_ids در context
+            # ============================================================
+            #                      SERIALIZATION
+            # ============================================================
+
             serializer = SimpleCustomUserSerializer(
                 paginated_users,
                 many=True,
                 context={
-                    'request': request, 
-                    'friend_ids': friend_ids,
-                    'sent_request_map': sent_request_map,
-                    'received_request_map': received_request_map,
+                    "request": request,
+                    "friend_ids": friend_ids,
+                    "sent_request_map": sent_request_map,
+                    "received_request_map": received_request_map,
                 }
             )
 
-            # پاسخ با صفحه‌بندی
             return paginator.get_paginated_response(serializer.data)
 
         except Exception as e:
             logger.error(f"Error during search_users: {e}")
             return Response({'error': 'Unable to search users'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
     # ------------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['get'], url_path='sent-requests', permission_classes=[IsAuthenticated])
@@ -1116,19 +1143,24 @@ class FriendshipViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Unable to fetch received requests'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     # ------------------------------------------------------------------------------------------------------
-    @action(detail=False, methods=["get"], url_path="friends-list", permission_classes=[IsAuthenticated])
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path='friends-list',
+        permission_classes=[IsAuthenticated]
+    )
     def friends_list(self, request):
         """
-        Return user's friends ordered alphabetically by username with special rules:
-        1) A–Z first (case-insensitive),
-        2) then any other starting char,
-        3) usernames starting with '_' go last.
-        Supports ?limit=NN. Ignores random/daily/seed in this endpoint.
+        Return optimized list of friends with:
+        - alphabetical ordering groups,
+        - full serializer context (friend_ids + friendship_ids),
+        - fast avatar URLs (via serializer),
+        - correct friendship_id for frontend compatibility.
         """
         try:
             user = request.user
 
-            # Collect accepted, active friendship edges involving this user
+            # --- Load friendship edges (accepted + active) ----------------------------
             edges = (
                 Friendship.objects
                 .filter(
@@ -1137,35 +1169,59 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                     is_active=True,
                 )
                 .filter(from_user__is_deleted=False, to_user__is_deleted=False)
-                .values('from_user_id', 'to_user_id')
+                .values('id', 'from_user_id', 'to_user_id')
             )
 
-            # Compute counterpart IDs (the "other" user in each edge)
+            # --- Build counterpart IDs and friendship_id map -------------------------
             counterpart_ids = set()
+            friendship_ids_map = {}   # { user_id: friendship_row_id }
             uid = user.id
-            for e in edges:
-                fid, tid = e['from_user_id'], e['to_user_id']
-                counterpart_ids.add(tid if fid == uid else fid)
 
-            friends_qs = CustomUser.objects.filter(id__in=counterpart_ids, is_deleted=False)
+            for edge in edges:
+                fid = edge['from_user_id']
+                tid = edge['to_user_id']
 
-            # Annotate first char and ranking group
-            # group = 0 for [A-Za-z], 1 for others, 2 for leading '_'
-            first_char = Substr('username', 1, 1)
-            group = Case(
-                When(**{'%s' % 'username__startswith': '_'}, then=Value(2)),
-                When(**{'%s__regex' % 'username': r'^[A-Za-z]'}, then=Value(0)),
-                default=Value(1),
-                output_field=IntegerField()
+                # find the "other" user
+                counterpart = tid if fid == uid else fid
+                counterpart_ids.add(counterpart)
+
+                # map that user to the friendship row ID
+                friendship_ids_map[counterpart] = edge['id']
+
+            # friend_ids = just counterpart IDs
+            friend_ids = counterpart_ids
+
+            # --- Query users with full select_related used by serializer -------------
+            friends_qs = (
+                CustomUser.objects
+                .filter(id__in=counterpart_ids, is_deleted=False)
+                .select_related(
+                    "label",          # needed for label + label_color
+                    "member_profile"  # needed for is_verified_identity
+                )
             )
 
-            friends_qs = friends_qs.annotate(
-                sort_group=group,
-                username_lower=Lower('username'),
-                first_char_annot=first_char,  # useful if you need to debug
-            ).order_by('sort_group', 'username_lower')
+            # --- Sorting annotations --------------------------------------------------
+            first_char = Substr('username', 1, 1)
 
-            # Optional limit
+            group = Case(
+                When(username__startswith='_', then=Value(2)),       # group 2: starts with "_"
+                When(username__regex=r'^[A-Za-z]', then=Value(0)),  # group 0: A–Z
+                default=Value(1),                                   # group 1: others
+                output_field=IntegerField(),
+            )
+
+            friends_qs = (
+                friends_qs
+                .annotate(
+                    sort_group=group,
+                    username_lower=Lower('username'),
+                    first_char_annot=first_char,  # for debugging if needed
+                )
+                .order_by('sort_group', 'username_lower')
+            )
+
+            # --- Optional limit ------------------------------------------------------
             limit = request.query_params.get('limit')
             if limit:
                 try:
@@ -1173,70 +1229,181 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                     if lim:
                         friends_qs = friends_qs[:lim]
                 except ValueError:
-                    pass  # ignore bad limit
+                    pass  # ignore invalid input
 
-            ser = SimpleCustomUserSerializer(friends_qs, many=True, context={"request": request})
+            # --- Serializer with ALL required context --------------------------------
+            ser = SimpleCustomUserSerializer(
+                friends_qs,
+                many=True,
+                context={
+                    "request": request,
+
+                    # required for serializer logic
+                    "friend_ids": friend_ids,
+                    "friendship_ids": friendship_ids_map,
+
+                    # optional (for compatibility with other endpoints)
+                    "sent_request_map": {},
+                    "received_request_map": {},
+                    "fellowship_ids": {},
+                }
+            )
+
             return Response(
                 {"results": ser.data, "meta": {"count": len(counterpart_ids)}},
                 status=status.HTTP_200_OK
             )
+
         except Exception:
             logger.exception("Error in friends_list")
-            return Response({"error": "Unable to retrieve friends list"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response(
+                {"error": "Unable to retrieve friends list"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 
     # ------------------------------------------------------------------------------------------------------
-    @action(detail=False, methods=['get'], url_path='friends-suggestions', permission_classes=[IsAuthenticated])
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path='friends-suggestions',
+        permission_classes=[IsAuthenticated]
+    )
     def friends_suggestions(self, request):
-        """Get friend suggestions for the Friends tab."""
+        """Return suggestions for the Friends tab."""
         user = request.user
         limit = int(request.query_params.get('limit', 5))
+
+        # suggestions may be a list -> wrap into queryset when possible
         suggestions = suggest_friends_for_friends_tab(user, limit)
-        serializer = SimpleCustomUserSerializer(suggestions, many=True, context={'request': request})
+
+        # If it's a QuerySet → annotate & optimize
+        if hasattr(suggestions, "select_related"):
+            suggestions = suggestions.select_related(
+                "label",
+                "member_profile"
+            )
+        else:
+            # If it's a list → leave as-is
+            suggestions = list(suggestions)
+
+        serializer = SimpleCustomUserSerializer(
+            suggestions,
+            many=True,
+            context={"request": request}
+        )
         return Response(serializer.data, status=status.HTTP_200_OK)
 
-    @action(detail=False, methods=['get'], url_path='requests-suggestions', permission_classes=[IsAuthenticated])
+    # ------------------------------------------------------------------------------------------------------
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path='requests-suggestions',
+        permission_classes=[IsAuthenticated]
+    )
     def requests_suggestions(self, request):
-        """Get friend suggestions for the Requests tab."""
+        """Return suggestions for the Requests tab."""
         user = request.user
         limit = int(request.query_params.get('limit', 5))
+
         suggestions = suggest_friends_for_requests_tab(user, limit)
-        serializer = SimpleCustomUserSerializer(suggestions, many=True, context={'request': request})
+
+        # Detect queryset vs list
+        if hasattr(suggestions, "select_related"):
+            suggestions = suggestions.select_related(
+                "label",
+                "member_profile"
+            )
+        else:
+            suggestions = list(suggestions)
+
+        serializer = SimpleCustomUserSerializer(
+            suggestions,
+            many=True,
+            context={"request": request}
+        )
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
     
-    @action(detail=True, methods=['post'], url_path='accept-friend-request', permission_classes=[IsAuthenticated])
+    # ------------------------------------------------------------------------------------------------------
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='accept-friend-request',
+        permission_classes=[IsAuthenticated]
+    )
     def accept_friend_request(self, request, pk=None):
         try:
-            friendship = self.get_object()
+            # Preload relationships needed by serializer
+            friendship = self.get_queryset().select_related(
+                "from_user__label",
+                "from_user__member_profile",
+                "to_user__label",
+                "to_user__member_profile",
+            ).get(pk=pk)
+
+            # Only the receiver may accept
             if friendship.to_user != request.user:
                 logger.warning(f"User {request.user.id} tried to accept a friendship not directed to them.")
                 return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
 
+            # Cannot accept request from deleted account
             if getattr(friendship.from_user, "is_deleted", False):
-                return Response({'error': 'This request is no longer valid (sender deactivated).'}, status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    {'error': 'This request is no longer valid (sender deactivated).'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
+            # Process pending request
             if friendship.status == 'pending':
                 friendship.status = 'accepted'
                 friendship.save()
 
-                # Add symmetric friendship
-                success = add_symmetric_friendship(friendship.from_user, friendship.to_user)
-                if not success:
-                    logger.error(f"Failed to create symmetric friendship for {friendship.from_user.id} and {friendship.to_user.id}")
-                    return Response({'error': 'Failed to create symmetric friendship'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                # Make symmetric friendship
+                success = add_symmetric_friendship(
+                    friendship.from_user,
+                    friendship.to_user
+                )
 
-                # Serialize the new friend data
-                friend_data = SimpleCustomUserSerializer(friendship.from_user).data
-                return Response({'message': 'Friendship accepted', 'friend': friend_data}, status=status.HTTP_200_OK)
+                if not success:
+                    logger.error(
+                        f"Failed to create symmetric friendship for {friendship.from_user.id} and {friendship.to_user.id}"
+                    )
+                    return Response(
+                        {'error': 'Failed to create symmetric friendship'},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    )
+
+                # Serialize the new friend (optimized)
+                friend_data = SimpleCustomUserSerializer(
+                    friendship.from_user,
+                    context={"request": request}
+                ).data
+
+                return Response(
+                    {'message': 'Friendship accepted', 'friend': friend_data},
+                    status=status.HTTP_200_OK
+                )
+
+            # Already processed
             logger.info(f"Friendship {friendship.id} already processed or invalid status.")
-            return Response({'error': 'Invalid request or already processed'}, status=status.HTTP_400_BAD_REQUEST)
-        
+            return Response(
+                {'error': 'Invalid request or already processed'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         except Friendship.DoesNotExist:
             logger.error(f"Friendship with id {pk} not found.")
             return Response({'error': 'Friendship request not found'}, status=status.HTTP_404_NOT_FOUND)
-        
+
         except Exception as e:
             logger.error(f"Unexpected error in accept_friend_request: {e}")
-            return Response({'error': 'An unexpected error occurred'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response(
+                {'error': 'An unexpected error occurred'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
         
     @action(detail=True, methods=['post'], url_path='decline-friend-request', permission_classes=[IsAuthenticated])
     def decline_friend_request(self, request, pk=None):
@@ -1286,46 +1453,114 @@ class FriendshipViewSet(viewsets.ModelViewSet):
             logger.error(f"Unexpected error in cancel_friend_request: {e}")
             return Response({'error': 'An unexpected error occurred'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    @action(detail=False, methods=['post'], url_path='delete-friendships', permission_classes=[IsAuthenticated])
+    # ------------------------------------------------------------------------------------------------------
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path='delete-friendships',
+        permission_classes=[IsAuthenticated]
+    )
     def delete_friendship(self, request):
+        """
+        Delete an accepted friendship (symmetric remove).
+        Supports both old 'friendshipId' and new 'friendship_id'.
+        """
         try:
             initiator = request.user
-            counterpart_id = request.data.get('friendshipId')
-            
-            if not counterpart_id:
-                logger.warning(f"User {initiator.id} tried to delete friendship without providing counterpart ID.")
-                return Response({'error': 'Counterpart ID is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
-            friendship = Friendship.objects.filter(from_user=initiator, to_user_id=counterpart_id, status='accepted').first()
+            # Support both old and new field names
+            friendship_id = (
+                request.data.get("friendship_id") or
+                request.data.get("friendshipId")
+            )
+
+            if not friendship_id:
+                logger.warning(f"User {initiator.id} attempted deletion with no friendship_id.")
+                return Response(
+                    {"error": "friendship_id is required."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Load the friendship row
+            friendship = (
+                Friendship.objects
+                .select_related(
+                    "from_user__label", "from_user__member_profile",
+                    "to_user__label",   "to_user__member_profile"
+                )
+                .filter(
+                    id=friendship_id,
+                    status="accepted",
+                    is_active=True
+                )
+                .first()
+            )
+
             if not friendship:
-                logger.warning(f"Friendship not found for initiator {initiator.id} and counterpart {counterpart_id}.")
-                return Response({'error': 'Friendship not found.'}, status=status.HTTP_404_NOT_FOUND)
+                logger.warning(f"Friendship not found for delete: id={friendship_id}")
+                return Response(
+                    {"error": "Friendship not found."},
+                    status=status.HTTP_404_NOT_FOUND
+                )
 
-            counterpart = friendship.to_user
-            
-            # بررسی وجود Fellowship فعال
+            # Ensure the current user is a participant
+            if friendship.from_user_id != initiator.id and friendship.to_user_id != initiator.id:
+                logger.warning(f"User {initiator.id} tried to delete friendship not belonging to them.")
+                return Response(
+                    {"error": "You do not have permission to delete this friendship."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            # Identify counterpart
+            counterpart = (
+                friendship.to_user
+                if friendship.from_user_id == initiator.id
+                else friendship.from_user
+            )
+
+            # LITCovenant prevention
             existing_fellowship = Fellowship.objects.filter(
                 Q(from_user=initiator, to_user=counterpart) |
                 Q(from_user=counterpart, to_user=initiator),
-                status='Accepted'
+                status="Accepted"
             ).exists()
 
             if existing_fellowship:
-                logger.info(f"User {initiator.id} tried to delete friendship with {counterpart.id} while an active Fellowship exists.")
-                return Response({
-                    'error': 'You cannot delete this friend while a LITCovenant relationship is still active. Please remove the LITCovenant first.',
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            if remove_symmetric_friendship(initiator, counterpart):
-                logger.info(f"Friendship successfully deleted by user {initiator.id} with counterpart {counterpart.id}.")
-                return Response({'message': 'Friendship successfully deleted.'}, status=status.HTTP_200_OK)
-            else:
-                logger.error(f"Failed to delete friendship between {initiator.id} and {counterpart.id}.")
-                return Response({'error': 'Failed to delete friendship.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                return Response(
+                    {
+                        "error": (
+                            "You cannot delete this friend while a LITCovenant "
+                            "relationship is active. Please remove the LITCovenant first."
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Symmetric remove
+            success = remove_symmetric_friendship(initiator, counterpart)
+
+            if not success:
+                logger.error(f"Symmetric friendship removal failed: {initiator.id} <-> {counterpart.id}")
+                return Response(
+                    {"error": "Failed to delete friendship."},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+            logger.info(f"Friendship deleted: {initiator.id} <-> {counterpart.id}")
+
+            return Response(
+                {"message": "Friendship successfully deleted."},
+                status=status.HTTP_200_OK
+            )
 
         except Exception as e:
-            logger.error(f"Unexpected error in delete_friendship for user {request.user.id}: {e}")
-            return Response({'error': 'An unexpected error occurred.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.exception(f"Unexpected error in delete_friendship: {e}")
+            return Response(
+                {"error": "An unexpected error occurred."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
 
 
 # FELLOWSHIP View --------------------------------------------------------------------------------------------
@@ -1348,11 +1583,16 @@ class FellowshipViewSet(viewsets.ModelViewSet):
         user = self.request.user
         return (
             Fellowship.objects
-            .select_related("from_user", "to_user")
+            .select_related(
+                "from_user", "to_user",
+                "from_user__label", "from_user__member_profile",
+                "to_user__label", "to_user__member_profile",
+            )
             .filter(Q(from_user=user) | Q(to_user=user))
             .filter(from_user__is_deleted=False, to_user__is_deleted=False)
             .order_by('-created_at')
         )
+
     
     def perform_create(self, serializer):
         try:
@@ -1432,7 +1672,8 @@ class FellowshipViewSet(viewsets.ModelViewSet):
 
             friends = (
                 CustomUser.objects
-                .filter(id__in=friend_ids, is_deleted=False)  # exclude deleted friends
+                .select_related("label", "member_profile")
+                .filter(id__in=friend_ids, is_deleted=False)
                 .filter(
                     Q(username__icontains=query) |
                     Q(email__icontains=query) |
@@ -1459,7 +1700,11 @@ class FellowshipViewSet(viewsets.ModelViewSet):
         try:
             qs = (
                 Fellowship.objects
-                .select_related("to_user", "from_user")
+                .select_related(
+                    "from_user", "to_user",
+                    "from_user__label", "from_user__member_profile",
+                    "to_user__label", "to_user__member_profile",
+                )
                 .filter(from_user=request.user, status='Pending')
                 # defense-in-depth (already handled in serializer, but cheap filter too)
                 .filter(from_user__is_deleted=False, to_user__is_deleted=False)
@@ -1480,7 +1725,11 @@ class FellowshipViewSet(viewsets.ModelViewSet):
         try:
             qs = (
                 Fellowship.objects
-                .select_related("to_user", "from_user")
+                .select_related(
+                    "from_user", "to_user",
+                    "from_user__label", "from_user__member_profile",
+                    "to_user__label", "to_user__member_profile",
+                )
                 .filter(to_user=request.user, status='Pending')
                 .filter(from_user__is_deleted=False, to_user__is_deleted=False)
                 .order_by('-created_at')
@@ -1500,7 +1749,12 @@ class FellowshipViewSet(viewsets.ModelViewSet):
             user = request.user
             fellowships = (
                 Fellowship.objects
-                .select_related("from_user", "to_user", "from_user__member_profile", "to_user__member_profile")
+                .select_related(
+                    "from_user", "to_user",
+                    "from_user__member_profile", "to_user__member_profile",
+                    "from_user__label", "to_user__label",
+                )
+
                 .filter(Q(from_user=user) | Q(to_user=user), status='Accepted')
                 .filter(from_user__is_deleted=False, to_user__is_deleted=False)
             )
@@ -1605,85 +1859,110 @@ class FellowshipViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='decline-request', permission_classes=[IsAuthenticated])
     @require_litshield_access("covenant")
     def decline_request(self, request, pk=None):
+        """
+        Decline a pending request:
+        1) set status -> 'Declined' and save (fires post_save signal -> notification)
+        2) then delete the row (we don't keep declined rows)
+        """
         try:
-            reciprocal_fellowship_type = request.data.get('reciprocalFellowshipType', None)
-
+            reciprocal_fellowship_type = request.data.get('reciprocalFellowshipType')
             if not reciprocal_fellowship_type:
-                logger.warning(f"User {request.user.id} did not provide reciprocalFellowshipType.")
                 return Response({'error': 'Reciprocal fellowship type is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
-            fellowship = Fellowship.objects.filter(
-                id=pk,
-                to_user=request.user,
-                reciprocal_fellowship_type=reciprocal_fellowship_type,
-                status='Pending'
-            ).first()
+            with transaction.atomic():
+                fellowship = (Fellowship.objects
+                            .select_for_update()
+                            .filter(id=pk,
+                                    to_user=request.user,
+                                    reciprocal_fellowship_type=reciprocal_fellowship_type,
+                                    status='Pending')
+                            .first())
+                if not fellowship:
+                    return Response({'error': 'Fellowship not found or already processed.'}, status=status.HTTP_404_NOT_FOUND)
 
-            if not fellowship:
-                logger.warning(f"Fellowship with id {pk} and reciprocal type {reciprocal_fellowship_type} not found.")
-                return Response({'error': 'Fellowship not found or already processed.'}, status=status.HTTP_404_NOT_FOUND)
+                # 1) trigger notification
+                fellowship.status = 'Declined'
+                fellowship.save(update_fields=['status'])  # ✅ post_save → notif
 
-            fellowship.delete()
-            logger.info(f"Fellowship {pk} declined and deleted by user {request.user.id}.")
-            return Response({'message': 'Fellowship request declined successfully.'}, status=status.HTTP_200_OK)
+                # 2) cleanup row (no need to keep declined)
+                fellowship.delete()
+
+            logger.info(f"Fellowship {pk} declined+deleted by user {request.user.id}.")
+            return Response({'message': 'Fellowship request declined.'}, status=status.HTTP_200_OK)
 
         except Exception as e:
-            logger.error(f"Unexpected error in decline_request for user {request.user.id}: {e}")
+            logger.error(f"Unexpected error in decline_request: {e}", exc_info=True)
             return Response({'error': 'An unexpected error occurred.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+
     # ---------------------------------------------------------------------------------------------------------------
-    @action(detail=True, methods=['delete'], url_path='cancel-request', permission_classes=[IsAuthenticated])
+    @action(detail=True, methods=['post'], url_path='cancel-request', permission_classes=[IsAuthenticated])
     @require_litshield_access("covenant")
     def cancel_request(self, request, pk=None):
+        """
+        Cancel my own pending outbound request:
+        1) set status -> 'Cancelled' and save (fires post_save signal -> notification)
+        2) then delete the row (we don't keep cancelled)
+        """
         try:
-            fellowship = self.get_object()
-            if fellowship.from_user != request.user:
-                logger.warning(f"User {request.user.id} tried to cancel a fellowship not initiated by them.")
-                return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+            with transaction.atomic():
+                fellowship = (Fellowship.objects
+                            .select_for_update()
+                            .get(id=pk))
 
-            if fellowship.status != 'Pending':
-                logger.info(f"Fellowship {fellowship.id} cannot be canceled because it is not pending.")
-                return Response({'error': 'Only pending requests can be canceled'}, status=status.HTTP_400_BAD_REQUEST)
+                if fellowship.from_user != request.user:
+                    return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
 
-            fellowship.delete()
-            logger.info(f"Fellowship {fellowship.id} canceled by user {request.user.id}.")
+                if fellowship.status != 'Pending':
+                    return Response({'error': 'Only pending requests can be canceled'}, status=status.HTTP_400_BAD_REQUEST)
+
+                # 1) trigger notification
+                fellowship.status = 'Cancelled'
+                fellowship.save(update_fields=['status'])  # ✅ post_save → notif
+
+                # 2) cleanup row
+                fellowship.delete()
+
+            logger.info(f"Fellowship {pk} cancelled+deleted by user {request.user.id}.")
             return Response({'message': 'Fellowship request canceled.'}, status=status.HTTP_200_OK)
+
         except Fellowship.DoesNotExist:
-            logger.error(f"Fellowship with id {pk} not found.")
             return Response({'error': 'Fellowship request not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            logger.error(f"Unexpected error in cancel_request: {e}")
+            logger.error(f"Unexpected error in cancel_request: {e}", exc_info=True)
             return Response({'error': 'An unexpected error occurred'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
     # ---------------------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='delete-fellowship', permission_classes=[IsAuthenticated])
     @require_litshield_access("covenant")
     def delete_fellowship(self, request):
+        """
+        Remove an accepted fellowship bidirectionally (unpair):
+        Delegates to a helper that:
+        - sets 'Cancelled' + save() on exactly ONE side (fires a single notification burst),
+        - then deletes BOTH sides.
+        """
         try:
             initiator = request.user
             counterpart_id = request.data.get('fellowshipId')
-            relationship_type = request.data.get('relationshipType')  # نوع رابطه
+            relationship_type = request.data.get('relationshipType')
 
             if not counterpart_id or not relationship_type:
-                logger.warning(f"User {initiator.id} tried to delete fellowship without providing complete data.")
-                return Response({'error': 'Counterpart ID and relationship type are required.'}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({'error': 'Counterpart ID and relationship type are required.'},
+                                status=status.HTTP_400_BAD_REQUEST)
 
             counterpart_user = CustomUser.objects.filter(id=counterpart_id).first()
             if not counterpart_user:
-                logger.warning(f"Counterpart user with ID {counterpart_id} not found.")
                 return Response({'error': 'Counterpart user not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-            success = remove_symmetric_fellowship(initiator, counterpart_user, relationship_type)
-            if success:
-                logger.info(f"Fellowship successfully deleted by user {initiator.id} with counterpart {counterpart_id} ({relationship_type}).")
+            ok = remove_symmetric_fellowship(initiator, counterpart_user, relationship_type)
+            if ok:
                 return Response({'message': 'Fellowship deleted successfully.'}, status=status.HTTP_200_OK)
-
-            else:
-                logger.error(f"Failed to delete fellowship for user {initiator.id} with counterpart {counterpart_id} ({relationship_type}).")
-                return Response({'error': 'Failed to delete fellowship.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({'error': 'Failed to delete fellowship.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         except Exception as e:
-            logger.error(f"Unexpected error in delete_fellowship for user {request.user.id}: {e}")
+            logger.error(f"Unexpected error in delete_fellowship: {e}", exc_info=True)
             return Response({'error': 'An unexpected error occurred.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 

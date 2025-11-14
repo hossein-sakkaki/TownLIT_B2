@@ -226,13 +226,16 @@ class ReactionViewSet(
         if owner_id != request.user.id:
             return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
 
-        # --- Reactions WITH messages only ---
-        # Store empty messages as NULL at write-time; then filter by isnull=False here.
+        # --- Reactions WITH messages only (optimized user loading) ---
         qs = (
             Reaction.objects
             .filter(content_type=cto, object_id=obj_pk)
             .exclude(message__isnull=True)
-            .select_related("name")
+            .select_related(
+                "name",                    # user
+                "name__label",             # JOIN label
+                "name__member_profile"     # JOIN member_profile
+            )
             .order_by("-timestamp")
         )
         if rtype:

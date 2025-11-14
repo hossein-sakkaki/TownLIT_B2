@@ -1,8 +1,9 @@
-# Slug Mixin -----------------------------------------------------------------
+# utils/mixins/slug_mixin.py
 from django.db import models, IntegrityError, transaction
 from django.utils.text import slugify
 from django.urls import reverse
 
+# Slug Mixin -----------------------------------------------------------------
 class SlugMixin(models.Model):
     """
     Mixin to generate a unique, URL-friendly slug once per object.

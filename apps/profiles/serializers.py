@@ -795,14 +795,17 @@ class PublicMemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
     # --- testimonies ---
     def get_testimonies(self, obj: Member):
         from apps.posts.serializers.testimonies import TestimonySerializer
+        request = self.context.get("request")
+
+        # یک context یکنواخت بساز
+        ctx = {"request": request} if request else {}
+
         data = testimonies_for_member(obj)
+
         return {
-            'audio':   TestimonySerializer(data['audio'],   context=self.context).data if data['audio']   else None,
-            'video':   TestimonySerializer(data['video'],   context=self.context).data if data['video']   else None,
-            'written': TestimonySerializer(
-                data['written'],
-                context={'request': self.context.get('request')}
-            ).data if data['written'] else None,
+            "audio":   TestimonySerializer(data["audio"],   context=ctx).data   if data["audio"]   else None,
+            "video":   TestimonySerializer(data["video"],   context=ctx).data   if data["video"]   else None,
+            "written": TestimonySerializer(data["written"], context=ctx).data   if data["written"] else None,
         }
 
 

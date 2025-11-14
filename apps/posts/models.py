@@ -9,6 +9,7 @@ from django.contrib.contenttypes.models import ContentType
 from django.urls import reverse
 from uuid import uuid4
 from django.db import transaction
+from urllib.parse import urlencode
 
 from apps.accounts.models import Address
 from .constants import (
@@ -33,6 +34,7 @@ from validators.mediaValidators.audio_validators import validate_audio_file
 from validators.mediaValidators.video_validators import validate_video_file
 from validators.mediaValidators.image_validators import validate_image_file, validate_image_size
 from validators.security_validators import validate_no_executable_file
+from apps.posts.utils.content_router import resolve_content_path
 import logging
 logger = logging.getLogger(__name__)
 from django.contrib.auth import get_user_model
@@ -74,8 +76,33 @@ class Reaction(models.Model):
             models.Index(fields=['content_type', 'object_id']),
             models.Index(fields=['name', 'content_type', 'object_id']),
         ]
+
+    # ==========================================================
+    # Absolute URL for frontend deep-linking (Reactions)
+    # ==========================================================
+    def get_absolute_url(self) -> str:
+        """
+        Deep-link to parent content via content_router.
+        Adds ?focus=reaction-<id> for frontend highlight.
+        """
+        try:
+            model_name = self.content_type.model
+            slug = getattr(self.content_object, "slug", None)
+            subtype = getattr(self.content_object, "type", None)  # optional: "video", "written", etc.
+
+            if slug:
+                return resolve_content_path(
+                    model_name,
+                    slug,
+                    subtype,
+                    focus=f"reaction-{self.pk}"
+                )
+        except Exception:
+            pass
+        return "#"
+
     
-    
+
 # Comment Models ------------------------------------------------------------------------------------------------------------
 class Comment(models.Model):
     id = models.BigAutoField(primary_key=True)
@@ -108,8 +135,44 @@ class Comment(models.Model):
     @property
     def is_reply(self) -> bool:
         return self.recomment_id is not None
-    
-    
+
+    # ==========================================================
+    # Absolute URL for frontend deep-linking (Comments)
+    # ==========================================================
+    def get_absolute_url(self) -> str:
+        """
+        Deep-link to parent content via content_router.
+        Supports both root comments and replies.
+        """
+        try:
+            model_name = self.content_type.model
+            content_obj = self.content_object
+            slug = getattr(content_obj, "slug", None)
+            subtype = getattr(content_obj, "type", None)
+
+            if not slug:
+                return "#"
+
+            # --- Detect focus type ---
+            if self.recomment_id:
+                focus_param = f"reply-{self.pk}:parent-{self.recomment_id}"
+            else:
+                focus_param = f"comment-{self.pk}"
+
+            # --- Generate final path ---
+            return resolve_content_path(
+                model_name=model_name,
+                slug=slug,
+                subtype=subtype,
+                focus=focus_param,
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"[Comment.get_absolute_url] failed: {e}")
+            return "#"
+
+        
+
 # Resource Models -----------------------------------------------------------------------------------------------------------
 class Resource(models.Model):
     RESOURCE_FILE = FileUpload('posts','resource_file','resource')
@@ -401,6 +464,7 @@ class Witness(SlugMixin):
         verbose_name_plural = "Witnesses"
 
 
+
 # Moment Models ----------------------------------------------------------------------------------------------------------
 class Moment(SlugMixin):
     IMAGE_OR_VIDEO = FileUpload('posts','moment_files','moment')
@@ -441,7 +505,8 @@ class Moment(SlugMixin):
         verbose_name = "Moment"
         verbose_name_plural = "Moments"
     
-    
+
+
 # Pray Models ------------------------------------------------------------------------------------------------------------
 class Pray(SlugMixin):
     IMAGE = FileUpload('posts','photos','pray')
@@ -573,7 +638,8 @@ class Lesson(SlugMixin):
     class Meta:
         verbose_name = "Lesson"
         verbose_name_plural = "Lessons"
-    
+
+
 # Preach Models ------------------------------------------------------------------------------------------------------------
 class Preach(SlugMixin):
     IMAGE = FileUpload('posts','photos','preach')
@@ -612,7 +678,7 @@ class Preach(SlugMixin):
         verbose_name = "Preach"
         verbose_name_plural = "Preaches"
     
-    
+
 # Worship Models ----------------------------------------------------------------------------------------------------------
 class Worship(SlugMixin):
     IMAGE = FileUpload('posts','photos','worship')

@@ -5,14 +5,14 @@ from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.admin import GenericTabularInline
 from django.utils import timezone
 from pathlib import Path
-
+from django.utils.translation import gettext_lazy as _
 
 from common.aws.s3_utils import get_file_url
 from apps.posts.models import Moment, Pray
 from apps.profiles.admin_forms import MemberServiceTypeAdminForm, MemberAdminForm
 from .models import (
                 AcademicRecord,
-                Friendship, MigrationHistory,
+                Friendship, Fellowship, MigrationHistory,
                 GuestUser,
                 Member, MemberServiceType,
                 Client, ClientRequest,
@@ -26,7 +26,7 @@ from apps.profilesOrg.models import OrganizationManager
 # Friendship Admin ---------------------------------------------------------------------
 @admin.register(Friendship)
 class FriendshipAdmin(admin.ModelAdmin):
-    list_display = ('initiator', 'friend', 'created_at', 'deleted_at', 'status_display', 'is_active')
+    list_display = ('id', 'initiator', 'friend', 'created_at', 'deleted_at', 'status_display', 'is_active')
     list_filter = ('created_at', 'status', 'deleted_at')
     search_fields = ('from_user__username', 'to_user__username')
     autocomplete_fields = ('from_user', 'to_user')
@@ -51,6 +51,66 @@ class FriendshipAdmin(admin.ModelAdmin):
     initiator.admin_order_field = 'from_user__username'
     friend.admin_order_field = 'to_user__username'
     status_display.short_description = 'Status'
+
+
+# Fellowship Admin -----------------------------------------------------------------------
+
+@admin.register(Fellowship)
+class FellowshipAdmin(admin.ModelAdmin):
+    # ▶ Fields to show in the list view
+    list_display = (
+        'id',
+        'from_user',
+        'to_user',
+        'fellowship_type',
+        'reciprocal_fellowship_type',
+        'status',
+        'created_at',
+        'updated_at',
+    )
+
+    # ▶ Filters on the right sidebar
+    list_filter = (
+        'fellowship_type',
+        'reciprocal_fellowship_type',
+        'status',
+        'created_at',
+    )
+
+    # ▶ Enable search by username or email
+    search_fields = (
+        'from_user__username',
+        'from_user__email',
+        'to_user__username',
+        'to_user__email',
+    )
+
+    # ▶ Read-only fields to prevent editing timestamps
+    readonly_fields = ('created_at', 'updated_at')
+
+    # ▶ Default ordering (newest first)
+    ordering = ('-created_at',)
+
+    # ▶ Organize fields in sections for better form layout
+    fieldsets = (
+        (_('Fellowship Information'), {
+            'fields': (
+                'from_user',
+                'to_user',
+                'fellowship_type',
+                'reciprocal_fellowship_type',
+                'status',
+            )
+        }),
+        (_('Timestamps'), {
+            'fields': ('created_at', 'updated_at'),
+        }),
+    )
+
+    # ▶ Display readable title in admin (optional override)
+    def __str__(self, obj):
+        return f"{obj.from_user} → {obj.to_user} ({obj.fellowship_type})"
+
 
 
 # Education Models Admin -----------------------------------------------------------------
@@ -115,7 +175,7 @@ class PrayInline(GenericTabularInline):
         return super().get_queryset(request).filter(content_type=ContentType.objects.get_for_model(Member))
 
 
-# Member Admin
+# Member Admin ----------------------------------------------------------------
 @admin.register(Member)
 class MemberAdmin(admin.ModelAdmin):
     # Use custom form that validates and filters family by branch

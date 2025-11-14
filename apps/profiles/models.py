@@ -52,7 +52,39 @@ class Friendship(models.Model):
         return f"{self.from_user.username} to {self.to_user.username} ({self.status})"
 
     def get_absolute_url(self):
-            return f"/{self.to_user.username}"
+        """
+        Returns the appropriate frontend URL for Friendship notifications.
+
+        - Pending → opens the 'Requests' tab in Friendship settings page.
+        - Accepted → opens the other user's public profile.
+        - Declined → opens the other user's public profile.
+        - Cancelled/Deleted → also opens the other user's public profile (the actor).
+        """
+        try:
+            # 🔹 Pending friend request → open requests tab
+            if self.status == "pending":
+                return "/settings/friendships?tab=requests"
+
+            # 🔹 For all other statuses → show the *other* user's profile
+            # figure out who should be shown depending on who triggered the action
+            actor = getattr(self, "from_user", None)
+            target = getattr(self, "to_user", None)
+
+            # If the friendship was deleted or cancelled, show actor's profile
+            if self.status in ["deleted", "cancelled"]:
+                if actor:
+                    return f"/lit/{actor.username}"
+
+            # Otherwise (accepted / declined), show the other person’s profile
+            if target:
+                return f"/lit/{target.username}"
+
+            # fallback safety
+            return "/lit/"
+
+        except Exception:
+            return "/lit/"
+
     
     
 # FELLOWSHIP Manager -----------------------------------------------------------------------------------    
@@ -80,7 +112,30 @@ class Fellowship(models.Model):
         return f"{self.from_user} -> {self.to_user} ({self.fellowship_type})"
 
     def get_absolute_url(self):
-            return f"/{self.to_user.username}"
+        """
+        Returns the correct frontend route for Fellowship notifications.
+        - Pending → settings covenant page
+        - Accepted/Declined → profile of the other user
+        - Cancelled → profile of the actor (who removed the fellowship)
+        """
+        try:
+            if self.status == "Pending":
+                return "/settings/lit-covenant"
+
+            # For cancelled relationships → show actor's profile
+            if self.status == "Cancelled":
+                if hasattr(self, "from_user") and self.from_user:
+                    return f"/lit/{self.from_user.username}"
+
+            # For other finalized statuses → show the other user's profile
+            if hasattr(self, "to_user") and self.to_user:
+                return f"/lit/{self.to_user.username}"
+
+            return "/lit/"
+        except Exception:
+            return "/lit/"
+
+
 
 
 # ACADEMIC RECORD Manager --------------------------------------------------------------------------------
@@ -352,8 +407,8 @@ class Member(SlugMixin):
                 })
     
     class Meta:
-        verbose_name = "2. Member"
-        verbose_name_plural = "2. Members"
+        verbose_name = "1. Member"
+        verbose_name_plural = "1. Members"
 
     def __str__(self):
         return self.user.username
@@ -374,8 +429,8 @@ class GuestUser(SlugMixin):
         return self.user.username
         
     class Meta:
-        verbose_name = "1. Guest User"
-        verbose_name_plural = "1. Guest Users"
+        verbose_name = "2. Guest User"
+        verbose_name_plural = "2. Guest Users"
 
     def __str__(self):
         return self.user.username

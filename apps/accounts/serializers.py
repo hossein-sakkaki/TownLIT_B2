@@ -9,8 +9,7 @@ from .models import (
 from apps.profiles.models import Member
 from apps.profilesOrg.models import Organization
 from validators.user_validators import validate_email_field, validate_password_field
-from common.file_handlers.profile_image import ProfileImageMixin
-
+from rest_framework.reverse import reverse
 import logging
 from django.contrib.auth import get_user_model
 
@@ -252,195 +251,486 @@ class SocialMediaLinkReadOnlySerializer(serializers.ModelSerializer):
         return None
 
 
-# CustomUser Serializers -----------------------------------------------------------------------
-class CustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
+# -------------------------------------------------------------------
+# CustomUserSerializer — Full editable profile (for owner only)
+# -------------------------------------------------------------------
+class CustomUserSerializer(serializers.ModelSerializer):
+    # --- Label + color ---
     label = CustomLabelSerializer(read_only=True)
+    label_color = serializers.CharField(source="label.color", read_only=True)
+
+    # --- Identity verification ---
     is_verified_identity = serializers.SerializerMethodField()
-    country = serializers.CharField(write_only=True)
-    country_display = serializers.CharField(
-        source='get_country_display', read_only=True
-    )
-    primary_language_display = serializers.CharField(
-        source='get_primary_language_display', read_only=True
-    )
-    secondary_language_display = serializers.CharField(
-        source='get_secondary_language_display', read_only=True
-    )
-    
-    class Meta:
-        model = CustomUser
-        exclude = ['registration_id', 'access_pin', 'delete_pin', 'is_active', 'is_admin', 'is_deleted', 'reports_count',
-                   'is_superuser', 'is_suspended', 'reactivated_at', 'deletion_requested_at', 'email_change_tokens',
-                   'reset_token', 'reset_token_expiration', 'register_date', 'mobile_verification_code', 'mobile_verification_expiry', 'user_active_code', 'user_active_code_expiry',
-                ]        
-        read_only_fields = ['id', 'register_date', ]
-        extra_kwargs = {
-            'password': {'write_only': True},
-            'username': {
-                'validators': []
-            }
-        }
 
-    def create(self, validated_data):
-        password = validated_data.pop('password', None)
-        instance = self.Meta.model(**validated_data)
-        if password is not None:
-            instance.set_password(password)
-        instance.generate_rsa_keys()
-        instance.save()
-        return instance
-
-    def update(self, instance, validated_data):
-        # Remove sensitive fields
-        password = validated_data.pop('password', None)
-        validated_data.pop('is_active', None)
-        profile_image = validated_data.pop('profile_image', None)
-
-        # Update other fields
-        for attr, value in validated_data.items():
-            setattr(instance, attr, value)
-
-        # Hash and set the password if it's provided
-        if password is not None:
-            instance.set_password(password)
-            
-        if profile_image:
-            instance.image_name = profile_image 
-
-        instance.save()
-        return instance
-    
-    def validate_username(self, value):
-        # Check if the username is unchanged
-        if self.instance and value == self.instance.username:
-            return value  
-        if CustomUser.objects.filter(username=value).exists():
-            raise serializers.ValidationError("Unfortunately, this username is already taken. Please choose another one.")
-        return value
-
-    def get_is_verified_identity(self, obj):
-        return getattr(getattr(obj, 'member_profile', None), 'is_verified_identity', False)
-    
-    
-# CustomUser Public Serializers -----------------------------------------------------------------------
-class PublicCustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
-    label = CustomLabelSerializer(read_only=True)
-    is_verified_identity = serializers.SerializerMethodField()
+    # --- Display enums ---
     country_display = serializers.CharField(source='get_country_display', read_only=True)
     primary_language_display = serializers.CharField(source='get_primary_language_display', read_only=True)
     secondary_language_display = serializers.CharField(source='get_secondary_language_display', read_only=True)
 
+    # --- Profile URL (detail page) ---
+    profile_url = serializers.SerializerMethodField()
+
+    # --- Avatar proxy (FAST, no S3 signing on frontend) ---
+    avatar_url = serializers.SerializerMethodField()
+
+    # country = write_only field
+    country = serializers.CharField(write_only=True, required=False)
+
+    class Meta:
+        model = CustomUser
+
+        # ⚠️ IMPORTANT:
+        # exclude dangerous internal fields but keep profile-related fields.
+        exclude = [
+            'registration_id', 'access_pin', 'delete_pin', 'is_active',
+            'is_admin', 'is_deleted', 'reports_count', 'is_superuser',
+            'is_suspended', 'reactivated_at', 'deletion_requested_at',
+            'email_change_tokens', 'reset_token', 'reset_token_expiration',
+            'mobile_verification_code', 'mobile_verification_expiry',
+            'user_active_code', 'user_active_code_expiry',
+        ]
+
+        read_only_fields = ['id', 'register_date']
+
+        extra_kwargs = {
+            'password': {'write_only': True},
+            'username': {
+                'validators': []  # username uniqueness manually validated
+            }
+        }
+
+    # --------------------------------------------------------------------
+    # CREATE USER
+    # --------------------------------------------------------------------
+    def create(self, validated_data):
+        password = validated_data.pop('password', None)
+
+        instance = CustomUser(**validated_data)
+
+        if password:
+            instance.set_password(password)
+
+        # Generate RSA keys for E2EE system
+        instance.generate_rsa_keys()
+
+        instance.save()
+        return instance
+
+    # --------------------------------------------------------------------
+    # UPDATE USER (owner updates their profile)
+    # --------------------------------------------------------------------
+    def update(self, instance, validated_data):
+        password = validated_data.pop('password', None)
+
+        # Remove fields that should never be written via API
+        validated_data.pop('is_active', None)
+        validated_data.pop('is_admin', None)
+        validated_data.pop('is_superuser', None)
+
+        # Handle profile image / avatar
+        profile_image = validated_data.pop('profile_image', None)
+
+        # Normal fields update
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+
+        # Optional password update
+        if password:
+            instance.set_password(password)
+
+        if profile_image:
+            instance.image_name = profile_image
+
+        instance.save()
+        return instance
+
+    # --------------------------------------------------------------------
+    # VALIDATE USERNAME
+    # --------------------------------------------------------------------
+    def validate_username(self, value):
+        if self.instance and value == self.instance.username:
+            return value
+        if CustomUser.objects.filter(username=value).exists():
+            raise serializers.ValidationError(
+                "Unfortunately, this username is already taken. Please choose another one."
+            )
+        return value
+
+    # --------------------------------------------------------------------
+    # COMPUTED FIELDS
+    # --------------------------------------------------------------------
+    def get_is_verified_identity(self, obj):
+        mp = getattr(obj, 'member_profile', None)
+        return getattr(mp, 'is_verified_identity', False)
+
+    def get_profile_url(self, obj):
+        try:
+            return obj.get_absolute_url()
+        except Exception:
+            return None
+
+    def get_avatar_url(self, obj):
+        request = self.context.get("request")
+        if not request:
+            return None
+
+        # proxy avatar endpoint (FAST)
+        return reverse(
+            "main:main-avatar-detail",
+            args=[obj.id],
+            request=request
+        )
+
+    
+    
+# -------------------------------------------------------------------
+# PublicCustomUserSerializer — full public profile, with avatar_url
+# -------------------------------------------------------------------
+class PublicCustomUserSerializer(serializers.ModelSerializer):
+    label = CustomLabelSerializer(read_only=True)
+    label_color = serializers.CharField(source="label.color", read_only=True)
+
+    # verification + profile URL
+    is_verified_identity = serializers.SerializerMethodField()
+    profile_url = serializers.SerializerMethodField()
+
+    # display-friendly enums
+    country_display = serializers.CharField(source='get_country_display', read_only=True)
+    primary_language_display = serializers.CharField(source='get_primary_language_display', read_only=True)
+    secondary_language_display = serializers.CharField(source='get_secondary_language_display', read_only=True)
+
+    # NEW: fast avatar proxy URL
+    avatar_url = serializers.SerializerMethodField()
+
     class Meta:
         model = CustomUser
         fields = [
-            'id', 'name', 'family', 'username', 'gender', 'label', 'is_verified_identity',
-            'country', 'country_display',
-            'primary_language', 'primary_language_display',
-            'secondary_language', 'secondary_language_display',
-            'email', 'mobile_number',
-            'city', 'birthday',
-            'show_email', 'show_phone_number', 'show_country', 'show_city',
-            'registration_started_at', 
-            'is_account_paused', 'is_suspended'
-        ]
-        read_only_fields = fields  # visitor is read-only
+            # identity
+            "id", "name", "family", "username", "gender",
 
+            # label system
+            "label", "label_color",
+
+            # verification
+            "is_verified_identity",
+
+            # location + languages
+            "country", "country_display",
+            "primary_language", "primary_language_display",
+            "secondary_language", "secondary_language_display",
+            "city", "birthday",
+
+            # contact fields
+            "email", "mobile_number",
+
+            # visibility flags
+            "show_email", "show_phone_number",
+            "show_country", "show_city",
+
+            # account state
+            "registration_started_at",
+            "is_account_paused", "is_suspended",
+
+            # UI routing
+            "profile_url",
+            "avatar_url",
+        ]
+        read_only_fields = fields  # Pure output serializer
+
+    # -------------------------------------------------------
+    # PRIVACY FILTER
+    # -------------------------------------------------------
     def to_representation(self, instance):
         rep = super().to_representation(instance)
-        # honor privacy flags on CustomUser
+
+        # respect privacy flags
         if not getattr(instance, 'show_email', False):
             rep.pop('email', None)
+
         if not getattr(instance, 'show_phone_number', False):
             rep.pop('mobile_number', None)
+
         if not getattr(instance, 'show_country', False):
             rep.pop('country', None)
             rep.pop('country_display', None)
+
         if not getattr(instance, 'show_city', False):
             rep.pop('city', None)
+
         return rep
 
+    # -------------------------------------------------------
+    # helpers
+    # -------------------------------------------------------
     def get_is_verified_identity(self, obj):
-        return getattr(getattr(obj, 'member_profile', None), 'is_verified_identity', False)
+        mp = getattr(obj, "member_profile", None)
+        return getattr(mp, "is_verified_identity", False)
+
+    def get_profile_url(self, obj):
+        try:
+            return obj.get_absolute_url()
+        except Exception:
+            return None
+
+    def get_avatar_url(self, obj):
+        request = self.context.get("request")
+        if not request:
+            return None
+
+        return reverse(
+            "main:main-avatar-detail",
+            args=[obj.id],
+            request=request,
+        )
 
 
-    
-# LIMITED MEMBER Serializer ------------------------------------------------------------------------------
-class LimitedCustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
-    """
-    Ultra-minimal public view of CustomUser.
-    """
+# -------------------------------------------------------------------
+# LimitedCustomUserSerializer — very small footprint
+# -------------------------------------------------------------------
+class LimitedCustomUserSerializer(serializers.ModelSerializer):
     label = CustomLabelSerializer(read_only=True)
+    label_color = serializers.CharField(source="label.color", read_only=True)
     is_verified_identity = serializers.SerializerMethodField()
+    profile_url = serializers.SerializerMethodField()
+
+    # NEW: avatar proxy URL
+    avatar_url = serializers.SerializerMethodField()
 
     class Meta:
         model = CustomUser
         fields = [
-            'id', 'name', 'family', 'username', 'gender', 'label',
-            'is_verified_identity', 'is_member', 'is_suspended', 'is_account_paused'
+            "id",
+            "name",
+            "family",
+            "username",
+            "gender",
+
+            "label",
+            "label_color",
+
+            "is_verified_identity",
+            "is_member",
+            "is_suspended",
+            "is_account_paused",
+
+            # NEW:
+            "profile_url",
+            "avatar_url",
         ]
         read_only_fields = fields
 
     def get_is_verified_identity(self, obj):
-        # Derive from related member profile if any
-        return getattr(getattr(obj, 'member_profile', None), 'is_verified_identity', False)
+        mp = getattr(obj, "member_profile", None)
+        return getattr(mp, "is_verified_identity", False)
 
+    def get_profile_url(self, obj):
+        try:
+            return obj.get_absolute_url()
+        except Exception:
+            return None
+
+    def get_avatar_url(self, obj):
+        request = self.context.get("request")
+        if not request:
+            return None
+
+        return reverse(
+            "main:main-avatar-detail",
+            args=[obj.id],
+            request=request,
+        )
 
 
 
 # Simple CustomUser Serializers For Showing Users ------------------------------------------------
-class SimpleCustomUserSerializer(ProfileImageMixin, serializers.ModelSerializer):
+class SimpleCustomUserSerializer(serializers.ModelSerializer):
+    # --- Label / badge ---
     label = CustomLabelSerializer(read_only=True)
+    label_color = serializers.CharField(source="label.color", read_only=True)
+
+    # --- Friendship / fellowship state ---
     is_friend = serializers.SerializerMethodField()
-    profile_url = serializers.SerializerMethodField()
-    is_verified_identity = serializers.SerializerMethodField()
-    
     request_sent = serializers.SerializerMethodField()
     has_received_request = serializers.SerializerMethodField()
     friendship_id = serializers.SerializerMethodField()
     fellowship_id = serializers.SerializerMethodField()
 
+    # --- Profile + verification ---
+    profile_url = serializers.SerializerMethodField()
+    is_verified_identity = serializers.SerializerMethodField()
+
+    # --- NEW: avatar proxy URL (no S3 signing on frontend) ---
+    avatar_url = serializers.SerializerMethodField()
+
     class Meta:
         model = CustomUser
         fields = [
-                'id', 'username', 'name', 'family', 'label', 
-                'is_friend', 'request_sent', 'has_received_request', 'friendship_id', 'fellowship_id',
-                'profile_url', 'is_verified_identity'
-            ]
-        read_only_fields = ['id']
+            "id",                # ALWAYS the real user.id  ✅
+            "username",
+            "name",
+            "family",
+
+            # badge + label
+            "label",
+            "label_color",
+
+            # friend/fellowship states
+            "is_friend",
+            "request_sent",
+            "has_received_request",
+            "friendship_id",     # ⬅️ legacy field kept as-is (used by frontend)
+            "fellowship_id",
+
+            # profile link
+            "profile_url",
+
+            # verification flag
+            "is_verified_identity",
+
+            # avatar proxy (fast)
+            "avatar_url",
+        ]
+        read_only_fields = ["id"]
+
+    # ---------------------------------------------------------------
+    # Friendship state fields
+    # ---------------------------------------------------------------
 
     def get_is_friend(self, obj):
-        friend_ids = self.context.get('friend_ids', set())
+        """
+        True if this user is already in the caller's friends set.
+        friend_ids: set of user IDs passed via context.
+        """
+        friend_ids = self.context.get("friend_ids", set())
         return obj.id in friend_ids
 
     def get_request_sent(self, obj):
-        sent_map = self.context.get('sent_request_map', {})
+        """
+        True if current user has sent a pending request to 'obj'.
+        sent_request_map: { to_user_id: friendship_id }
+        """
+        sent_map = self.context.get("sent_request_map", {})
         return obj.id in sent_map
 
     def get_has_received_request(self, obj):
-        received_map = self.context.get('received_request_map', {})
+        """
+        True if current user has *received* a pending request from 'obj'.
+        received_request_map: { from_user_id: friendship_id }
+        """
+        received_map = self.context.get("received_request_map", {})
         return obj.id in received_map
 
     def get_friendship_id(self, obj):
-        received_map = self.context.get('received_request_map', {})
+        """
+        Legacy numeric ID of the Friendship edge (if any).
+        Frontend uses this when calling delete-friendships.
+        Priority:
+          1) incoming requests (received_map)
+          2) outgoing requests (sent_map)
+        """
+        received_map = self.context.get("received_request_map", {})
         if obj.id in received_map:
             return received_map[obj.id]
 
-        sent_map = self.context.get('sent_request_map', {})
+        sent_map = self.context.get("sent_request_map", {})
         if obj.id in sent_map:
             return sent_map[obj.id]
+
+        # For plain friends_list / suggestions you can also
+        # inject direct { user_id: friendship_id } map in context
+        direct_map = self.context.get("friendship_ids", {})
+        if obj.id in direct_map:
+            return direct_map[obj.id]
 
         return None
 
     def get_fellowship_id(self, obj):
-        return self.context.get('fellowship_ids', {}).get(obj.id)
+        """
+        Optional: map of { user_id: fellowship_id } passed via context.
+        Used in covenant/fellowship screens.
+        """
+        return self.context.get("fellowship_ids", {}).get(obj.id)
+
+    # ---------------------------------------------------------------
+    # Profile URL
+    # ---------------------------------------------------------------
 
     def get_profile_url(self, obj):
+        """
+        Stable profile URL for user (detail page).
+        Uses model's get_absolute_url for flexibility.
+        """
         if not isinstance(obj, CustomUser):
             return None
-        return obj.get_absolute_url()
+        try:
+            return obj.get_absolute_url()
+        except Exception:
+            return None
+
+    # ---------------------------------------------------------------
+    # Verification
+    # ---------------------------------------------------------------
 
     def get_is_verified_identity(self, obj):
-        return getattr(getattr(obj, 'member_profile', None), 'is_verified_identity', False)
+        """
+        Pull flag from MemberProfile if exists; default False.
+        """
+        mp = getattr(obj, "member_profile", None)
+        return getattr(mp, "is_verified_identity", False)
+
+    # ---------------------------------------------------------------
+    # Avatar Proxy URL (FAST)
+    # ---------------------------------------------------------------
+
+    def get_avatar_url(self, user):
+        request = self.context.get("request")
+        if not user:
+            return None
+
+        # ⭐ 100% future-proof — uses namespace + basename
+        return reverse(
+            "main:main-avatar-detail",
+            args=[user.id],
+            request=request
+        )
+        
+
+# ------------------------------------------------------------------------------------
+class UserMiniSerializer(serializers.ModelSerializer):
+    is_verified_identity = serializers.SerializerMethodField()
+    label_color = serializers.CharField(source='label.color', read_only=True)
+    avatar_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CustomUser
+        fields = [
+            "id",
+            "username",
+            "name",
+            "family",
+            "is_verified_identity",
+            "label_color",
+            "avatar_url",
+        ]
+
+    def get_is_verified_identity(self, user):
+        mp = getattr(user, "member_profile", None)
+        return getattr(mp, "is_verified_identity", False)
+
+    def get_avatar_url(self, user):
+        request = self.context.get("request")
+        if not user:
+            return None
+
+        # ⭐ 100% future-proof — uses namespace + basename
+        return reverse(
+            "main:main-avatar-detail",
+            args=[user.id],
+            request=request
+        )
+
+
+
 
 
 # Reactivation User Serializers -----------------------------------------------------------------------
