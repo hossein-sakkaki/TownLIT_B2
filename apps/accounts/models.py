@@ -39,6 +39,7 @@ class CustomUserManager(BaseUserManager):
                     primary_language=None,
                     secondary_language=None,
                     image_name=None,
+                    avatar_version=None,
                     user_active_code=None,
                     user_active_code_expiry=None,
                     reset_token=None,
@@ -71,6 +72,7 @@ class CustomUserManager(BaseUserManager):
         birthday = birthday if birthday else None
         gender = gender if gender else None
         image_name = image_name if image_name else None
+        avatar_version = avatar_version if avatar_version else None
         
         primary_language = primary_language or 'en'
         secondary_language = secondary_language or None
@@ -100,6 +102,7 @@ class CustomUserManager(BaseUserManager):
             primary_language=primary_language,
             secondary_language=secondary_language,
             image_name=image_name,
+            avatar_version=avatar_version,
             user_active_code=user_active_code,
             user_active_code_expiry=user_active_code_expiry,
             reset_token=reset_token,
@@ -137,6 +140,7 @@ class CustomUserManager(BaseUserManager):
                         primary_language=None,
                         secondary_language=None,
                         image_name=None,
+                        avatar_version=None,
                         user_active_code=None,
                         user_active_code_expiry=None,
                         reset_token=None,
@@ -158,6 +162,7 @@ class CustomUserManager(BaseUserManager):
             primary_language=primary_language,
             secondary_language=secondary_language,
             image_name=image_name,
+            avatar_version=avatar_version,
             
             user_active_code=user_active_code,
             user_active_code_expiry=user_active_code_expiry,
@@ -285,6 +290,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     secondary_language = models.CharField(max_length=5, choices=LANGUAGE_CHOICES, null=True, blank=True, verbose_name='Secondary Language')
     
     image_name = models.ImageField(upload_to=IMAGE.dir_upload, null=True, blank=True, validators=[validate_image_file, validate_image_size, validate_no_executable_file], verbose_name='Image')
+    avatar_version = models.PositiveIntegerField(default=1)
     user_active_code = models.CharField(max_length=200, null=True, blank=True)
     user_active_code_expiry = models.DateTimeField(null=True, blank=True)
     register_date = models.DateField(default=timezone.now, verbose_name='Register Date')

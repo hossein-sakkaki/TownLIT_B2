@@ -210,9 +210,10 @@ class MemberViewSet(viewsets.ModelViewSet):
             "user": payload,  # (تدریجاً deprecate)
         }, status=status.HTTP_200_OK)
 
+    # Update profile image ------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='update-profile-image', permission_classes=[IsAuthenticated])
     def update_profile_image(self, request):
-        # Block avatar changes for deleted accounts
+
         if getattr(request.user, "is_deleted", False):
             return Response(
                 {"error": "Your account is deactivated. Reactivate first to change your profile image."},
@@ -223,18 +224,30 @@ class MemberViewSet(viewsets.ModelViewSet):
         if not profile_image:
             return Response({"error": "No profile image uploaded"}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Load Member + CustomUser
         try:
             member = request.user.member_profile
         except (Member.DoesNotExist, AttributeError):
             return Response({"error": "Profile not found"}, status=status.HTTP_404_NOT_FOUND)
 
         custom_user = member.user
-        custom_user.image_name = profile_image
-        custom_user.save(update_fields=["image_name"])
 
-        data = MemberSerializer(member, context={'request': request}).data
-        return Response({"message": "Profile image updated successfully.", "member": data, "user": data},
-                        status=status.HTTP_200_OK)
+        # --- Save image & bump version ---
+        custom_user.image_name = profile_image
+        custom_user.avatar_version = (custom_user.avatar_version or 1) + 1
+        custom_user.save(update_fields=["image_name", "avatar_version"])
+
+        # --- Return updated serializers ---
+        member_data = MemberSerializer(member, context={'request': request}).data
+
+        return Response(
+            {
+                "message": "Profile image updated successfully.",
+                "member": member_data,
+                "user": member_data.get("user"),   # nested CustomUser
+            },
+            status=status.HTTP_200_OK
+        )
 
     # Request Email Actions -------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='request-email-change', permission_classes=[IsAuthenticated])

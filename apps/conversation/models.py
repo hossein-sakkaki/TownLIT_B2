@@ -29,6 +29,7 @@ class Dialogue(models.Model):
     id = models.BigAutoField(primary_key=True)
     group_name = models.CharField( max_length=255, blank=True, null=True, unique=False, verbose_name="Group Name")
     group_image = models.ImageField(upload_to=get_upload_path('conversation', 'cover', 'group'), validators=[validate_image_file, validate_image_size, validate_no_executable_file], blank=True, null=True, verbose_name="Group Image")
+    group_avatar_version = models.PositiveIntegerField(default=1)
     participants = models.ManyToManyField(settings.AUTH_USER_MODEL, related_name="dialogues")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Created At")
     is_group = models.BooleanField(default=False, verbose_name="Is Group")
