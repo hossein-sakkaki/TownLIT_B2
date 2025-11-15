@@ -1,14 +1,13 @@
+# apps/notifications/consumers.py
 import logging
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Real-time notifications (single private channel per user)
-# ---------------------------------------------------------------------------
+
 class NotificationConsumer(AsyncJsonWebsocketConsumer):
     async def connect(self):
-        """Establish a private WS channel for each authenticated user."""
+        """Private WS channel for real-time notifications."""
         user = self.scope.get("user")
 
         # Reject anonymous users
@@ -18,11 +17,14 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
             return
 
         self.user = user
-        self.group_name = f"user_{user.id}"
 
-        # Join user's private group
+        # ✅ FIX: Use a dedicated group only for notifications
+        self.group_name = f"notif_user_{user.id}"
+
+        # Join notification-only channel
         await self.channel_layer.group_add(self.group_name, self.channel_name)
         await self.accept()
+
         logger.debug(f"[WS-Notif] Connected: user={user.username} → group={self.group_name}")
 
         # Confirm connection
@@ -32,40 +34,38 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
         """Remove user from WS group when socket closes."""
         if hasattr(self, "group_name"):
             await self.channel_layer.group_discard(self.group_name, self.channel_name)
-            logger.debug(f"[WS-Notif] Disconnected: user={getattr(self, 'user', None)}")
+            logger.debug(f"[WS-Notif] Disconnected user={getattr(self, 'user', None)}")
 
     # ------------------------------------------------------------------
-    # Client → Server messages
+    # Client → Server
     # ------------------------------------------------------------------
     async def receive_json(self, content, **kwargs):
-        """Handle incoming messages (ping / delivered)."""
+        """Handle ping / delivered events."""
         msg_type = content.get("type")
 
         if msg_type == "ping":
-            await self.ping(content)
+            await self.ping()
         elif msg_type == "delivered":
-            await self.mark_as_delivered(content)
+            await self.mark_as_delivered()
         else:
             logger.debug(f"[WS-Notif] Unknown message type: {msg_type}")
 
-    async def ping(self, event):
-        """Respond to heartbeat ping from frontend."""
+    async def ping(self):
+        """Heartbeat response."""
         await self.send_json({"type": "pong"})
-        logger.debug(f"[WS-Notif] Pong sent → {self.user.username}")
+        logger.debug(f"[WS-Notif] Pong → {self.user.username}")
 
-    async def mark_as_delivered(self, event):
-        """Client confirms receipt of notification."""
-        user_id = getattr(self.user, "id", None)
+    async def mark_as_delivered(self):
+        """Client acknowledges receiving the notification."""
         await self.send_json({"type": "ack", "status": "ok"})
-        logger.debug(f"[WS-Notif] Delivery ACK from user {user_id}")
+        logger.debug(f"[WS-Notif] Delivery ACK ← user {self.user.id}")
 
     # ------------------------------------------------------------------
-    # Server → Client messages
+    # Server → Client
     # ------------------------------------------------------------------
     async def send_notification(self, event):
         """
-        Called via group_send(type='send_notification') when a new notification is created.
-        Expects: {'type': 'send_notification', 'payload': {...}}
+        Called from group_send(type="send_notification")
         """
         try:
             payload = event.get("payload", {})
