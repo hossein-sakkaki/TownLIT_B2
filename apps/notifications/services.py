@@ -130,7 +130,7 @@ def _deliver_notification(notif: Notification, channels_mask: int):
             layer = get_channel_layer()
             if layer:
                 async_to_sync(layer.group_send)(
-                    f"user_{notif.user_id}",
+                    f"notif_user_{notif.user_id}",   # ←← FIXED HERE
                     {
                         "type": "send_notification",
                         "payload": {
@@ -143,11 +143,12 @@ def _deliver_notification(notif: Notification, channels_mask: int):
                         },
                     },
                 )
-                logger.debug(f"[Notif] WS sent to user_{notif.user_id}")
+                logger.debug(f"[Notif] WS sent to notif_user_{notif.user_id}")
             else:
                 logger.warning(f"[Notif] WS layer unavailable for user {notif.user_id}")
     except Exception as e:
         logger.warning(f"[Notif] WS delivery failed for user {notif.user_id}: {e}", exc_info=True)
+
 
     # --- Push Delivery (FCM) ---
     try:
