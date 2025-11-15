@@ -159,9 +159,10 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'django_otp.middleware.OTPMiddleware',  # 2FA
     'whitenoise.middleware.WhiteNoiseMiddleware',
-    
+
     'townlit_b.middleware.media_headers.AddMediaCORSHeadersMiddleware',
-    "common.middleware.security_headers.ContentSecurityPolicyMiddleware",
+
+    'common.middleware.security_headers.SecurityHeadersMiddleware',
 ]
 
 # To active WebSocket
