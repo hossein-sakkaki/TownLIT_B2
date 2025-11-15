@@ -170,7 +170,6 @@ class DialogueViewSet(viewsets.ModelViewSet):
 
         recipient = get_object_or_404(CustomUser, id=recipient_id)
 
-        # بررسی وجود دیالوگ
         dialogue = Dialogue.objects.filter(
             participants=request.user,
             is_group=False
@@ -220,26 +219,34 @@ class DialogueViewSet(viewsets.ModelViewSet):
         if not group_name:
             return Response({'error': 'Group name is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        if Dialogue.objects.filter(
-            is_group=True,
-            group_name__iexact=group_name.strip()
-        ).exists():
+        if Dialogue.objects.filter(is_group=True, group_name__iexact=group_name.strip()).exists():
             return Response({'error': 'A group with this name already exists.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        # 1) Create dialogue without image first
         dialogue = Dialogue.objects.create(
             is_group=True,
             group_name=group_name.strip(),
-            group_image=group_image,
         )
 
-        # ✅ اضافه کردن موسس به لیست شرکت‌کنندگان
-        dialogue.participants.add(request.user)
-        DialogueParticipant.objects.create(dialogue=dialogue, user=request.user, role='founder')
+        # 2) Add image + bump version
+        if group_image:
+            dialogue.group_image = group_image
+            dialogue.group_avatar_version = (dialogue.group_avatar_version or 1) + 1
+            dialogue.save(update_fields=["group_image", "group_avatar_version"])
 
-        # ✅ ساخت slug با استفاده از نام گروه و نام موسس
+        # founder
+        dialogue.participants.add(request.user)
+        DialogueParticipant.objects.create(
+            dialogue=dialogue,
+            user=request.user,
+            role='founder'
+        )
+
+        # slug
         usernames = list(dialogue.participants.values_list("username", flat=True))
         dialogue.slug = Dialogue.generate_dialogue_slug(usernames, group_name)
         dialogue.save(update_fields=["slug"])
+
         serializer = DialogueSerializer(dialogue, context={"request": request})
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
@@ -252,21 +259,25 @@ class DialogueViewSet(viewsets.ModelViewSet):
         if not dialogue.is_group:
             return Response({"detail": "Only group dialogues can have images."}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            participant = DialogueParticipant.objects.get(dialogue=dialogue, user=request.user)
-            if participant.role not in ["founder", "elder"]:
-                return Response({"detail": "You don't have permission to update the group image."}, status=status.HTTP_403_FORBIDDEN)
-        except DialogueParticipant.DoesNotExist:
+        # Check role
+        participant = DialogueParticipant.objects.filter(dialogue=dialogue, user=request.user).first()
+        if not participant:
             return Response({"detail": "You are not a participant of this group."}, status=status.HTTP_404_NOT_FOUND)
+
+        if participant.role not in ["founder", "elder"]:
+            return Response({"detail": "You don't have permission to update the group image."}, status=status.HTTP_403_FORBIDDEN)
 
         group_image = request.FILES.get("group_image")
         if not group_image:
             return Response({"detail": "No image uploaded."}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Update image + bump version
         dialogue.group_image = group_image
-        dialogue.save()
+        dialogue.group_avatar_version = (dialogue.group_avatar_version or 1) + 1
+        dialogue.save(update_fields=["group_image", "group_avatar_version"])
 
         return Response({"detail": "Group image updated successfully."}, status=status.HTTP_200_OK)
+
 
     # Update Group Name & ... Action ---------------
     @action(detail=True, methods=["post", "patch"], url_path="update-group-info", permission_classes=[IsAuthenticated])

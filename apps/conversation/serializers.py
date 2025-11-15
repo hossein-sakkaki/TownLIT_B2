@@ -5,10 +5,11 @@ from django.db.models import Count
 
 from .models import Dialogue, DialogueParticipant, Message, UserDialogueMarker
 from apps.accounts.serializers import SimpleCustomUserSerializer
+from apps.conversation.mixins import GroupAvatarURLMixin
 from apps.accounts.models import UserDeviceKey
 from apps.conversation.utils import get_websocket_url
 from common.aws.s3_utils import get_file_url
-
+from rest_framework.reverse import reverse
 
 # Dialogue Participant Serializer ------------------------------------------------------
 class DialogueParticipantSerializer(serializers.ModelSerializer):
@@ -23,14 +24,19 @@ class DialogueParticipantSerializer(serializers.ModelSerializer):
 
 
 # Dialogue Serializer ------------------------------------------------------------------
-class DialogueSerializer(GroupImageMixin, serializers.ModelSerializer):
+class DialogueSerializer(GroupAvatarURLMixin, serializers.ModelSerializer):
+    """
+    Serializer for 1:1 and group dialogues.
+    - For participants: uses SimpleCustomUserSerializer (with avatar_url).
+    - For groups: exposes group_avatar_url as a proxy endpoint (no S3 on FE).
+    """
+
     participants = SimpleCustomUserSerializer(many=True, read_only=True)
-    
-    chat_partner = serializers.SerializerMethodField()     
+
+    chat_partner = serializers.SerializerMethodField()
     last_message = serializers.SerializerMethodField()
     participants_roles = DialogueParticipantSerializer(many=True, read_only=True)
 
-    # Dynamically determine if any message in this dialogue is encrypted
     is_encrypted = serializers.SerializerMethodField()
     websocket_url = serializers.SerializerMethodField()
     my_role = serializers.SerializerMethodField()
@@ -38,35 +44,86 @@ class DialogueSerializer(GroupImageMixin, serializers.ModelSerializer):
     is_sensitive = serializers.SerializerMethodField()
     marker_id = serializers.SerializerMethodField()
 
+    # NEW: group avatar proxy URL (for group chats)
+    group_avatar_url = serializers.SerializerMethodField()
+    group_avatar_version = serializers.IntegerField(read_only=True)
+
     class Meta:
         model = Dialogue
         fields = [
-            'id', 'slug', 'group_name', 'participants', 'chat_partner', 'created_at', 'is_group', 'last_message',
-            'participants_roles', 'is_encrypted', 'websocket_url', 'my_role',
-            'is_sensitive', 'marker_id'
+            "id",
+            "slug",
+            "group_name",
+            "participants",
+            "chat_partner",
+            "created_at",
+            "is_group",
+            "last_message",
+            "participants_roles",
+            "is_encrypted",
+            "websocket_url",
+            "my_role",
+            "is_sensitive",
+            "marker_id",
+            # NEW
+            "group_avatar_url", "group_avatar_version",
         ]
 
+    # -------------------------------------------------------------------
+    # WebSocket URL
+    # -------------------------------------------------------------------
     def get_websocket_url(self, obj):
-        request = self.context.get('request')
+        request = self.context.get("request")
         if request:
             return get_websocket_url(request, obj.slug)
         return None
 
+    # -------------------------------------------------------------------
+    # Encryption flag
+    # -------------------------------------------------------------------
     def get_is_encrypted(self, obj):
-        return obj.messages.annotate(enc_count=Count("encryptions")).filter(enc_count__gt=0).exists()
-        
+        # True if any message in this dialogue has encryptions
+        return (
+            obj.messages
+            .annotate(enc_count=Count("encryptions"))
+            .filter(enc_count__gt=0)
+            .exists()
+        )
+
+    # -------------------------------------------------------------------
+    # Chat partner (for 1:1)
+    # -------------------------------------------------------------------
     def get_chat_partner(self, obj):
-        request = self.context.get('request')
+        """
+        For 1:1 dialogues: return the "other" participant with avatar_url & key info.
+        For group dialogues: usually None (frontend shows group info instead).
+        """
+        request = self.context.get("request")
         if not request:
             return None
-        
+
+        if obj.is_group:
+            # For groups you normally don't expose a single partner
+            return None
+
         other_participants = obj.participants.exclude(id=request.user.id)
         if not other_participants.exists():
             return None
-        
+
         user = other_participants.first()
-        user_data = SimpleCustomUserSerializer(user, context=self.context).data
-        active_key = UserDeviceKey.objects.filter(user=user, is_active=True).order_by('-last_used').first()
+
+        user_data = SimpleCustomUserSerializer(
+            user,
+            context=self.context,
+        ).data
+
+        # Attach latest active device public key (if any)
+        active_key = (
+            UserDeviceKey.objects
+            .filter(user=user, is_active=True)
+            .order_by("-last_used")
+            .first()
+        )
         if active_key:
             user_data["public_key"] = active_key.public_key
             user_data["device_id"] = active_key.device_id
@@ -76,20 +133,35 @@ class DialogueSerializer(GroupImageMixin, serializers.ModelSerializer):
 
         return user_data
 
-
+    # -------------------------------------------------------------------
+    # Last message
+    # -------------------------------------------------------------------
     def get_last_message(self, obj):
         request = self.context.get("request")
-        device_id = request.query_params.get("device_id", "").strip().lower() if request else None
-        last_msg = obj.messages.filter(is_system=False).order_by("-timestamp").first()
+        device_id = (
+            request.query_params.get("device_id", "").strip().lower()
+            if request
+            else None
+        )
+
+        last_msg = (
+            obj.messages
+            .filter(is_system=False)
+            .order_by("-timestamp")
+            .first()
+        )
 
         if last_msg:
             serializer = MessageSerializer(
                 last_msg,
-                context={"request": request, "device_id": device_id}
+                context={"request": request, "device_id": device_id},
             )
             return serializer.data
         return None
-        
+
+    # -------------------------------------------------------------------
+    # My role in this dialogue
+    # -------------------------------------------------------------------
     def get_my_role(self, obj):
         request = self.context.get("request")
         if request and hasattr(request, "user"):
@@ -98,19 +170,23 @@ class DialogueSerializer(GroupImageMixin, serializers.ModelSerializer):
             return role_obj.role if role_obj else None
         return None
 
+    # -------------------------------------------------------------------
+    # Sensitivity + marker
+    # -------------------------------------------------------------------
     def get_is_sensitive(self, obj):
-        request = self.context.get('request')
+        request = self.context.get("request")
         if not request:
             return False
         marker = obj.marked_users.filter(user=request.user).first()
         return marker.is_sensitive if marker else False
 
     def get_marker_id(self, obj):
-        request = self.context.get('request')
+        request = self.context.get("request")
         if not request:
             return None
         marker = obj.marked_users.filter(user=request.user).first()
         return marker.id if marker else None
+
 
 
 # Update Group Info Serializer --------------------------------------------------------

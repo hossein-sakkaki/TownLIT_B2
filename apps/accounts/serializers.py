@@ -7,6 +7,7 @@ from .models import (
                 InviteCode
             )
 from apps.profiles.models import Member
+from .mixins import AvatarURLMixin
 from apps.profilesOrg.models import Organization
 from validators.user_validators import validate_email_field, validate_password_field
 from rest_framework.reverse import reverse
@@ -254,7 +255,7 @@ class SocialMediaLinkReadOnlySerializer(serializers.ModelSerializer):
 # -------------------------------------------------------------------
 # CustomUserSerializer — Full editable profile (for owner only)
 # -------------------------------------------------------------------
-class CustomUserSerializer(serializers.ModelSerializer):
+class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
     # --- Label + color ---
     label = CustomLabelSerializer(read_only=True)
     label_color = serializers.CharField(source="label.color", read_only=True)
@@ -272,6 +273,7 @@ class CustomUserSerializer(serializers.ModelSerializer):
 
     # --- Avatar proxy (FAST, no S3 signing on frontend) ---
     avatar_url = serializers.SerializerMethodField()
+    avatar_version = serializers.IntegerField(read_only=True)
 
     # country = write_only field
     country = serializers.CharField(write_only=True, required=False)
@@ -322,27 +324,29 @@ class CustomUserSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         password = validated_data.pop('password', None)
 
-        # Remove fields that should never be written via API
+        # Non-editable fields
         validated_data.pop('is_active', None)
         validated_data.pop('is_admin', None)
         validated_data.pop('is_superuser', None)
 
-        # Handle profile image / avatar
+        # Handle avatar change
         profile_image = validated_data.pop('profile_image', None)
 
-        # Normal fields update
+        # Update normal fields
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
 
-        # Optional password update
         if password:
             instance.set_password(password)
 
+        # ⬅️ Avatar changed?
         if profile_image:
             instance.image_name = profile_image
+            instance.avatar_version = (instance.avatar_version or 1) + 1
 
         instance.save()
         return instance
+
 
     # --------------------------------------------------------------------
     # VALIDATE USERNAME
@@ -369,24 +373,20 @@ class CustomUserSerializer(serializers.ModelSerializer):
         except Exception:
             return None
 
+    # --------------------------------------------------------------------
+    # Fast avatar proxy URL
+    # --------------------------------------------------------------------
     def get_avatar_url(self, obj):
-        request = self.context.get("request")
-        if not request:
-            return None
+        return self.build_avatar_url(obj)
 
-        # proxy avatar endpoint (FAST)
-        return reverse(
-            "main:main-avatar-detail",
-            args=[obj.id],
-            request=request
-        )
+
 
     
-    
+     
 # -------------------------------------------------------------------
 # PublicCustomUserSerializer — full public profile, with avatar_url
 # -------------------------------------------------------------------
-class PublicCustomUserSerializer(serializers.ModelSerializer):
+class PublicCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
     label = CustomLabelSerializer(read_only=True)
     label_color = serializers.CharField(source="label.color", read_only=True)
 
@@ -401,6 +401,7 @@ class PublicCustomUserSerializer(serializers.ModelSerializer):
 
     # NEW: fast avatar proxy URL
     avatar_url = serializers.SerializerMethodField()
+    avatar_version = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = CustomUser
@@ -434,6 +435,7 @@ class PublicCustomUserSerializer(serializers.ModelSerializer):
             # UI routing
             "profile_url",
             "avatar_url",
+            "avatar_version",
         ]
         read_only_fields = fields  # Pure output serializer
 
@@ -473,21 +475,14 @@ class PublicCustomUserSerializer(serializers.ModelSerializer):
             return None
 
     def get_avatar_url(self, obj):
-        request = self.context.get("request")
-        if not request:
-            return None
+        return self.build_avatar_url(obj)
 
-        return reverse(
-            "main:main-avatar-detail",
-            args=[obj.id],
-            request=request,
-        )
 
 
 # -------------------------------------------------------------------
 # LimitedCustomUserSerializer — very small footprint
 # -------------------------------------------------------------------
-class LimitedCustomUserSerializer(serializers.ModelSerializer):
+class LimitedCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
     label = CustomLabelSerializer(read_only=True)
     label_color = serializers.CharField(source="label.color", read_only=True)
     is_verified_identity = serializers.SerializerMethodField()
@@ -495,6 +490,7 @@ class LimitedCustomUserSerializer(serializers.ModelSerializer):
 
     # NEW: avatar proxy URL
     avatar_url = serializers.SerializerMethodField()
+    avatar_version = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = CustomUser
@@ -516,6 +512,7 @@ class LimitedCustomUserSerializer(serializers.ModelSerializer):
             # NEW:
             "profile_url",
             "avatar_url",
+            "avatar_version",
         ]
         read_only_fields = fields
 
@@ -530,20 +527,11 @@ class LimitedCustomUserSerializer(serializers.ModelSerializer):
             return None
 
     def get_avatar_url(self, obj):
-        request = self.context.get("request")
-        if not request:
-            return None
-
-        return reverse(
-            "main:main-avatar-detail",
-            args=[obj.id],
-            request=request,
-        )
-
+        return self.build_avatar_url(obj)
 
 
 # Simple CustomUser Serializers For Showing Users ------------------------------------------------
-class SimpleCustomUserSerializer(serializers.ModelSerializer):
+class SimpleCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
     # --- Label / badge ---
     label = CustomLabelSerializer(read_only=True)
     label_color = serializers.CharField(source="label.color", read_only=True)
@@ -561,6 +549,7 @@ class SimpleCustomUserSerializer(serializers.ModelSerializer):
 
     # --- NEW: avatar proxy URL (no S3 signing on frontend) ---
     avatar_url = serializers.SerializerMethodField()
+    avatar_version = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = CustomUser
@@ -589,6 +578,7 @@ class SimpleCustomUserSerializer(serializers.ModelSerializer):
 
             # avatar proxy (fast)
             "avatar_url",
+            "avatar_version",
         ]
         read_only_fields = ["id"]
 
@@ -654,7 +644,6 @@ class SimpleCustomUserSerializer(serializers.ModelSerializer):
     # ---------------------------------------------------------------
     # Profile URL
     # ---------------------------------------------------------------
-
     def get_profile_url(self, obj):
         """
         Stable profile URL for user (detail page).
@@ -670,7 +659,6 @@ class SimpleCustomUserSerializer(serializers.ModelSerializer):
     # ---------------------------------------------------------------
     # Verification
     # ---------------------------------------------------------------
-
     def get_is_verified_identity(self, obj):
         """
         Pull flag from MemberProfile if exists; default False.
@@ -681,25 +669,18 @@ class SimpleCustomUserSerializer(serializers.ModelSerializer):
     # ---------------------------------------------------------------
     # Avatar Proxy URL (FAST)
     # ---------------------------------------------------------------
+    def get_avatar_url(self, obj):
+        return self.build_avatar_url(obj)
 
-    def get_avatar_url(self, user):
-        request = self.context.get("request")
-        if not user:
-            return None
-
-        # ⭐ 100% future-proof — uses namespace + basename
-        return reverse(
-            "main:main-avatar-detail",
-            args=[user.id],
-            request=request
-        )
-        
+            
 
 # ------------------------------------------------------------------------------------
-class UserMiniSerializer(serializers.ModelSerializer):
+class UserMiniSerializer(AvatarURLMixin, serializers.ModelSerializer):
     is_verified_identity = serializers.SerializerMethodField()
     label_color = serializers.CharField(source='label.color', read_only=True)
+
     avatar_url = serializers.SerializerMethodField()
+    avatar_version = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = CustomUser
@@ -710,26 +691,15 @@ class UserMiniSerializer(serializers.ModelSerializer):
             "family",
             "is_verified_identity",
             "label_color",
-            "avatar_url",
+            "avatar_url", "avatar_version",
         ]
 
     def get_is_verified_identity(self, user):
         mp = getattr(user, "member_profile", None)
         return getattr(mp, "is_verified_identity", False)
 
-    def get_avatar_url(self, user):
-        request = self.context.get("request")
-        if not user:
-            return None
-
-        # ⭐ 100% future-proof — uses namespace + basename
-        return reverse(
-            "main:main-avatar-detail",
-            args=[user.id],
-            request=request
-        )
-
-
+    def get_avatar_url(self, obj):
+        return self.build_avatar_url(obj)
 
 
 

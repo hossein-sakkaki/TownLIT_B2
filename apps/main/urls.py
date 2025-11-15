@@ -17,6 +17,7 @@ from .views import (
     PrayerViewSet,
     coming_soon_view,
     AvatarViewSet,
+    GroupAvatarViewSet,
 )
 
 app_name = "main"  # For namespaced reversing; does not change URLs
@@ -37,7 +38,7 @@ router.register(r'official-videos', OfficialVideoViewSet, basename='main-officia
 router.register(r'prayers', PrayerViewSet, basename='main-prayers')  # keep URL stable
 
 router.register(r'media/avatar', AvatarViewSet, basename='main-avatar')
-
+router.register(r"media/group-avatar", GroupAvatarViewSet, basename="main-group-avatar")
 
 urlpatterns = router.urls + [
     # S3 media proxy endpoint (keep stable)

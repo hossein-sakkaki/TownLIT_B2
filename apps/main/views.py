@@ -1,3 +1,4 @@
+# apps/main/views.py
 from rest_framework import viewsets, status
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny, IsAdminUser
@@ -30,6 +31,7 @@ from .models import (
         TermsAndPolicy, FAQ, SiteAnnouncement, UserFeedback, UserActionLog, Prayer,
         VideoCategory, VideoSeries, OfficialVideo, VideoViewLog
     )
+from apps.conversation.models import Dialogue
 from .serializers import (
         TermsAndPolicySerializer, FAQSerializer, SiteAnnouncementSerializer,
         UserFeedbackSerializer, UserActionLogSerializer, PrayerSerializer,
@@ -401,15 +403,10 @@ class AvatarViewSet(viewsets.ViewSet):
             raise Http404("User not found")
 
         # --- 2) Check privacy (you can expand logic later) ---
-        # If user profile is private, allow only friends / authenticated / etc.
         is_private = False
         mp = getattr(user, "member_profile", None)
         if mp and mp.is_privacy:
             is_private = True
-
-        # If you want: block private profile avatar for guests
-        # if is_private and not request.user.is_authenticated:
-        #     raise Http404("Avatar unavailable")
 
         # --- 3) No avatar uploaded ---
         if not user.image_name:
@@ -436,14 +433,54 @@ class AvatarViewSet(viewsets.ViewSet):
         resp = HttpResponse(obj["Body"].read(), content_type=ctype)
 
         # --- 7) Heavy caching for performance ---
-        # Cache 30 days (can change to 90 days if needed)
         resp["Cache-Control"] = "public, max-age=2592000, immutable"
 
         return resp
 
 
+# ----------------------------------------------------------------------------
+class GroupAvatarViewSet(viewsets.ViewSet):
+    permission_classes = [AllowAny]
 
+    def retrieve(self, request, pk=None):
+        """
+        GET /api/v1/media/group-avatar/<dialogue_id>/
+        """
 
+        # --- 1) Fetch group dialogue ---
+        try:
+            dialogue = Dialogue.objects.get(id=pk, is_group=True)
+        except Dialogue.DoesNotExist:
+            raise Http404("Group not found")
+
+        # --- 2) No image? Return 404 (frontend will load default group avatar) ---
+        if not dialogue.group_image:
+            raise Http404("No group avatar available")
+
+        # S3 key → actual file path stored in ImageField
+        s3_key = dialogue.group_image.name
+
+        # --- 3) Read from private S3 ---
+        try:
+            obj = s3_client.get_object(
+                Bucket=settings.AWS_STORAGE_BUCKET_NAME,
+                Key=s3_key
+            )
+        except ClientError:
+            raise Http404("Group avatar not found")
+
+        # --- 4) Guess content type ---
+        ctype, _ = mimetypes.guess_type(s3_key)
+        if not ctype:
+            ctype = "image/jpeg"
+
+        # --- 5) Stream file ---
+        resp = HttpResponse(obj["Body"].read(), content_type=ctype)
+
+        # --- 6) Cache aggressively (30 days) ---
+        resp["Cache-Control"] = "public, max-age=2592000, immutable"
+
+        return resp
 
 
 
