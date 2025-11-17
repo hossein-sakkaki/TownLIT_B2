@@ -239,7 +239,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
         DialogueParticipant.objects.create(
             dialogue=dialogue,
             user=request.user,
-            role='founder'
+            role='founder' 
         )
 
         # slug

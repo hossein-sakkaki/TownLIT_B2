@@ -1625,6 +1625,28 @@ class FellowshipViewSet(viewsets.ModelViewSet):
             if to_user == self.request.user:
                 raise serializers.ValidationError({"error": "You cannot send a fellowship request to yourself."})
 
+            # --- Confidant safety: block hidden Confidant re-requests silently ---
+            # If user is in 'hide_confidants' mode and this is a Confidant request,
+            # and the target is already an accepted Confidant, return a generic error.
+            try:
+                member = self.request.user.member_profile
+                hide_confidants = getattr(member, "hide_confidants", False)
+            except Member.DoesNotExist:
+                hide_confidants = False
+
+            if hide_confidants and fellowship_type == "Confidant":
+                is_hidden_confidant = Fellowship.objects.filter(
+                    from_user=self.request.user,
+                    to_user=to_user,
+                    fellowship_type="Confidant",
+                    status="Accepted",
+                ).exists()
+                if is_hidden_confidant:
+                    # Generic error message to avoid leaking security state
+                    raise serializers.ValidationError({
+                        "error": "Unable to process this request at the moment."
+                    })
+
             # pending dup check (exclude deleted endpoints)
             existing_request = (
                 Fellowship.objects
@@ -1696,6 +1718,24 @@ class FellowshipViewSet(viewsets.ModelViewSet):
                 .distinct()
             )
 
+            # --- Confidant safety: hide already-accepted Confidants when hide_confidants is active ---
+            # If user is in 'hide_confidants' mode, do not show Confidants in search results.
+            try:
+                member = request.user.member_profile
+                hide_confidants = getattr(member, "hide_confidants", False)
+            except Member.DoesNotExist:
+                hide_confidants = False
+
+            if hide_confidants:
+                # Only Confidants where this user is the 'from_user' are hidden
+                hidden_confidant_ids = Fellowship.objects.filter(
+                    from_user=request.user,
+                    fellowship_type="Confidant",
+                    status="Accepted",
+                ).values_list("to_user_id", flat=True)
+
+                friends = friends.exclude(id__in=hidden_confidant_ids)
+
             paginator = ConfigurablePagination(page_size=20, max_page_size=100)
             paginated_friends = paginator.paginate_queryset(friends, request)
             serializer = SimpleCustomUserSerializer(paginated_friends, many=True, context={'request': request})
@@ -1704,6 +1744,7 @@ class FellowshipViewSet(viewsets.ModelViewSet):
         except Exception as e:
             logger.error(f"Error in search_friends: {e}")
             return Response({'error': 'Unable to search friends'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 
     # ---------------------------------------------------------------------------------------------------------------

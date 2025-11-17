@@ -618,13 +618,22 @@ class MemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
             raise serializers.ValidationError({"error": "Spiritual rebirth day cannot be in the future."})
         return value
 
-    # --- litcovenant (unchanged) ---
+    # --- litcovenant (hardened for safety) ---
     def get_litcovenant(self, obj):
-        # respect visibility flag
+        """
+        Return only non-sensitive covenant relationships for the owner profile.
+        Even if:
+          - show_fellowship_in_profile = True
+          - pin_security_enabled = True
+        we NEVER expose 'Confidant' or 'Entrusted' via this serializer.
+        """
+        # Respect visibility flag
         if not getattr(obj, 'show_fellowship_in_profile', False):
             return []
+
         user = obj.user
         request = self.context.get('request')
+
         qs = (
             Fellowship.objects
             .filter(Q(from_user=user) | Q(to_user=user), status='Accepted')
@@ -633,10 +642,12 @@ class MemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
                 'from_user__member_profile', 'to_user__member_profile'
             )
         )
-        hide_confidants = bool(getattr(obj, 'hide_confidants', False))
+
         out, seen = [], set()
         fellowship_ids_map = {}
+
         for f in qs:
+            # Decide relationship type and opposite user from POV of profile owner
             if f.from_user_id == user.id:
                 rel_type = f.fellowship_type
                 opposite_user = f.to_user
@@ -644,11 +655,8 @@ class MemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
                 rel_type = f.reciprocal_fellowship_type
                 opposite_user = f.from_user
 
-            if hide_confidants and rel_type == "Confidant":
-                continue
-            if rel_type == "Confidant" and not getattr(user, "pin_security_enabled", False):
-                continue
-            if rel_type == "Entrusted" and not getattr(opposite_user, "pin_security_enabled", False):
+            # 🔒 Hard rule: never expose highly sensitive relationships
+            if rel_type in ("Confidant", "Entrusted"):
                 continue
 
             key = (opposite_user.id, rel_type)
@@ -659,8 +667,10 @@ class MemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
             out.append(f)
             fellowship_ids_map[opposite_user.id] = f.id
 
+        # Pass fellowship_ids map so frontend can know which id to use for actions
         ctx = {'request': request, 'fellowship_ids': fellowship_ids_map}
         return FellowshipSerializer(out, many=True, context=ctx).data
+
 
     # --- spiritual_gifts (unchanged) ---
     def get_spiritual_gifts(self, obj):
@@ -789,8 +799,21 @@ class PublicMemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
     
     # --- litcovenant ---
     def get_litcovenant(self, obj: Member):
+        """
+        Visitor-safe covenant list:
+        - Never expose highly sensitive relationships (Confidant, Entrusted) to frontend.
+        """
         qs = fellowships_visible(obj)
-        return FellowshipSerializer(qs, many=True, context=self.context).data
+
+        # Exclude sensitive types on either side of the covenant
+        safe_qs = qs.exclude(
+            fellowship_type__in=["Confidant", "Entrusted"]
+        ).exclude(
+            reciprocal_fellowship_type__in=["Confidant", "Entrusted"]
+        )
+
+        return FellowshipSerializer(safe_qs, many=True, context=self.context).data
+
 
     # --- testimonies ---
     def get_testimonies(self, obj: Member):
