@@ -34,6 +34,7 @@ from .models import (
     CustomLabel, SocialMediaLink, SocialMediaType, InviteCode,
     UserDeviceKey, UserDeviceKeyBackup, UserSecurityProfile
     )
+from utils.security.security_manager import SecurityStateManager
 from .serializers import (
     CustomUserSerializer,
     RegisterUserSerializer, LoginSerializer,
@@ -206,7 +207,7 @@ class AuthViewSet(viewsets.ViewSet):
                 user = CustomUser.objects.create_user(
                     email=ser_data.validated_data['email'],
                 )
-                user.set_password(ser_data.validated_data['password'])
+                user.set_password(ser_data.validated_data['password']) 
                 user.image_name = settings.DEFAULT_USER_AVATAR_URL
                 user.save()
 
@@ -1053,6 +1054,7 @@ class AuthViewSet(viewsets.ViewSet):
                 return Response({"error": "Pin is required to disable pin security."}, status=status.HTTP_400_BAD_REQUEST)
 
             if user.verify_access_pin(entered_pin):
+                SecurityStateManager.unhide_confidants(user)
                 user.access_pin = None
                 user.delete_pin = None
                 user.pin_security_enabled = False

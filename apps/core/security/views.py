@@ -1,15 +1,17 @@
+# apps/core/security/views.py
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.accounts.models import CustomUser
+from utils.security.security_manager import SecurityStateManager
 from utils.security.destructive_actions import handle_destructive_pin_actions
 from .access import grant_litshield_access, check_litshield_access, revoke_litshield_access
 
 
 class LITShieldAccessViewSet(viewsets.ViewSet):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated] 
 
     # Enter ------------------------------------------------------------
     @action(detail=False, methods=["post"])
@@ -22,21 +24,29 @@ class LITShieldAccessViewSet(viewsets.ViewSet):
 
         user: CustomUser = request.user
 
+        # If PIN security is off
         if not getattr(user, "pin_security_enabled", False):
             return grant_litshield_access(scope, user)
 
         if not pin:
-            return Response({"error": "PIN is required."}, status=status.HTTP_400_BAD_REQUEST)        
-        
-        if user.verify_access_pin(pin) or user.verify_delete_pin(pin):
-            if user.verify_delete_pin(pin):
-                try:
-                    handle_destructive_pin_actions(user)
-                except ImportError:
-                    pass
+            return Response({"error": "PIN is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Access PIN (normal PIN) → restore hidden items
+        if user.verify_access_pin(pin):
+            SecurityStateManager.unhide_confidants(user)
+            return grant_litshield_access(scope, user)
+
+        # Delete PIN (destructive PIN)
+        if user.verify_delete_pin(pin):
+            try:
+                handle_destructive_pin_actions(user)
+            except ImportError:
+                pass
 
             return grant_litshield_access(scope, user)
+
         return Response({"error": "Wrong PIN!"}, status=status.HTTP_403_FORBIDDEN)
+
 
     # Check ------------------------------------------------------------
     @action(detail=False, methods=["get"])
