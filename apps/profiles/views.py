@@ -2029,7 +2029,7 @@ class MemberSpiritualGiftsViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         member = self.request.user.member_profile
-        return MemberSpiritualGifts.objects.filter(member=member)
+        return MemberSpiritualGifts.objects.filter(member=member) 
 
     @action(detail=False, methods=['get'], url_path='spiritual-gifts', permission_classes=[IsAuthenticated])
     def get_spiritual_gifts_for_member(self, request):

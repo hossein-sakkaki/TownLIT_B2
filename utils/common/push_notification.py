@@ -1,14 +1,9 @@
 # utils/common/push_notification.py
-from django.conf import settings
+"""
+Deprecated shim for backwards compatibility.
+Prefer using utils.firebase.push_engine.push_engine directly.
+"""
 
+from utils.firebase.push_engine import push_engine 
 
-# Push Notification ---------------------------------------------------------
-from pyfcm import FCMNotification
-def send_push_notification(registration_id, message_title, message_body):
-    push_service = FCMNotification(api_key=settings.FCM_API_KEY)
-    result = push_service.notify_single_device(
-        registration_id=registration_id,
-        message_title=message_title,
-        message_body=message_body
-    )
-    return result
+__all__ = ["push_engine"]

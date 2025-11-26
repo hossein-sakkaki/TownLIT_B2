@@ -1,102 +1,124 @@
+# apps/notifications/signals/reaction_signals.py
+
 import logging
 from django.db.models.signals import post_save
 from django.dispatch import receiver
+
 from apps.posts.models import Reaction
 from apps.notifications.services import create_and_dispatch_notification
 
 logger = logging.getLogger(__name__)
 
 
-# =====================================================
-# 🔸 Reaction → Message Mapping
-# =====================================================
-def _reaction_message(username: str, rtype: str) -> tuple[str, str]:
-    """Return user-facing message + notification type."""
-    mapping = {
-        "like":         (f"{username} liked your post.", "new_reaction_like"),
-        "bless":        (f"{username} sent you a blessing.", "new_reaction_bless"),
-        "gratitude":    (f"{username} expressed gratitude.", "new_reaction_gratitude"),
-        "amen":         (f"{username} said Amen to your post.", "new_reaction_amen"),
-        "encouragement":(f"{username} encouraged your post.", "new_reaction_encouragement"),
-        "empathy":      (f"{username} expressed empathy.", "new_reaction_empathy"),
-        "faithfire":    (f"{username} was inspired by your faith.", "new_reaction_faithfire"),
-        "support":      (f"{username} stands with you in support.", "new_reaction_support"),
-    }
-    return mapping.get(rtype, (f"{username} reacted to your post.", "new_reaction"))
+# ----------------------------------------------------
+# 🔹 Map: reaction_type → (user-facing message, notif_type)
+# ----------------------------------------------------
+REACTION_MAP = {
+    "like":          ("liked your post.",              "new_reaction_like"),
+    "bless":         ("sent you a blessing.",          "new_reaction_bless"),
+    "gratitude":     ("expressed gratitude.",          "new_reaction_gratitude"),
+    "amen":          ("said Amen to your post.",       "new_reaction_amen"),
+    "encouragement": ("encouraged your post.",         "new_reaction_encouragement"),
+    "empathy":       ("expressed empathy.",            "new_reaction_empathy"),
+    "faithfire":     ("was inspired by your faith.",   "new_reaction_faithfire"),
+    "support":       ("stands with you in support.",   "new_reaction_support"),
+}
 
 
-# =====================================================
-# 🔸 Owner Resolver (generic)
-# =====================================================
+def _reaction_template(username: str, reaction_code: str):
+    """Returns (message, notif_type) with safe fallback."""
+    if reaction_code in REACTION_MAP:
+        msg, ntype = REACTION_MAP[reaction_code]
+        return f"{username} {msg}", ntype
+
+    return f"{username} reacted to your post.", "new_reaction"
+
+
+# ----------------------------------------------------
+# 🔹 Resolve content owner
+# ----------------------------------------------------
 def _resolve_owner(obj):
-    """Attempt to find the logical owner (user) of the target content."""
     if not obj:
         return None
 
-    # Common ownership fields
+    # direct ownership patterns
     for attr in ("user", "owner", "author", "created_by", "name", "member_user", "org_owner_user"):
         val = getattr(obj, attr, None)
-        if val is not None and hasattr(val, "id"):
+        if hasattr(val, "id"):
             return val
 
-    # Fallback: nested objects
-    try:
-        if hasattr(obj, "content_object"):
-            inner = obj.content_object
-            for attr in ("user", "owner", "org_owner_user"):
-                val = getattr(inner, attr, None)
-                if val is not None and hasattr(val, "id"):
-                    return val
-    except Exception as e:
-        logger.debug(f"[Notif] _resolve_owner fallback failed for {obj}: {e}")
+    # fallback generic content_object
+    content = getattr(obj, "content_object", None)
+    if content:
+        for attr in ("user", "owner", "org_owner_user"):
+            val = getattr(content, attr, None)
+            if hasattr(val, "id"):
+                return val
 
     return None
 
 
-# =====================================================
-# 🔸 Main Reaction Signal
-# =====================================================
-@receiver(post_save, sender=Reaction, dispatch_uid="notifications.reaction.create_v4")
+# ----------------------------------------------------
+# 🔹 Main Reaction Notification Signal
+# ----------------------------------------------------
+@receiver(post_save, sender=Reaction, dispatch_uid="notif.reaction.create_v5")
 def on_reaction_created(sender, instance: Reaction, created, **kwargs):
-    """Send notification only if the reaction has a message."""
     if not created:
         return
 
     actor = getattr(instance, "name", None)
     if not actor:
-        logger.debug("[Notif] Reaction skipped: missing actor.")
+        logger.debug("[Notif] Reaction skipped — no actor on instance.")
         return
 
-    # ✅ skip if no message (text is None or blank after decryption)
+    # Reaction text (user-entered message) — decrypt already done in model
     msg_text = (instance.message or "").strip()
-    if not msg_text:
-        logger.debug(f"[Notif] Reaction skipped (no message) from {actor.username}")
-        return
 
-    content_object = getattr(instance, "content_object", None)
-    to_user = _resolve_owner(content_object)
+    # If user did not write a message → OK (still send the emoji reaction)
+    # But if msg exists and is only whitespace → ignore
+    # (You already implemented this logic properly; keeping it clean)
+    if instance.message is None:
+        msg_text = ""
 
-    # Skip invalid or self-target
+    target = getattr(instance, "content_object", None)
+    to_user = _resolve_owner(target)
+
     if not to_user or to_user.id == actor.id:
-        logger.debug(f"[Notif] Reaction skipped: invalid/self target for {actor.username}")
+        logger.debug(f"[Notif] Reaction skipped (invalid/self target) → {actor.username}")
         return
 
-    # Map to readable text + notif type
-    msg_template, notif_type = _reaction_message(actor.username, getattr(instance, "reaction_type", ""))
+    # Template reaction message
+    base_msg, notif_type = _reaction_template(actor.username, getattr(instance, "reaction_type", ""))
 
-    # Combine both: custom message first, fallback template for clarity
-    full_msg = f"{msg_template}\n\n💬 “{msg_text}”" if msg_text else msg_template
+    # Combine with optional custom message
+    full_msg = base_msg
+    if msg_text:
+        full_msg = f"{base_msg}\n\n💬 “{msg_text}”"
 
-    # ✅ Create + dispatch notification
+    # unified payload (useful for push, WS, analytics)
+    payload = {
+        "reaction_id": instance.id,
+        "reaction_type": instance.reaction_type,
+        "has_message": bool(msg_text),
+        "target_type": target.__class__.__name__ if target else None,
+        "target_id": getattr(target, "id", None),
+    }
+
+    # 🔥 Create + dispatch
     try:
         create_and_dispatch_notification(
             recipient=to_user,
             actor=actor,
             notif_type=notif_type,
             message=full_msg,
-            target_obj=content_object,
-            action_obj=instance,  # provides deep-link
+            target_obj=target,
+            action_obj=instance,     # enables deep-link
+            extra_payload=payload,   # WebPush + WS need this
         )
-        logger.debug(f"[Notif] Reaction → {to_user.username} ({notif_type}) by {actor.username}")
+
+        logger.debug(
+            f"[Notif] Reaction delivered → {to_user.username} | type={notif_type} | actor={actor.username}"
+        )
+
     except Exception as e:
         logger.exception(f"[Notif] Failed to dispatch reaction notification: {e}")

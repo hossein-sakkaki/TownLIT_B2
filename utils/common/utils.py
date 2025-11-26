@@ -76,7 +76,7 @@ def create_active_code(count):
     count-=1
     return random.randint(10**count, 10**(count+1)-1)
         
-        
+# utils/common/utils.py     
 # SEND ACTIVE CODE by AWS EMAIL ------------------------------------------
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError

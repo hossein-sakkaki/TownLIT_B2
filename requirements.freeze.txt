@@ -78,7 +78,6 @@ ptyprocess==0.7.0
 pyasn1==0.6.0
 pyasn1_modules==0.4.0
 pycparser==2.22
-pyfcm==2.0.6
 PyJWT==2.8.0
 PyMuPDF==1.23.17
 PyMuPDFb==1.23.9

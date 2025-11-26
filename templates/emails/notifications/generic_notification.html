@@ -1,0 +1,39 @@
+{% extends "base_email.html" %}
+
+{% block subject %}
+{{ subject|default:"You have a new notification on TownLIT" }} 
+{% endblock %}
+
+{% block content %}
+  <h1>New notification from TownLIT</h1>
+
+  <p>{{ message }}</p>
+
+  {% if link %}
+    <p class="middle-container">
+      <a href="{{ link }}" class="email-button">
+        View in TownLIT
+      </a>
+    </p>
+
+    <p class="notification-link-supporter">
+      If the button doesn’t work, copy and paste this link into your browser:
+      <br />
+      <a href="{{ link }}">{{ link }}</a>
+    </p>
+  {% endif %}
+
+  <p class="notification-preferences">
+    {{ respect_line }}
+    <br />
+    <a href="{{site_domain}}/settings/notification-preferences">
+      Notification Preferences
+    </a>
+  </p>
+
+
+  <p class="email-signature">
+    {{ signature }}<br />
+    TownLIT
+  </p>
+{% endblock %}

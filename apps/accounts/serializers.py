@@ -1,5 +1,7 @@
 from rest_framework import serializers
 from django.contrib.contenttypes.models import ContentType
+from django.utils import timezone
+
 from django.conf import settings
 from .models import (
                 Address, CustomLabel, SocialMediaType, SocialMediaLink,
@@ -734,3 +736,33 @@ class UserDeviceKeySerializer(serializers.ModelSerializer):
             "location_city", "location_region", "location_country",
             "is_verified", "verified_at"
         ]
+
+
+# FCM Token Serializers -----------------------------------------------------------------------
+class DevicePushTokenSerializer(serializers.Serializer):
+    device_id = serializers.CharField(max_length=100)
+    push_token = serializers.CharField(max_length=512)
+    platform = serializers.CharField(max_length=20, required=False, allow_blank=True)
+
+    def save(self, user):
+        device_id = self.validated_data["device_id"]
+        push_token = self.validated_data["push_token"]
+        platform = self.validated_data.get("platform") or "web"
+
+        obj, created = UserDeviceKey.objects.get_or_create(
+            user=user,
+            device_id=device_id,
+            defaults={
+                "platform": platform,
+                "push_token": push_token,
+            },
+        )
+
+        if not created:
+            obj.platform = platform
+            obj.push_token = push_token
+            obj.is_active = True
+            obj.last_used = timezone.now()
+            obj.save(update_fields=["platform", "push_token", "is_active", "last_used"])
+
+        return obj

@@ -141,7 +141,7 @@ class Comment(models.Model):
     # ==========================================================
     def get_absolute_url(self) -> str:
         """
-        Deep-link to parent content via content_router.
+        Deep-link to parent content via content_router. 
         Supports both root comments and replies.
         """
         try:

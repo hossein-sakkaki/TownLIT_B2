@@ -40,7 +40,7 @@ from .serializers import (
     RegisterUserSerializer, LoginSerializer,
     VerifyNewBornSerializer, ForgetPasswordSerializer, ResetPasswordSerializer,
     SocialMediaLinkSerializer, SocialMediaLinkReadOnlySerializer, SocialMediaTypeSerializer,
-    UserDeviceKeySerializer, ReactivationUserSerializer
+    UserDeviceKeySerializer, DevicePushTokenSerializer, ReactivationUserSerializer
     )
 from .constants import BELIEVER, SEEKER, PREFER_NOT_TO_SAY
 from apps.profilesOrg.models import Organization
@@ -1294,18 +1294,16 @@ class AuthViewSet(viewsets.ViewSet):
             logger.error(f"Error in confirm_reactivate_account: {str(e)}")
             return Response({"error": f"An error occurred: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-
-
     # Register Device Key ----------------------------------------------------------------------------------------------------
     @action(detail=False, methods=["post"], url_path="register-device-key", permission_classes=[IsAuthenticated])
     def register_device_key(self, request):
         """
-        Register/rotate a device public key.
+        Register/rotate a device public key + (NEW: push token support).
 
         Policy:
         - device_id MUST be the key-fingerprint (canonical).
         - Dedup Plan A: install_id (stable per install) → remove old rows of same install.
-        - Dedup Plan B: fingerprint_hint + replace_same_fp=True (fallback when install_id is missing after cache clear).
+        - Dedup Plan B: fingerprint_hint + replace_same_fp=True.
         - Both A and B may run; do NOT use elif.
         """
         user = request.user
@@ -1316,19 +1314,24 @@ class AuthViewSet(viewsets.ViewSet):
         device_name = request.data.get("device_name")
         allow_rotate = bool(request.data.get("allow_rotate", False))
 
-        # Read install_id from body/header separately to enforce consistency if both present
+        # PUSH TOKEN (NEW)
+        push_token = request.data.get("push_token") or None
+        platform = request.data.get("platform") or None
+
+        # ----- install_id -----
         body_install = (request.data.get("install_id") or "").strip().lower()
         header_install = (request.headers.get("X-Install-ID") or "").strip().lower()
         install_id = body_install or header_install or None
 
-        # Optional Plan-B hint (base64url hash string; do NOT lower-case)
+        # ----- Plan-B hint -----
         fingerprint_hint = (request.data.get("fingerprint_hint") or "").strip()
         replace_same_fp = str(request.data.get("replace_same_fp", "")).lower() in ("1", "true", "yes", "on")
 
-        # Enforce header/body consistency for device_id & install_id
+        # ----- Consistency checks -----
         header_device = (request.headers.get("X-Device-ID") or "").strip().lower()
         if header_device and header_device != device_id:
             return Response({"error": "X-Device-ID mismatch."}, status=status.HTTP_400_BAD_REQUEST)
+
         if body_install and header_install and body_install != header_install:
             return Response({"error": "X-Install-ID mismatch."}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1337,11 +1340,14 @@ class AuthViewSet(viewsets.ViewSet):
 
         # ----- Basic validation -----
         if not device_id or not public_key:
-            return Response({"error": "Device ID and public key are required."}, status=status.HTTP_400_BAD_REQUEST)
-        if "-----BEGIN PUBLIC KEY-----" not in public_key or "-----END PUBLIC KEY-----" not in public_key:
-            return Response({"error": "Invalid public key format (PEM expected)."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "Device ID and public key are required."},
+                            status=status.HTTP_400_BAD_REQUEST)
 
-        # ----- Best-effort geo -----
+        if "-----BEGIN PUBLIC KEY-----" not in public_key or "-----END PUBLIC KEY-----" not in public_key:
+            return Response({"error": "Invalid public key format (PEM expected)."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # ----- Geo -----
         location = get_location_from_ip(ip_address) or {}
         city = location.get("city")
         region = location.get("region")
@@ -1352,14 +1358,15 @@ class AuthViewSet(viewsets.ViewSet):
         longitude = location.get("longitude")
         postal = location.get("postal")
 
-        # ----- Limits & PoP TTL (safe casting) -----
+        # ----- Limits -----
         try:
             MAX_ACTIVE_DEVICE_KEYS = int(getattr(settings, "MAX_ACTIVE_DEVICE_KEYS", 10))
-        except (TypeError, ValueError):
+        except Exception:
             MAX_ACTIVE_DEVICE_KEYS = 10
+
         try:
             POP_TTL_MINUTES = int(getattr(settings, "POP_TTL_MINUTES", 10))
-        except (TypeError, ValueError):
+        except Exception:
             POP_TTL_MINUTES = 10
 
         pop_payload = None
@@ -1367,8 +1374,12 @@ class AuthViewSet(viewsets.ViewSet):
         created = False
         rotated = False
 
+        # =====================================================================================
+        # TRANSACTION START
+        # =====================================================================================
         with transaction.atomic():
-            # Lock-by-key to avoid races on this device_id
+
+            # ----- Lock this device_id for this user -----
             existing = (
                 UserDeviceKey.objects
                 .select_for_update(of=("self",))
@@ -1376,8 +1387,10 @@ class AuthViewSet(viewsets.ViewSet):
                 .first()
             )
 
+            # =================================================================================
+            # 1) EXISTING DEVICE → UPDATE
+            # =================================================================================
             if existing:
-                # Compare DER (robust to PEM whitespace)
                 old_der = _pem_to_der_bytes(existing.public_key)
                 new_der = _pem_to_der_bytes(public_key)
 
@@ -1395,11 +1408,10 @@ class AuthViewSet(viewsets.ViewSet):
                             },
                             status=status.HTTP_409_CONFLICT,
                         )
-                    # Intentional rotation
                     existing.public_key = public_key
                     rotated = True
 
-                # Refresh mutable metadata
+                # Update metadata
                 existing.device_name = device_name or existing.device_name
                 existing.user_agent = user_agent
                 existing.ip_address = ip_address
@@ -1413,37 +1425,46 @@ class AuthViewSet(viewsets.ViewSet):
                 existing.latitude = latitude
                 existing.longitude = longitude
                 existing.postal_code = postal
+
                 if install_id:
                     existing.install_id = install_id
                 if fingerprint_hint:
                     existing.fp_hint = fingerprint_hint
 
+                # NEW: store push_token/platform
+                if push_token:
+                    existing.push_token = push_token
+                if platform:
+                    existing.platform = platform
+
                 existing.save(update_fields=[
-                    "public_key", "device_name", "user_agent", "ip_address", "last_used", "is_active",
+                    "public_key", "device_name", "user_agent", "ip_address",
+                    "last_used", "is_active",
                     "location_city", "location_region", "location_country", "timezone",
                     "organization", "latitude", "longitude", "postal_code",
                     "install_id", "fp_hint",
+                    "push_token", "platform",  # NEW
                 ])
+
                 device_obj = existing
 
+            # =================================================================================
+            # 2) CREATE NEW DEVICE
+            # =================================================================================
             else:
-                # Creating a new row → may trigger dedup removal; account for that when enforcing limit.
                 active_count = UserDeviceKey.objects.filter(user=user, is_active=True).count()
 
-                # --- Estimate stale rows to be removed (UNION of both plans) ---
+                # Possible rows to remove
                 would_remove_ids = set()
 
                 if install_id:
-                    ids = UserDeviceKey.objects.filter(user=user, install_id=install_id) \
-                        .values_list("id", flat=True)
+                    ids = UserDeviceKey.objects.filter(user=user, install_id=install_id).values_list("id", flat=True)
                     would_remove_ids.update(ids)
 
                 if replace_same_fp and fingerprint_hint:
-                    ids = UserDeviceKey.objects.filter(user=user, fp_hint=fingerprint_hint) \
-                        .values_list("id", flat=True)
+                    ids = UserDeviceKey.objects.filter(user=user, fp_hint=fingerprint_hint).values_list("id", flat=True)
                     would_remove_ids.update(ids)
 
-                # If after removals we'd still be at/over the limit → block
                 if active_count >= MAX_ACTIVE_DEVICE_KEYS and (active_count - len(would_remove_ids)) >= MAX_ACTIVE_DEVICE_KEYS:
                     return Response(
                         {"error": "Active device limit reached.", "limit": MAX_ACTIVE_DEVICE_KEYS},
@@ -1469,11 +1490,15 @@ class AuthViewSet(viewsets.ViewSet):
                         postal_code=postal,
                         install_id=install_id,
                         fp_hint=fingerprint_hint or None,
+
+                        # NEW
+                        push_token=push_token,
+                        platform=platform,
                     )
                     created = True
 
                 except IntegrityError:
-                    # Lost the race: fallback to update path
+                    # Lost the race → update existing instead
                     existing = (
                         UserDeviceKey.objects
                         .select_for_update(of=("self",))
@@ -1488,10 +1513,6 @@ class AuthViewSet(viewsets.ViewSet):
                             {
                                 "error": "Public key mismatch for this device_id.",
                                 "code": "KEY_MISMATCH",
-                                "detail": (
-                                    "This device_id is already registered with a different public key. "
-                                    "If you intend to rotate keys, re-send with allow_rotate=true."
-                                ),
                             },
                             status=status.HTTP_409_CONFLICT,
                         )
@@ -1512,20 +1533,31 @@ class AuthViewSet(viewsets.ViewSet):
                     existing.latitude = latitude
                     existing.longitude = longitude
                     existing.postal_code = postal
+
                     if install_id:
                         existing.install_id = install_id
                     if fingerprint_hint:
                         existing.fp_hint = fingerprint_hint
 
+                    # NEW
+                    if push_token:
+                        existing.push_token = push_token
+                    if platform:
+                        existing.platform = platform
+
                     existing.save(update_fields=[
-                        "public_key", "device_name", "user_agent", "ip_address", "last_used", "is_active",
+                        "public_key", "device_name", "user_agent", "ip_address",
+                        "last_used", "is_active",
                         "location_city", "location_region", "location_country", "timezone",
                         "organization", "latitude", "longitude", "postal_code",
                         "install_id", "fp_hint",
+                        "push_token", "platform",  # NEW
                     ])
                     device_obj = existing
 
-            # ----- PoP: issue challenge when needed -----
+            # =================================================================================
+            # PoP Challenge (unchanged)
+            # =================================================================================
             issue_pop = created or rotated or (not device_obj.is_verified)
             if issue_pop:
                 nonce = crsa.randbytes(32)
@@ -1534,6 +1566,7 @@ class AuthViewSet(viewsets.ViewSet):
                 device_obj.pop_attempts = 0
                 device_obj.is_verified = False
                 device_obj.verified_at = None
+
                 device_obj.save(update_fields=[
                     "pop_challenge_hash", "pop_challenge_expiry", "pop_attempts",
                     "is_verified", "verified_at", "last_used",
@@ -1546,42 +1579,40 @@ class AuthViewSet(viewsets.ViewSet):
                     "ttl_minutes": POP_TTL_MINUTES,
                 }
 
-            # ----- Dedup A: by install_id (preferred) -----
+            # =================================================================================
+            # Dedup A: install_id
+            # =================================================================================
             if install_id:
-                stale_qs = (
-                    UserDeviceKey.objects
-                    .filter(user=user, install_id=install_id)
-                    .exclude(id=device_obj.id)
-                )
+                stale_qs = UserDeviceKey.objects.filter(user=user, install_id=install_id).exclude(id=device_obj.id)
                 if stale_qs.exists():
                     dedup_removed_ids.extend(list(stale_qs.values_list("device_id", flat=True)))
                     stale_qs.delete()
 
-            # ----- Dedup B: by fingerprint_hint (run IN ADDITION to A when requested) -----
+            # =================================================================================
+            # Dedup B: fingerprint_hint
+            # =================================================================================
             if replace_same_fp and fingerprint_hint:
                 from django.db.models import Q
-
                 stale_fp_qs = (
                     UserDeviceKey.objects
                     .filter(user=user, fp_hint=fingerprint_hint)
                     .exclude(id=device_obj.id)
                 )
-                # Safer: delete only rows from same IP or unverified
                 stale_fp_qs = stale_fp_qs.filter(Q(ip_address=ip_address) | Q(is_verified=False))
-
                 if stale_fp_qs.exists():
                     dedup_removed_ids.extend(list(stale_fp_qs.values_list("device_id", flat=True)))
                     stale_fp_qs.delete()
 
-
-        # ----- Response -----
+        # =====================================================================================
+        # RESPONSE
+        # =====================================================================================
         return Response({
             "message": "Device key registered successfully." if created else "Device key updated.",
             "created": bool(created),
             "rotated": bool(rotated),
             "location": location,
             "pop": pop_payload,
-            "dedup_removed": dedup_removed_ids,  # list of device_id removed by dedup
+            "dedup_removed": dedup_removed_ids,
         }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
 
@@ -2134,3 +2165,4 @@ class SocialLinksViewSet(viewsets.ViewSet):
 
         except Exception as e:
             return Response({"error": "Failed to fetch social media types."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        

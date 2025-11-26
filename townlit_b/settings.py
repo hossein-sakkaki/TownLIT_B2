@@ -313,10 +313,11 @@ REST_FRAMEWORK = {
 
 from datetime import timedelta
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(hours=24),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=14),
+    "ACCESS_TOKEN_LIFETIME": timedelta(days=10),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=30),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
+    
     "UPDATE_LAST_LOGIN": False,
 
     "ALGORITHM": "HS256",
@@ -465,8 +466,39 @@ CELERY_TASK_DEFAULT_QUEUE = 'default'
 broker_connection_retry_on_startup = True
 
 # FCM KEY for push Notifications ------------------------------------------------------
-FCM_PRIVATE_KEY_ID = os.getenv('FCM_PRIVATE_KEY_ID')
-FCM_API_KEY = os.getenv('FCM_API_KEY')
+# FCM_PRIVATE_KEY_ID = os.getenv('FCM_PRIVATE_KEY_ID')
+# FCM_API_KEY = os.getenv('FCM_API_KEY')
+
+
+# --------------------------------------------------------------------
+# Firebase Push Notification (FINAL)
+# --------------------------------------------------------------------
+from pathlib import Path
+import json
+from django.core.exceptions import ImproperlyConfigured
+
+# Path to service account
+FIREBASE_CREDENTIALS_PATH = Path(__file__).resolve().parent / "service-account.json"
+
+if not FIREBASE_CREDENTIALS_PATH.exists():
+    raise ImproperlyConfigured(
+        f"Firebase service account file missing at {FIREBASE_CREDENTIALS_PATH}"
+    )
+
+# Load JSON file
+try:
+    with open(FIREBASE_CREDENTIALS_PATH, "r") as f:
+        FIREBASE_CREDENTIALS = json.load(f)
+except Exception as e:
+    raise ImproperlyConfigured(
+        f"Unable to load Firebase credentials file: {e}"
+    )
+
+# Project ID required for FCM REST
+FIREBASE_PROJECT_ID = FIREBASE_CREDENTIALS.get("project_id")
+if not FIREBASE_PROJECT_ID:
+    raise ImproperlyConfigured("Firebase project_id missing in service account JSON.")
+
 
 # Real-Time Notification --------------------------------------------------------------
 ASGI_APPLICATION = 'townlit_b.asgi.application'

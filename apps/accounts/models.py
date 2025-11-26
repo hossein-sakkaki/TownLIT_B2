@@ -411,6 +411,20 @@ class UserDeviceKey(models.Model):
     user_agent = models.TextField(blank=True, null=True)
     ip_address = models.GenericIPAddressField(blank=True, null=True)
 
+    # Platform & push token for FCM
+    platform = models.CharField(
+        max_length=20,
+        blank=True,
+        null=True,
+        help_text="web / android / ios (for future multi-platform support)",
+    )
+    push_token = models.CharField(
+        max_length=512,
+        blank=True,
+        null=True,
+        help_text="Universal push registration token (FCM/WebPush/APNs)"
+    )
+
     install_id = models.CharField(max_length=64, blank=True, null=True, db_index=True)
     fp_hint = models.CharField(max_length=128, blank=True, null=True, db_index=True)
 
@@ -448,7 +462,6 @@ class UserDeviceKey(models.Model):
             return decrypted == code
         except Exception:
             return False
-
 
     class Meta:
         unique_together = ('user', 'device_id')
@@ -515,3 +528,5 @@ class InviteCode(models.Model):
 
     def __str__(self):
         return f"{self.code} ({'USED' if self.is_used else 'UNUSED'})"
+    
+    

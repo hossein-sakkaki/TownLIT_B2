@@ -1,3 +1,4 @@
+# utils/email/token_generator.py
 from django.core.exceptions import ObjectDoesNotExist
 from django.core import signing
 

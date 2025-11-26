@@ -1,3 +1,4 @@
+<!-- templates/base_email.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -24,10 +25,7 @@
       background-position: center;
       background-attachment: fixed;
 
-
-      font-family: 'Lato', 'Segoe UI', sans-serif;
-
-      
+      font-family: "Lato", "Noto Sans", "Helvetica", "Segoe UI", sans-serif;
     }
 
     /* ========== GLOBAL WRAPPER ========== */
@@ -133,7 +131,7 @@
       display: inline-block;
       background-color: #0F52BA;
       color: #F8F6F0 !important;
-      padding: 12px 24px;
+      padding: 8px 20px;
       border-radius: 10px;
       text-decoration: none;
       font-size: 16px;
@@ -143,6 +141,7 @@
 
     .email-button:hover {
       background-color: #F6C860;
+      color: #2B2C30 !important;
     }
 
     .code-box {
@@ -157,6 +156,34 @@
       text-align: center;
       margin: 24px 0;
       font-family: 'Lato', monospace;
+    }
+
+    .middle-container {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      margin: 22px 0;
+    }
+
+    .notification-link-supporter {
+      font-size: 12px; 
+      color: #6F6F6F;
+    }
+
+    .notification-preferences {
+      font-size: 12px; 
+      color: #6F6F6F; 
+      margin-top: 32px; 
+      line-height: 1.5;
+    }
+    .notification-preferences a {
+      font-weight: bold;
+      color: #0F52BA; 
+      text-decoration: none;
+    }
+    .notification-preferences a:hover {
+      color: #F6C860 !important;
     }
 
     .email-reflection {

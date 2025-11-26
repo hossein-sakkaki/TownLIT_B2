@@ -11,7 +11,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.db.models.functions import Now
 from django.contrib.auth import get_user_model
 
-from .constants import NOTIFICATION_TYPES
+from .constants import NOTIFICATION_TYPES, CHANNEL_DEFAULT
 
 User = get_user_model()
 
@@ -22,7 +22,7 @@ class UserNotificationPreference(models.Model):
     notification_type = models.CharField(max_length=50, choices=NOTIFICATION_TYPES)
     enabled = models.BooleanField(default=True)
     # Optional channel mask (default = both push+ws)
-    channels_mask = models.PositiveIntegerField(default=3)  # 1:push, 2:ws
+    channels_mask = models.PositiveIntegerField(default=CHANNEL_DEFAULT)  # 1:push,2:ws,4:email
 
     class Meta:
         unique_together = ('user', 'notification_type')
