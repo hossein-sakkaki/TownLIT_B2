@@ -62,3 +62,5 @@ Thumbs.db
 
 # Ignore CKEditor static files
 static/ckeditor/ckeditor/
+
+townlit_b/service-account.json
