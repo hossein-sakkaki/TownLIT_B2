@@ -36,6 +36,10 @@ NOTIFICATION_TYPES = [
     ("fellowship_request_declined", "Fellowship Request Declined"),
     ("fellowship_decline_notice", "Fellowship Decline Notice"),
     ("fellowship_cancelled", "Fellowship Cancelled"),
+
+    # --- Messages ---
+    ("new_message_direct", "New Direct Message"),
+    ("new_message_group", "New Group Message"),
 ]
 
 
@@ -164,5 +168,20 @@ NOTIFICATION_PREF_METADATA = {
         "label": "LITCovenant cancelled",
         "description": "You will be notified when a LITCovenant relationship is cancelled.",
     },
+
+    # ------------------------
+    # MESSAGES
+    # ------------------------
+    "new_message_direct": {
+        "category": "Messages",
+        "label": "New direct message",
+        "description": "You will be notified when someone sends you a direct message.",
+    },
+    "new_message_group": {
+        "category": "Messages",
+        "label": "New group message",
+        "description": "You will be notified when someone sends a new message in a group you are part of.",
+    },
+
 
 }

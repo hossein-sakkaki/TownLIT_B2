@@ -1,6 +1,6 @@
 # utils/firebase/push_engine.py
 
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any 
 import logging
 import requests
 
@@ -84,16 +84,17 @@ class FirebasePushEngine:
             "Content-Type": "application/json; charset=utf-8",
         }
 
-        # STRINGIFY DATA
-        safe_data = _stringify_dict(data)
+        # Merge title/body into data payload (data-only message)
+        base_data: Dict[str, Any] = data.copy() if data else {}
+        base_data.setdefault("title", title)
+        base_data.setdefault("body", body)
+
+        safe_data = _stringify_dict(base_data)
 
         payload = {
             "message": {
                 "token": token,
-                "notification": {
-                    "title": title,
-                    "body": body,
-                },
+                # ❌ NO "notification" BLOCK HERE
                 "data": safe_data,
             }
         }
@@ -123,6 +124,8 @@ class FirebasePushEngine:
         except Exception as e:
             logger.exception("⛔ FCM EXCEPTION → %s", e)
             return None
+
+
 
     # ------------------------------------------------------------
     # PUBLIC: send to multiple tokens

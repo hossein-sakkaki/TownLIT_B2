@@ -14,14 +14,14 @@ logger = logging.getLogger(__name__)
 # 🔹 Map: reaction_type → (user-facing message, notif_type)
 # ----------------------------------------------------
 REACTION_MAP = {
-    "like":          ("liked your post.",              "new_reaction_like"),
-    "bless":         ("sent you a blessing.",          "new_reaction_bless"),
-    "gratitude":     ("expressed gratitude.",          "new_reaction_gratitude"),
-    "amen":          ("said Amen to your post.",       "new_reaction_amen"),
-    "encouragement": ("encouraged your post.",         "new_reaction_encouragement"),
-    "empathy":       ("expressed empathy.",            "new_reaction_empathy"),
-    "faithfire":     ("was inspired by your faith.",   "new_reaction_faithfire"),
-    "support":       ("stands with you in support.",   "new_reaction_support"),
+    "like":          ("liked your post",              "new_reaction_like"),
+    "bless":         ("sent you a blessing",          "new_reaction_bless"),
+    "gratitude":     ("expressed gratitude",          "new_reaction_gratitude"),
+    "amen":          ("said Amen to your post",       "new_reaction_amen"),
+    "encouragement": ("encouraged your post",         "new_reaction_encouragement"),
+    "empathy":       ("expressed empathy",            "new_reaction_empathy"),
+    "faithfire":     ("was inspired by your faith",   "new_reaction_faithfire"),
+    "support":       ("stands with you in support",   "new_reaction_support"),
 }
 
 
@@ -31,7 +31,7 @@ def _reaction_template(username: str, reaction_code: str):
         msg, ntype = REACTION_MAP[reaction_code]
         return f"{username} {msg}", ntype
 
-    return f"{username} reacted to your post.", "new_reaction"
+    return f"{username} reacted to your post", "new_reaction"
 
 
 # ----------------------------------------------------
@@ -93,7 +93,7 @@ def on_reaction_created(sender, instance: Reaction, created, **kwargs):
     # Combine with optional custom message
     full_msg = base_msg
     if msg_text:
-        full_msg = f"{base_msg}\n\n💬 “{msg_text}”"
+        full_msg = f"{base_msg}: “{msg_text}”"
 
     # unified payload (useful for push, WS, analytics)
     payload = {
