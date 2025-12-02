@@ -18,8 +18,9 @@ def _build_message_link(dialogue, message) -> str:
     if not dialogue:
         return "/conversation/"
 
-    # Try canonical URL of the dialogue first
     base_url = None
+
+    # Try canonical URL of the dialogue first
     if hasattr(dialogue, "get_absolute_url"):
         try:
             base_url = dialogue.get_absolute_url()
@@ -30,16 +31,77 @@ def _build_message_link(dialogue, message) -> str:
                 e,
             )
 
-    # Fallback if no get_absolute_url or it failed
+    # Fallback if get_absolute_url is missing or failed
     if not base_url:
+        # ⚠️ If you prefer /conversation/{id}/ change slug → id
         base_url = f"/conversation/{dialogue.slug}/"
+
     return f"{base_url}?focus=message-{message.id}"
+
+
+def _classify_message_kind(msg: Message) -> str:
+    """
+    Classify message kind based on Message model fields (NO decryption).
+    Returns one of: 'text', 'voice', 'video', 'image', 'file'.
+    """
+
+    # Debug log to help if something goes wrong
+    logger.debug(
+        "[Notif][MessageKind] msg_id=%s | image=%s | video=%s | file=%s | audio=%s",
+        getattr(msg, "id", None),
+        bool(msg.image),
+        bool(msg.video),
+        bool(msg.file),
+        bool(msg.audio),
+    )
+
+    # Voice / audio
+    if msg.audio:
+        return "voice"
+
+    # Video
+    if msg.video:
+        return "video"
+
+    # Image
+    if msg.image:
+        return "image"
+
+    # Generic file
+    if msg.file:
+        return "file"
+
+    # Fallback: assume text-only (encrypted or not)
+    return "text"
+
+
+def _build_notification_message(actor, msg_kind: str) -> str:
+    """
+    Build human-readable notification text based on message kind.
+    We NEVER include decrypted content (E2EE remains intact).
+    """
+    username = getattr(actor, "username", "Someone")
+
+    if msg_kind == "voice":
+        return f"New voice message from {username}"
+    if msg_kind == "video":
+        return f"New video message from {username}"
+    if msg_kind == "image":
+        return f"New image from {username}"
+    if msg_kind == "file":
+        return f"New file from {username}"
+
+    # Default: text message
+    return f"New message from {username}"
 
 
 @receiver(post_save, sender=Message, dispatch_uid="notif.message_new_v1")
 def on_message_created(sender, instance: Message, created, **kwargs):
     """
-    Create Notification (DB + WS + Push + Email) when a new message is created.
+    Create Notification (DB + Push + Email) when a new message is created.
+
+    WebSocket streaming for messages is handled by the conversation app;
+    here we only fan-out high-level notifications.
     """
     if not created:
         return
@@ -76,30 +138,37 @@ def on_message_created(sender, instance: Message, created, **kwargs):
     # Build deep-link once per message
     link = _build_message_link(dialogue, instance)
 
+    # Classify message kind once
+    msg_kind = _classify_message_kind(instance)
+
     for recipient in recipients_qs:
+        # Safety: skip sender (should already be excluded above)
         if recipient.id == actor.id:
             continue
 
-        msg_text = f"New message from {actor.username}"
+        # Human readable notification message (no content preview)
+        msg_text = _build_notification_message(actor, msg_kind)
 
         create_and_dispatch_notification(
             recipient=recipient,
             actor=actor,
             notif_type=notif_type,
             message=msg_text,
-            target_obj=dialogue,
-            action_obj=instance,
+            target_obj=dialogue,   # used for link resolution fallback
+            action_obj=instance,   # the Message itself
             link=link,
             extra_payload={
                 "dialogue_id": dialogue.id,
                 "message_id": instance.id,
                 "is_group": getattr(dialogue, "is_group", False),
+                "message_kind": msg_kind,
             },
         )
 
         logger.debug(
-            "[Notif][Message] %s → %s (dialogue=%s, message=%s, link=%s)",
+            "[Notif][Message] %s (%s) → %s (dialogue=%s, message=%s, link=%s)",
             notif_type,
+            msg_kind,
             recipient.username,
             dialogue.id,
             instance.id,

@@ -5,4 +5,5 @@ from .friendship_signals import *
 from .fellowship_signals import *
 from .common_signals import *
 from .messages_signals import *
+from .testimony_signals import *
 

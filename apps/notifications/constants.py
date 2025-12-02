@@ -40,11 +40,21 @@ NOTIFICATION_TYPES = [
     # --- Messages ---
     ("new_message_direct", "New Direct Message"),
     ("new_message_group", "New Group Message"),
+
+    # --- Testimonies ---
+    ("new_testimony_written", "New Written Testimony"),
+    ("new_testimony_audio", "New Audio Testimony"),
+    ("new_testimony_video", "New Video Testimony"),
+
 ]
 
+# Types that should only send Push and Email notifications (no WebSocket) ---------
+NOTIFICATION_TYPES_PUSH_EMAIL_ONLY = {
+    "new_message_direct",
+    "new_message_group",
+}
 
-
-# Notification Channels ----------------------------------------------------
+# Notification Channels -----------------------------------------------------------
 CHANNEL_PUSH = 1     # FCM
 CHANNEL_WS = 2       # WebSocket
 CHANNEL_EMAIL = 4    # Email
@@ -183,5 +193,23 @@ NOTIFICATION_PREF_METADATA = {
         "description": "You will be notified when someone sends a new message in a group you are part of.",
     },
 
+    # ------------------------
+    # TESTIMONIES
+    # ------------------------
+    "new_testimony_written": {
+        "category": "Testimonies",
+        "label": "New written testimony from a friend",
+        "description": "You will be notified when a friend publishes a new written testimony.",
+    },
+    "new_testimony_audio": {
+        "category": "Testimonies",
+        "label": "New audio testimony from a friend",
+        "description": "You will be notified when a friend publishes a new audio testimony.",
+    },
+    "new_testimony_video": {
+        "category": "Testimonies",
+        "label": "New video testimony from a friend",
+        "description": "You will be notified when a friend publishes a new video testimony.",
+    },
 
 }

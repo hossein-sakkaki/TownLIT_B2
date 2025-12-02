@@ -10,7 +10,14 @@ from typing import Optional, Dict, Any
 
 from utils.firebase.push_engine import push_engine  # NEW: Firebase REST engine
 from .models import Notification, UserNotificationPreference
-from .constants import CHANNEL_PUSH, CHANNEL_WS, CHANNEL_EMAIL, CHANNEL_DEFAULT
+from .constants import (
+    CHANNEL_PUSH,
+    CHANNEL_WS,
+    CHANNEL_EMAIL,
+    CHANNEL_DEFAULT,
+    NOTIFICATION_TYPES_PUSH_EMAIL_ONLY,
+)
+
 from .tasks import send_email_notification  # Celery async task
 
 logger = logging.getLogger(__name__)
@@ -111,6 +118,7 @@ def create_and_dispatch_notification(
         actor.id if actor else None,
     )
 
+    # Resolve user preference + channel mask
     enabled, channels_mask = _is_enabled(recipient, notif_type)
 
     logger.error(
@@ -119,6 +127,11 @@ def create_and_dispatch_notification(
         enabled,
         channels_mask,
     )
+
+    # For some types (e.g. messages) we only want Push + Email, no WS
+    if notif_type in NOTIFICATION_TYPES_PUSH_EMAIL_ONLY:
+        # Keep only PUSH + EMAIL bits, drop WebSocket
+        channels_mask = channels_mask & (CHANNEL_PUSH | CHANNEL_EMAIL)
 
     if not enabled:
         logger.error(
@@ -133,6 +146,7 @@ def create_and_dispatch_notification(
     action_ct = _safe_ct(action_obj)
     action_id = getattr(action_obj, "pk", None)
 
+    # Prefer explicit link, else deep-link resolver
     link = link or _resolve_link(target_obj, action_obj)
 
     dedupe_key = (
@@ -170,6 +184,7 @@ def create_and_dispatch_notification(
                 recipient.id,
             )
 
+            # Fan-out to WS / Push / Email according to channels_mask
             _deliver_notification(notif, channels_mask, extra_payload)
 
             return notif
@@ -188,6 +203,7 @@ def create_and_dispatch_notification(
         transaction.on_commit(lambda: _persist())
     else:
         _persist()
+
 
 
 

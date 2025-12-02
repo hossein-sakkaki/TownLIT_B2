@@ -12,5 +12,6 @@ class NotificationsConfig(AppConfig):
         import apps.notifications.signals.fellowship_signals
         import apps.notifications.signals.common_signals
         import apps.notifications.signals.messages_signals
+        import apps.notifications.signals.testimony_signals
 
 
