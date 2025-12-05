@@ -6,21 +6,42 @@
   <title>{% block subject %}TownLIT Message{% endblock %}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
+  <!-- Web fonts (supported on Apple Mail, iOS Mail, some Android) -->
+  <link href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&family=Noto+Sans:wght@300;400;700&display=swap" rel="stylesheet" />
+
+  <!-- Hidden preheader text -->
   <style>
-    /* Reset */
+    .preheader {
+      display: none !important;
+      visibility: hidden;
+      opacity: 0;
+      color: transparent;
+      height: 0;
+      width: 0;
+      overflow: hidden;
+      mso-hide: all;
+    }
+  </style>
+
+  <style>
+    /* Basic resets for email clients */
     body, table, td, a {
       -webkit-text-size-adjust: 100%;
       -ms-text-size-adjust: 100%;
     }
-    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+    table, td {
+      mso-table-lspace: 0pt;
+      mso-table-rspace: 0pt;
+    }
     img { -ms-interpolation-mode: bicubic; }
 
+    /* Body base styling + fallback background */
     body {
+      margin: 0;
+      padding: 0;
+      background-color: #000000;
       background: radial-gradient(circle, #0F52BA 10%, #000000 75%, #000000 100%);
-      background-repeat: no-repeat;
-      background-position: center;
-      background-attachment: fixed;
-      font-family: 'Lato', 'Segoe UI', sans-serif;
+      font-family: "Lato", "Noto Sans", "Helvetica", "Segoe UI", sans-serif;
     }
 
     .email-wrapper {
@@ -34,67 +55,45 @@
       border: 1px solid rgba(43, 44, 48, 0.1);
       border-radius: 10px;
       padding: 32px 24px;
+      background-color: #F9F8F4; /* fallback */
       background: linear-gradient(290deg, #F9F8F4 0%, #F5F1EA 20%, #EEE6DB 45%, #F4F1EB 70%, #F9F8F4 100%);
     }
 
-    .email-code-container {
-      display: flex;
-      justify-content: center;
-      align-items: center;
-    }
-
-    .email-button-container {
-      display: flex;
-      justify-content: center;
-      align-items: center;
-    }
-
+    /* Header logo */
     .email-header {
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
       text-align: center;
       margin-bottom: 24px;
-      gap: 8px;
     }
-
-    .logos-header {
-      display: flex;
-      justify-content: center;
-      gap: 10px;
-    }
-
     .email-header img.logo {
-      display: flex;
-      justify-content: center;
-      align-items: center;
       width: 60px;
       height: 60px;
+      display: block;
+      margin: 0 auto;
     }
 
+    /* Email content */
     .email-content {
       font-size: 16px;
-      line-height: 1.4;
+      line-height: 1.5;
       color: #2B2C30;
-      margin-top: 60px;
-      margin-bottom: 60px;
+      margin: 40px 0;
+      font-family: "Lato", "Noto Sans", "Helvetica", "Segoe UI", sans-serif !important;
     }
 
+    /* Headings */
     h1 {
       color: #0F52BA;
       font-size: 20px;
       font-weight: bold;
       line-height: 1.4;
+      margin: 0 0 12px 0;
     }
-
     h2 {
       color: #F6C860;
       font-size: 16px;
       font-weight: bold;
       line-height: 1.4;
     }
-
     h3 {
       color: #2B2C30;
       font-size: 14px;
@@ -105,87 +104,98 @@
       letter-spacing: 0.5px;
     }
 
-    em {
-      color: #3BAA75;
-    }
-
-    .email-reflection {
-      font-style: italic;
+    /* Paragraphs */
+    p {
+      margin: 8px 0;
       font-size: 16px;
-      text-align: center;
-      color: #0F52BA;
-      margin-top: 32px;
-      margin-bottom: 32px;
-      line-height: 1.6;
-    }
-
-    .email-signature {
-      margin-top: 32px;
-      font-size: 15px;
-      font-weight: bold;
+      line-height: 1.5;
       color: #2B2C30;
-      font-family: 'Lato', sans-serif;
-      line-height: 1.3;
+      font-family: "Lato", "Noto Sans", "Helvetica", "Segoe UI", sans-serif !important;
     }
 
-    p { margin: 8px 0; }
-
+    /* Links */
     p a {
       color: #0F52BA !important;
       text-decoration: none;
-      transition: 150ms ease-in-out;
     }
     p a:hover {
       color: #F6C860 !important;
     }
 
+    /* Divider */
     .email-divider {
       border-top: 1px solid rgba(43, 44, 48, 0.1);
       margin: 32px 0 12px 0;
     }
 
+    /* Support text */
     .email-support-text {
       text-align: center;
       font-size: 14px;
       color: #555;
+      font-family: "Lato", "Noto Sans", "Helvetica", "Segoe UI", sans-serif !important;
     }
 
-    .email-footer {
-      margin-top: 24px;
-      font-size: 12px;
+    /* ========== FOOTER ========== */
+    .site-email-footer {
+      margin-top: 32px;
       text-align: center;
-      color: #7A7A7A;
+      font-size: 12px !important;
+      color: #7A7A7A !important;
     }
 
-    .email-footer a {
-      color: #7A7A7A;
+    .site-email-footer p {
+      margin: 4px 0;
+            font-size: 12px !important;
+      color: #7A7A7A !important;
+    }
+
+    .site-email-footer-links a {
+      color: #0F52BA !important;
+      font-size: 12px !important;
       text-decoration: none;
       transition: 150ms ease-in-out;
     }
 
-    .email-footer a:hover {
+    .site-email-footer-links a:hover {
       color: #F6C860 !important;
     }
 
+    /* Mobile responsiveness */
     @media only screen and (max-width: 620px) {
-      .email-container { padding: 24px 16px; }
+      .email-container {
+        padding: 20px 16px !important;
+      }
+      .email-content {
+        font-size: 15px !important;
+      }
+      h1 {
+        font-size: 18px !important;
+      }
     }
-
   </style>
 </head>
 
 <body>
+
+  <!-- Preheader text (improves open rate) -->
+  <div class="preheader">
+    {{ preheader_text|default:"A message from TownLIT..." }}
+  </div>
+
   <div class="email-wrapper">
     <div class="email-container">
 
       <!-- Header -->
       <div class="email-header">
-        <div class="logos-header">
-          <img src="https://townlit.com/images/logo/TownLITLogo.png" alt="TownLIT Logo" class="logo" />
-        </div>
+        <img 
+          src="https://townlit.com/images/logo/TownLITLogo.png"
+          alt="TownLIT — A Christian community platform built for connection and growth"
+          class="logo"
+        />
       </div>
 
-      <!-- Email Content -->
+      <!-- Dynamic Email Content -->
       <div class="email-content">
         {% block content %}
           {{ content|safe }}
@@ -195,27 +205,35 @@
       <!-- Divider -->
       <div class="email-divider"></div>
 
-      <!-- Support -->
+      <!-- Support Text -->
       <p class="email-support-text">
-        Questions or feedback? Reach us at
+        Questions or feedback? Contact us at
         <a href="mailto:support@townlit.com">support@townlit.com</a>
       </p>
 
       <!-- Footer -->
-      <div class="email-footer">
-        <div class="email-footer-links">
-          <a href="https://townlit.com" class="footer-link">TownLIT</a> |
-          <a href="https://townlit.com/townlit-official/foundation/townlit_beliefs" class="footer-link">Statement of Faith</a> |
-          <a href="https://townlit.com/townlit-official/foundation/vision_and_mission" class="footer-link">Vision & Mission</a>
+      <div class="site-email-footer">
+        <div class="site-email-footer-links">
+          <p>
+            <a href="https://townlit.com">TownLIT</a> |
+            <a href="https://townlit.com/townlit-official/foundation/townlit_beliefs">Statement of Faith</a> |
+            <a href="https://townlit.com/townlit-official/foundation/vision_and_mission">Vision & Mission</a>
+          </p>
+          <p>
+            If you no longer wish to receive these emails,<br/>
+            you may <a href="{{ unsubscribe_url }}">unsubscribe </a>here.
+          </p>
+
         </div>
-        <p>
-          If you no longer wish to receive these messages, you can
-          <a href="{{ unsubscribe_url }}">unsubscribe</a>
-        </p>
+
+
+
         <p>&copy; 2022–{{ current_year }} TownLIT. All rights reserved.</p>
       </div>
 
     </div>
   </div>
+
 </body>
+
 </html>

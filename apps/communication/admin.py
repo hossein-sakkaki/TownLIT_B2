@@ -60,16 +60,15 @@ class EmailCampaignAdmin(admin.ModelAdmin):
     #     }
         
     list_display = [
-            'title', 'status', 'target_group', 'scheduled_time', 'sent_at', 'created_by',
-            'preview_link', 'ignore_unsubscribe', 
-            'draft_note', 'edit_draft_link',
-            'open_rate', 'click_rate'
-        ]
-    list_filter = ['status', 'target_group', 'created_by']
-    search_fields = ['title', 'subject']
+        'title', 'tag', 'status', 'target_group', 'scheduled_time',
+        'sent_at', 'created_by', 'preview_link', 'ignore_unsubscribe',
+        'draft_note', 'edit_draft_link', 'open_rate', 'click_rate'
+    ]
+    list_filter = ['status', 'target_group', 'created_by', 'tag']
+    search_fields = ['title', 'subject', 'tag']
     readonly_fields = ['sent_at', 'created_at']
     filter_horizontal = ['recipients']
-    actions = ['send_campaign_now']
+    actions = ['send_campaign_now', 'send_test_email', 'clone_campaign']
     exclude = ['created_by']
     
     def save_model(self, request, obj, form, change):
@@ -120,6 +119,57 @@ class EmailCampaignAdmin(admin.ModelAdmin):
             return "—"
         return f"{(clicked / total) * 100:.1f}%"
     click_rate.short_description = "🔗 Click Rate"
+
+    # --------------------------
+    # ACTION: SEND TEST EMAIL
+    # --------------------------
+    def send_test_email(self, request, queryset):
+        """
+        Sends a single test email to the 'test_email' field defined in the campaign.
+        """
+        from .services import send_test_email_for_campaign
+
+        count = 0
+        for campaign in queryset:
+            if not campaign.test_email:
+                self.message_user(request, f"⚠️ No test email set for: {campaign.title}", level=messages.WARNING)
+                continue
+
+            ok = send_test_email_for_campaign(campaign)
+            if ok:
+                count += 1
+                self.message_user(request, f"✅ Test email sent for '{campaign.title}' → {campaign.test_email}")
+            else:
+                self.message_user(request, f"❌ Failed to send test email for {campaign.title}", level=messages.ERROR)
+
+        if count:
+            self.message_user(request, f"🎉 {count} test email(s) sent.")
+
+    send_test_email.short_description = "📩 Send Test Email"
+
+
+    # ------------------------------------------------
+    # ACTION: CLONE CAMPAIGN
+    # ------------------------------------------------
+    def clone_campaign(self, request, queryset):
+        """
+        Creates a duplicate copy of the selected campaign(s).
+        """
+        count = 0
+        for campaign in queryset:
+            # Create new instance (copy)
+            campaign.pk = None  # forces Django to create a new record
+            campaign.title = f"{campaign.title} (Copy)"
+            campaign.status = 'draft'
+            campaign.sent_at = None
+            campaign.scheduled_time = None
+            campaign.save()
+
+            count += 1
+
+        self.message_user(request, f"📄 {count} campaign(s) cloned successfully.")
+
+    clone_campaign.short_description = "📄 Clone selected campaigns"
 
 
 # SCHEDULE EMAIL Admin ----------------------------------------------------------------

@@ -10,14 +10,6 @@ from django.contrib.auth import get_user_model
 
 CustomUser = get_user_model()
 
-
-# class LongRichTextUploadingField(RichTextUploadingField):
-#     def db_type(self, connection):
-#         if connection.vendor == 'mysql':
-#             return 'LONGTEXT'
-#         return super().db_type(connection)
-    
-
 # EMAIL TEMPLATE Model ----------------------------------------------------------------
 class EmailTemplate(models.Model):
     name = models.CharField(max_length=100, unique=True, verbose_name="Template Name")
@@ -40,7 +32,6 @@ class EmailTemplate(models.Model):
 
     def __str__(self):
         return self.name
-
 
 
 # EMAIL CAMPAIGN Model ----------------------------------------------------------------
@@ -68,6 +59,23 @@ class EmailCampaign(models.Model):
     created_at = models.DateTimeField(default=timezone.now, verbose_name="Created At")
     sent_at = models.DateTimeField(null=True, blank=True, verbose_name="Sent At")
 
+    # Allows admin to send a test email to themselves
+    test_email = models.EmailField(
+        blank=True,
+        null=True,
+        verbose_name="Test Email (Optional)",
+        help_text="If provided, this email will receive a test message."
+    )
+
+    # Optional category for organizing campaigns
+    tag = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name="Campaign Tag",
+        help_text="Optional tag for categorizing campaigns (e.g., Christmas 2024)"
+    )
+
     class Meta:
         verbose_name = "Email Campaign"
         verbose_name_plural = "Email Campaigns"
@@ -75,7 +83,6 @@ class EmailCampaign(models.Model):
 
     def __str__(self):
         return self.title
-
     
 
 # EMAIL LOG Model ----------------------------------------------------------------------
@@ -98,6 +105,7 @@ class EmailLog(models.Model):
     def __str__(self):
         return f"{self.email} – {self.campaign.title}"
 
+
 # SCHEDULE EMAIL Model ----------------------------------------------------------------
 class ScheduledEmail(models.Model):
     campaign = models.ForeignKey(EmailCampaign, on_delete=models.CASCADE, verbose_name="Email Campaign")
@@ -114,7 +122,6 @@ class ScheduledEmail(models.Model):
 
     def __str__(self):
         return f"Scheduled: {self.campaign.title} @ {self.run_at}"
-
 
 
 # UNSUBSCRIBE USER  Model -------------------------------------------------------------
@@ -143,7 +150,6 @@ class UnsubscribedUser(models.Model):
         return self.user.email if self.user else self.email
 
 
-
 # DRAFT CAMPAIGN Model ----------------------------------------------------------------
 class DraftCampaign(models.Model):
     campaign = models.OneToOneField(EmailCampaign, on_delete=models.CASCADE, related_name='draft', verbose_name="Related Campaign")
@@ -157,7 +163,6 @@ class DraftCampaign(models.Model):
 
     def __str__(self):
         return f"Draft: {self.campaign.title}"
-
 
 
     
@@ -181,6 +186,7 @@ class ExternalEmailCampaign(models.Model):
 
     def __str__(self):
         return f"External Campaign: {self.title}"
+
 
 # EXTERNAL CONTACT Model ------------------------------------------------------------
 class ExternalContact(models.Model):

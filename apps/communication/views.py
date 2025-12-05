@@ -166,8 +166,6 @@ class ResubscribeView(APIView):
             }
             return render(request, "api/communication/resubscribe_failed.html", context, status=400)
 
-
-    
     
 # External Unsubscribe View -----------------------------------------------------------------
 class ExternalUnsubscribeView(View):
@@ -183,8 +181,7 @@ class ExternalUnsubscribeView(View):
             return render(request, "api/communication/unsubscribe_failed.html", {
                 "profile_url": settings.SITE_URL
             }, status=400)
-            
-            
+
 
 # ٍEmail Preview -----------------------------------------------------------------
 def preview_reset_password(request):

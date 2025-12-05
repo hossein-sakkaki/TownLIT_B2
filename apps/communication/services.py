@@ -1,4 +1,4 @@
-import csv, json, io
+# apps/communication/services.py
 from django.conf import settings
 from django.utils.timezone import now
 from django.contrib.auth import get_user_model
@@ -327,3 +327,48 @@ def send_external_email_campaign(campaign):
         "failed_saves": failed_count,
     }
 
+
+# ------------------------------------------------------
+# Send a test email for previewing campaign rendering
+# ------------------------------------------------------
+def send_test_email_for_campaign(campaign):
+    """
+    Sends the campaign email to campaign.test_email for preview.
+    Does NOT log or alter campaign status.
+    """
+
+    if not campaign.test_email:
+        return False
+
+    # Prepare minimal context
+    context = {
+        'email': campaign.test_email,
+        'first_name': "Friend",
+        'username': "test_user",
+        'site_domain': settings.SITE_URL,
+        "logo_base_url": settings.EMAIL_LOGO_URL,
+        "current_year": timezone.now().year,
+        'unsubscribe_url': f"{settings.SITE_URL}/unsubscribe/test/",
+    }
+
+    # Render body
+    raw_body = campaign.custom_html or (campaign.template.body_template if campaign.template else '')
+    body_template = Template(raw_body)
+    context['content'] = body_template.render(Context(context))
+
+    # Render subject
+    subject_raw = campaign.subject or (campaign.template.subject_template if campaign.template else '')
+    subject_template = Template(subject_raw)
+    rendered_subject = subject_template.render(Context(context))
+
+    # Determine layout
+    layout = campaign.template.layout if campaign.template else 'base_site'
+    template_path = f'{layout}.html'
+
+    # Send email (no logs)
+    return send_custom_email(
+        to=campaign.test_email,
+        subject=rendered_subject,
+        template_path=template_path,
+        context=context
+    )
