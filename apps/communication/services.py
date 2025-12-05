@@ -80,16 +80,41 @@ def get_users_for_campaign(campaign):
         users = CustomUser.objects.filter(id__in=unsub_ids, is_active=True)
         
     elif tg == 'access_requests':
-        # TEMPORARY TARGET GROUP: AccessRequest users
-        # These users are not registered yet (not CustomUser)
-        # This is used for pre-launch communication and will be removed once they convert
         qs = AccessRequest.objects.filter(
             is_active=True,
         ).exclude(email__isnull=True).exclude(email__exact='')
+
+        # filter unsubscribed emails (external)
         if not campaign.ignore_unsubscribe:
             unsubscribed_emails = UnsubscribedUser.objects.filter(user__isnull=True).values_list('email', flat=True)
             qs = qs.exclude(email__in=unsubscribed_emails)
-        return list(qs)
+
+        # ✅ Always return a queryset, never a list
+        return AccessRequest.objects.filter(id__in=qs.values_list("id", flat=True))
+    
+    elif tg == 'unused_invite_access_requests':
+        # 1) All access requests
+        qs = AccessRequest.objects.filter(
+            is_active=True
+        ).exclude(email__isnull=True).exclude(email__exact='')
+
+        # 2) Get emails with unused invite codes
+        from apps.accounts.models import InviteCode
+        unused_emails = InviteCode.objects.filter(
+            is_used=False
+        ).values_list("email", flat=True)
+
+        # 3) Keep only access requests whose email has an unused invite code
+        qs = qs.filter(email__in=unused_emails)
+
+        # 4) Respect unsubscribe rules
+        if not campaign.ignore_unsubscribe:
+            unsubscribed_emails = UnsubscribedUser.objects.filter(user__isnull=True).values_list("email", flat=True)
+            qs = qs.exclude(email__in=unsubscribed_emails)
+
+        # 5) Return as queryset (never list) → important for admin counting
+        return AccessRequest.objects.filter(id__in=qs.values_list("id", flat=True))
+
 
     else:
         # fallback → all active

@@ -29,26 +29,43 @@ class EmailCampaignAdminForm(forms.ModelForm):
 
         if instance and instance.pk and instance.target_group:
             try:
+                # --- Retrieve users for this campaign ---
                 users_qs = get_users_for_campaign(instance)
-                final_count = users_qs.count()
-                unsubscribed_ids = UnsubscribedUser.objects.values_list('user_id', flat=True)
-                unsubscribed_in_group = users_qs.model.objects.filter(
-                    id__in=unsubscribed_ids
-                )
 
-                # از ابتدا بررسی کنیم چند نفر با این فیلتر انتخاب می‌شوند (با و بدون unsubscribe)
+                # --- Safe count: works for QuerySet or list ---
+                if hasattr(users_qs, "count"):
+                    final_count = users_qs.count()
+                else:
+                    final_count = len(users_qs)
+
+                # --- Retrieve unsubscribed users ---
+                unsubscribed_ids = UnsubscribedUser.objects.values_list('user_id', flat=True)
+
+                # --- Determine all users (safe queryset fallback) ---
                 all_users = get_users_for_campaign(instance)
+
+                # If result is list, convert to a queryset dynamically
+                if not hasattr(all_users, "model"):
+                    # Import here to avoid circular issues
+                    from apps.moderation.models import AccessRequest
+                    all_users = AccessRequest.objects.all()
+
+                # If not ignoring unsubscribes, restrict to model queryset
                 if not instance.ignore_unsubscribe:
                     all_users = all_users.model.objects.all()
 
+                # --- Compute unsubscribed count safely ---
                 full_filtered_users = all_users.exclude(id__in=unsubscribed_ids)
                 unsub_count = all_users.count() - full_filtered_users.count()
 
+                # --- Display result in admin help text ---
                 self.fields['target_group'].help_text = mark_safe(
                     f"<strong>📊 Estimated recipients:</strong> <code>{final_count:,}</code> user(s)<br>"
-                    f"<span style='color:#888;'>({unsub_count} user(s) in this group are unsubscribed)</span>"
+                    f"<span style='color:#888;'>({unsub_count} unsubscribed user(s) in this group)</span>"
                 )
+
             except Exception as e:
+                # Show any unexpected error in admin UI
                 self.fields['target_group'].help_text = (
                     f"⚠ Unable to count recipients due to error: {e}"
                 )

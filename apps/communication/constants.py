@@ -21,6 +21,7 @@ PRIVACY_ENABLED = 'privacy_enabled'
 UNVERIFIED_IDENTITY = 'unverified_identity'
 RE_ENGAGEMENT = 'reengagement'
 ACCESS_REQUESTS = 'access_requests'
+UNUSED_INVITE_ACCESS = 'unused_invite_access_requests'
 
 TARGET_GROUP_CHOICES = [
     (ALL_ACTIVE, 'All Active Users'),
@@ -39,6 +40,7 @@ TARGET_GROUP_CHOICES = [
     
     # 🔶 TEMPORARY: External invitees (not yet registered users)
     (ACCESS_REQUESTS, 'Pending Access Requests (pre-registration users)'),
+    (UNUSED_INVITE_ACCESS, 'Access Requests with Unused Invite Codes'),
 ]
 
 

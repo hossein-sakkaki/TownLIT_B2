@@ -49,7 +49,7 @@ class EmailTemplateAdmin(admin.ModelAdmin):
         return format_html('<a href="{}" target="_blank">Preview</a>', url)
     preview_link.short_description = "Preview"
 
-
+ 
 # EMAIL CAMPAIGN Admin ----------------------------------------------------------------
 @admin.register(EmailCampaign)
 class EmailCampaignAdmin(admin.ModelAdmin):
