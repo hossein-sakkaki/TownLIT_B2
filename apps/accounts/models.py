@@ -72,7 +72,6 @@ class CustomUserManager(BaseUserManager):
         birthday = birthday if birthday else None
         gender = gender if gender else None
         image_name = image_name if image_name else None
-        avatar_version = avatar_version if avatar_version else None
         
         primary_language = primary_language or 'en'
         secondary_language = secondary_language or None
@@ -102,7 +101,6 @@ class CustomUserManager(BaseUserManager):
             primary_language=primary_language,
             secondary_language=secondary_language,
             image_name=image_name,
-            avatar_version=avatar_version,
             user_active_code=user_active_code,
             user_active_code_expiry=user_active_code_expiry,
             reset_token=reset_token,
@@ -162,7 +160,6 @@ class CustomUserManager(BaseUserManager):
             primary_language=primary_language,
             secondary_language=secondary_language,
             image_name=image_name,
-            avatar_version=avatar_version,
             
             user_active_code=user_active_code,
             user_active_code_expiry=user_active_code_expiry,

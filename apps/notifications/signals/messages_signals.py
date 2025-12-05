@@ -16,7 +16,7 @@ def _build_message_link(dialogue, message) -> str:
     Adjust the URL/query according to your frontend routing.
     """
     if not dialogue:
-        return "/conversation/"
+        return "/conversation/" 
 
     base_url = None
 

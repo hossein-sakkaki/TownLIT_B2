@@ -14,7 +14,11 @@ from .serializers import (
     NotificationMarkReadSerializer,
 )
 from apps.core.pagination import ConfigurablePagination  # ✅ your shared pagination
-from .constants import CHANNEL_EMAIL, CHANNEL_PUSH, CHANNEL_WS, NOTIFICATION_PREF_METADATA, NOTIFICATION_TYPES, CHANNEL_DEFAULT
+from .constants import (
+    CHANNEL_EMAIL, CHANNEL_PUSH, CHANNEL_DEFAULT,
+    NOTIFICATION_PREF_METADATA, NOTIFICATION_TYPES,
+    NOTIFICATION_TYPES_PUSH_EMAIL_ONLY
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +57,9 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
         - auto-remove stale notifications (defense-in-depth).
         """
         qs = (
-            Notification.objects.filter(user=self.request.user)
+            Notification.objects
+            .filter(user=self.request.user)
+            .exclude(notification_type__in=NOTIFICATION_TYPES_PUSH_EMAIL_ONLY)
             .select_related(
                 "actor",
                 "actor__member_profile",
@@ -62,12 +68,7 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
             .order_by("-created_at")
         )
 
-        # ❌ این خط را حذف کن
-        # qs = qs[:200]
-
-        # 🔹 Optional safety net: remove any stale notifications on-the-fly
         self._auto_prune_stale_notifications(qs)
-
         return qs
 
 
@@ -148,6 +149,7 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
         qs = (
             Notification.objects
             .filter(user=request.user, is_read=False)
+            .exclude(notification_type__in=NOTIFICATION_TYPES_PUSH_EMAIL_ONLY)
             .order_by("-created_at")[:200]
         )
         return Response({"unread": qs.count()})
