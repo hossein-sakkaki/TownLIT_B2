@@ -1,3 +1,5 @@
+# apps/accounts/constants.py
+
 # Gender choices ----------------------------------------------------------------------------------
 MALE = 'Male'
 FEMALE = 'Female'
@@ -5,6 +7,80 @@ GENDER_CHOICES = [
     (MALE, 'Male'),
     (FEMALE, 'Female'),
 ]
+
+
+# Identity Verification (methods) -----------------------------------------------------------------
+IV_METHOD_PROVIDER = "provider"
+IV_METHOD_ADMIN = "admin"
+
+IDENTITY_VERIFICATION_METHOD_CHOICES = [
+    (IV_METHOD_PROVIDER, "Provider"),
+    (IV_METHOD_ADMIN, "TownLIT Admin (Manual)"),
+]
+
+
+
+# Identity Verification (status) ------------------------------------------------------------------
+IV_STATUS_PENDING = 'pending'
+IV_STATUS_VERIFIED = 'verified'
+IV_STATUS_REJECTED = 'rejected'
+IV_STATUS_REVOKED = 'revoked'
+
+IDENTITY_VERIFICATION_STATUS_CHOICES = [
+    (IV_STATUS_PENDING, 'Pending'),
+    (IV_STATUS_VERIFIED, 'Verified'),
+    (IV_STATUS_REJECTED, 'Rejected'),
+    (IV_STATUS_REVOKED, 'Revoked'),
+]
+
+
+# Identity Verification (level) -------------------------------------------------------------------
+IV_LEVEL_BASIC = 'basic'
+IV_LEVEL_STRONG = 'strong'
+IV_LEVEL_PROTECTED = 'protected'
+
+IDENTITY_VERIFICATION_LEVEL_CHOICES = [
+    (IV_LEVEL_BASIC, 'Basic'),
+    (IV_LEVEL_STRONG, 'Strong'),
+    (IV_LEVEL_PROTECTED, 'Protected'),
+]
+
+# Identity sensitive fields (used for revoke rules) ------------------------------------------------
+# Keep this list tight: fields that affect identity trust.
+IDENTITY_SENSITIVE_FIELDS = ('name', 'family', 'birthday', 'gender', 'country')
+
+
+# Identity Audit (actions) ------------------------------------------------------------------------
+IA_CREATE = 'create'
+IA_SUBMIT = 'submit'
+IA_VERIFY = 'verify'
+IA_REJECT = 'reject'
+IA_REVOKE = 'revoke'
+IA_UPDATE = 'update'
+
+IDENTITY_AUDIT_ACTION_CHOICES = [
+    (IA_CREATE, 'Create'),
+    (IA_SUBMIT, 'Submit'),
+    (IA_VERIFY, 'Verify'),
+    (IA_REJECT, 'Reject'),
+    (IA_REVOKE, 'Revoke'),
+    (IA_UPDATE, 'Update'),
+]
+
+
+# Identity Audit (source) -------------------------------------------------------------------------
+IA_SOURCE_VERIFF = 'veriff'
+IA_SOURCE_ORGANIZATION = 'organization'
+IA_SOURCE_ADMIN = 'admin'
+IA_SOURCE_SYSTEM = 'system'
+
+IDENTITY_AUDIT_SOURCE_CHOICES = [
+    (IA_SOURCE_VERIFF, 'Veriff'),
+    (IA_SOURCE_ORGANIZATION, 'Organization'),
+    (IA_SOURCE_ADMIN, 'Admin'),
+    (IA_SOURCE_SYSTEM, 'System'),
+]
+
 
 
 # User Label Choices --------------------------------------------------------------------------------

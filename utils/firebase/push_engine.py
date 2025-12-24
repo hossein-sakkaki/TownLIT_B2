@@ -53,13 +53,6 @@ class FirebasePushEngine:
         )
 
         tokens = [u.push_token for u in qs]
-
-        logger.error(
-            "🔥 PUSH ENGINE: Fetching tokens for user %s → %s",
-            user.id,
-            tokens,
-        )
-
         return tokens
 
     # ------------------------------------------------------------
@@ -72,13 +65,17 @@ class FirebasePushEngine:
         body: str,
         data: Optional[Dict[str, Any]] = None,
     ):
-        logger.error("🔥 FCM SEND START → token=%s...", token[:15])
-
         if not self.project_id:
             logger.error("⛔ Cannot send → FIREBASE_PROJECT_ID missing")
             return None
 
         access_token = get_google_access_token()
+
+        logger.error(
+            "🔐 GOOGLE ACCESS TOKEN → %s",
+            access_token[:30] if access_token else "NONE",
+        )
+
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json; charset=utf-8",
@@ -99,9 +96,15 @@ class FirebasePushEngine:
             }
         }
 
-        logger.error("🔥 FCM REQUEST PAYLOAD → %s", payload)
-
         try:
+
+            logger.error(
+                "🚀 FCM OUT → project=%s token=%s data=%s",
+                self.project_id,
+                token[:20],
+                safe_data,
+            )
+
             resp = requests.post(
                 self.base_url,
                 json=payload,
@@ -110,15 +113,14 @@ class FirebasePushEngine:
             )
 
             logger.error(
-                "🔥 FCM RESPONSE → status=%s body=%s",
+                "📡 FCM RESP → status=%s body=%s",
                 resp.status_code,
                 resp.text,
             )
 
+
             if 200 <= resp.status_code < 300:
                 return resp.json()
-
-            logger.error("⛔ FCM FAILED → %s", resp.text)
             return None
 
         except Exception as e:

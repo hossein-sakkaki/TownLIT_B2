@@ -1,8 +1,10 @@
+# services/message_atomic_utils.py
 from django.db import transaction
 from asgiref.sync import sync_to_async
 from apps.conversation.models import Message
 
 
+# MARK MESSAGE AS DELIVERED ------------------------------------------------------------------
 @sync_to_async
 def mark_message_as_delivered_atomic(message):
     with transaction.atomic():
@@ -10,6 +12,8 @@ def mark_message_as_delivered_atomic(message):
             message.is_delivered = True
             message.save(update_fields=["is_delivered"])
 
+
+# MARK MESSAGE AS READ ----------------------------------------------------------------------
 @sync_to_async
 def mark_message_as_read_atomic(message, user):
     with transaction.atomic():
@@ -18,6 +22,7 @@ def mark_message_as_read_atomic(message, user):
             message.save()
             
 
+# SAVE MESSAGE -------------------------------------------------------------------------------
 @transaction.atomic
 def save_message_atomic(dialogue, sender, content, is_encrypted=False):
     content_to_store = content.encode()

@@ -5,7 +5,7 @@ from django.db.models.signals import post_save
 from django.dispatch import receiver
 
 from apps.posts.models import Reaction
-from apps.notifications.services import create_and_dispatch_notification
+from apps.notifications.services.services import create_and_dispatch_notification
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +104,7 @@ def on_reaction_created(sender, instance: Reaction, created, **kwargs):
         "target_id": getattr(target, "id", None),
     }
 
-    # 🔥 Create + dispatch
+    # Create + dispatch
     try:
         create_and_dispatch_notification(
             recipient=to_user,

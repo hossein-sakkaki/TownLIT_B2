@@ -29,8 +29,8 @@ class OrganizationManagerAdmin(admin.ModelAdmin):
     # form = OrganizationManagerForm
     list_display = ['organization', 'member', 'is_approved', 'access_level', 'register_date']
     list_filter = ['organization', 'is_approved', 'access_level']
-    search_fields = ['organization__org_name', 'member__name__username']
-    autocomplete_fields = ['organization', 'member']
+    search_fields = ['organization__org_name', 'member_profile__name__username']
+    # autocomplete_fields = ['organization', 'member']
 
     def get_queryset(self, request):
         queryset = super().get_queryset(request)

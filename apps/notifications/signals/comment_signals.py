@@ -1,9 +1,10 @@
+# apps/notifications/signals/comment_signals.py
 import logging
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
 from apps.posts.models import Comment
-from apps.notifications.services import create_and_dispatch_notification
+from apps.notifications.services.services import create_and_dispatch_notification
 
 logger = logging.getLogger(__name__)
 
@@ -41,42 +42,25 @@ def on_comment_created(sender, instance: Comment, created, **kwargs):
     if not created:
         return
 
-    logger.error("🔥 SIGNAL: Comment created → id=%s", instance.id)
-
     actor = getattr(instance, "name", None)
     if not actor:
         logger.error("⛔ SIGNAL: No actor found for comment %s", instance.id)
         return
 
-    logger.error("🔥 SIGNAL: actor=%s (id=%s)", actor.username, actor.id)
-
     # Resolve target object
     try:
         target = instance.content_type.get_object_for_this_type(pk=instance.object_id)
-        logger.error("🔥 SIGNAL: target_resolved → %s (id=%s)", type(target).__name__, instance.object_id)
     except Exception as e:
         logger.error("⛔ SIGNAL: target resolve failed for comment %s: %s", instance.id, e)
         target = None
 
     post_owner = _resolve_owner(target)
-    logger.error(
-        "🔥 SIGNAL: post_owner=%s",
-        post_owner.id if post_owner else None
-    )
 
     # ----------------------------
     # Case 1 — Root Comment
     # ----------------------------
     if instance.recomment is None:
-        logger.error("🔥 SIGNAL: ROOT COMMENT branch")
-
         if post_owner and post_owner.id != actor.id:
-            logger.error(
-                "🔥 SIGNAL → DISPATCH new_comment → to=%s from=%s",
-                post_owner.id,
-                actor.id,
-            )
-
             create_and_dispatch_notification(
                 recipient=post_owner,
                 actor=actor,
@@ -95,20 +79,10 @@ def on_comment_created(sender, instance: Comment, created, **kwargs):
     # Case 2 — Reply to comment
     # ----------------------------
     else:
-        logger.error("🔥 SIGNAL: REPLY branch")
-
         parent = instance.recomment
         original_author = getattr(parent, "name", None)
 
-        if original_author:
-            logger.error("🔥 SIGNAL: original_author=%s", original_author.id)
-
         if original_author and original_author.id != actor.id:
-            logger.error(
-                "🔥 SIGNAL → DISPATCH new_reply → to=%s from=%s",
-                original_author.id,
-                actor.id,
-            )
             create_and_dispatch_notification(
                 recipient=original_author,
                 actor=actor,
@@ -125,23 +99,13 @@ def on_comment_created(sender, instance: Comment, created, **kwargs):
 
         try:
             parent_target = parent.content_type.get_object_for_this_type(pk=parent.object_id)
-            logger.error("🔥 SIGNAL: parent_target resolved")
         except Exception as e:
             logger.error("⛔ SIGNAL: parent_target resolve failed %s", e)
             parent_target = None
 
         parent_owner = _resolve_owner(parent_target)
 
-        if parent_owner:
-            logger.error("🔥 SIGNAL: parent_owner=%s", parent_owner.id)
-
         if parent_owner and parent_owner.id not in (actor.id, getattr(original_author, "id", None)):
-            logger.error(
-                "🔥 SIGNAL → DISPATCH new_reply_post_owner → to=%s from=%s",
-                parent_owner.id,
-                actor.id,
-            )
-
             create_and_dispatch_notification(
                 recipient=parent_owner,
                 actor=actor,
@@ -155,5 +119,3 @@ def on_comment_created(sender, instance: Comment, created, **kwargs):
                     "is_reply": True,
                 }
             )
-
-    logger.error("🔥 SIGNAL DONE for comment %s", instance.id)

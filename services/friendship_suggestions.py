@@ -96,7 +96,7 @@ def suggest_friends_for_friends_tab(user, limit=5):
     # Get eligible suggestions
     eligible_suggestions = CustomUser.objects.filter(
         # Q(id__in=mutual_ids) |
-        # Q(member__denomination_type=user.member.denomination_type)
+        # Q(member_profile__denomination_type=user.member.denomination_type)
         
         Q(id__in=mutual_ids)
     ).exclude(id__in=exclude_users).distinct()

@@ -1,3 +1,5 @@
+# apps/accounts/tasks.py
+
 from celery import shared_task
 from django.utils import timezone
 from django.conf import settings
@@ -23,7 +25,7 @@ def delete_abandoned_users():
         user_active_code_expiry__lt=timezone.now(),
         registration_started_at__lt=threshold,
         last_login__isnull=True,
-    ).exclude(member__isnull=False).exclude(guestuser__isnull=False)
+    ).exclude(member_profile__isnull=False).exclude(guestuser__isnull=False)
 
     count = users_to_delete.count()
     users_to_delete.delete()

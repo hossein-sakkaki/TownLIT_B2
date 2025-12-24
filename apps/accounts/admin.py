@@ -1,15 +1,23 @@
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.contrib.auth.admin import UserAdmin
 from colorfield.fields import ColorField
 from django.db.models import Q
 from django import forms  
+from django.utils import timezone
 from django.utils.html import format_html
 
 from .forms import UserCreationForm, UserChangeForm
 from .models import (
                 Address, CustomLabel, SocialMediaType, SocialMediaLink,
-                InviteCode, UserDeviceKey
+                InviteCode, UserDeviceKey,
+                IdentityVerification, IdentityAuditLog,
+                OrganizationLITShieldEndorsement, LITShieldGrant,
+                IdentityGrant
             )
+from apps.accounts.services.identity_audit import log_identity_event
+from apps.accounts.constants import IA_VERIFY, IA_REVOKE, IA_SOURCE_ADMIN
+from apps.accounts.services.identity_verification_service import admin_mark_identity_verified, admin_revoke_identity
+from apps.sanctuary.models import SanctuaryParticipantProfile
 from apps.profiles.models import Friendship
 from django.contrib.auth import get_user_model
 
@@ -75,34 +83,111 @@ class FriendshipInline(admin.TabularInline):
         return False 
 
 
+# SANCTUARY PARTICIPANT PROFILE Inline Admin ----------------------------------------
+class SanctuaryParticipationInline(admin.StackedInline):
+    model = SanctuaryParticipantProfile
+    extra = 0
+    can_delete = False
+    fk_name = "user"
+    fields = (
+        "is_participant",
+        "is_eligible",
+        "eligible_reason",
+        "eligible_changed_at",
+        "eligible_changed_by",
+        "participant_opted_in_at",
+        "participant_opted_out_at",
+        "settings",
+    )
+    readonly_fields = ("eligible_changed_at", "eligible_changed_by", "participant_opted_in_at", "participant_opted_out_at")
+
+
+
+
 # CUSTOMUSER ADMIN Manager -----------------------------------------------------------
 @admin.register(CustomUser)
 class CustomUserAdmin(UserAdmin):
     form = UserChangeForm
     add_form = UserCreationForm
-    list_display = ['id','email', 'name', 'family', 'username', 'gender', 'label', 'pin_security_enabled', 'two_factor_enabled', 'is_member', 'is_active', 'is_admin', 'is_suspended', 'is_deleted', 'reports_count', 'is_account_paused', 'register_date', 'profile_image_thumbnail']
-    list_filter = ['is_active', 'is_admin', 'gender', 'label', 'register_date']
-    list_editable = ['is_active', 'is_admin', 'is_member'] 
-    search_fields = ['username', 'mobile_number', 'name']
-    readonly_fields = ['register_date', 'last_login', 'email']
+
+    list_display = [
+        "id", "email", "name", "family", "username", "gender", "label",
+        "is_verified_identity", "identity_level",
+        "pin_security_enabled", "two_factor_enabled",
+        "is_member", "is_active", "is_admin", "is_superuser",
+        "is_suspended", "is_deleted", "reports_count", "is_account_paused",
+        "register_date", "profile_image_thumbnail",
+    ]
+    list_filter = [
+        "is_active", "is_admin", "is_superuser", "gender", "label",
+        "is_suspended", "is_deleted", "is_account_paused", "register_date",
+    ]
+    list_editable = ["is_active", "is_admin", "is_member"]
+    search_fields = ["email", "username", "mobile_number", "name", "family"]
+    readonly_fields = ["register_date", "last_login", "email", "is_verified_identity", "identity_level"]
+    ordering = ["-id"]
+    filter_horizontal = ("groups", "user_permissions")
+
     fieldsets = (
-        ('Account Info', {'fields': ('mobile_number', 'mobile_verification_code', 'password', 'username', 'registration_id', 'is_account_paused')}),
-        ('Personal info', {'fields': ('name', 'family', 'email', 'last_email_change', 'email_change_tokens', 'gender', 'label', 'birthday', 'country', 'city', 'primary_language', 'secondary_language', 'image_name', 'register_date')}),
-        ('Sanctuary info', {'fields': ('is_suspended', 'reports_count')}),
-        ('Expiry date info', {'fields': ('user_active_code_expiry', 'mobile_verification_expiry', 'reset_token_expiration')}),
-        # ('Keys & Security', {'fields': ('two_factor_enabled'),}),
-        ('Deleted Info', {'fields': ('pin_security_enabled', 'deletion_requested_at', 'is_deleted', 'reactivated_at')}),
-        ('Permissions', {'fields': ('show_email', 'show_phone_number', 'show_country', 'show_city', 'is_active', 'is_member', 'is_admin', 'is_superuser', 'groups', 'user_permissions')}),
-    )
-    add_fieldsets = (
-        (None, {
-            'classes': ('wide',),
-            'fields': ('email', 'mobile_number', 'name', 'family', 'username', 'birthday', 'gender', 'label', 'country', 'city', 'image_name', 'password'),
+        ("Account Info", {
+            "fields": (
+                "email", "password", "username", "mobile_number",
+                "registration_id", "is_account_paused",
+            )
+        }),
+        ("Personal Info", {
+            "fields": (
+                "name", "family", "gender", "label", "birthday",
+                "country", "city", "primary_language", "secondary_language",
+                "image_name", "avatar_version", "register_date",
+            )
+        }),
+        ("Identity Verification (Read-only)", {
+            "fields": ("is_verified_identity", "identity_level")
+        }),
+        ("Security", {
+            "fields": (
+                "two_factor_enabled", "two_factor_token_expiry",
+                "pin_security_enabled",
+                "access_pin", "delete_pin",
+            )
+        }),
+        ("Sanctuary / Moderation", {
+            "fields": ("is_suspended", "reports_count")
+        }),
+        ("Expiry / Tokens", {
+            "fields": (
+                "user_active_code_expiry", "mobile_verification_expiry",
+                "reset_token_expiration", "last_email_change",
+                "email_change_tokens",
+            )
+        }),
+        ("Deletion", {
+            "fields": ("deletion_requested_at", "is_deleted", "reactivated_at")
+        }),
+        ("Privacy", {
+            "fields": ("show_email", "show_phone_number", "show_country", "show_city")
+        }),
+        ("Permissions", {
+            "fields": ("is_active", "is_member", "is_admin", "is_superuser", "groups", "user_permissions")
         }),
     )
-    filter_horizontal = ('groups', 'user_permissions') 
-    inlines = [FriendshipInline]
-    
+
+    add_fieldsets = (
+        (None, {
+            "classes": ("wide",),
+            "fields": (
+                "email", "mobile_number", "name", "family", "username",
+                "birthday", "gender", "label", "country", "city",
+                "primary_language", "secondary_language",
+                "image_name", "password1", "password2",
+            ),
+        }),
+    )
+
+    # If you have FriendshipInline, keep it
+    inlines = [SanctuaryParticipationInline]  # e.g. [FriendshipInline]
+
     def get_inline_instances(self, request, obj=None):
         if obj:
             return [inline(self.model, self.admin_site) for inline in self.inlines]
@@ -110,10 +195,12 @@ class CustomUserAdmin(UserAdmin):
 
     def profile_image_thumbnail(self, obj):
         if obj.image_name:
-            return format_html('<img src="{}" width="30" height="30" style="border-radius:50%;" />', obj.image_name.url)
-        return ''
-    
-    profile_image_thumbnail.short_description = 'Profile Image'
+            return format_html(
+                '<img src="{}" width="30" height="30" style="border-radius:50%;" />',
+                obj.image_name.url
+            )
+        return ""
+    profile_image_thumbnail.short_description = "Profile Image"
     
 
 # Invite Code Admin ---------------------------------------------------------------------
@@ -149,3 +236,304 @@ class UserDeviceKeyAdmin(admin.ModelAdmin):
         'latitude', 'longitude',
     )
     ordering = ('-last_used',)
+
+
+# IdentityVerification Admin -----------------------------------------------------------
+@admin.register(IdentityVerification)
+class IdentityVerificationAdmin(admin.ModelAdmin):
+    # Core visibility
+    list_display = (
+        "user",
+        "method",
+        "status",
+        "level",
+        "risk_flag",
+        "verified_at",
+        "revoked_at",
+        "created_at",
+    )
+
+    list_filter = (
+        "method",
+        "status",
+        "level",
+        "risk_flag",
+        "created_at",
+    )
+
+    search_fields = (
+        "user__email",
+        "user__username",
+        "provider_reference",
+    )
+
+    readonly_fields = (
+        "user",
+        "method",
+        "provider_reference",
+        "provider_payload",
+        "created_at",
+        "updated_at",
+        "verified_at",
+        "revoked_at",
+        "rejected_at",
+    )
+
+    fieldsets = (
+        ("User", {
+            "fields": ("user",)
+        }),
+        ("Verification Status", {
+            "fields": ("method", "status", "level", "risk_flag")
+        }),
+        ("Provider Data", {
+            "classes": ("collapse",),
+            "fields": ("provider_reference", "provider_payload")
+        }),
+        ("Timestamps", {
+            "fields": ("created_at", "verified_at", "revoked_at", "rejected_at")
+        }),
+        ("Admin Notes", {
+            "fields": ("notes",)
+        }),
+    )
+
+    actions = [
+        "mark_verified_strong",
+        "mark_verified_protected",
+        "mark_revoked",
+    ]
+
+    # -----------------------------
+    # Admin actions
+    # -----------------------------
+    @admin.action(description="Mark as VERIFIED (STRONG)")
+    def mark_verified_strong(self, request, queryset):
+        queryset.update(
+            status="verified",
+            level="strong",
+            verified_at=timezone.now(),
+            revoked_at=None,
+            rejected_at=None,
+        )
+
+    @admin.action(description="Mark as VERIFIED (PROTECTED)")
+    def mark_verified_protected(self, request, queryset):
+        queryset.update(
+            status="verified",
+            level="protected",
+            verified_at=timezone.now(),
+            revoked_at=None,
+            rejected_at=None,
+        )
+
+    @admin.action(description="Revoke identity")
+    def mark_revoked(self, request, queryset):
+        for iv in queryset:
+            prev = iv.status
+            iv.status = "revoked"
+            iv.revoked_at = timezone.now()
+            iv.save()
+
+            log_identity_event(
+                user=iv.user,
+                identity_verification=iv,
+                action=IA_REVOKE,
+                source=IA_SOURCE_ADMIN,
+                actor=request.user,
+                previous_status=prev,
+                new_status=iv.status,
+                reason="Admin revoke",
+            )
+
+
+# Identity Audit Log Admin --------------------------------------------------------
+@admin.register(IdentityAuditLog)
+class IdentityAuditLogAdmin(admin.ModelAdmin):
+    list_display = (
+        "user",
+        "action",
+        "source",
+        "actor",
+        "previous_status",
+        "new_status",
+        "created_at",
+    )
+
+    list_filter = (
+        "action",
+        "source",
+        "created_at",
+    )
+
+    search_fields = (
+        "user__email",
+        "actor__email",
+        "reason",
+    )
+
+    readonly_fields = (
+        "user",
+        "identity_verification",
+        "action",
+        "source",
+        "actor",
+        "reason",
+        "previous_status",
+        "new_status",
+        "metadata",
+        "created_at",
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+# Identity Grant Admin -------------------------------------------------------------
+@admin.register(IdentityGrant)
+class IdentityGrantAdmin(admin.ModelAdmin):
+    list_display = ("user", "level", "source", "is_active", "approved_by", "granted_at", "revoked_at")
+    list_filter = ("level", "source", "is_active")
+    search_fields = ("user__email", "user__username")
+    readonly_fields = ("approved_by", "granted_at", "revoked_at")
+
+    fieldsets = (
+        ("User", {"fields": ("user",)}),
+        ("Grant", {"fields": ("level", "source", "is_active")}),
+        ("Audit", {"fields": ("approved_by", "reason")}),
+        ("Timestamps", {"fields": ("granted_at", "revoked_at")}),
+    )
+
+    def save_model(self, request, obj, form, change):
+        if not obj.pk:
+            obj.approved_by = request.user
+        super().save_model(request, obj, form, change)
+
+
+# LITShield Grant Serializers -----------------------------------------------------------------------
+@admin.register(LITShieldGrant)
+class LITShieldGrantAdmin(admin.ModelAdmin):
+    list_display = (
+        "user", "source", "organization", "is_active",
+        "approved_by", "granted_at", "revoked_at"
+    )
+
+    list_filter = (
+        "source", "is_active", "organization"
+    )
+
+    search_fields = (
+        "user__email", "user__username", "organization__org_name"
+    )
+
+    readonly_fields = (
+        "approved_by", "granted_at", "revoked_at"
+    )
+
+    fieldsets = (
+        ("User", {"fields": ("user",)}),
+        ("Grant Decision", {"fields": ("is_active", "source", "organization")}),
+        ("Admin Notes", {"fields": ("admin_notes",)}),
+        ("Audit", {"fields": ("approved_by", "granted_at", "revoked_at")}),
+    )
+
+    def save_model(self, request, obj, form, change):
+        """
+        Custom save:
+        - Auto-set approved_by
+        - Auto-set granted_at
+        - Enforce direct vs org_endorsement logic
+        """
+        is_new = obj.pk is None
+
+        if is_new:
+            obj.approved_by = request.user
+            obj.granted_at = timezone.now()
+
+            if obj.organization:
+                obj.source = "org_endorsement"
+            else:
+                obj.source = "direct"
+
+        # Revoke logic
+        if not obj.is_active and not obj.revoked_at:
+            obj.revoked_at = timezone.now()
+
+        # Reactivation logic
+        if obj.is_active:
+            obj.revoked_at = None
+
+        super().save_model(request, obj, form, change)
+
+    def has_delete_permission(self, request, obj=None):
+        # ❌ Never allow hard delete (history must remain)
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        # Allow editing only via form (no bulk edits)
+        return True
+
+
+# LITShield Endorsement Serializers -----------------------------------------------------------------------
+@admin.register(OrganizationLITShieldEndorsement)
+class OrganizationLITShieldEndorsementAdmin(admin.ModelAdmin):
+    list_display = (
+        "user", "organization", "referrer_member",
+        "approved", "reviewed_by", "created_at"
+    )
+
+    list_filter = (
+        "approved", "organization", "created_at"
+    )
+
+    search_fields = (
+        "user__email", "user__username", "organization__org_name"
+    )
+
+    readonly_fields = (
+        "user", "organization", "referrer_member",
+        "reason", "created_at"
+    )
+
+    fieldsets = (
+        ("Endorsement Request", {"fields": ("user", "organization", "referrer_member", "reason")}),
+        ("Review", {"fields": ("approved", "reviewed_by")}),
+        ("Timestamps", {"fields": ("created_at", "reviewed_at")}),
+    )
+
+    actions = [
+        "approve_and_grant_litshield",
+        "reject_endorsement",
+    ]
+
+    @admin.action(description="Approve & Grant LITShield")
+    def approve_and_grant_litshield(self, request, queryset):
+        for e in queryset.filter(approved__isnull=True):
+            e.approved = True
+            e.reviewed_by = request.user
+            e.reviewed_at = timezone.now()
+            e.save()
+
+            LITShieldGrant.objects.update_or_create(
+                user=e.user,
+                defaults={
+                    "source": "org_endorsement",
+                    "organization": e.organization,
+                    "approved_by": request.user,
+                    "is_active": True,
+                }
+            )
+
+    @admin.action(description="Reject Endorsement")
+    def reject_endorsement(self, request, queryset):
+        queryset.filter(approved__isnull=True).update(
+            approved=False,
+            reviewed_by=request.user,
+            reviewed_at=timezone.now(),
+        )

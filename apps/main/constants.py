@@ -59,6 +59,8 @@ COMMUNITY_GUIDELINES = 'community_guidelines'
 VISION_AND_MISSION = 'vision_and_mission'
 TOWNLIT_HISTORY = 'townlit_history'
 TOWNLIT_BELIEFS = 'townlit_beliefs'
+
+SANCTUARY_COUNCIL_RULES = "sanctuary_council_rules"
  
 TERMS_AND_POLICIES_CHOICES = [
     (PRIVACY_POLICY, 'Privacy Policy'),
@@ -72,6 +74,7 @@ TERMS_AND_POLICIES_CHOICES = [
     (TOWNLIT_HISTORY, 'TownLIT History'),
     (TOWNLIT_BELIEFS, 'TownLIT Beliefs'),
 
+    (SANCTUARY_COUNCIL_RULES, "Sanctuary Council Rules"),
 ]
 
 

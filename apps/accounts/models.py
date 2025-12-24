@@ -12,8 +12,12 @@ from django.conf import settings
 from apps.profilesOrg.constants import LANGUAGE_CHOICES, ENGLISH, COUNTRY_CHOICES
 from .constants import (
     SOCIAL_MEDIA_CHOICES,
-    USER_LABEL_CHOICES, GENDER_CHOICES, ADDRESS_TYPE_CHOICES, HOME
+    USER_LABEL_CHOICES, GENDER_CHOICES, ADDRESS_TYPE_CHOICES, HOME,
+    IDENTITY_VERIFICATION_METHOD_CHOICES, IDENTITY_VERIFICATION_STATUS_CHOICES, IDENTITY_VERIFICATION_LEVEL_CHOICES,
+    IV_STATUS_PENDING, IV_STATUS_VERIFIED, IV_STATUS_REVOKED, IDENTITY_AUDIT_ACTION_CHOICES, IDENTITY_AUDIT_SOURCE_CHOICES,
+    IV_STATUS_VERIFIED
 )
+
 from validators.user_validators import validate_phone_number
 from validators.mediaValidators.image_validators import validate_image_file, validate_image_size
 from validators.security_validators import validate_no_executable_file
@@ -177,7 +181,7 @@ class CustomUserManager(BaseUserManager):
         return user
 
 
-# ADDRESS Manager ---------------------------------------------
+# ADDRESS Model ---------------------------------------------
 class Address(models.Model):
     id = models.BigAutoField(primary_key=True)
     street_number = models.CharField(max_length=100, blank=True, verbose_name='Streen Number')
@@ -199,7 +203,7 @@ class Address(models.Model):
         verbose_name = "Custom Address"
         verbose_name_plural = "Custom Addresses"
 
-# LABEL Manager -----------------------------------------------------
+# LABEL Model -----------------------------------------------------
 class CustomLabel(models.Model):
     name = models.CharField(max_length=20, choices=USER_LABEL_CHOICES, unique=True, verbose_name='Label Name')
     color = ColorField(verbose_name='Color Code')
@@ -213,7 +217,7 @@ class CustomLabel(models.Model):
     def __str__(self):
         return self.name
 
-# URL Manager ---------------------------------------------------
+# URL Model ---------------------------------------------------
 class SocialMediaType(models.Model):
     name = models.CharField(max_length=20, choices=SOCIAL_MEDIA_CHOICES, unique=True, verbose_name='Social Media Name')
     icon_class = models.CharField(max_length=100, null=True, blank=True, verbose_name='FontAwesome Class')
@@ -245,7 +249,7 @@ class SocialMediaLink(models.Model):
         return self.link
 
     
-# CUSTOMUSER Manager ----------------------------------------------
+# CUSTOMUSER Model ----------------------------------------------
 class CustomUser(AbstractBaseUser, PermissionsMixin):
     IMAGE = FileUpload('accounts', 'photos', 'custom_user')
     
@@ -380,7 +384,26 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
         
     def is_member_user(self):
         return self.is_member
-    
+
+    @property
+    def is_verified_identity(self) -> bool:
+        iv = getattr(self, "identity_verification", None)
+        grant = self.identity_grants.filter(is_active=True).first()
+        return bool(
+            (iv and iv.status == "verified") or grant
+        )
+
+    @property
+    def identity_level(self) -> str:
+        # Computed identity level (best effort)
+        iv = getattr(self, "identity_verification", None)
+        return getattr(iv, "level", None) or "basic"
+
+    @property
+    def has_litshield(self) -> bool:
+        grant = getattr(self, "litshield_grant", None)
+        return bool(grant and grant.is_active)
+
     @property
     def image_url(self):
         if self.image_name:
@@ -396,6 +419,248 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     
     def get_absolute_url(self):
         return f"/{self.username}"
+    
+
+# Identity Verification ----------------------------------------------------
+class IdentityVerification(models.Model):
+    # Identity verification state per user
+    id = models.BigAutoField(primary_key=True)
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="identity_verification", db_index=True)
+
+    method = models.CharField(max_length=20, choices=IDENTITY_VERIFICATION_METHOD_CHOICES, db_index=True)
+    status = models.CharField(max_length=20, choices=IDENTITY_VERIFICATION_STATUS_CHOICES, default=IV_STATUS_PENDING, db_index=True)
+    level = models.CharField(max_length=20, choices=IDENTITY_VERIFICATION_LEVEL_CHOICES, db_index=True)
+
+    provider_reference = models.CharField(max_length=255, null=True, blank=True, db_index=True)  # e.g. veriff session id
+    provider_payload = models.JSONField(null=True, blank=True)  # store minimal provider response (no secrets)
+
+    verified_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    revoked_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    rejected_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
+    risk_flag = models.BooleanField(default=False, db_index=True)  # fraud / mismatch flag
+    notes = models.TextField(null=True, blank=True)  # internal notes (short)
+
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Identity Verification"
+        verbose_name_plural = "Identity Verifications"
+
+    def __str__(self):
+        return f"IV({self.user_id}) {self.method}:{self.status}:{self.level}"
+
+    def mark_verified(self, level=None):
+        # Mark as verified
+        self.status = IV_STATUS_VERIFIED
+        if level:
+            self.level = level
+        self.verified_at = timezone.now()
+        self.revoked_at = None
+        self.rejected_at = None
+        self.save(update_fields=["status", "level", "verified_at", "revoked_at", "rejected_at", "updated_at"])
+
+    def mark_revoked(self, reason=None):
+        # Mark as revoked
+        self.status = IV_STATUS_REVOKED
+        self.revoked_at = timezone.now()
+        if reason:
+            self.notes = (reason[:1000] if isinstance(reason, str) else str(reason)[:1000])
+        self.save(update_fields=["status", "revoked_at", "notes", "updated_at"])
+
+
+# Identity Grants ----------------------------------------------------------
+class IdentityGrant(models.Model):
+    SOURCE_ADMIN = "admin"
+    SOURCE_SYSTEM = "system"
+
+    SOURCE_CHOICES = [
+        (SOURCE_ADMIN, "TownLIT Admin"),
+        (SOURCE_SYSTEM, "System"),
+    ]
+
+    id = models.BigAutoField(primary_key=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="identity_grants")
+    source = models.CharField(max_length=20, choices=SOURCE_CHOICES)
+    level = models.CharField(max_length=20, choices=IDENTITY_VERIFICATION_LEVEL_CHOICES)
+    reason = models.TextField()
+    approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="approved_identity_grants")
+    is_active = models.BooleanField(default=True)
+    granted_at = models.DateTimeField(auto_now_add=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Identity Grant"
+        verbose_name_plural = "Identity Grants"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user"],
+                condition=models.Q(is_active=True),
+                name="unique_active_identity_grant_per_user"
+            )
+        ]
+
+    def revoke(self):
+        self.is_active = False
+        self.revoked_at = timezone.now()
+        self.save(update_fields=["is_active", "revoked_at"])
+
+
+
+# LITShield Grant ----------------------------------------------------------
+class LITShieldGrant(models.Model):
+    """
+    Controls access to PIN / LITShield features.
+    NOT related to identity or spiritual verification.
+    """
+
+    DIRECT = "direct"
+    ORG_ENDORSEMENT = "org_endorsement"
+
+    GRANT_SOURCE_CHOICES = [
+        (DIRECT, "Direct TownLIT Decision"),
+        (ORG_ENDORSEMENT, "Organization Endorsement"),
+    ]
+
+    id = models.BigAutoField(primary_key=True)
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="litshield_grant",
+        db_index=True,
+    )
+
+    source = models.CharField(
+        max_length=20,
+        choices=GRANT_SOURCE_CHOICES,
+        db_index=True,
+    )
+
+    # Optional — only when source = ORG_ENDORSEMENT
+    organization = models.ForeignKey(
+        "profilesOrg.Organization",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="litshield_endorsements",
+    )
+
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="litshield_requests",
+        help_text="Admin or organization owner who initiated this"
+    )
+
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="litshield_approvals",
+        help_text="TownLIT admin who approved"
+    )
+
+    is_active = models.BooleanField(default=True, db_index=True)
+
+    admin_notes = models.TextField(null=True, blank=True)
+
+    granted_at = models.DateTimeField(auto_now_add=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "LITShield Grant"
+        verbose_name_plural = "LITShield Grants"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user"],
+                condition=models.Q(is_active=True),
+                name="unique_active_litshield_per_user"
+            )
+        ]
+
+    def __str__(self):
+        return f"LITShield → {self.user_id} ({self.source})"
+    
+
+# Organization Endorsement -------------------------------------------------
+class OrganizationLITShieldEndorsement(models.Model):
+    from apps.profilesOrg.models import Organization
+    id = models.BigAutoField(primary_key=True)
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="litshield_endorsement_requests"
+    )
+
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="litshield_grants"
+    )
+
+
+    referrer_member = models.ForeignKey(
+        "profiles.Member",
+        on_delete=models.PROTECT,
+        help_text="Member submitting endorsement"
+    )
+
+    reason = models.TextField()
+
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="litshield_reviews"
+    )
+
+    approved = models.BooleanField(null=True)  # None = pending
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("user", "organization")
+
+
+
+# Identity Audit Log -------------------------------------------------------
+class IdentityAuditLog(models.Model):
+    # Immutable audit log for identity events
+    id = models.BigAutoField(primary_key=True)
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="identity_audit_logs", db_index=True)
+    identity_verification = models.ForeignKey("IdentityVerification", on_delete=models.SET_NULL, null=True, blank=True, related_name="audit_logs")
+
+    action = models.CharField(max_length=20, choices=IDENTITY_AUDIT_ACTION_CHOICES, db_index=True)
+    source = models.CharField(max_length=20, choices=IDENTITY_AUDIT_SOURCE_CHOICES, db_index=True)
+
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="performed_identity_audits")
+    reason = models.CharField(max_length=1000, null=True, blank=True)
+
+    previous_status = models.CharField(max_length=20, null=True, blank=True)
+    new_status = models.CharField(max_length=20, null=True, blank=True)
+
+    metadata = models.JSONField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name = "Identity Audit Log"
+        verbose_name_plural = "Identity Audit Logs"
+        ordering = ("-created_at",)
+
+    def __str__(self):
+        return f"{self.user_id} {self.action} via {self.source} @ {self.created_at}"
     
 
 # User Device Key Model -----------------------------------------------------

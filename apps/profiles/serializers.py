@@ -511,16 +511,15 @@ class MemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
             'denomination_branch_label', 'denomination_family_label',
 
             'show_gifts_in_profile', 'show_fellowship_in_profile', 'hide_confidants', 'is_hidden_by_confidants',
-            'register_date', 'identity_verification_status', 'is_verified_identity', 'identity_verified_at', 'is_sanctuary_participant',
+            'register_date', 
+            'is_townlit_verified', 'townlit_verified_at',
             'is_privacy', 'is_migrated', 'is_active', 
             'litcovenant', 'spiritual_gifts',
              'friends',
         ]
         read_only_fields = [
             'register_date', 'is_migrated', 'is_active',
-            'identity_verification_status', 'identity_verified_at',
-            'is_verified_identity', 'is_sanctuary_participant',
-            # labels are always read-only
+            'is_townlit_verified', 'townlit_verified_at',
             'denomination_branch_label', 'denomination_family_label',
         ]
 
@@ -728,8 +727,9 @@ class PublicMemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
             'academic_record', 'spiritual_gifts',
             'social_links', 'friends', 'litcovenant', 'testimonies',
             'show_gifts_in_profile', 'show_fellowship_in_profile', 'hide_confidants',
-            'register_date', 'identity_verification_status', 'is_verified_identity', 'identity_verified_at',
-            'is_sanctuary_participant', 'is_privacy', 'is_hidden_by_confidants', 'is_migrated', 'is_active',
+            'register_date', 
+            'is_townlit_verified', 'townlit_verified_at',
+            'is_privacy', 'is_hidden_by_confidants', 'is_migrated', 'is_active',
         ]
         read_only_fields = fields
 
@@ -836,19 +836,26 @@ class PublicMemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
 class LimitedMemberSerializer(serializers.ModelSerializer):
     """
     Ultra-minimal public view of Member when privacy/visibility is restricted.
-    Only exposes nested LimitedCustomUserSerializer.
+    Exposes only identity-safe verification flags + nested user.
     """
     user = LimitedCustomUserSerializer(read_only=True)
 
     class Meta:
         model = Member
-        fields = ['user']  # <-- ONLY user field per policy
+        fields = [
+            'user',
+            'is_townlit_verified',
+            'townlit_verified_at',
+        ]
         read_only_fields = fields
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Keep context for nested user serializer
-        self.fields['user'] = LimitedCustomUserSerializer(context=self.context, read_only=True)
+        self.fields['user'] = LimitedCustomUserSerializer(
+            context=self.context,
+            read_only=True
+        )
 
     
 # MEMBER'S GIFT serializer -----------------------------------------------------------------------------
@@ -982,8 +989,6 @@ class ClientSerializer(serializers.ModelSerializer):
         return fields
 
     def validate(self, data):
-        # Note: 'request' is read_only; اگر این شرط واقعاً لازم است و از context می‌آید،
-        # بعداً می‌توانی به شکل دیگری چک کنی. فعلاً منطق فعلی حفظ شد.
         if data.get('is_active') and not data.get('request'):
             raise serializers.ValidationError("Active client must have a request.")
         return data

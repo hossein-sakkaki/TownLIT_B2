@@ -3,6 +3,7 @@ from django.utils import timezone
 from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.db.models import Q
+from django.shortcuts import get_object_or_404
 import datetime
 import traceback
 import re
@@ -32,17 +33,40 @@ from cryptography.fernet import Fernet
 
 from .models import (
     CustomLabel, SocialMediaLink, SocialMediaType, InviteCode,
-    UserDeviceKey, UserDeviceKeyBackup, UserSecurityProfile
+    UserDeviceKey, UserDeviceKeyBackup, UserSecurityProfile,
+    IdentityVerification
     )
+from apps.accounts.services.veriff import create_veriff_session, parse_veriff_webhook
 from utils.security.security_manager import SecurityStateManager
 from .serializers import (
     CustomUserSerializer,
     RegisterUserSerializer, LoginSerializer,
     VerifyNewBornSerializer, ForgetPasswordSerializer, ResetPasswordSerializer,
     SocialMediaLinkSerializer, SocialMediaLinkReadOnlySerializer, SocialMediaTypeSerializer,
-    UserDeviceKeySerializer, DevicePushTokenSerializer, ReactivationUserSerializer
+    UserDeviceKeySerializer, DevicePushTokenSerializer, ReactivationUserSerializer,
+    IdentityStartSerializer,
+    IdentityStatusSerializer,
+    IdentityRevokeSerializer,
     )
-from .constants import BELIEVER, SEEKER, PREFER_NOT_TO_SAY
+from apps.accounts.services.veriff_security import verify_veriff_signature
+from apps.accounts.permissions import IsAdminUserStrict
+from .constants import (
+    BELIEVER, SEEKER, PREFER_NOT_TO_SAY,
+    IV_STATUS_PENDING,
+    IV_STATUS_VERIFIED,
+    IV_STATUS_REJECTED,
+    IA_VERIFY,
+    IA_REJECT,
+    IA_SOURCE_VERIFF,
+
+    IV_METHOD_PROVIDER,
+    IV_METHOD_ADMIN,
+    IV_STATUS_REVOKED,
+    IA_REVOKE,
+    IA_SOURCE_ADMIN,
+)
+
+from apps.accounts.services.identity_audit import log_identity_event
 from apps.profilesOrg.models import Organization
 from apps.profiles.models import Member, GuestUser
 from apps.conversation.models import Message, MessageEncryption
@@ -58,6 +82,8 @@ from django.contrib.auth import get_user_model
 
 CustomUser = get_user_model()
 logger = logging.getLogger(__name__)
+security_logger = logging.getLogger("security.identity")
+
 
 # Generate key for encryption ---------------------------------------------------
 cipher_suite = Fernet(settings.FERNET_KEY)
@@ -120,7 +146,6 @@ class AuthViewSet(viewsets.ViewSet):
                         status=status.HTTP_400_BAD_REQUEST
                     )
                 else:
-                    # کاربر غیرفعال → آپدیت پسورد و ارسال مجدد کد
                     if ser_data.is_valid():
                         existing_user.set_password(ser_data.validated_data['password'])
                         existing_user.user_active_code = None
@@ -128,20 +153,36 @@ class AuthViewSet(viewsets.ViewSet):
                         existing_user.registration_started_at = timezone.now()
                         existing_user.save()
 
-                        # ثبت توافق با سیاست‌ها
-                        required_policies = ['terms_of_service', 'privacy_policy']
+                        # accept policies -------------------------------
+                        required_policies = ["terms_of_service", "privacy_policy"]
                         missing_policies = []
 
+                        # choose language (example)
+                        lang = (request.data.get("language") or "en").strip().lower()
+
                         for policy_type in required_policies:
-                            try:
-                                policy = TermsAndPolicy.objects.get(policy_type=policy_type)
-                                UserAgreement.objects.get_or_create(
-                                    user=existing_user,
-                                    policy=policy,
-                                    defaults={"is_latest_agreement": True}
+                            policy = (
+                                TermsAndPolicy.objects
+                                .filter(policy_type=policy_type, is_active=True, language=lang)
+                                .order_by("-last_updated")
+                                .first()
+                            )
+
+                            if not policy and lang != "en":
+                                policy = (
+                                    TermsAndPolicy.objects
+                                    .filter(policy_type=policy_type, is_active=True, language="en")
+                                    .order_by("-last_updated")
+                                    .first()
                                 )
-                            except TermsAndPolicy.DoesNotExist:
+
+                            if not policy:
                                 missing_policies.append(policy_type)
+                                continue
+
+                            # ✅ history-friendly + idempotent
+                            from apps.main.services.policy_acceptance import ensure_policy_acceptance
+                            ensure_policy_acceptance(user=existing_user, policy=policy)
 
                         if missing_policies:
                             return Response(
@@ -149,6 +190,7 @@ class AuthViewSet(viewsets.ViewSet):
                                 status=status.HTTP_400_BAD_REQUEST
                             )
 
+                        # Generate and encrypt activation code ---------
                         active_code = create_active_code(5)
                         expiration_minutes = settings.EMAIL_CODE_EXPIRATION_MINUTES
                         expiration_time = timezone.now() + datetime.timedelta(minutes=expiration_minutes)
@@ -157,9 +199,9 @@ class AuthViewSet(viewsets.ViewSet):
                         existing_user.user_active_code_expiry = expiration_time
                         existing_user.save()
                         
-                        print('----------------------1----------------------')
-                        print(active_code)
-                        print('-----------------------1---------------------')
+                        # print('----------------------1----------------------')
+                        # print(active_code)
+                        # print('-----------------------1---------------------')
 
                         subject = "Welcome back to TownLIT - Verify Again"
                         context = {
@@ -201,8 +243,7 @@ class AuthViewSet(viewsets.ViewSet):
                     else:
                         return Response({"message": extract_first_error_message(ser_data.errors)}, status=status.HTTP_400_BAD_REQUEST)
 
-
-            # در صورت نبود کاربر → مسیر عادی ثبت‌نام
+            # Create new user
             if ser_data.is_valid():
                 user = CustomUser.objects.create_user(
                     email=ser_data.validated_data['email'],
@@ -211,19 +252,36 @@ class AuthViewSet(viewsets.ViewSet):
                 user.image_name = settings.DEFAULT_USER_AVATAR_URL
                 user.save()
 
+                # accept policies -------------------------------
+                required_policies = ["terms_of_service", "privacy_policy"]
                 missing_policies = []
-                required_policies = ['terms_of_service', 'privacy_policy']
+
+                # choose language (example)
+                lang = (request.data.get("language") or "en").strip().lower()
 
                 for policy_type in required_policies:
-                    try:
-                        policy = TermsAndPolicy.objects.get(policy_type=policy_type)
-                        UserAgreement.objects.get_or_create(
-                            user=user,
-                            policy=policy,
-                            defaults={"is_latest_agreement": True}
+                    policy = (
+                        TermsAndPolicy.objects
+                        .filter(policy_type=policy_type, is_active=True, language=lang)
+                        .order_by("-last_updated")
+                        .first()
+                    )
+
+                    if not policy and lang != "en":
+                        policy = (
+                            TermsAndPolicy.objects
+                            .filter(policy_type=policy_type, is_active=True, language="en")
+                            .order_by("-last_updated")
+                            .first()
                         )
-                    except TermsAndPolicy.DoesNotExist:
+
+                    if not policy:
                         missing_policies.append(policy_type)
+                        continue
+
+                    # ✅ history-friendly + idempotent
+                    from apps.main.services.policy_acceptance import ensure_policy_acceptance
+                    ensure_policy_acceptance(user=existing_user, policy=policy)
 
                 if missing_policies:
                     return Response(
@@ -231,6 +289,7 @@ class AuthViewSet(viewsets.ViewSet):
                         status=status.HTTP_400_BAD_REQUEST
                     )
 
+                # Generate and encrypt activation code ---------
                 active_code = create_active_code(5)
                 expiration_minutes = settings.EMAIL_CODE_EXPIRATION_MINUTES
                 expiration_time = timezone.now() + datetime.timedelta(minutes=expiration_minutes)
@@ -239,11 +298,10 @@ class AuthViewSet(viewsets.ViewSet):
                 user.user_active_code_expiry = expiration_time
                 user.save()
                 
-                print('----------------------2----------------------')
-                print(active_code)
-                print('----------------------2----------------------')
+                # print('----------------------2----------------------')
+                # print(active_code)
+                # print('----------------------2----------------------')
                     
-
                 subject = "Welcome to TownLIT - Activate Your Account!"
                 context = {
                     'activation_code': active_code,
@@ -672,47 +730,55 @@ class AuthViewSet(viewsets.ViewSet):
                 "message": "Invalid OTP code. Please try again."
             }, status=status.HTTP_400_BAD_REQUEST)
 
+
     # Logout ---------------------------------------------------------------------------------------------------------
-    @action(detail=False, methods=['post'], url_path='logout', permission_classes=[IsAuthenticated])
+    @action(detail=False, methods=["post"], url_path="logout", permission_classes=[IsAuthenticated])
     def logout(self, request):
         """
-        Revoke refresh token (if blacklist app enabled) and force WS logout.
-        Allowed for suspended users via allow_suspended_actions.
+        Revoke refresh token and force WS logout for THIS device only.
         """
         refresh_token = request.data.get("refresh")
         if not refresh_token:
             return Response({"error": "Refresh token is required."}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Read device_id (must match WS querystring device_id)
+        device_id = (request.data.get("device_id") or "").strip().lower()
+
         # Try to blacklist refresh token
         try:
             token = RefreshToken(refresh_token)
             try:
-                token.blacklist()  # no-op if blacklist app not installed
+                token.blacklist()
             except Exception:
-                # Swallow if blacklist app isn't enabled; client should still drop tokens.
                 pass
         except TokenError:
             return Response(
                 {"error": "Invalid token or token has already been blacklisted."},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Force logout over WebSocket (best-effort)
-        try:
-            channel_layer = get_channel_layer()
-            if channel_layer is not None:
-                async_to_sync(channel_layer.group_send)(
-                    f"user_{request.user.id}",
-                    {
-                        "type": "force_logout",   # your consumer handler
-                        "user_id": request.user.id,
-                    }
-                )
-        except Exception:
-            # Do not fail logout if WS delivery fails
-            pass
+        # Best-effort WS force logout (device-scoped)
+        if device_id:
+            try:
+                channel_layer = get_channel_layer()
+                if channel_layer is not None:
+                    async_to_sync(channel_layer.group_send)(
+                        f"device_{device_id}",
+                        {
+                            "type": "dispatch_event",   # Central dispatcher entry
+                            "app": "conversation",
+                            "event": "force_logout",
+                            "data": {
+                                "user_id": request.user.id,
+                                "device_id": device_id,
+                            },
+                        },
+                    )
+            except Exception:
+                pass
 
         return Response({"message": "User has been successfully logged out."}, status=status.HTTP_200_OK)
+
         
         
     # Forgot Password -------------------------------------------------------------------------------------------------
@@ -1017,32 +1083,62 @@ class AuthViewSet(viewsets.ViewSet):
     # PINs Manage -----------------------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='enable-pin', permission_classes=[IsAuthenticated])
     def enable_pin(self, request):
-        try:
-            user = request.user
-            if not user.is_member:
-                return Response({"error": "Only members can set access and delete pins."}, status=status.HTTP_403_FORBIDDEN)
+        user = request.user
 
-            access_pin = request.data.get('access_pin')
-            delete_pin = request.data.get('delete_pin')
-            
-            if access_pin and (len(access_pin) != 4 or not access_pin.isdigit()):
-                return Response({"error": "Access pin must be 4 numeric digits."}, status=status.HTTP_400_BAD_REQUEST)
-            if delete_pin and (len(delete_pin) != 4 or not delete_pin.isdigit()):
-                return Response({"error": "Delete pin must be 4 numeric digits."}, status=status.HTTP_400_BAD_REQUEST)
-            if access_pin == delete_pin:
-                return Response({"error": "Access pin and delete pin must be different."}, status=status.HTTP_400_BAD_REQUEST)
+        # -----------------------------
+        # LITShield authorization check
+        # -----------------------------
+        litshield = getattr(user, "litshield_grant", None)
+        if not litshield or not litshield.is_active:
+            return Response(
+                {"error": "LITShield access is not granted for this account."},
+                status=status.HTTP_403_FORBIDDEN
+            )
 
-            if access_pin:
-                user.set_access_pin(access_pin)
-            if delete_pin:
-                user.set_delete_pin(delete_pin)
-                
-            user.pin_security_enabled = True
-            user.save()
-            return Response({"message": "Pin security enabled and pins set successfully."}, status=status.HTTP_200_OK)
-        except Exception as e:
-            logger.error(f"Error occurred: {str(e)}")
-            return Response({"error": "An unexpected error occurred"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        access_pin = request.data.get("access_pin")
+        delete_pin = request.data.get("delete_pin")
+
+        # -----------------------------
+        # Validation
+        # -----------------------------
+        if not access_pin or not delete_pin:
+            return Response(
+                {"error": "Both access_pin and delete_pin are required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if len(access_pin) != 4 or not access_pin.isdigit():
+            return Response(
+                {"error": "Access pin must be exactly 4 numeric digits."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if len(delete_pin) != 4 or not delete_pin.isdigit():
+            return Response(
+                {"error": "Delete pin must be exactly 4 numeric digits."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if access_pin == delete_pin:
+            return Response(
+                {"error": "Access pin and delete pin must be different."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # -----------------------------
+        # Set pins
+        # -----------------------------
+        user.set_access_pin(access_pin)
+        user.set_delete_pin(delete_pin)
+
+        user.pin_security_enabled = True
+        user.save(update_fields=["access_pin", "delete_pin", "pin_security_enabled"])
+
+        return Response(
+            {"message": "PIN security enabled successfully."},
+            status=status.HTTP_200_OK
+        )
+
 
 
     @action(detail=False, methods=['post'], url_path='disable-pin', permission_classes=[IsAuthenticated])
@@ -2166,3 +2262,168 @@ class SocialLinksViewSet(viewsets.ViewSet):
         except Exception as e:
             return Response({"error": "Failed to fetch social media types."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
+
+# IDENTITY VERIFICATION -----------------------------------------------------------------------
+class IdentityViewSet(viewsets.ViewSet):
+    """
+    Identity Verification API
+    - Provider-based (Veriff)
+    - Manual admin override (superuser only)
+    """
+
+    # -----------------------------------------------------
+    # START PROVIDER VERIFICATION (Veriff)
+    # -----------------------------------------------------
+    @action(detail=False, methods=["post"], permission_classes=[IsAuthenticated])
+    def start(self, request):
+        serializer = IdentityStartSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        iv, _ = IdentityVerification.objects.get_or_create(
+            user=request.user,
+            defaults={
+                "method": IV_METHOD_PROVIDER,
+                "status": IV_STATUS_PENDING,
+                "level": "basic",
+            },
+        )
+
+        if iv.status == IV_STATUS_VERIFIED:
+            return Response(
+                {"detail": "Identity already verified."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        session = create_veriff_session(
+            user=request.user,
+            success_url=serializer.validated_data.get("success_url"),
+            failure_url=serializer.validated_data.get("failure_url"),
+        )
+
+        iv.method = IV_METHOD_PROVIDER
+        iv.status = IV_STATUS_PENDING
+        iv.provider_reference = session["verification"]["id"]
+        iv.provider_payload = {"session": session}
+        iv.save()
+
+        return Response(
+            {"verification_url": session["verification"]["url"]},
+            status=status.HTTP_200_OK,
+        )
+
+    # -----------------------------------------------------
+    # GET CURRENT USER IDENTITY STATUS
+    # -----------------------------------------------------
+    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated])
+    def status(self, request):
+        iv = get_object_or_404(IdentityVerification, user=request.user)
+        return Response(
+            IdentityStatusSerializer(iv).data,
+            status=status.HTTP_200_OK,
+        )
+
+    # -----------------------------------------------------
+    # ADMIN: REVOKE IDENTITY
+    # -----------------------------------------------------
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsAuthenticated, IsAdminUserStrict],
+        url_path="revoke",
+    )
+    def revoke(self, request, pk=None):
+        serializer = IdentityRevokeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        iv = get_object_or_404(IdentityVerification, user_id=pk)
+
+        previous_status = iv.status
+
+        iv.status = IV_STATUS_REVOKED
+        iv.revoked_at = timezone.now()
+        iv.notes = serializer.validated_data.get("reason", "Admin revoke")
+        iv.method = IV_METHOD_ADMIN
+        iv.save()
+
+        log_identity_event(
+            user=iv.user,
+            identity_verification=iv,
+            action=IA_REVOKE,
+            source=IA_SOURCE_ADMIN,
+            actor=request.user,
+            previous_status=previous_status,
+            new_status=iv.status,
+            reason=iv.notes,
+        )
+
+        return Response(
+            {"detail": "Identity revoked by admin."},
+            status=status.HTTP_200_OK,
+        )
+
+    # -----------------------------------------------------
+    # VERIFF WEBHOOK (NO AUTH)
+    # -----------------------------------------------------
+    @action(
+        detail=False,
+        methods=["post"],
+        authentication_classes=[],
+        permission_classes=[],
+        url_path="webhook/veriff",
+    )
+    def veriff_webhook(self, request):
+        # 1️⃣ Verify signature
+        signature = request.headers.get("X-Veriff-Signature")
+        if not verify_veriff_signature(request.body, signature):
+            return Response({"detail": "Invalid signature"}, status=403)
+
+        # 2️⃣ Parse payload
+        data = parse_veriff_webhook(request.data)
+        session_id = data.get("session_id")
+
+        if not session_id:
+            return Response({"detail": "Missing session id"}, status=400)
+
+        iv = get_object_or_404(IdentityVerification, provider_reference=session_id)
+
+        # 3️⃣ Idempotency guard
+        if iv.status in {IV_STATUS_VERIFIED, IV_STATUS_REJECTED, IV_STATUS_REVOKED}:
+            return Response({"ok": True}, status=200)
+
+        previous_status = iv.status
+
+        # 4️⃣ Apply decision
+        if data["status"] == "approved":
+            iv.status = IV_STATUS_VERIFIED
+            iv.level = "strong"
+            iv.verified_at = timezone.now()
+
+            log_identity_event(
+                user=iv.user,
+                identity_verification=iv,
+                action=IA_VERIFY,
+                source=IA_SOURCE_VERIFF,
+                previous_status=previous_status,
+                new_status=iv.status,
+                metadata={"risk": data.get("risk")},
+            )
+        else:
+            iv.status = IV_STATUS_REJECTED
+            iv.rejected_at = timezone.now()
+            iv.notes = data.get("reason")
+
+            log_identity_event(
+                user=iv.user,
+                identity_verification=iv,
+                action=IA_REJECT,
+                source=IA_SOURCE_VERIFF,
+                previous_status=previous_status,
+                new_status=iv.status,
+                reason=data.get("reason"),
+            )
+
+        iv.risk_flag = bool(data.get("risk"))
+        iv.provider_payload = data.get("raw")
+        iv.save()
+
+        return Response({"ok": True}, status=200)

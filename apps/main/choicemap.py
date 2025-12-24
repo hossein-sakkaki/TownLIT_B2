@@ -90,19 +90,19 @@ from apps.posts.constants import (
 )
 
 # Import sanctuary_constants
-from apps.sanctuary.constants import (
-    POST_REPORT_CHOICES,
-    ACCOUNT_REPORT_CHOICES,
-    ORGANIZATION_REPORT_CHOICES,
-    POST_ADMIN_REVIEW_CATEGORIES,
-    ACCOUNT_ADMIN_REVIEW_CATEGORIES,
-    ORGANIZATION_ADMIN_REVIEW_CATEGORIES,
-    SENSITIVE_CATEGORIES,
-    REQUEST_TYPE_CHOICES,
-    REQUEST_STATUS_CHOICES,
-    REVIEW_STATUS_CHOICES,
-    OUTCOME_CHOICES,
-)
+# from apps.sanctuary.constants import (
+#     POST_REPORT_CHOICES,
+#     ACCOUNT_REPORT_CHOICES,
+#     ORGANIZATION_REPORT_CHOICES,
+#     POST_ADMIN_REVIEW_CATEGORIES,
+#     ACCOUNT_ADMIN_REVIEW_CATEGORIES,
+#     ORGANIZATION_ADMIN_REVIEW_CATEGORIES,
+#     SENSITIVE_CATEGORIES,
+#     REQUEST_TYPE_CHOICES,
+#     REQUEST_STATUS_CHOICES,
+#     REVIEW_STATUS_CHOICES,
+#     OUTCOME_CHOICES,
+# )
 
 # Import store_constants
 from apps.store.store_constants import (
@@ -199,17 +199,17 @@ CHOICES_MAP = {
     'resource_type': RESOURCE_TYPE_CHOICES,
 
     # Sanctuary constants
-    'post_report': POST_REPORT_CHOICES,
-    'account_report': ACCOUNT_REPORT_CHOICES,
-    'organization_report': ORGANIZATION_REPORT_CHOICES,
-    'request_type': REQUEST_TYPE_CHOICES,
-    'request_status': REQUEST_STATUS_CHOICES,
-    'review_status': REVIEW_STATUS_CHOICES,
-    'outcome': OUTCOME_CHOICES,
-    'sensitive_categories': SENSITIVE_CATEGORIES,
-    'post_admin_review_categories': POST_ADMIN_REVIEW_CATEGORIES,
-    'account_admin_review_categories': ACCOUNT_ADMIN_REVIEW_CATEGORIES,
-    'organization_admin_review_categories': ORGANIZATION_ADMIN_REVIEW_CATEGORIES,
+    # 'post_report': POST_REPORT_CHOICES,
+    # 'account_report': ACCOUNT_REPORT_CHOICES,
+    # 'organization_report': ORGANIZATION_REPORT_CHOICES,
+    # 'request_type': REQUEST_TYPE_CHOICES,
+    # 'request_status': REQUEST_STATUS_CHOICES,
+    # 'review_status': REVIEW_STATUS_CHOICES,
+    # 'outcome': OUTCOME_CHOICES,
+    # 'sensitive_categories': SENSITIVE_CATEGORIES,
+    # 'post_admin_review_categories': POST_ADMIN_REVIEW_CATEGORIES,
+    # 'account_admin_review_categories': ACCOUNT_ADMIN_REVIEW_CATEGORIES,
+    # 'organization_admin_review_categories': ORGANIZATION_ADMIN_REVIEW_CATEGORIES,
 
     # Store constants
     'store_product_category': STORE_PRODUCT_CATEGORY_CHOICES,

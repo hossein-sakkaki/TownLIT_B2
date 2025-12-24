@@ -3,6 +3,7 @@ from __future__ import absolute_import, unicode_literals
 import os
 from celery import Celery
 from celery.schedules import crontab
+from datetime import timedelta
 
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'townlit_b.settings')
@@ -11,9 +12,7 @@ app.config_from_object('django.conf:settings', namespace='CELERY')
 app.autodiscover_tasks()
 
 
-
-
-# Define all beat schedules in one dictionary
+# Define all beat schedules in one dictionary ------------------------------------------
 app.conf.beat_schedule = {
 
     # ✅ Delete Inactive Users
@@ -93,13 +92,31 @@ app.conf.beat_schedule = {
         'task': 'accounts.tasks.delete_abandoned_users',
         'schedule': crontab(hour=3, minute=0),  # هر روز ساعت ۳ صبح
     },
+
+    # ✅ Replace Member for Sanctuary (run every 2 hours; replaces only after 48h cutoff)
+    'check_for_inactive_reviewers_every_2_hours': {
+        'task': 'apps.sanctuary.tasks.check_for_inactive_reviewers',
+        'schedule': crontab(minute=0, hour='*/2'),
+    },
+
+    # ✅ Reassign Admin for Sanctuary (run every 2 hours; cutoff is 24h inside task)
+    'check_for_inactive_admins_every_2_hours': {
+        'task': 'apps.sanctuary.tasks.check_for_inactive_admins',
+        'schedule': crontab(minute=0, hour='*/2'),
+    },
+
+    # ✅ Replace Admin for Appeal (run every 2 hours; cutoff is 24h inside task)
+    'check_for_inactive_appeal_admins_every_2_hours': {
+        'task': 'apps.sanctuary.tasks.check_for_inactive_appeal_admins',
+        'schedule': crontab(minute=0, hour='*/2'),
+    },
+
+    # ✅ Check Appeal Deadlines (daily midnight is fine)
+    'check-appeal-deadlines-every-day': {
+        'task': 'apps.sanctuary.tasks.check_appeal_deadlines',
+        'schedule': crontab(hour=0, minute=0),
+    },
 }
-
-
-
-
-
-
 
 
 

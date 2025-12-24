@@ -1,3 +1,4 @@
+# apps/accounts/serializers.py
 from rest_framework import serializers
 from django.contrib.contenttypes.models import ContentType
 from django.utils import timezone
@@ -6,9 +7,10 @@ from django.conf import settings
 from .models import (
                 Address, CustomLabel, SocialMediaType, SocialMediaLink,
                 UserDeviceKey,
-                InviteCode
+                InviteCode,
+                IdentityVerification,
+                LITShieldGrant
             )
-from apps.profiles.models import Member
 from .mixins import AvatarURLMixin
 from apps.profilesOrg.models import Organization
 from validators.user_validators import validate_email_field, validate_password_field
@@ -263,7 +265,11 @@ class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
     label_color = serializers.CharField(source="label.color", read_only=True)
 
     # --- Identity verification ---
-    is_verified_identity = serializers.SerializerMethodField()
+    is_verified_identity = serializers.BooleanField(read_only=True)
+    is_townlit_verified = serializers.SerializerMethodField()
+
+    # --- LitShield access ---
+    has_litshield_access = serializers.SerializerMethodField()
 
     # --- Display enums ---
     country_display = serializers.CharField(source='get_country_display', read_only=True)
@@ -362,13 +368,6 @@ class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
             )
         return value
 
-    # --------------------------------------------------------------------
-    # COMPUTED FIELDS
-    # --------------------------------------------------------------------
-    def get_is_verified_identity(self, obj):
-        mp = getattr(obj, 'member_profile', None)
-        return getattr(mp, 'is_verified_identity', False)
-
     def get_profile_url(self, obj):
         try:
             return obj.get_absolute_url()
@@ -381,6 +380,27 @@ class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
     def get_avatar_url(self, obj):
         return self.build_avatar_url(obj)
 
+    # --------------------------------------------------------------------
+    # Is TownLIT verified?
+    # --------------------------------------------------------------------
+    def get_is_townlit_verified(self, obj):
+        """
+        Derived flag:
+        True if user has a member profile AND it is TownLIT verified.
+        """
+        mp = getattr(obj, "member_profile", None)
+        return bool(mp and mp.is_townlit_verified)
+
+    # --------------------------------------------------------------------
+    # LitShield access?
+    # --------------------------------------------------------------------
+    def get_has_litshield_access(self, obj):
+        """
+        Security permission flag (LITShield):
+        True ONLY if an active LITShieldGrant exists.
+        Independent from identity or spiritual verification.
+        """
+        return LITShieldGrant.objects.filter(user=obj, is_active=True).exists()
 
 
     
@@ -393,7 +413,9 @@ class PublicCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
     label_color = serializers.CharField(source="label.color", read_only=True)
 
     # verification + profile URL
-    is_verified_identity = serializers.SerializerMethodField()
+    is_verified_identity = serializers.BooleanField(read_only=True)
+    is_townlit_verified = serializers.SerializerMethodField()
+
     profile_url = serializers.SerializerMethodField()
 
     # display-friendly enums
@@ -416,6 +438,7 @@ class PublicCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
 
             # verification
             "is_verified_identity",
+            "is_townlit_verified",
 
             # location + languages
             "country", "country_display",
@@ -463,12 +486,6 @@ class PublicCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
 
         return rep
 
-    # -------------------------------------------------------
-    # helpers
-    # -------------------------------------------------------
-    def get_is_verified_identity(self, obj):
-        mp = getattr(obj, "member_profile", None)
-        return getattr(mp, "is_verified_identity", False)
 
     def get_profile_url(self, obj):
         try:
@@ -479,6 +496,16 @@ class PublicCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
     def get_avatar_url(self, obj):
         return self.build_avatar_url(obj)
 
+    def get_is_townlit_verified(self, obj):
+        """
+        Derived flag:
+        True if user has a member profile AND it is TownLIT verified.
+        """
+        mp = getattr(obj, "member_profile", None)
+        return bool(mp and mp.is_townlit_verified)
+
+
+
 
 
 # -------------------------------------------------------------------
@@ -487,7 +514,9 @@ class PublicCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
 class LimitedCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
     label = CustomLabelSerializer(read_only=True)
     label_color = serializers.CharField(source="label.color", read_only=True)
-    is_verified_identity = serializers.SerializerMethodField()
+    is_verified_identity = serializers.BooleanField(read_only=True)
+    is_townlit_verified = serializers.SerializerMethodField()
+
     profile_url = serializers.SerializerMethodField()
 
     # NEW: avatar proxy URL
@@ -507,6 +536,8 @@ class LimitedCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
             "label_color",
 
             "is_verified_identity",
+            "is_townlit_verified",
+            
             "is_member",
             "is_suspended",
             "is_account_paused",
@@ -518,9 +549,6 @@ class LimitedCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
-    def get_is_verified_identity(self, obj):
-        mp = getattr(obj, "member_profile", None)
-        return getattr(mp, "is_verified_identity", False)
 
     def get_profile_url(self, obj):
         try:
@@ -531,7 +559,17 @@ class LimitedCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
     def get_avatar_url(self, obj):
         return self.build_avatar_url(obj)
 
+    def get_is_townlit_verified(self, obj):
+        """
+        Derived flag:
+        True if user has a member profile AND it is TownLIT verified.
+        """
+        mp = getattr(obj, "member_profile", None)
+        return bool(mp and mp.is_townlit_verified)
 
+
+
+ 
 # Simple CustomUser Serializers For Showing Users ------------------------------------------------
 class SimpleCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
     # --- Label / badge ---
@@ -547,7 +585,8 @@ class SimpleCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
 
     # --- Profile + verification ---
     profile_url = serializers.SerializerMethodField()
-    is_verified_identity = serializers.SerializerMethodField()
+    is_verified_identity = serializers.BooleanField(read_only=True)
+    is_townlit_verified = serializers.SerializerMethodField()
 
     # --- NEW: avatar proxy URL (no S3 signing on frontend) ---
     avatar_url = serializers.SerializerMethodField()
@@ -556,7 +595,7 @@ class SimpleCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
     class Meta:
         model = CustomUser
         fields = [
-            "id",                # ALWAYS the real user.id  ✅
+            "id", 
             "username",
             "name",
             "family",
@@ -569,7 +608,7 @@ class SimpleCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
             "is_friend",
             "request_sent",
             "has_received_request",
-            "friendship_id",     # ⬅️ legacy field kept as-is (used by frontend)
+            "friendship_id", 
             "fellowship_id",
 
             # profile link
@@ -577,6 +616,7 @@ class SimpleCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
 
             # verification flag
             "is_verified_identity",
+            "is_townlit_verified",
 
             # avatar proxy (fast)
             "avatar_url",
@@ -659,26 +699,30 @@ class SimpleCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
             return None
 
     # ---------------------------------------------------------------
-    # Verification
-    # ---------------------------------------------------------------
-    def get_is_verified_identity(self, obj):
-        """
-        Pull flag from MemberProfile if exists; default False.
-        """
-        mp = getattr(obj, "member_profile", None)
-        return getattr(mp, "is_verified_identity", False)
-
-    # ---------------------------------------------------------------
     # Avatar Proxy URL (FAST)
     # ---------------------------------------------------------------
     def get_avatar_url(self, obj):
         return self.build_avatar_url(obj)
 
+    # ---------------------------------------------------------------
+    # TownLIT verification
+    # ---------------------------------------------------------------
+    def get_is_townlit_verified(self, obj):
+        """
+        Derived flag:
+        True if user has a member profile AND it is TownLIT verified.
+        """
+        mp = getattr(obj, "member_profile", None)
+        return bool(mp and mp.is_townlit_verified)
+
+
             
 
 # ------------------------------------------------------------------------------------
 class UserMiniSerializer(AvatarURLMixin, serializers.ModelSerializer):
-    is_verified_identity = serializers.SerializerMethodField()
+    is_verified_identity = serializers.BooleanField(read_only=True)
+    is_townlit_verified = serializers.SerializerMethodField()
+
     label_color = serializers.CharField(source='label.color', read_only=True)
 
     avatar_url = serializers.SerializerMethodField()
@@ -692,16 +736,23 @@ class UserMiniSerializer(AvatarURLMixin, serializers.ModelSerializer):
             "name",
             "family",
             "is_verified_identity",
+            "is_townlit_verified",
             "label_color",
             "avatar_url", "avatar_version",
         ]
 
-    def get_is_verified_identity(self, user):
-        mp = getattr(user, "member_profile", None)
-        return getattr(mp, "is_verified_identity", False)
 
     def get_avatar_url(self, obj):
         return self.build_avatar_url(obj)
+
+    def get_is_townlit_verified(self, obj):
+        """
+        Derived flag:
+        True if user has a member profile AND it is TownLIT verified.
+        """
+        mp = getattr(obj, "member_profile", None)
+        return bool(mp and mp.is_townlit_verified)
+
 
 
 
@@ -766,3 +817,32 @@ class DevicePushTokenSerializer(serializers.Serializer):
             obj.save(update_fields=["platform", "push_token", "is_active", "last_used"])
 
         return obj
+
+
+
+# Identity Serializers -----------------------------------------------------------------------
+class IdentityStartSerializer(serializers.Serializer):
+    # Start identity verification
+    success_url = serializers.URLField(required=False)
+    failure_url = serializers.URLField(required=False)
+
+
+class IdentityStatusSerializer(serializers.ModelSerializer):
+    # Identity status for UI
+    class Meta:
+        model = IdentityVerification
+        fields = (
+            "method",
+            "status",
+            "level",
+            "verified_at",
+            "revoked_at",
+            "rejected_at",
+            "risk_flag",
+        )
+
+
+class IdentityRevokeSerializer(serializers.Serializer):
+    # Manual revoke by admin
+    reason = serializers.CharField(max_length=1000, required=False)
+

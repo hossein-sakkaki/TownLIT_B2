@@ -4,6 +4,7 @@ from rest_framework.routers import DefaultRouter
 from common.views.media_proxy import serve_s3_media_file
 from .views import (
     TermsAndPolicyViewSet,
+    UserAgreementViewSet,
     FAQViewSet,
     SiteAnnouncementViewSet,
     UserFeedbackViewSet,
@@ -25,6 +26,8 @@ app_name = "main"  # For namespaced reversing; does not change URLs
 router = DefaultRouter()
 # Use unique basenames to avoid reverse name collisions across apps.
 router.register(r'terms-and-policies', TermsAndPolicyViewSet, basename='main-terms-and-policies')
+router.register(r"user-agreements", UserAgreementViewSet, basename="user-agreements")
+
 router.register(r'faqs', FAQViewSet, basename='main-faqs')
 router.register(r'site-announcements', SiteAnnouncementViewSet, basename='main-site-announcements')
 router.register(r'user-feedbacks', UserFeedbackViewSet, basename='main-user-feedbacks')

@@ -191,9 +191,10 @@ class MemberAdmin(admin.ModelAdmin):
         'is_active',
         'is_privacy',
         'register_date',
-        'identity_verification_status',
-        'is_verified_identity',
-        'is_sanctuary_participant',
+
+        'is_townlit_verified',
+        'townlit_verified_at',
+
         'is_hidden_by_confidants',
         'show_fellowship_in_profile',
         'hide_confidants',
@@ -207,9 +208,7 @@ class MemberAdmin(admin.ModelAdmin):
         'is_active',
         'is_privacy',
         'register_date',
-        'identity_verification_status',
-        'is_verified_identity',
-        'is_sanctuary_participant',
+        'is_townlit_verified',
     ]
 
     # --- Search fields ---
@@ -218,7 +217,7 @@ class MemberAdmin(admin.ModelAdmin):
         'biography',
         'vision',
         'service_types__service__name',
-        'denomination_branch',        # ← helpful for quick find
+        'denomination_branch',    
         'denomination_family',
     ]
 
@@ -233,9 +232,8 @@ class MemberAdmin(admin.ModelAdmin):
                 'biography',
                 'vision',
                 'spiritual_rebirth_day',
-                # Old field removed: 'denominations_type'
-                'denomination_branch',       # ← NEW (required)
-                'denomination_family',       # ← NEW (optional)
+                'denomination_branch', 
+                'denomination_family',  
                 'show_gifts_in_profile',
                 'show_fellowship_in_profile',
                 'hide_confidants',
@@ -248,20 +246,14 @@ class MemberAdmin(admin.ModelAdmin):
                 'is_migrated',
                 'is_active',
                 'is_privacy',
-                'identity_verification_status',
-                'identity_verified_at',
-                'is_verified_identity',
-                'is_sanctuary_participant',
+                'is_townlit_verified',
+                'townlit_verified_at',
+                'townlit_verified_reason',
                 'is_hidden_by_confidants',
             )
         }),
         ('Dates', {'fields': ('register_date',)}),
     )
-
-    # If you still need inlines, keep them (sample from your code)
-    # inlines = [OrganizationManagerInMemberInline]
-    # Example you had:
-    # inlines = [MomentInline, PrayInline]
 
     def get_form(self, request, obj=None, **kwargs):
         # Keep reference if needed by other admin hooks
@@ -369,16 +361,16 @@ class SpiritualGiftSurveyQuestionAdmin(admin.ModelAdmin):
 @admin.register(SpiritualGiftSurveyResponse)
 class SpiritualGiftSurveyResponseAdmin(admin.ModelAdmin):
     list_display = ('member', 'question', 'answer')
-    # search_fields = ('member__username', 'question__question_text',)
-    search_fields = ('member__user__username', 'question__question_text',)
+    # search_fields = ('member_profile__username', 'question__question_text',)
+    search_fields = ('member_profile__user__username', 'question__question_text',)
     list_filter = ('question',)
     ordering = ('member',)
 
 @admin.register(MemberSpiritualGifts)
 class MemberSpiritualGiftsAdmin(admin.ModelAdmin):
     list_display = ('member', 'get_gifts', 'survey_results')
-    search_fields = ('member__user__username',)
-    # search_fields = ('member__username',)
+    search_fields = ('member_profile__user__username',)
+    # search_fields = ('member_profile__username',)
     list_filter = ('member',)
     ordering = ('member',)
 

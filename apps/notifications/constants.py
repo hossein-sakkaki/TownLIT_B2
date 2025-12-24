@@ -46,6 +46,12 @@ NOTIFICATION_TYPES = [
     ("new_testimony_audio", "New Audio Testimony"),
     ("new_testimony_video", "New Video Testimony"),
 
+    # --- Sanctuary ---
+    ("sanctuary_admin_assignment", "Sanctuary: Admin Assignment"),
+    ("sanctuary_member_review_request", "Sanctuary: Council Review Request"),
+    ("sanctuary_outcome_finalized", "Sanctuary: Outcome Finalized"),
+    ("sanctuary_appeal_assignment", "Sanctuary: Appeal Assignment"),
+
 ]
 
 # Types that should only send Push and Email notifications (no WebSocket) ---------
@@ -210,6 +216,30 @@ NOTIFICATION_PREF_METADATA = {
         "category": "Testimonies",
         "label": "New video testimony from a friend",
         "description": "You will be notified when a friend publishes a new video testimony.",
+    },
+
+    # ------------------------
+    # SANCTUARY
+    # ------------------------
+    "sanctuary_admin_assignment": {
+        "category": "LITSanctuary",
+        "label": "Admin assigned to a Sanctuary case",
+        "description": "You will be notified when you are assigned as an admin reviewer for a Sanctuary request.",
+    },
+    "sanctuary_member_review_request": {
+        "category": "LITSanctuary",
+        "label": "Council review request",
+        "description": "You will be notified when you are selected to review a Sanctuary request as a council member.",
+    },
+    "sanctuary_outcome_finalized": {
+        "category": "LITSanctuary",
+        "label": "Sanctuary outcome finalized",
+        "description": "You will be notified when a Sanctuary case outcome is finalized (confirmed or rejected).",
+    },
+    "sanctuary_appeal_assignment": {
+        "category": "LITSanctuary",
+        "label": "Appeal assigned to admin",
+        "description": "You will be notified when you are assigned to review an appeal for a Sanctuary outcome.",
     },
 
 }

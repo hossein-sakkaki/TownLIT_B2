@@ -7,6 +7,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.exceptions import ValidationError
 from rest_framework.filters import SearchFilter, OrderingFilter
 import mimetypes
+from django.db import transaction
 from django.http import Http404, HttpResponse
 from django.contrib.auth import get_user_model
 from common.aws.aws_clients import s3_client
@@ -29,14 +30,14 @@ from datetime import timedelta
 
 from .models import (
         TermsAndPolicy, FAQ, SiteAnnouncement, UserFeedback, UserActionLog, Prayer,
-        VideoCategory, VideoSeries, OfficialVideo, VideoViewLog
+        VideoCategory, VideoSeries, OfficialVideo, VideoViewLog, UserAgreement
     )
 from apps.conversation.models import Dialogue
 from .serializers import (
         TermsAndPolicySerializer, FAQSerializer, SiteAnnouncementSerializer,
         UserFeedbackSerializer, UserActionLogSerializer, PrayerSerializer,
         VideoCategorySerializer, VideoSeriesSerializer, OfficialVideoSerializer,
-        OfficialVideoCreateUpdateSerializer, VideoViewLogSerializer
+        OfficialVideoCreateUpdateSerializer, VideoViewLogSerializer, UserAgreementSerializer
     )
 from utils.common.ip import get_client_ip
 from apps.profilesOrg.constants_denominations import FAMILIES_BY_BRANCH
@@ -64,6 +65,33 @@ class TermsAndPolicyViewSet(viewsets.ReadOnlyModelViewSet):
             # Restrict write operations to admin users only
             permission_classes = [IsAdminUser]
         return [permission() for permission in permission_classes]
+
+
+# USER AGREEMENT ViewSet ----------------------------------------------------------------------------------
+class UserAgreementViewSet(viewsets.ModelViewSet):
+    serializer_class = UserAgreementSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return UserAgreement.objects.filter(user=self.request.user)
+
+    def create(self, request, *args, **kwargs):
+        policy_id = request.data.get("policy")
+        if not policy_id:
+            return Response(
+                {"detail": "policy is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        with transaction.atomic():
+            agreement = UserAgreement.objects.create(
+                user=request.user,
+                policy_id=policy_id,
+                is_latest_agreement=True,
+            )
+
+        serializer = self.get_serializer(agreement)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 # FAQ ViewSet ---------------------------------------------------------------------------------------------

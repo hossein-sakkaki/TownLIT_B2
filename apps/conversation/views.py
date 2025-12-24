@@ -8,12 +8,10 @@ from django.db.models import Max, Q, Value, DateTimeField
 from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404
 import base64
-import os
+import json
 from django.db import transaction
 from django.http import Http404
 
-
-        
 
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
@@ -22,10 +20,8 @@ from services.redis_online_manager import get_last_seen, get_online_status_for_u
 from datetime import datetime
 from django.utils.timesince import timesince
 from rest_framework.renderers import JSONRenderer
-import json
 
 from common.aws.s3_utils import get_file_url
-
 from .models import Dialogue, Message, MessageSearchIndex, MessageEncryption, UserDialogueMarker, DialogueParticipant
 from .serializers import DialogueSerializer, MessageSerializer, UserDialogueMarkerSerializer, DialogueParticipantSerializer, UpdateGroupInfoSerializer
 from .permissions import ConversationAccessPermission, IsDialogueParticipant
@@ -36,12 +32,18 @@ from apps.conversation.utils import get_websocket_url
 from common.mime_type_validator import validate_file_type, is_unsafe_file
 from apps.core.security.decorators import require_litshield_access
 
-
+import logging
+logger = logging.getLogger(__name__)
 from django.contrib.auth import get_user_model
 CustomUser = get_user_model()
 
+
+
+# SYSTEM MESSAGES ------------------------------------------------------------------------
 def send_system_message(dialogue, sender, system_event, content):
-    plain_text = content.strip()
+    plain_text = (content or "").strip()
+
+    # Keep your current DB storage format (base64 in bytes)
     base64_str = base64.b64encode(plain_text.encode("utf-8")).decode("utf-8")
     content_bytes = base64_str.encode("utf-8")
 
@@ -55,25 +57,40 @@ def send_system_message(dialogue, sender, system_event, content):
 
     dialogue.last_message = system_message
     dialogue.save(update_fields=["last_message"])
-
     channel_layer = get_channel_layer()
+
     async_to_sync(channel_layer.group_send)(
         f"dialogue_{dialogue.slug}",
         {
-            "type": "chat_message",
-            "event_type": "system_message",
-            "dialogue_slug": dialogue.slug,
-            "message_id": system_message.id,
-            "content": base64_str,
-            "sender": {
-                "id": sender.id,
-                "username": sender.username,
+            "type": "dispatch_event",
+            "app": "conversation",
+            "event": "chat_message",
+            "data": {
+                "event_type": "system_message",
+                "dialogue_slug": dialogue.slug,
+                "message_id": system_message.id,
+
+                # IMPORTANT:
+                # ✅ send real text for realtime UI
+                "decrypted_content": plain_text,
+
+                # you can keep this for debugging/back-compat if you want
+                "content": base64_str,
+
+                "sender": {
+                    "id": sender.id,
+                    "username": sender.username,
+                },
+                "timestamp": system_message.timestamp.isoformat(),
+                "is_system": True,
+                "system_event": system_event,
+
+                # ensure frontend won't try E2EE decrypt
+                "is_encrypted": False,
             },
-            "timestamp": system_message.timestamp.isoformat(),
-            "is_system": True,
-            "system_event": system_event,
         }
     )
+
 
 
 # DIALOGUE VIEWSET -------------------------------------------------------------------------
@@ -417,10 +434,15 @@ class DialogueViewSet(viewsets.ModelViewSet):
         async_to_sync(channel_layer.group_send)(
             f"user_{participant.id}",
             {
-                "type": "group_added",
-                "dialogue": parsed_data
+                "type": "dispatch_event",
+                "app": "conversation",
+                "event": "group_added",
+                "data": {
+                    "dialogue": parsed_data
+                }
             }
         )
+
         send_system_message(dialogue, request.user, 'joined', f"{participant.username} joined the group.")
 
         # Restore if previously deleted
@@ -467,10 +489,15 @@ class DialogueViewSet(viewsets.ModelViewSet):
         async_to_sync(channel_layer.group_send)(
             f"user_{participant.id}",
             {
-                "type": "group_removed",
-                "dialogue": parsed_data
+                "type": "dispatch_event",
+                "app": "conversation",
+                "event": "group_removed",
+                "data": {
+                    "dialogue": parsed_data
+                }
             }
-        )                    
+        )
+                  
         send_system_message(dialogue, request.user, 'removed', f"{participant.username} was removed from the group.")
         return Response({'message': f'{participant.username} removed from the group.'}, status=status.HTTP_200_OK)
 
@@ -580,12 +607,16 @@ class DialogueViewSet(viewsets.ModelViewSet):
             async_to_sync(channel_layer.group_send)(
                 f"user_{participant.id}",
                 {
-                    "type": "group_left",
-                    "user": serialized_user,
-                    "dialogue_slug": dialogue.slug,
+                    "type": "dispatch_event",
+                    "app": "conversation",
+                    "event": "group_left",
+                    "data": {
+                        "user": serialized_user,
+                        "dialogue_slug": dialogue.slug,
+                    }
                 }
             )
-    
+
         return Response({'message': 'You left the group and your chat was removed from the list.'}, status=status.HTTP_200_OK)
 
     # ---------------------------------------
@@ -619,9 +650,13 @@ class DialogueViewSet(viewsets.ModelViewSet):
             async_to_sync(channel_layer.group_send)(
                 f"user_{user.id}",
                 {
-                    "type": "founder_transferred",
-                    "dialogue_slug": dialogue.slug,
-                    "new_founder_id": new_founder.user.id,
+                    "type": "dispatch_event",
+                    "app": "conversation",
+                    "event": "founder_transferred",
+                    "data": {
+                        "dialogue_slug": dialogue.slug,
+                        "new_founder_id": new_founder.user.id
+                    }
                 }
             )
 
@@ -680,7 +715,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
                     ),
                 })
         except Exception as e:
-            print("❌ Error getting last seen:", e)
+            logger.error("❌ Error getting last seen:", e)
 
         return Response({
             'user_id': participant.id,
@@ -860,7 +895,7 @@ class MessageViewSet(viewsets.ModelViewSet):
             {
                 "dialogue_slug": dialogue.slug,
                 "message_id": message.id,
-                "websocket_url": get_websocket_url(request, dialogue.slug),
+                "websocket_url": get_websocket_url(request, dialogue.slug), 
             },
             status=status.HTTP_201_CREATED,
         )
@@ -973,7 +1008,7 @@ class MessageViewSet(viewsets.ModelViewSet):
                             MessageEncryption.objects.bulk_create(to_create[:MAX_PER_MESSAGE])
                 except Exception as e:
                     # Non-fatal: we keep the message but report parsing error
-                    print("❌ Failed to parse/store per-device keys:", e)
+                    logger.error("❌ Failed to parse/store per-device keys:", e)
 
         # --- Finalize dialogue metadata --------------------------------------------
         dialogue.last_message = message
@@ -1012,7 +1047,6 @@ class MessageViewSet(viewsets.ModelViewSet):
 
         mode = (request.query_params.get("mode") or "inline").strip().lower()  # "inline" | "download"
         
-        
         media_field = getattr(message, media_type, None)
         if not media_field:
             return Response({"error": f"{media_type} not found on this message."}, status=status.HTTP_404_NOT_FOUND)
@@ -1026,23 +1060,17 @@ class MessageViewSet(viewsets.ModelViewSet):
         if not enc_entry:
             return Response({"error": "Encrypted key not found for this device or user devices."}, status=status.HTTP_403_FORBIDDEN)
 
-        # ساخت لینک امضاشده به encrypted object روی S3
         key = getattr(media_field, "name", None)
         if not key:
             return Response({"error": "Media key missing."}, status=status.HTTP_404_NOT_FOUND)
 
-        # inline: بدون Content-Disposition
-        # download: با Content-Disposition: attachment
         force_download = (mode == "download")
         signed_url = get_file_url(key=key, expires_in=None, force_download=force_download)
 
         return Response(
             {
-                "download_url": signed_url,                 # points to ENCRYPTED bytes
-                "encrypted_aes_key": enc_entry.encrypted_content,  # base64 envelope (aes_key+nonce encrypted)
-                # optionally include mime/filename hints if ذخیره کرده‌ای
-                # "filename": os.path.basename(key),
-                # "mime": media_field.file.content_type if available
+                "download_url": signed_url, 
+                "encrypted_aes_key": enc_entry.encrypted_content,
             },
             status=status.HTTP_200_OK
         )
@@ -1052,111 +1080,121 @@ class MessageViewSet(viewsets.ModelViewSet):
     # Edit Message -----------------------------------------------------------------------------------------
     @action(detail=True, methods=['post'], url_path='edit-message', permission_classes=[IsAuthenticated])
     def edit_message(self, request, pk=None):
-        # 1) Load & basic ownership check
-        message = get_object_or_404(Message, pk=pk, sender=request.user)
-        if not message.can_edit():
-            return Response(
-                {'error': 'You can only edit messages within 12 hours of sending.'},
-                status=status.HTTP_403_FORBIDDEN
+        try:
+            logger.info(">> [EDIT] Starting edit_message for pk=%s user=%s", pk, request.user)
+
+            # 1) Load & basic ownership check
+            message = get_object_or_404(Message, pk=pk, sender=request.user)
+            dialogue = message.dialogue
+            is_group = bool(dialogue.is_group)
+            logger.info(">> [EDIT] Dialogue=%s Group=%s", dialogue.slug, is_group)
+
+            if not message.can_edit():
+                return Response({'error': 'You can only edit messages within 12 hours of sending.'},
+                                status=status.HTTP_403_FORBIDDEN)
+
+            # 2) Verify device PoP
+            header_device = (request.headers.get("X-Device-ID") or "").strip().lower()
+            if not header_device:
+                logger.error(">> [EDIT] Missing device header")
+                return Response({"error": "X-Device-ID header is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            if not is_sender_device_verified(request.user, header_device, dialogue_is_group=is_group):
+                logger.error(">> [EDIT] Device not verified")
+                return Response({"error": "Sender device is not verified.",
+                                "code": "SENDER_DEVICE_UNVERIFIED"},
+                                status=status.HTTP_403_FORBIDDEN)
+
+            # 3) Handle edit
+            encrypted_contents = request.data.get('encrypted_contents', [])
+            logger.info(">> [EDIT] encrypted_contents=%s", encrypted_contents)
+
+            new_content = None
+
+            if is_group:
+                new_content = (request.data.get("content") or "").strip()
+                logger.info(">> [EDIT] new_content=%s", new_content)
+
+                if not new_content:
+                    return Response({'error': 'Message content cannot be empty.'},
+                                    status=status.HTTP_400_BAD_REQUEST)
+
+                base64_str = base64.b64encode(new_content.encode("utf-8")).decode("utf-8")
+                message.content_encrypted = base64_str.encode("utf-8")
+                message.edited_at = timezone.now()
+                message.is_edited = True
+                message.encrypted_for_device = None
+                message.aes_key_encrypted = None
+                message.save()
+
+            else:
+                # DM encrypted version
+                if not isinstance(encrypted_contents, list) or not encrypted_contents:
+                    logger.error(">> [EDIT] Invalid encrypted_contents")
+                    return Response({'error': 'Missing or invalid encrypted_contents for private chat.'},
+                                    status=status.HTTP_400_BAD_REQUEST)
+
+                MessageEncryption.objects.filter(message=message).delete()
+
+                message.content_encrypted = b"[Encrypted]"
+                message.edited_at = timezone.now()
+                message.is_edited = True
+                message.save()
+
+                seen = set()
+                to_create = []
+                for enc in encrypted_contents:
+                    device_id = (enc.get('device_id') or '').strip().lower()
+                    encrypted_content = enc.get('encrypted_content')
+
+                    if not device_id or not encrypted_content:
+                        logger.warning(">> [EDIT] Skipped invalid entry: %s", enc)
+                        continue
+
+                    if device_id not in seen:
+                        seen.add(device_id)
+                        to_create.append(
+                            MessageEncryption(
+                                message=message,
+                                device_id=device_id,
+                                encrypted_content=encrypted_content
+                            )
+                        )
+
+                MessageEncryption.objects.bulk_create(to_create)
+
+            # ------------------------------------------------------------------
+            # 4) WebSocket broadcast
+            # ------------------------------------------------------------------
+            logger.info(">> [EDIT] Broadcasting edit_message event to WS group=%s", dialogue.slug)
+
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                f"dialogue_{dialogue.slug}",
+                {
+                    "type": "dispatch_event",   # consumer این را تبدیل می‌کند به WS envelope
+                    "app": "conversation",
+                    "event": "edit_message",
+                    "data": {
+                        "dialogue_slug": dialogue.slug,
+                        "edited_at": message.edited_at.isoformat(),
+                        "is_encrypted": not is_group,
+                        "is_edited": True,
+                        "encrypted_contents": encrypted_contents if not is_group else None,
+                        "new_content": new_content if is_group else None,
+                    }
+                }
             )
 
-        dialogue = message.dialogue
-        is_group = bool(dialogue.is_group)
 
-        # 2) Enforce sender PoP (DMs by default; configurable via settings)
-        header_device = (request.headers.get("X-Device-ID") or "").strip().lower()
-        if not header_device:
-            return Response({"error": "X-Device-ID header is required."}, status=status.HTTP_400_BAD_REQUEST)
+            logger.info(">> [EDIT] Completed successfully")
+            return Response({'message': 'Message edited successfully.'}, status=status.HTTP_200_OK)
 
-        if not is_sender_device_verified(request.user, header_device, dialogue_is_group=is_group):
-            return Response(
-                {"error": "Sender device is not verified.", "code": "SENDER_DEVICE_UNVERIFIED"},
-                status=status.HTTP_403_FORBIDDEN
-            )
+        except Exception as e:
+            logger.exception("‼️ ERROR DURING edit_message(): %s", e)
+            return Response({'error': 'Internal server error', 'details': str(e)},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        encrypted_contents = request.data.get('encrypted_contents', [])
-        new_content = None
-
-        if is_group:
-            # 3) Group: server-side storage (base64-encoded text); must NOT be client-encrypted
-            new_content = (request.data.get("content") or "").strip()
-            if not new_content:
-                return Response({'error': 'Message content cannot be empty.'}, status=status.HTTP_400_BAD_REQUEST)
-
-            base64_str = base64.b64encode(new_content.encode("utf-8")).decode("utf-8")
-            content_bytes = base64_str.encode("utf-8")
-
-            message.content_encrypted = content_bytes
-            message.edited_at = timezone.now()
-            message.is_edited = True
-            # Clear E2EE-specific fields on group messages (safety)
-            message.encrypted_for_device = None
-            message.aes_key_encrypted = None
-            message.save(update_fields=["content_encrypted", "edited_at", "is_edited",
-                                        "encrypted_for_device", "aes_key_encrypted"])
-        else:
-            # 4) DM: must be client-encrypted; replace per-device envelopes
-            if not isinstance(encrypted_contents, list) or not encrypted_contents:
-                return Response(
-                    {'error': 'Missing or invalid encrypted_contents for private chat.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            # Remove old envelopes
-            MessageEncryption.objects.filter(message=message).delete()
-
-            # Placeholder content (DM bodies are not stored in plaintext)
-            message.content_encrypted = b"[Encrypted]"
-            message.edited_at = timezone.now()
-            message.is_edited = True
-            message.save(update_fields=["content_encrypted", "edited_at", "is_edited"])
-
-            # Sanitize, dedupe by device_id (first occurrence wins), and create rows
-            seen = set()
-            to_create = []
-            for enc in encrypted_contents:
-                device_id = (enc.get('device_id') or '').strip().lower()
-                encrypted_content = enc.get('encrypted_content')
-
-                if not device_id or not isinstance(encrypted_content, str) or not encrypted_content:
-                    continue
-                if device_id in seen:
-                    continue
-                seen.add(device_id)
-
-                to_create.append(
-                    MessageEncryption(
-                        message=message,
-                        device_id=device_id,
-                        encrypted_content=encrypted_content
-                    )
-                )
-
-            if not to_create:
-                # Roll back edit if nothing valid remains
-                return Response({"error": "No valid encrypted contents."}, status=status.HTTP_400_BAD_REQUEST)
-
-            # Optional guardrail to prevent abuse
-            MAX_PER_MESSAGE = 500
-            MessageEncryption.objects.bulk_create(to_create[:MAX_PER_MESSAGE])
-
-        # 5) WebSocket notification (avoid relying on message.is_encrypted field)
-        is_encrypted_flag = not is_group
-        channel_layer = get_channel_layer()
-        async_to_sync(channel_layer.group_send)(
-            f"dialogue_{dialogue.slug}",
-            {
-                "type": "edit_message",
-                "dialogue_slug": dialogue.slug,
-                "edited_at": message.edited_at.isoformat(),
-                "is_encrypted": is_encrypted_flag,  # derived from dialogue type
-                "is_edited": bool(message.is_edited),
-                "encrypted_contents": encrypted_contents if not is_group else None,
-                "new_content": new_content if is_group else None,
-            }
-        )
-
-        return Response({'message': 'Message edited successfully.'}, status=status.HTTP_200_OK)
 
 
         
@@ -1192,23 +1230,32 @@ class MessageViewSet(viewsets.ModelViewSet):
             async_to_sync(channel_layer.group_send)(
                 f"user_{message.sender_id}",
                 {
-                    "type": "mark_as_delivered",
-                    "dialogue_slug": dialogue.slug,
-                    "message_id": message.id,
-                    "user_id": user.id,
+                    "type": "dispatch_event",
+                    "app": "conversation",
+                    "event": "mark_as_delivered",
+                    "data": {
+                        "dialogue_slug": dialogue.slug,
+                        "message_id": message.id,
+                        "user_id": user.id,
+                    }
                 }
             )
 
-            # (optional) also to dialogue group
+            # broadcast to dialogue group (optional)
             async_to_sync(channel_layer.group_send)(
                 f"dialogue_{dialogue.slug}",
                 {
-                    "type": "mark_as_delivered",
-                    "dialogue_slug": dialogue.slug,
-                    "message_id": message.id,
-                    "user_id": user.id,
+                    "type": "dispatch_event",
+                    "app": "conversation",
+                    "event": "mark_as_delivered",
+                    "data": {
+                        "dialogue_slug": dialogue.slug,
+                        "message_id": message.id,
+                        "user_id": user.id,
+                    }
                 }
             )
+
 
             return Response({'message': 'Message marked as delivered.'}, status=status.HTTP_200_OK)
 

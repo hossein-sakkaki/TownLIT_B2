@@ -292,6 +292,7 @@ class Message(models.Model):
         return f"Message from {self.sender.username} in {self.dialogue.id}"
     
 
+# MESSAGE ENCRYPTION Model -------------------------------------------------------------------------
 class MessageEncryption(models.Model):
     id = models.BigAutoField(primary_key=True)
     message = models.ForeignKey(Message, on_delete=models.CASCADE, related_name='encryptions')
@@ -307,7 +308,8 @@ class MessageEncryption(models.Model):
             models.Index(fields=["message", "device_id"], name="idx_message_device"),
         ]
 
-    
+
+# MESSAGE SEARCH INDEX Model -------------------------------------------------------------------------
 class MessageSearchIndex(models.Model):
     message = models.OneToOneField(Message, on_delete=models.CASCADE, related_name="search_index")
     plaintext = models.TextField()

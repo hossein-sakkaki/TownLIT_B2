@@ -30,6 +30,7 @@ def comment_group_name(ct_id: int, obj_id: int) -> str:
     return f"comments.{ct_id}.{obj_id}"
 
 
+# ---------------------------------------------------------------------
 def _resolve_content_type(ct: str):
     """
     Accepts:
@@ -46,6 +47,7 @@ def _resolve_content_type(ct: str):
     return ContentType.objects.get(model=str(ct))
 
 
+# ---------------------------------------------------------------------
 def _safe_broadcast(event_name: str, payload: dict, ct_id: int, obj_id: int):
     """
     Send WS event safely (won't break HTTP if Redis/Channels is down).
@@ -55,16 +57,24 @@ def _safe_broadcast(event_name: str, payload: dict, ct_id: int, obj_id: int):
         if not channel_layer:
             logger.warning("Channel layer not configured; skip WS send.")
             return
+
         group = comment_group_name(ct_id, obj_id)
+
         async_to_sync(channel_layer.group_send)(
             group,
-            {"type": "comment.event", "event": event_name, "data": payload},
+            {
+                "type": "dispatch_event",  
+                "app": "comments",        
+                "event": event_name,
+                "data": payload,
+            },
         )
+
     except Exception:
         logger.exception("WS broadcast failed (ignored)")
+        
+
 # ---------------------------------------------------------------------
-
-
 class CommentViewSet(viewsets.ModelViewSet):
     """
     🔹 REST + WebSocket broadcast for comments.

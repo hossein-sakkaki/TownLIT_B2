@@ -527,7 +527,8 @@ CHANNEL_LAYERS = {
 
 
 # Veriff -------------------------------------------------------------------------------
-VERIFF_API_KEY = os.getenv('VERIFF_API_KEY')
+VERIFF_API_KEY = os.getenv("VERIFF_API_KEY")
+VERIFF_WEBHOOK_SECRET = os.getenv("VERIFF_WEBHOOK_SECRET")
 VERIFF_BASE_URL = 'https://api.veriff.com/v1/'
 
 
@@ -608,16 +609,34 @@ else:
     MEDIA_URL = '/media/'
     MEDIA_ROOT = os.path.join(BASE_DIR, 'media/')
 
+
+# ---------------- Logging ------------------
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
-    "handlers": {"console": {"class": "logging.StreamHandler"}},
-    "root": {"handlers": ["console"], "level": "INFO"},
+
+    "handlers": {
+        "console": {"class": "logging.StreamHandler"},
+    },
+
+    "root": {
+        "handlers": ["console"],
+        "level": "INFO",
+    },
+
     "loggers": {
+        # "django.db.backends": {"level": "DEBUG"},
+        "django": {"level": "INFO"},
         "botocore": {"level": "WARNING"},
         "boto3": {"level": "WARNING"},
         "urllib3": {"level": "WARNING"},
-        "django": {"level": "INFO"},
+
+        # "django.security.DisallowedHost": {"level": "ERROR"},
+        "security.identity": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
     },
 }
 

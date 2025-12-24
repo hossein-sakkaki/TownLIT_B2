@@ -7,7 +7,6 @@ from .views import (
     ProfileMigrationViewSet,
     FriendshipViewSet,
     FellowshipViewSet,
-    VeriffViewSet,
     SpiritualGiftSurveyViewSet,
     SpiritualGiftSurveyQuestionViewSet,
     MemberSpiritualGiftsViewSet,
@@ -52,12 +51,6 @@ custom_paths = [
     path('guestusers/<int:pk>/',            
          GuestUserViewSet.as_view({'get': 'view_guest_profile'}), 
          name='guestuser-detail'),
-    path('veriff/create/',                  
-         VeriffViewSet.as_view({'post': 'create_verification_session'}), 
-         name='create-verification-session'),
-    path('veriff/status/',                  
-         VeriffViewSet.as_view({'get': 'get_verification_status'}), 
-         name='get-verification-status'),
 
     # member services (match frontend BASE_PATH = "/profiles/members")
     path('members/services-catalog/', services_catalog, name='member-services-catalog'),

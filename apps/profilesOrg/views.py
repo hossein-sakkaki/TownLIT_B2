@@ -55,7 +55,7 @@ class OrganizationManagerViewSet(viewsets.ModelViewSet):
     # Creating a new admin (Only by full access admins)
     def create(self, request, *args, **kwargs):
         # Checking if the current user is a full access admin
-        if not OrganizationManager.objects.filter(member__id=request.user.member.id, access_level=OrganizationManager.FULL_ACCESS).exists():
+        if not OrganizationManager.objects.filter(member_profile__id=request.user.member.id, access_level=OrganizationManager.FULL_ACCESS).exists():
             return Response({"error": "Only full access admins can add new admins."}, status=status.HTTP_403_FORBIDDEN)
 
         # Validating access level (Prevents limited access admins from assigning full access)
@@ -72,7 +72,7 @@ class OrganizationManagerViewSet(viewsets.ModelViewSet):
     # Updating an admin (With required access controls)
     def update(self, request, *args, **kwargs):
         organization_manager = self.get_object()
-        if not OrganizationManager.objects.filter(member__id=request.user.member.id, access_level=OrganizationManager.FULL_ACCESS).exists():
+        if not OrganizationManager.objects.filter(member_profile__id=request.user.member.id, access_level=OrganizationManager.FULL_ACCESS).exists():
             return Response({"error": "Only full access admins can update the organization manager."}, status=status.HTTP_403_FORBIDDEN)        
         access_level = request.data.get('access_level')
         if access_level == OrganizationManager.FULL_ACCESS and not request.user.is_full_access_admin():
@@ -89,7 +89,7 @@ class OrganizationManagerViewSet(viewsets.ModelViewSet):
     # Deleting an admin (Only by full access admins)
     def destroy(self, request, *args, **kwargs):
         organization_manager = self.get_object()
-        if not OrganizationManager.objects.filter(member__id=request.user.member.id, access_level=OrganizationManager.FULL_ACCESS).exists():
+        if not OrganizationManager.objects.filter(member_profile__id=request.user.member.id, access_level=OrganizationManager.FULL_ACCESS).exists():
             return Response({"error": "Only full access admins can remove admins."}, status=status.HTTP_403_FORBIDDEN)
         
         organization_manager.delete()
@@ -109,7 +109,7 @@ class OrganizationViewSet(
 
     def create(self, request, *args, **kwargs):
         member = request.user.member  
-        if not member.is_verified_identity:
+        if not member.is_townlit_verified:
             return Response({"error": "You must verify your identity before creating an organization. Please upload your ID."}, status=status.HTTP_403_FORBIDDEN)
 
         data = request.data.copy()
@@ -159,7 +159,7 @@ class OrganizationViewSet(
             return Response({"error": "This organization is currently suspended and cannot be updated."}, status=status.HTTP_403_FORBIDDEN)
         org_manager = OrganizationManager.objects.filter(
             organization=organization, 
-            member__username=member.username, 
+            member_profile__username=member.username, 
             access_level=OrganizationManager.FULL_ACCESS, 
             is_approved=True
         ).first()
@@ -174,7 +174,7 @@ class OrganizationViewSet(
             return Response({"error": "This organization is currently suspended and cannot be updated."}, status=status.HTTP_403_FORBIDDEN)
         org_manager = OrganizationManager.objects.filter(
             organization=organization, 
-            member__username=member.username, 
+            member_profile__username=member.username, 
             access_level=OrganizationManager.FULL_ACCESS, 
             is_approved=True
         ).first()
@@ -190,7 +190,7 @@ class OrganizationViewSet(
 
     # Access Admins Check
     def check_access(self, organization, member_username, required_access_level):
-        admin = OrganizationManager.objects.filter(organization=organization, member__username=member_username).first()
+        admin = OrganizationManager.objects.filter(organization=organization, member_profile__username=member_username).first()
         if not admin or admin.access_level not in required_access_level:
             return False
         return True

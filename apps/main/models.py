@@ -1,6 +1,8 @@
+# apps/main/models.py
 import os
 from django.conf import settings
-from django.db import models
+from django.db import models, transaction
+from django.db.models import Q
 from ckeditor_uploader.fields import RichTextUploadingField
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
@@ -63,24 +65,56 @@ class TermsAndPolicy(models.Model):
 
 # USER AGREEMENT Model ------------------------------------------------------------------------------------------
 class UserAgreement(models.Model):
-    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='agreements', verbose_name='User')
-    policy = models.ForeignKey(TermsAndPolicy, on_delete=models.CASCADE, related_name='user_agreements', verbose_name='Policy')
-    agreed_at = models.DateTimeField(auto_now_add=True, verbose_name='Agreed At')
-    is_latest_agreement = models.BooleanField(default=True, verbose_name='Is Latest Agreement')
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name="agreements", verbose_name="User")
+    policy = models.ForeignKey(TermsAndPolicy, on_delete=models.CASCADE, related_name="user_agreements", verbose_name="Policy")
+
+    agreed_at = models.DateTimeField(auto_now_add=True, verbose_name="Agreed At")
+    is_latest_agreement = models.BooleanField(default=True, verbose_name="Is Latest Agreement")
+
+    # ✅ optional but recommended for audit/debug
+    policy_version_number = models.CharField(max_length=20, null=True, blank=True, verbose_name="Policy Version Snapshot")
+    policy_last_updated_snapshot = models.DateTimeField(null=True, blank=True, verbose_name="Policy Last Updated Snapshot")
 
     class Meta:
-        verbose_name = 'User Agreement'
-        verbose_name_plural = 'User Agreements'
-        unique_together = ('user', 'policy')
+        verbose_name = "User Agreement"
+        verbose_name_plural = "User Agreements"
+        # ✅ only ONE latest per (user, policy)
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "policy"],
+                condition=Q(is_latest_agreement=True),
+                name="uniq_latest_agreement_per_user_policy",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["user", "policy", "is_latest_agreement"]),
+            models.Index(fields=["agreed_at"]),
+        ]
 
     def __str__(self):
-        return f"{self.user.username} agreed to {self.policy.title}"
+        return f"{self.user.username} agreed to {self.policy.title} at {self.agreed_at}"
 
     def save(self, *args, **kwargs):
-        # If a new UserAgreement is being saved, mark previous agreements as not latest
-        if self.id is None:
-            UserAgreement.objects.filter(user=self.user, is_latest_agreement=True).update(is_latest_agreement=False)
-        super(UserAgreement, self).save(*args, **kwargs)
+        # snapshot policy state
+        if self.policy_id:
+            self.policy_version_number = getattr(self.policy, "version_number", None)
+            self.policy_last_updated_snapshot = getattr(self.policy, "last_updated", None)
+
+        creating = self.pk is None
+
+        if creating and self.is_latest_agreement:
+            with transaction.atomic():
+                # mark previous latest for same (user, policy) as not-latest
+                UserAgreement.objects.filter(
+                    user=self.user,
+                    policy=self.policy,
+                    is_latest_agreement=True,
+                ).update(is_latest_agreement=False)
+
+                super().save(*args, **kwargs)
+                return
+
+        super().save(*args, **kwargs)
 
 
 # POLICY CHANGE HISTORY Model -----------------------------------------------------------------------------------

@@ -1,3 +1,5 @@
+# apps/profilesOrg/mixins/voting_mixins.py
+
 from django.utils import timezone
 from django.db import transaction
 
@@ -27,7 +29,7 @@ class OwnerManageMixin:
         new_owner_username = request.data.get('member_username')
         try:
             new_owner = Member.objects.get(username=new_owner_username)
-            if not new_owner.is_verified_identity:
+            if not new_owner.is_townlit_verified:
                 return Response({"error": f"User {new_owner.username} must verify their identity before being added as an owner."}, status=status.HTTP_403_FORBIDDEN)
             if new_owner.username in organization.org_owners.values_list('username', flat=True):
                 return Response({"error": "This member is already an owner."}, status=status.HTTP_400_BAD_REQUEST)

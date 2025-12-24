@@ -10,4 +10,5 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS("✅ Invite codes assigned successfully."))
 
 
-# python manage.py assign_invite_codes
+# docker compose exec backend python manage.py assign_invite_codes
+

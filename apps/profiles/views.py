@@ -1,10 +1,10 @@
 from django.db.models import Q, Case, When, Value, IntegerField
 from django.db.models.functions import Lower, Substr
-from django.db import transaction
 from django.utils import timezone
 from datetime import timedelta
 from django.http import Http404
 from django.shortcuts import get_object_or_404
+from django.db import IntegrityError, transaction
 
 from rest_framework import status
 from rest_framework import viewsets
@@ -49,7 +49,7 @@ from apps.profiles.services.listing import build_friends_list
 
 from validators.user_validators import validate_phone_number
 from django.core.exceptions import ValidationError
-from utils.common.utils import create_veriff_session, get_veriff_status, create_active_code, send_sms
+from utils.common.utils import create_active_code, send_sms
 from utils.email.email_tools import send_custom_email
 from django.template.loader import render_to_string
 from services.friendship_suggestions import suggest_friends_for_friends_tab, suggest_friends_for_requests_tab
@@ -367,12 +367,29 @@ class MemberViewSet(viewsets.ModelViewSet):
             
             if user.user_active_code_expiry and timezone.now() > user.user_active_code_expiry:
                 return Response({"error": "The verification codes have expired. Please request a new email change."}, status=status.HTTP_400_BAD_REQUEST)
-            
-            user.email = user.email_change_tokens.get("new_email")
-            user.last_email_change = timezone.now()
-            user.email_change_tokens = None
-            user.user_active_code_expiry = None
-            user.save()
+
+            tokens = user.email_change_tokens or {}
+            new_email = tokens.get("new_email")
+
+            if not new_email:
+                return Response(
+                    {"error": "Invalid or expired email change request."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            try:
+                with transaction.atomic():
+                    user.email = new_email
+                    user.last_email_change = timezone.now()
+                    user.email_change_tokens = None
+                    user.user_active_code_expiry = None
+                    user.save()
+
+            except IntegrityError:
+                return Response(
+                    {"error": "This email is already in use by another account."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
             # Notify the user about the successful email change
             subject = "Your Email Has Been Successfully Changed"
@@ -398,7 +415,12 @@ class MemberViewSet(viewsets.ModelViewSet):
             return Response({"message": "Email has been successfully updated."}, status=status.HTTP_200_OK)
                     
         except Exception as e:
-            return Response({"error": "An unexpected error occurred.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.exception("Confirm email change failed")
+            return Response(
+                {"error": "Email confirmation failed. Please contact support."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 
     # Phone Number Actions -------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='request-phone-verification', permission_classes=[IsAuthenticated])
@@ -834,48 +856,6 @@ class MemberServicesViewSet(viewsets.ViewSet):
         return Response(data, status=status.HTTP_200_OK)
 
 
-# MEMBER IDENTITY VERIFICATION Viewset ------------------------------------------------------------------
-class VeriffViewSet(viewsets.ViewSet):
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
-    def create_verification_session(self, request, pk=None):
-        member = request.user.member_profile
-
-        # Check if the member is already verified
-        if member.is_verified_identity:
-            return Response({"message": "Your identity is already verified."}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            veriff_response = create_veriff_session(member)
-            member.veriff_session_id = veriff_response.get('sessionId')
-            member.identity_verification_status = 'submitted'
-            member.save()
-            logger.info(f"Veriff session created for member {member.user.username}")
-            return Response(veriff_response, status=status.HTTP_201_CREATED)
-        except Exception as e:
-            logger.error(f"Error creating Veriff session for member {member.user.username}: {str(e)}")
-            return Response({"error": "Unable to create Veriff session."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
-    def get_verification_status(self, request, pk=None):
-        member = request.user.member_profile
-
-        # Check if the session exists
-        if not member.veriff_session_id:
-            return Response({"error": "No verification session found."}, status=status.HTTP_404_NOT_FOUND)
-        try:
-            veriff_status = get_veriff_status(member.veriff_session_id)
-            member.identity_verification_status = veriff_status.get('status')
-            
-            # If status is verified, update member profile
-            if veriff_status.get('status') == 'approved':
-                member.is_verified_identity = True
-                member.identity_verified_at = timezone.now()
-            member.save()
-            logger.info(f"Verification status updated for member {member.user.username}: {veriff_status.get('status')}")
-            return Response(veriff_status, status=status.HTTP_200_OK)
-        except Exception as e:
-            logger.error(f"Error fetching Veriff status for member {member.user.username}: {str(e)}")
-            return Response({"error": "Unable to fetch verification status."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
 
 # GUESTUSER PANEL Viewsets ---------------------------------------------------------------------
 class GuestUserViewSet(viewsets.ModelViewSet):
@@ -1209,8 +1189,8 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                 CustomUser.objects
                 .filter(id__in=counterpart_ids, is_deleted=False)
                 .select_related(
-                    "label",          # needed for label + label_color
-                    "member_profile"  # needed for is_verified_identity
+                    "label", 
+                    "member_profile" 
                 )
             )
 

@@ -1,4 +1,5 @@
 # apps/communication/services.py
+
 from django.conf import settings
 from django.utils.timezone import now
 from django.contrib.auth import get_user_model
@@ -46,35 +47,52 @@ def get_users_for_campaign(campaign):
         users = users.filter(is_active=True, is_admin=True)
 
     elif tg == 'deleted_members':
-        users = users.filter(is_active=False, member__isnull=False)
+        users = users.filter(is_active=False, member_profile__isnull=False)
 
     elif tg == 'deleted_non_members':
-        users = users.filter(is_active=False, member__isnull=True)
+        users = users.filter(is_active=False, member_profile__isnull=True)
 
     elif tg == 'suspended':
         users = users.filter(is_active=True, is_suspended=True)
 
-    elif tg == 'sanctuary_participants':
+    elif tg == "sanctuary_participants":
         users = users.filter(
             is_active=True,
-            member__isnull=False,
-            member__is_sanctuary_participant=True
+            is_verified_identity=True,
+            member_profile__isnull=False,
+            member_profile__is_townlit_verified=True,
+            sanctuary_participant__is_participant=True,
+            sanctuary_participant__is_eligible=True,
         )
 
     elif tg == 'privacy_enabled':
         users = users.filter(
             is_active=True,
-            member__isnull=False,
-            member__is_privacy=True
+            member_profile__isnull=False,
+            member_profile__is_privacy=True
         )
 
     elif tg == 'unverified_identity':
         users = users.filter(
             is_active=True,
-            member__isnull=False,
-            member__is_verified_identity=False
+            is_verified_identity=False
         )
-    
+
+    elif tg == 'townlit_not_verified':
+        users = users.filter(
+            is_active=True,
+            is_verified_identity=True,
+            member_profile__isnull=False,
+            member_profile__is_townlit_verified=False
+        )
+
+    elif tg == 'townlit_verified':
+        users = users.filter(
+            is_active=True,
+            member_profile__isnull=False,
+            member_profile__is_townlit_verified=True
+        )
+
     elif tg == 'reengagement':
         unsub_ids = UnsubscribedUser.objects.values_list('user_id', flat=True)
         users = CustomUser.objects.filter(id__in=unsub_ids, is_active=True)

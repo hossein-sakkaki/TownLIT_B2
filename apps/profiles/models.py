@@ -373,11 +373,10 @@ class Member(SlugMixin):
     )
     register_date = models.DateField(default=timezone.now, verbose_name='Register Date')
 
-    identity_document = models.FileField(upload_to=FILE.dir_upload, null=True, blank=True, validators=[validate_pdf_file, validate_no_executable_file], verbose_name='Identity Document')
-    identity_verified_at = models.DateTimeField(null=True, blank=True, verbose_name='Identity Verified At')
-    identity_verification_status = models.CharField(max_length=20, choices=IDENTITY_VERIFICATION_STATUS_CHOICES, default=NOT_SUBMITTED, verbose_name='Identity Verification Status')
-    is_verified_identity = models.BooleanField(default=False, verbose_name="Verified Identity")
-    is_sanctuary_participant = models.BooleanField(default=False, verbose_name="Sanctuary Participant")
+    # TownLIT verification (spiritual readiness)
+    is_townlit_verified = models.BooleanField(default=False, db_index=True, verbose_name="TownLIT Verified")
+    townlit_verified_at = models.DateTimeField(null=True, blank=True, db_index=True, verbose_name="TownLIT Verified At")
+    townlit_verified_reason = models.CharField(max_length=255, null=True, blank=True, verbose_name="TownLIT Verification Reason")    
 
     is_hidden_by_confidants = models.BooleanField(default=False, verbose_name='Hidden by Confidants')    
     is_privacy = models.BooleanField(default=False, verbose_name='Is Privacy')

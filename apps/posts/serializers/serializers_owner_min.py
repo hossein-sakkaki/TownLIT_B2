@@ -1,4 +1,5 @@
 # posts/serializers_owner_min.py
+
 from rest_framework import serializers
 from django.urls import reverse
 
@@ -11,7 +12,8 @@ from apps.profiles.models import Member
 # ------------------------------ Owner (User) ------------------------------
 class OwnerMinCustomUserSerializer(serializers.ModelSerializer):
     label = CustomLabelSerializer(read_only=True)
-    is_verified_identity = serializers.SerializerMethodField()
+    is_verified_identity = serializers.BooleanField(read_only=True)
+    is_townlit_verified = serializers.SerializerMethodField()
     avatar_url = serializers.SerializerMethodField()
     profile_url = serializers.SerializerMethodField()
 
@@ -24,14 +26,11 @@ class OwnerMinCustomUserSerializer(serializers.ModelSerializer):
             "family",
             "label",
             "is_verified_identity",
+            "is_townlit_verified",
             "avatar_url",
             "profile_url",
         ]
         read_only_fields = fields
-
-    def get_is_verified_identity(self, obj):
-        mp = getattr(obj, "member_profile", None)
-        return getattr(mp, "is_verified_identity", False)
 
     def get_profile_url(self, obj):
         request = self.context.get("request")
@@ -52,6 +51,17 @@ class OwnerMinCustomUserSerializer(serializers.ModelSerializer):
 
         return path
 
+    # ---------------------------------------------------------------
+    # TownLIT verification
+    # ---------------------------------------------------------------
+    def get_is_townlit_verified(self, obj):
+        """
+        Derived flag:
+        True if user has a member profile AND it is TownLIT verified.
+        """
+        mp = getattr(obj, "member_profile", None)
+        return bool(mp and mp.is_townlit_verified)
+    
 
 # ---- Owner (Organization) ----
 class OwnerMinOrganizationSerializer(OrganizationLogoMixin, serializers.ModelSerializer):

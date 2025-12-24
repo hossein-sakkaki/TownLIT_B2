@@ -87,7 +87,7 @@ class OrderViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def request_help(self, request, pk=None):
         order = self.get_object()
-        if not request.user.is_member or not request.user.member.is_verified_identity:
+        if not request.user.is_member or not request.user.member.is_townlit_verified:
             return Response({'error': 'You must be a verified member to request help.'}, status=status.HTTP_403_FORBIDDEN)
         help_message = request.data.get('help_message', None)
         if not help_message:

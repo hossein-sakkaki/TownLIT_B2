@@ -1,6 +1,10 @@
+# common/permissions.py
+
 from rest_framework import permissions
 from apps.profilesOrg.models import OrganizationManager
 
+
+# Is Admin or ReadOnly ----------------------------------------------------------------------------------------
 class IsAdminOrReadOnly(permissions.BasePermission):
     """Allow create for anyone, but list/update only for admins"""
     def has_permission(self, request, view):
@@ -9,12 +13,7 @@ class IsAdminOrReadOnly(permissions.BasePermission):
         return request.user and request.user.is_staff
 
 
-class IsSanctuaryVerifiedMember(permissions.BasePermission):
-    def has_permission(self, request, view):
-        return request.user.is_verified_identity and request.user.is_sanctuary_participant
-    
-    
-
+# Is Full Access Admin ----------------------------------------------------------------------------------------
 class IsFullAccessAdmin(permissions.BasePermission):
     def has_permission(self, request, view):
         # Only admins should be able to add services
@@ -29,6 +28,7 @@ class IsFullAccessAdmin(permissions.BasePermission):
             return False
 
 
+# Is Limited Access Admin ----------------------------------------------------------------------------------------
 class IsLimitedAccessAdmin(permissions.BasePermission):
     def has_permission(self, request, view):
         # The user must be authenticated
