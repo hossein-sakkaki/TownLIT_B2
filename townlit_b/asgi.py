@@ -1,38 +1,23 @@
 # townlit_b/asgi.py
 import os
 import django
-import asyncio
 
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'townlit_b.settings')
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "townlit_b.settings")
 django.setup()
 
 from django.core.asgi import get_asgi_application
 from channels.routing import ProtocolTypeRouter, URLRouter
 from apps.main.middleware import JWTAuthMiddlewareStack
 from apps.core.websocket.routing import websocket_urlpatterns
-from services.presence_watchdog import ensure_presence_watchdog_running
 
-
-ensure_presence_watchdog_running()
-# ASGI HTTP
 django_asgi_app = get_asgi_application()
 
-# Fix Python 3.10 event loop behavior
-try:
-    asyncio.get_running_loop()
-except RuntimeError:
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-# Main application
 application = ProtocolTypeRouter({
     "http": django_asgi_app,
     "websocket": JWTAuthMiddlewareStack(
         URLRouter(websocket_urlpatterns)
     ),
 })
-
-
 
 
 
