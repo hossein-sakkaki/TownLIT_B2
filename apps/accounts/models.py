@@ -767,7 +767,7 @@ class UserSecurityProfile(models.Model):
     def __str__(self):
         return f"UserSecurityProfile(user={self.user_id}, has_pp={self.has_passphrase})"
 
-# apps/moderation/models.py
+# apps/accounts/models.py
 # Invite Code Model -----------------------------------------------------
 class InviteCode(models.Model):
     code = models.CharField(max_length=20, unique=True)

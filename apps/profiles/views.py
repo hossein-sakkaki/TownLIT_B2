@@ -960,8 +960,10 @@ class FriendshipViewSet(viewsets.ModelViewSet):
 
             to_user = serializer.validated_data['to_user_id']
 
-            if getattr(to_user, "is_deleted", False):
-                raise serializers.ValidationError("You cannot send a friend request to a deactivated account.")
+            if not to_user.is_active or getattr(to_user, "is_deleted", False):
+                raise serializers.ValidationError(
+                    "You cannot send a friend request to this account."
+                )
 
             if to_user == self.request.user:
                 logger.warning(f"User {self.request.user.id} tried to send a friend request to themselves.")
@@ -1044,7 +1046,7 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                     Q(email__icontains=query)
                 )
                 .exclude(id=request.user.id)
-                .filter(is_deleted=False)
+                .filter(is_active=True, is_deleted=False)
                 .distinct()
             )
 
@@ -1113,7 +1115,7 @@ class FriendshipViewSet(viewsets.ModelViewSet):
             qs = (
                 Friendship.objects
                 .filter(from_user=request.user, status='pending')
-                .filter(to_user__is_deleted=False)  # exclude deleted receivers
+                .filter(to_user__is_active=True, to_user__is_deleted=False)
             )
             serializer = self.get_serializer(qs, many=True)
             return Response(serializer.data, status=status.HTTP_200_OK)
@@ -1127,7 +1129,8 @@ class FriendshipViewSet(viewsets.ModelViewSet):
             qs = (
                 Friendship.objects
                 .filter(to_user=request.user, status='pending')
-                .filter(from_user__is_deleted=False)  # exclude deleted senders
+                .filter(from_user__is_deleted=False)
+                .filter(from_user__is_active=True, from_user__is_deleted=False)
             )
             serializer = self.get_serializer(qs, many=True)
             return Response(serializer.data, status=status.HTTP_200_OK)
@@ -1187,7 +1190,7 @@ class FriendshipViewSet(viewsets.ModelViewSet):
             # --- Query users with full select_related used by serializer -------------
             friends_qs = (
                 CustomUser.objects
-                .filter(id__in=counterpart_ids, is_deleted=False)
+                .filter(id__in=counterpart_ids, is_active=True, is_deleted=False)
                 .select_related(
                     "label", 
                     "member_profile" 
@@ -1345,6 +1348,13 @@ class FriendshipViewSet(viewsets.ModelViewSet):
             if getattr(friendship.from_user, "is_deleted", False):
                 return Response(
                     {'error': 'This request is no longer valid (sender deactivated).'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Cannot accept request from inactive account
+            if not friendship.from_user.is_active:
+                return Response(
+                    {'error': 'This request is no longer valid.'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
