@@ -16,46 +16,129 @@ from .models import (
 class TermsAndPolicyAdmin(admin.ModelAdmin):
     class Media:
         css = {
-            'all': ('css/custom_admin.css',)
+            "all": ("css/custom_admin.css",)
         }
 
+    # ------------------------------------------------------------------
+    # LIST VIEW
+    # ------------------------------------------------------------------
     list_display = [
-        'title', 'policy_type', 'language', 'version_number', 
-        'display_location', 'footer_column', 'requires_acceptance', 
-        'slug', 'last_updated', 'is_active'
+        "title",
+        "policy_type",
+        "language",
+        "version_number",
+        "acceptance_context",
+        "requires_acceptance",
+        "show_in_footer",
+        "display_location",
+        "footer_column",
+        "is_active",
+        "last_updated",
     ]
 
     list_editable = [
-        'language', 'version_number', 'display_location',
-        'footer_column', 'requires_acceptance', 'is_active'
+        "language",
+        "version_number",
+        "acceptance_context",
+        "requires_acceptance",
+        "show_in_footer",
+        "display_location",
+        "footer_column",
+        "is_active",
     ]
 
     list_filter = [
-        'is_active', 'display_location', 'requires_acceptance',
-        'language', 'last_updated'
+        "is_active",
+        "acceptance_context",
+        "requires_acceptance",
+        "show_in_footer",
+        "display_location",
+        "language",
+        "last_updated",
     ]
 
-    search_fields = ['title', 'policy_type', 'slug', 'version_number']
-    ordering = ['-last_updated']
-    readonly_fields = ['last_updated', 'slug']
+    search_fields = [
+        "title",
+        "policy_type",
+        "slug",
+        "version_number",
+    ]
 
+    ordering = ["-last_updated"]
+
+    readonly_fields = [
+        "slug",
+        "last_updated",
+    ]
+
+    # ------------------------------------------------------------------
+    # FORM LAYOUT
+    # ------------------------------------------------------------------
     fieldsets = (
-        ("Basic Info", {
-            'fields': ('title', 'policy_type', 'slug', 'version_number', 'language')
-        }),
-        ("Display Settings", {
-            'fields': ('display_location', 'footer_column', 'requires_acceptance', 'is_active')
-        }),
-        ("Content", {
-            'fields': ('content',)
-        }),
-        ("Metadata", {
-            'fields': ('last_updated',)
-        }),
+        (
+            "Basic Information",
+            {
+                "fields": (
+                    "title",
+                    "policy_type",
+                    "slug",
+                    "language",
+                    "version_number",
+                )
+            },
+        ),
+        (
+            "Acceptance Rules",
+            {
+                "description": (
+                    "Controls whether and where users must accept this policy."
+                ),
+                "fields": (
+                    "requires_acceptance",
+                    "acceptance_context",
+                ),
+            },
+        ),
+        (
+            "Display Settings",
+            {
+                "description": (
+                    "Controls visibility of this policy in the frontend UI."
+                ),
+                "fields": (
+                    "display_location",
+                    "show_in_footer",
+                    "footer_column",
+                    "is_active",
+                ),
+            },
+        ),
+        (
+            "Policy Content",
+            {
+                "fields": ("content",),
+            },
+        ),
+        (
+            "Metadata",
+            {
+                "fields": ("last_updated",),
+            },
+        ),
     )
 
+    # ------------------------------------------------------------------
+    # UX SAFETY GUARDS
+    # ------------------------------------------------------------------
     def get_queryset(self, request):
-        return super().get_queryset(request).select_related()
+        return super().get_queryset(request)
+
+    def formfield_for_choice_field(self, db_field, request, **kwargs):
+        """
+        UX hint: if policy is not acceptance-required,
+        context still visible but clearly optional.
+        """
+        return super().formfield_for_choice_field(db_field, request, **kwargs)
 
 
 # Policy Change History Admin Admin -----------------------------------------------------------------------------

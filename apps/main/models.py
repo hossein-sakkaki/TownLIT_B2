@@ -15,10 +15,11 @@ from validators.mediaValidators.image_validators import validate_image_file, val
 from validators.security_validators import validate_no_executable_file
 
 from .constants import (
-                            TERMS_AND_POLICIES_CHOICES, LOG_ACTION_CHOICES, 
-                            POLICY_DISPLAY_LOCATION_CHOICES, FOOTER_COLUMN_CHOICES, DISPLAY_IN_OFFICIAL,
-                            USER_FEEDBACK_STATUS_CHOICES
-                        )
+                    TERMS_AND_POLICIES_CHOICES, LOG_ACTION_CHOICES, 
+                    POLICY_DISPLAY_LOCATION_CHOICES, FOOTER_COLUMN_CHOICES, DISPLAY_IN_OFFICIAL,
+                    USER_FEEDBACK_STATUS_CHOICES,
+                    POLICY_CONTEXT_CHOICES, REGISTRATION
+                )
 from .constants import LANGUAGE_CHOICES        
 from django.contrib.auth import get_user_model
 
@@ -37,6 +38,22 @@ class TermsAndPolicy(models.Model):
     language = models.CharField(max_length=10, choices=LANGUAGE_CHOICES, default='en', verbose_name='Language')
     version_number = models.CharField(max_length=20, default='1.0', verbose_name='Version Number')
     requires_acceptance = models.BooleanField(default=False, verbose_name='Requires Acceptance')
+
+    # ✅ NEW: where acceptance is required
+    acceptance_context = models.CharField(
+        max_length=30,
+        choices=POLICY_CONTEXT_CHOICES,
+        default=REGISTRATION,
+        verbose_name="Acceptance Context",
+        db_index=True,
+    )
+
+    # ✅ NEW: footer visibility (simple admin toggle)
+    show_in_footer = models.BooleanField(
+        default=False,
+        verbose_name="Show In Footer",
+        help_text="If enabled, this policy link can appear in the frontend footer.",
+    )
 
     last_updated = models.DateTimeField(auto_now=True, verbose_name='Last Updated')
     is_active = models.BooleanField(default=True, verbose_name='Active')

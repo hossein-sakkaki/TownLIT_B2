@@ -43,6 +43,7 @@ def get_participation_status(user) -> Dict:
     policy = (
         TermsAndPolicy.objects.filter(
             policy_type=SANCTUARY_COUNCIL_RULES,
+            acceptance_context="sanctuary",
             is_active=True,
         )
         .order_by("-last_updated")

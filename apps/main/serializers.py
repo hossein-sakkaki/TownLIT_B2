@@ -19,14 +19,20 @@ from common.serializers.targets import InstanceTargetMixin
 class TermsAndPolicySerializer(serializers.ModelSerializer):
     class Meta:
         model = TermsAndPolicy
-        fields = '__all__'
+        fields = "__all__"
+        read_only_fields = ["last_updated", "slug"]
 
 
 # USER AGREEMENT Serializer -----------------------------------------------------------------------------------
 class UserAgreementSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserAgreement
-        fields = '__all__'
+        fields = "__all__"
+        read_only_fields = [
+            "agreed_at",
+            "policy_version_number",
+            "policy_last_updated_snapshot",
+        ]
 
 
 # POLICY CHANGE HISTORY Serializer ----------------------------------------------------------------------------

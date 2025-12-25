@@ -9,6 +9,8 @@ from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.conf import settings
 
+from apps.accounts.utils.username import generate_unique_username_from_email
+from apps.accounts.utils.name_normalizer import normalize_person_name
 from apps.profilesOrg.constants import LANGUAGE_CHOICES, ENGLISH, COUNTRY_CHOICES
 from .constants import (
     SOCIAL_MEDIA_CHOICES,
@@ -271,14 +273,19 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     family = models.CharField(max_length=40, null=True, blank=True, verbose_name='Family')
     username = models.CharField(max_length=40, unique=True, blank=True, verbose_name='Username')
     def save(self, *args, **kwargs):
+        # Normalize names for consistent storage
+        if self.name is not None:
+            self.name = normalize_person_name(self.name)
+
+        if self.family is not None:
+            self.family = normalize_person_name(self.family)
+
         if not self.username:
-            base_username = slugify(self.name + '_' + self.family)
-            suggested_username = base_username
-            counter = 1
-            while CustomUser.objects.filter(username=suggested_username).exists():
-                suggested_username = f"{base_username}_{counter}"
-                counter += 1
-            self.username = suggested_username
+            self.username = generate_unique_username_from_email(
+                email=self.email,
+                model_cls=CustomUser,
+            )
+
         super().save(*args, **kwargs)
         
     birthday = models.DateField(auto_now=False, auto_now_add=False, blank=True, null=True, verbose_name='Birthday')        

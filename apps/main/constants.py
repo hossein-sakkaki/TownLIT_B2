@@ -98,6 +98,20 @@ FOOTER_COLUMN_CHOICES = [
 ]
 
 
+# POLICY CONTEXT Choices ----------------------------------------------------------------
+REGISTRATION = "registration"
+LOGIN = "login"
+SANCTUARY = "sanctuary"
+FEATURE = "feature"
+
+POLICY_CONTEXT_CHOICES = [
+    (REGISTRATION, "Registration"),
+    (LOGIN, "Login"),
+    (SANCTUARY, "Sanctuary"),
+    (FEATURE, "Feature Access"),
+]
+
+
 # LOG ACTION Choices ---------------------------------------------------------------------
 VIEW = 'view'
 EDIT = 'edit'

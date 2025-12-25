@@ -37,6 +37,7 @@ from .models import (
     IdentityVerification
     )
 from apps.accounts.services.veriff import create_veriff_session, parse_veriff_webhook
+from apps.main.services.policy_acceptance import accept_required_policies
 from utils.security.security_manager import SecurityStateManager
 from .serializers import (
     CustomUserSerializer,
@@ -153,41 +154,14 @@ class AuthViewSet(viewsets.ViewSet):
                         existing_user.registration_started_at = timezone.now()
                         existing_user.save()
 
-                        # accept policies -------------------------------
-                        required_policies = ["terms_of_service", "privacy_policy"]
-                        missing_policies = []
-
-                        # choose language (example)
+                        # choose language
                         lang = (request.data.get("language") or "en").strip().lower()
 
-                        for policy_type in required_policies:
-                            policy = (
-                                TermsAndPolicy.objects
-                                .filter(policy_type=policy_type, is_active=True, language=lang)
-                                .order_by("-last_updated")
-                                .first()
-                            )
-
-                            if not policy and lang != "en":
-                                policy = (
-                                    TermsAndPolicy.objects
-                                    .filter(policy_type=policy_type, is_active=True, language="en")
-                                    .order_by("-last_updated")
-                                    .first()
-                                )
-
-                            if not policy:
-                                missing_policies.append(policy_type)
-                                continue
-
-                            # ✅ history-friendly + idempotent
-                            from apps.main.services.policy_acceptance import ensure_policy_acceptance
-                            ensure_policy_acceptance(user=existing_user, policy=policy)
-
-                        if missing_policies:
-                            return Response(
-                                {"message": f"Required policy(ies) not found: {', '.join(missing_policies)}"},
-                                status=status.HTTP_400_BAD_REQUEST
+                        with transaction.atomic():
+                            accept_required_policies(
+                                user=existing_user,
+                                acceptance_context="registration",
+                                language=lang,
                             )
 
                         # Generate and encrypt activation code ---------
@@ -199,9 +173,9 @@ class AuthViewSet(viewsets.ViewSet):
                         existing_user.user_active_code_expiry = expiration_time
                         existing_user.save()
                         
-                        # print('----------------------1----------------------')
-                        # print(active_code)
-                        # print('-----------------------1---------------------')
+                        print('----------------------1----------------------')
+                        print(active_code)
+                        print('-----------------------1---------------------')
 
                         subject = "Welcome back to TownLIT - Verify Again"
                         context = {
@@ -252,41 +226,14 @@ class AuthViewSet(viewsets.ViewSet):
                 user.image_name = settings.DEFAULT_USER_AVATAR_URL
                 user.save()
 
-                # accept policies -------------------------------
-                required_policies = ["terms_of_service", "privacy_policy"]
-                missing_policies = []
-
-                # choose language (example)
+                # choose language
                 lang = (request.data.get("language") or "en").strip().lower()
 
-                for policy_type in required_policies:
-                    policy = (
-                        TermsAndPolicy.objects
-                        .filter(policy_type=policy_type, is_active=True, language=lang)
-                        .order_by("-last_updated")
-                        .first()
-                    )
-
-                    if not policy and lang != "en":
-                        policy = (
-                            TermsAndPolicy.objects
-                            .filter(policy_type=policy_type, is_active=True, language="en")
-                            .order_by("-last_updated")
-                            .first()
-                        )
-
-                    if not policy:
-                        missing_policies.append(policy_type)
-                        continue
-
-                    # ✅ history-friendly + idempotent
-                    from apps.main.services.policy_acceptance import ensure_policy_acceptance
-                    ensure_policy_acceptance(user=existing_user, policy=policy)
-
-                if missing_policies:
-                    return Response(
-                        {"message": f"Required policy(ies) not found: {', '.join(missing_policies)}"},
-                        status=status.HTTP_400_BAD_REQUEST
+                with transaction.atomic():
+                    accept_required_policies(
+                        user=user,
+                        acceptance_context="registration",
+                        language=lang,
                     )
 
                 # Generate and encrypt activation code ---------
@@ -298,9 +245,9 @@ class AuthViewSet(viewsets.ViewSet):
                 user.user_active_code_expiry = expiration_time
                 user.save()
                 
-                # print('----------------------2----------------------')
-                # print(active_code)
-                # print('----------------------2----------------------')
+                print('----------------------2----------------------')
+                print(active_code)
+                print('----------------------2----------------------')
                     
                 subject = "Welcome to TownLIT - Activate Your Account!"
                 context = {
