@@ -68,6 +68,7 @@ from .constants import (
 )
 
 from apps.accounts.services.identity_audit import log_identity_event
+from apps.accounts.tasks import send_believer_welcome_email
 from apps.profilesOrg.models import Organization
 from apps.profiles.models import Member, GuestUser
 from apps.conversation.models import Message, MessageEncryption
@@ -413,8 +414,8 @@ class AuthViewSet(viewsets.ViewSet):
         
         # Assign the label and member status to the user
         user.label = label
-        if category == BELIEVER:
-            user.is_member = True
+        user.is_member = (category == BELIEVER)
+        
         try:
             user.save()
             external_contact = ExternalContact.objects.filter(email__iexact=user.email).first()
@@ -450,6 +451,14 @@ class AuthViewSet(viewsets.ViewSet):
         user.last_login = timezone.now()        
         user.is_active = True
         user.save()
+
+        # Fire async welcome email (non-blocking)
+        if user.is_member:
+            try:
+                send_believer_welcome_email.delay(user.id)
+            except Exception as e:
+                # Never break onboarding flow
+                logger.warning(f"Welcome email task failed to dispatch: {str(e)}")
         
         # Mark invite code as used, only now that everything is successful
         if getattr(settings, 'USE_INVITE_CODE', False):

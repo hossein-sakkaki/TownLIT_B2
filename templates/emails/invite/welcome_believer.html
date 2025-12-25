@@ -1,0 +1,48 @@
+<!-- templates/emails/invite/welcome_believer.html -->
+{% extends 'base_email.html' %}
+
+{% block subject %}
+  You’re In — Begin Your Journey in TownLIT
+{% endblock %}
+
+{% block content %}
+  <p>
+    Hello <strong>{{ user.username|default:'Friend' }}</strong>,
+  </p> <br>
+
+  <p>
+    Your account has been successfully created, and you’ve just taken your first real step into TownLIT.
+  </p>
+
+  <p>
+    To get started, you may want to complete your profile, choose an avatar that represents you, and take a moment to explore the community. There’s no pressure to do everything at once — TownLIT is designed to meet you where you are.
+  </p>
+
+  <p>
+    For the best experience (until the native iOS and Android apps are available), we recommend adding TownLIT to your home screen so it feels like a real app on your phone.
+  </p>
+
+  <p>
+    <div class="title-paraf">On iPhone (Safari):</div><br />
+    <div>→ Open TownLIT in Safari</div>
+    <div>→ tap the <strong>Share</strong> icon (square with an arrow)</div>
+    <div>→ scroll down and select <strong>Add to Home Screen</strong>.</div>     
+  </p>
+
+  <p>
+    <div class="title-paraf">On Android (Chrome):</div><br />
+    <div>→ Open TownLIT</div>
+    <div>→ tap <strong>Install TownLIT App</strong> (or the install prompt)</div>
+    <div>→ tap <strong>Install</strong>.</div>
+  </p>
+  <br>
+
+  <p>
+    We are ready to welcome people into something built with heart — a place created with care, faith, and genuine love for community. We’re grateful that you are part of this beginning.
+  </p>
+
+  <p class="email-signature">
+    With warmth and hope,<br />
+    The TownLIT Team
+  </p>
+{% endblock %}

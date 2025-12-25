@@ -1,6 +1,7 @@
 <!-- templates/base_email.html -->
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
   <title>{% block subject %}TownLIT Email{% endblock %}</title>
@@ -8,24 +9,31 @@
 
   <style>
     /* ========== RESET ========== */
-    body, table, td, a {
+    body,
+    table,
+    td,
+    a {
       -webkit-text-size-adjust: 100%;
       -ms-text-size-adjust: 100%;
     }
-    table, td {
+
+    table,
+    td {
       mso-table-lspace: 0pt;
       mso-table-rspace: 0pt;
     }
+
     img {
       -ms-interpolation-mode: bicubic;
     }
+
     body {
       background: radial-gradient(circle, #0F52BA 10%, #000000 75%, #000000 100%);
       background-repeat: no-repeat;
       background-position: center;
       background-attachment: fixed;
 
-      font-family: "Lato", "Noto Sans", "Helvetica", "Segoe UI", sans-serif;
+      font-family: "Lato", "Noto Sans", "Helvetica", "Segoe UI", sans-serif !important;
     }
 
     /* ========== GLOBAL WRAPPER ========== */
@@ -40,14 +48,12 @@
       border: 1px solid rgba(43, 44, 48, 0.1);
       border-radius: 10px;
       padding: 32px 24px;
-      background: linear-gradient(
-        290deg,
-        #F9F8F4 0%,
-        #F5F1EA 20%,
-        #EEE6DB 45%,
-        #F4F1EB 70%,
-        #F9F8F4 100%
-      );
+      background: linear-gradient(290deg,
+          #F9F8F4 0%,
+          #F5F1EA 20%,
+          #EEE6DB 45%,
+          #F4F1EB 70%,
+          #F9F8F4 100%);
     }
 
     /* ========== HEADER ========== */
@@ -93,14 +99,14 @@
       font-weight: bold;
       line-height: 1.4;
     }
-  
+
     h2 {
-      color: #F6C860; 
+      color: #F6C860;
       font-size: 16px;
       font-weight: bold;
       line-height: 1.4;
     }
-  
+
     h3 {
       color: #2B2C30;
       font-size: 14px;
@@ -110,21 +116,34 @@
       text-transform: uppercase;
       letter-spacing: 0.5px;
     }
-  
+
     em {
       color: #3BAA75;
     }
 
     .email-code-container {
       display: flex;
+      flex-direction: column;
       justify-content: center;
       align-items: center;
+      gap: 4px;
+      margin: 24px 0;
     }
 
     .email-button-container {
       display: flex;
       justify-content: center;
       align-items: center;
+    }
+
+    .email-button-container a {
+      background-color: #0F52BA !important;
+      color: #F8F6F0 !important;
+      transition: all 0.3s ease-in-out;
+    }
+
+    .email-button-container a:hover {
+      background-color: #F6C860 !important;
     }
 
     .email-button {
@@ -144,6 +163,11 @@
       color: #2B2C30 !important;
     }
 
+    .text-code-box {
+      font-weight: bold !important;
+      color: #0F52BA !important;
+    }
+
     .code-box {
       display: inline-block;
       background-color: #F4F1EB;
@@ -154,8 +178,7 @@
       color: #0F52BA;
       letter-spacing: 4px;
       text-align: center;
-      margin: 24px 0;
-      font-family: 'Lato', monospace;
+      font-family: 'Lato', monospace !important;
     }
 
     .middle-container {
@@ -167,33 +190,43 @@
     }
 
     .notification-link-supporter {
-      font-size: 12px; 
+      font-size: 12px;
       color: #6F6F6F;
     }
 
     .notification-preferences {
-      font-size: 12px; 
-      color: #6F6F6F; 
-      margin-top: 32px; 
+      font-size: 12px;
+      color: #6F6F6F;
+      margin-top: 32px;
       line-height: 1.5;
     }
+
     .notification-preferences a {
       font-weight: bold;
-      color: #0F52BA; 
+      color: #0F52BA;
       text-decoration: none;
     }
+
     .notification-preferences a:hover {
       color: #F6C860 !important;
     }
 
+    .title-paraf {
+      color: #F6C860;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+    }
+
     .email-reflection {
-      font-style: italic;
       font-size: 16px;
       text-align: center;
       color: #F6C860;
       margin-top: 32px;
       margin-bottom: 32px;
       line-height: 1.6;
+      font-weight: bold !important;
+      text-shadow:
+        0 1px 2px rgba(0, 0, 0, 0.45),
+        0 0 6px rgba(246, 200, 96, 0.35);
     }
 
     .email-signature {
@@ -201,21 +234,22 @@
       font-size: 15px;
       font-weight: bold;
       color: #2B2C30;
-      font-family: 'Lato', sans-serif;
+      font-family: "Lato", "Noto Sans", "Helvetica", "Segoe UI", sans-serif !important;
       line-height: 1.3;
     }
 
-
     p {
       margin-top: 8px;
-      margin-bottom: 8px;
+      margin-bottom: 16px;
+      line-height: 1.6;
     }
 
-    p a{
+    p a {
       color: #0F52BA !important;
       text-decoration: none;
       transition: 150ms ease-in-out;
     }
+
     p a:hover {
       color: #F6C860 !important;
     }
@@ -257,6 +291,7 @@
       .email-container {
         padding: 24px 16px;
       }
+
       .email-button {
         width: 100%;
         text-align: center;
@@ -264,10 +299,11 @@
     }
 
 
-     /* ========== SAFTY ========== */
+    /* ========== SAFTY ========== */
     .alert-box {
       background-color: #FFF4F4;
-      border-left: 6px solid #C40233; /* --color-danger */
+      border-left: 6px solid #C40233;
+      /* --color-danger */
       padding: 20px;
       border-radius: 8px;
       margin-bottom: 24px;
@@ -275,7 +311,8 @@
 
     .info-box {
       background-color: #FFF8EC;
-      border-left: 5px solid #F4A429; /* --color-warning */
+      border-left: 5px solid #F4A429;
+      /* --color-warning */
       padding: 16px 20px;
       border-radius: 6px;
       margin-top: 24px;
@@ -285,8 +322,6 @@
       background-color: #F4A429 !important;
       color: #ffffff !important;
     }
-
-
   </style>
 </head>
 
@@ -305,7 +340,7 @@
       <!-- Content Block -->
       <div class="email-content">
         {% block content %}
-          {{ content|safe }}
+        {{ content|safe }}
         {% endblock %}
       </div>
 
@@ -323,8 +358,10 @@
       <div class="email-footer">
         <div class="email-footer-links">
           <a href="https://townlit.com" class="footer-link">TownLIT</a> |
-          <a href="https://townlit.com/townlit-official/foundation/townlit_beliefs" class="footer-link">Statement of Faith</a> |
-          <a href="https://townlit.com/townlit-official/foundation/vision_and_mission" class="footer-link">Vision & Mission</a>
+          <a href="https://townlit.com/townlit-official/foundation/townlit_beliefs" class="footer-link">Statement of
+            Faith</a> |
+          <a href="https://townlit.com/townlit-official/foundation/vision_and_mission" class="footer-link">Vision &
+            Mission</a>
         </div>
         <p>If you didn’t request this email, feel free to ignore it.</p>
         <p>&copy; 2022–{{ current_year }} TownLIT. All rights reserved.</p>
@@ -333,5 +370,5 @@
     </div>
   </div>
 </body>
-</html>
 
+</html>
