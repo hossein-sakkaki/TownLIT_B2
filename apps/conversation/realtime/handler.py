@@ -62,9 +62,6 @@ class ConversationHandler(
         self.scope = consumer.scope
         self.channel_layer = consumer.channel_layer
         self.channel_name = consumer.channel_name
-        self.send_json = consumer.send_json
-        self.send = consumer.send
-        self.close = consumer.close
 
         # Flags
         self.connected = False
@@ -102,7 +99,7 @@ class ConversationHandler(
 
         # Auth guard
         if not self.user or not self.user.is_authenticated or not self.device_id:
-            await self.close()
+            await self.consumer.close()
             return
 
         # Device verification
@@ -112,7 +109,7 @@ class ConversationHandler(
             ).exists
         )()
         if not belongs:
-            await self.close(code=4403)
+            await self.consumer.close(code=4403)
             return
 
         # Mark this socket online in Redis
@@ -139,7 +136,7 @@ class ConversationHandler(
 
         dialogue_slugs = {d.slug for d in dialogues}
         if self.slug and self.slug not in dialogue_slugs:
-            await self.close()
+            await self.consumer.close()
             return
 
         # Build map
@@ -161,7 +158,7 @@ class ConversationHandler(
         await self.send_all_online_statuses()
 
         # Notify connected user (UNIFIED)
-        await self.consumer.send_json({
+        await self.consumer.safe_send_json({
             "type": "event",
             "app": "conversation",
             "event": "user_online_status",
@@ -309,7 +306,7 @@ class ConversationHandler(
         if int(event.get("user_id") or 0) == self.user.id:
             self.force_logout_triggered = True
             await self.finalize_disconnect()
-            await self.close()
+            await self.consumer.close()
 
 
     # --------------------------------------------------------------
@@ -451,7 +448,7 @@ class ConversationHandler(
 
                 # Server ping → client pong (Central will refresh TTL)
                 try:
-                    await self.send_json({
+                    await self.consumer.safe_send_json({
                         "type": "ping",
                         "timestamp": timezone.now().isoformat(),  # short trace
                     })
@@ -533,7 +530,7 @@ class ConversationHandler(
                 return
 
         except Exception as e:
-            await self.send_json({"type": "error", "message": str(e)})
+            await self.consumer.safe_send_json({"type": "error", "message": str(e)})
 
 
     # -----------------------------------------------------------
@@ -629,19 +626,12 @@ class ConversationHandler(
     # WS HELPERS: backend → frontend (JSON envelope)
     # -----------------------------------------------------------
     async def _send_conv_event(self, event_type: str, data: dict):
-        if not getattr(self, "connected", False):
-            return
-        try:
-            await self.consumer.send_json({
-                "type": "event",
-                "app": "conversation",
-                "event": event_type,
-                "data": data,
-            })
-        except Exception:
-            # socket closed / response completed
-            self.connected = False
-            return
+        await self.consumer.safe_send_json({
+            "type": "event",
+            "app": "conversation",
+            "event": event_type,
+            "data": data,
+        })
 
 
     async def ws_chat_message(self, data: dict):

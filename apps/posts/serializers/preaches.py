@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.apps import apps
-from apps.posts.models import Preach
+from apps.posts.models.preach import Preach
 from apps.accounts.serializers import SimpleCustomUserSerializer 
 from apps.profilesOrg.serializers_min import SimpleOrganizationSerializer
 

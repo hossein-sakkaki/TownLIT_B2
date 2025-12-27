@@ -8,7 +8,8 @@ from pathlib import Path
 from django.utils.translation import gettext_lazy as _
 
 from common.aws.s3_utils import get_file_url
-from apps.posts.models import Moment, Pray
+from apps.posts.models.moment import Moment
+from apps.posts.models.pray import Pray
 from apps.profiles.admin_forms import MemberServiceTypeAdminForm, MemberAdminForm
 from .models import (
                 AcademicRecord,
@@ -266,29 +267,29 @@ class MemberAdmin(admin.ModelAdmin):
     managed_organizations_display.short_description = 'Managed Organizations'
 
 
-# GUESTUSER MOMENT Admin Inline
-class GuestUserMomentInline(GenericTabularInline):
-    model = Moment
-    extra = 0
-    readonly_fields = ['content', 'published_at']
+# # GUESTUSER MOMENT Admin Inline
+# class GuestUserMomentInline(GenericTabularInline):
+#     model = Moment
+#     extra = 0
+#     readonly_fields = ['content', 'published_at']
 
-    def get_queryset(self, request):
-        return super().get_queryset(request).filter(content_type=ContentType.objects.get_for_model(GuestUser))
+#     def get_queryset(self, request):
+#         return super().get_queryset(request).filter(content_type=ContentType.objects.get_for_model(GuestUser))
     
     
-# GUEST USER ADMIN Manager -----------------------------------------------------------
-@admin.register(GuestUser)
-class GuestUserAdmin(admin.ModelAdmin):
-    list_display = ['user', 'register_date', 'is_migrated', 'is_active']
-    list_filter = ['is_migrated', 'is_active', 'register_date']
-    search_fields = ['user__username']
-    ordering = ['register_date', 'is_migrated', 'is_active']
-    fieldsets = (
-        ('User Info', {'fields': ('user',)}),
-        ('Status', {'fields': ('is_migrated', 'is_active')}),
-        ('Dates', {'fields': ('register_date',)}),
-    )
-    inlines = [GuestUserMomentInline]
+# # GUEST USER ADMIN Manager -----------------------------------------------------------
+# @admin.register(GuestUser)
+# class GuestUserAdmin(admin.ModelAdmin):
+#     list_display = ['user', 'register_date', 'is_migrated', 'is_active']
+#     list_filter = ['is_migrated', 'is_active', 'register_date']
+#     search_fields = ['user__username']
+#     ordering = ['register_date', 'is_migrated', 'is_active']
+#     fieldsets = (
+#         ('User Info', {'fields': ('user',)}),
+#         ('Status', {'fields': ('is_migrated', 'is_active')}),
+#         ('Dates', {'fields': ('register_date',)}),
+#     )
+#     inlines = [GuestUserMomentInline]
 
 
 # CUSTOMER ADMIN Manager -----------------------------------------------------------

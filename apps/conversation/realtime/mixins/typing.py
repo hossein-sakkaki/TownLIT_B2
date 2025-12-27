@@ -29,17 +29,6 @@ class TypingMixin:
         if is_typing:
             await self._schedule_typing_clear(dialogue_slug)
 
-    # --------------------------------------------------------------------
-    # 2) Server → client broadcast handler
-    # --------------------------------------------------------------------
-    # async def typing_status_broadcast(self, event):
-    #     """Called when backend dispatches typing broadcast."""
-    #     await self.send(text_data=json.dumps({
-    #         "type": "typing_status",
-    #         "dialogue_slug": event["dialogue_slug"],
-    #         "sender": event["sender"],
-    #         "is_typing": event["is_typing"],
-    #     }))
 
     # --------------------------------------------------------------------
     # Internal: broadcast typing to dialogue group
@@ -68,12 +57,15 @@ class TypingMixin:
     # Auto-clear typing after timeout
     # --------------------------------------------------------------------
     async def _schedule_typing_clear(self, dialogue_slug: str):
-        if TYPING_TIMEOUTS.get(self.user.id):
-            TYPING_TIMEOUTS[self.user.id].cancel()
+        key = (self.user.id, dialogue_slug)
 
-        TYPING_TIMEOUTS[self.user.id] = asyncio.create_task(
+        if TYPING_TIMEOUTS.get(key):
+            TYPING_TIMEOUTS[key].cancel()
+
+        TYPING_TIMEOUTS[key] = asyncio.create_task(
             self._clear_typing_after_timeout(dialogue_slug)
         )
+
 
     async def _clear_typing_after_timeout(self, dialogue_slug: str):
         try:
@@ -81,8 +73,6 @@ class TypingMixin:
         except asyncio.CancelledError:
             return
 
-        # Broadcast stop typing
         await self._broadcast_typing_status(dialogue_slug, is_typing=False)
 
-        # Cleanup
-        TYPING_TIMEOUTS.pop(self.user.id, None)
+        TYPING_TIMEOUTS.pop((self.user.id, dialogue_slug), None)

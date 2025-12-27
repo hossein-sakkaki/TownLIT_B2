@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.apps import apps
-from apps.posts.models import MediaContent
+from apps.posts.models.media_content import MediaContent
 from apps.accounts.serializers import SimpleCustomUserSerializer 
 
 

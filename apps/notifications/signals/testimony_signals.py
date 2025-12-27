@@ -11,7 +11,7 @@ from django.contrib.auth import get_user_model
 from apps.accounts.models import CustomUser
 from apps.profiles.models import Friendship
 from apps.profiles.constants import ACCEPTED
-from apps.posts.models import Testimony
+from apps.posts.models.testimony import Testimony
 from apps.notifications.services.services import create_and_dispatch_notification
 
 logger = logging.getLogger(__name__)

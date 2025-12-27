@@ -7,9 +7,9 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import status, viewsets
 
-from apps.posts.models import ServiceEvent
-from apps.posts.serializers.service_event import ServiceEventSerializer
-from apps.posts.mixins.mixins import CommentMixin, OrganizationActionMixin
+from apps.posts.models.service_event import ServiceEvent
+from apps.posts.serializers.service_events import ServiceEventSerializer
+from apps.posts.mixins.mixins import  OrganizationActionMixin
 from apps.profilesOrg.models import (
     Organization, Church, MissionOrganization, ChristianPublishingHouse, ChristianCounselingCenter,
     ChristianWorshipMinistry, ChristianConferenceCenter, ChristianEducationalInstitution,
@@ -21,7 +21,7 @@ from apps.profilesOrg.models import (
 
 
 # SERVICE EVENT ViewSet ---------------------------------------------------------------------------------------------------
-class ServiceEventViewSet(viewsets.ModelViewSet, CommentMixin, OrganizationActionMixin):
+class ServiceEventViewSet(viewsets.ModelViewSet,  OrganizationActionMixin):
     queryset = ServiceEvent.objects.all()
     serializer_class = ServiceEventSerializer
     permission_classes = [IsAuthenticated]

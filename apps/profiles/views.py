@@ -558,7 +558,7 @@ The TownLIT Team 🌍
         Lightweight proxy to return audio/video/written summary for current member.
         No CRUD here; use MeTestimonyViewSet for create/update/delete.
         """
-        from apps.posts.models import Testimony
+        from apps.posts.models.testimony import Testimony
         from django.contrib.contenttypes.models import ContentType
         member = getattr(request.user, 'member_profile', None) or getattr(request.user, 'member', None)
         if not member:

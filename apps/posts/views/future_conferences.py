@@ -7,9 +7,9 @@ from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, AllowAny
 
-from apps.posts.models import FutureConference
+from apps.posts.models.future_conference import FutureConference
 from apps.posts.serializers.future_conferences import FutureConferenceSerializer
-from apps.posts.mixins.mixins import CommentMixin, OrganizationActionMixin
+from apps.posts.mixins.mixins import  OrganizationActionMixin
 from apps.profilesOrg.models import (
     Organization, Church, MissionOrganization, ChristianPublishingHouse, ChristianCounselingCenter,
     ChristianWorshipMinistry, ChristianConferenceCenter, ChristianEducationalInstitution,
@@ -18,7 +18,7 @@ from apps.profilesOrg.models import (
 
 
 # Future Conference ViewSet ---------------------------------------------------------------------------------------------------
-class FutureConferenceViewSet(viewsets.ModelViewSet, CommentMixin, OrganizationActionMixin):
+class FutureConferenceViewSet(viewsets.ModelViewSet,  OrganizationActionMixin):
     queryset = FutureConference.objects.all()
     serializer_class = FutureConferenceSerializer
     permission_classes = [IsAuthenticated]

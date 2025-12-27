@@ -6,13 +6,13 @@ from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, AllowAny
 
-from apps.posts.models import Pray
+from apps.posts.models.pray import Pray
 from apps.posts.serializers.prayers import PraySerializer
-from apps.posts.mixins.mixins import CommentMixin, MemberActionMixin
+from apps.posts.mixins.mixins import  MemberActionMixin
 
 
 # Pray ViewSet ---------------------------------------------------------------------------------------------------
-class PrayViewSet(viewsets.ModelViewSet, CommentMixin, MemberActionMixin):
+class PrayViewSet(viewsets.ModelViewSet,  MemberActionMixin):
     queryset = Pray.objects.all()
     serializer_class = PraySerializer
     permission_classes = [IsAuthenticated]

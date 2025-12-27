@@ -76,7 +76,7 @@ class CommentsHandler:
         await self.socket.join_feature_group(group)
         self.groups.add(group)
 
-        await self.socket.send_json({
+        await self.socket.safe_send_json({
             "app": "comments",
             "type": "event",
             "event": "subscribed",
@@ -98,7 +98,7 @@ class CommentsHandler:
             await self.socket.leave_feature_group(group)
             self.groups.discard(group)
 
-            await self.socket.send_json({
+            await self.socket.safe_send_json({
                 "app": "comments",
                 "type": "event",
                 "event": "unsubscribed",
@@ -112,7 +112,7 @@ class CommentsHandler:
         kind = event.get("event")
         data = event.get("data")
 
-        await self.socket.send_json({
+        await self.socket.safe_send_json({
             "app": "comments",
             "type": "event",
             "event": kind,

@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.apps import apps
-from apps.posts.models import Lesson
+from apps.posts.models.lesson import Lesson
 from apps.accounts.serializers import SimpleCustomUserSerializer 
 from apps.profilesOrg.serializers_min import SimpleOrganizationSerializer
 

@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.apps import apps
 from django.contrib.contenttypes.models import ContentType
-from apps.posts.models import Resource
+from apps.posts.models.common import Resource
 
 import logging
 logger = logging.getLogger(__name__)

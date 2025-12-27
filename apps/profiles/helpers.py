@@ -10,7 +10,7 @@ from django.utils import timezone
 from rest_framework import serializers
 
 from django.contrib.contenttypes.models import ContentType
-from apps.posts.models import Testimony
+from apps.posts.models.testimony import Testimony
 from apps.accounts.models import CustomUser, SocialMediaLink
 from apps.profiles.models import Member, Fellowship, Friendship
 

@@ -7,9 +7,9 @@ from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, AllowAny
 
-from apps.posts.models import Preach
+from apps.posts.models.preach import Preach
 from apps.posts.serializers.preaches import PreachSerializer
-from apps.posts.mixins.mixins import CommentMixin, OrganizationActionMixin
+from apps.posts.mixins.mixins import  OrganizationActionMixin
 from apps.profilesOrg.models import (
     Organization, Church, MissionOrganization, ChristianPublishingHouse, ChristianCounselingCenter,
     ChristianWorshipMinistry, ChristianConferenceCenter, ChristianEducationalInstitution,
@@ -18,7 +18,7 @@ from apps.profilesOrg.models import (
 
 
 # Preach ViewSet ---------------------------------------------------------------------------------------------------
-class PreachViewSet(viewsets.ModelViewSet, CommentMixin, OrganizationActionMixin):
+class PreachViewSet(viewsets.ModelViewSet,  OrganizationActionMixin):
     queryset = Preach.objects.all()
     serializer_class = PreachSerializer
     permission_classes = [IsAuthenticated]

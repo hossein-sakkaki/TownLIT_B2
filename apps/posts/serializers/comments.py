@@ -2,7 +2,7 @@
 
 from rest_framework import serializers
 from django.contrib.contenttypes.models import ContentType
-from apps.posts.models import Comment
+from apps.posts.models.comment import Comment
 from apps.accounts.serializers import SimpleCustomUserSerializer 
 
 class SimpleCommentReadSerializer(serializers.ModelSerializer):

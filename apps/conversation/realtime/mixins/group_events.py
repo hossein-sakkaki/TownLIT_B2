@@ -15,7 +15,7 @@ class ConversationGroupMixin:
 
     async def _send_event(self, event_name: str, data: dict):
         # Unified envelope for frontend websocketManager
-        await self.send_json({
+        await self.consumer.safe_send_json({
             "type": "event",
             "app": "conversation",
             "event": event_name,

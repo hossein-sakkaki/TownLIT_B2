@@ -122,7 +122,10 @@ class FileEventsMixin:
 
         # ensure dialogue exists
         try:
-            await sync_to_async(Dialogue.objects.get)(slug=dialogue_slug)
+            await sync_to_async(Dialogue.objects.get)(
+                slug=dialogue_slug,
+                participants=self.user
+            )
         except Dialogue.DoesNotExist:
             return
 
@@ -142,13 +145,18 @@ class FileEventsMixin:
             }
         )
 
-        # confirm to sender
-        await self.send(text_data=json.dumps({
-            "type": "upload_canceled",
-            "dialogue_slug": dialogue_slug,
-            "file_type": file_type,
-            "status": "cancelled",
-        }))
+        # confirm to sender (unified)
+        await self.consumer.safe_send_json({
+            "type": "event",
+            "app": "conversation",
+            "event": "upload_canceled",
+            "data": {
+                "dialogue_slug": dialogue_slug,
+                "file_type": file_type,
+                "status": "cancelled",
+            }
+        })
+
 
     # ------------------------------------------------------------
     # UPLOAD STATUS (progress, processing, ready) 
@@ -157,7 +165,10 @@ class FileEventsMixin:
     async def send_file_status(self, dialogue_slug, file_type, status, progress=None):
         """Broadcast upload status to all participants of the dialogue."""
         try:
-            await sync_to_async(Dialogue.objects.get)(slug=dialogue_slug)
+            await sync_to_async(Dialogue.objects.get)(
+                slug=dialogue_slug,
+                participants=self.user
+            )
         except Dialogue.DoesNotExist:
             return
 
@@ -208,7 +219,10 @@ class FileEventsMixin:
 
         # Ensure dialogue exists
         try:
-            await sync_to_async(Dialogue.objects.get)(slug=dialogue_slug)
+            await sync_to_async(Dialogue.objects.get)(
+                slug=dialogue_slug,
+                participants=self.user
+            )
         except Dialogue.DoesNotExist:
             return
 
@@ -230,8 +244,5 @@ class FileEventsMixin:
                 }
             }
         )
-
-
-
 
 

@@ -1,9 +1,6 @@
 from rest_framework import serializers
 from django.apps import apps
-from apps.posts.models import Conference
-from apps.accounts.serializers import SimpleCustomUserSerializer 
-
-from apps.posts.constants import REACTION_TYPE_CHOICES
+from apps.posts.models.conference import Conference
 import logging
 logger = logging.getLogger(__name__)
 from django.contrib.auth import get_user_model

@@ -7,9 +7,9 @@ from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, AllowAny
 
-from apps.posts.models import Lesson
+from apps.posts.models.lesson import Lesson
 from apps.posts.serializers.lessons import LessonSerializer
-from apps.posts.mixins.mixins import CommentMixin, OrganizationActionMixin
+from apps.posts.mixins.mixins import  OrganizationActionMixin
 from apps.profilesOrg.models import (
     Organization, Church, MissionOrganization, ChristianPublishingHouse, ChristianCounselingCenter,
     ChristianWorshipMinistry, ChristianConferenceCenter, ChristianEducationalInstitution,
@@ -18,7 +18,7 @@ from apps.profilesOrg.models import (
 
 
 # LESSON ViewSet -----------------------------------------------------------------------------------------------------
-class LessonViewSet(viewsets.ModelViewSet, CommentMixin, OrganizationActionMixin):
+class LessonViewSet(viewsets.ModelViewSet,  OrganizationActionMixin):
     queryset = Lesson.objects.all()
     serializer_class = LessonSerializer
     permission_classes = [IsAuthenticated]

@@ -7,9 +7,9 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import status, viewsets
 
-from apps.posts.models import Mission
+from apps.posts.models.mission import Mission
 from apps.posts.serializers.missions import MissionSerializer
-from apps.posts.mixins.mixins import CommentMixin, OrganizationActionMixin
+from apps.posts.mixins.mixins import  OrganizationActionMixin
 from apps.profilesOrg.models import (
     Organization, Church, MissionOrganization, ChristianPublishingHouse, ChristianCounselingCenter,
     ChristianWorshipMinistry, ChristianConferenceCenter, ChristianEducationalInstitution,
@@ -18,7 +18,7 @@ from apps.profilesOrg.models import (
 
 
 # Mission ViewSet ---------------------------------------------------------------------------------------------------
-class MissionViewSet(viewsets.ModelViewSet, CommentMixin, OrganizationActionMixin):
+class MissionViewSet(viewsets.ModelViewSet,  OrganizationActionMixin):
     queryset = Mission.objects.all()
     serializer_class = MissionSerializer
     permission_classes = [IsAuthenticated]

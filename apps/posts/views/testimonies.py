@@ -11,9 +11,9 @@ from rest_framework.exceptions import NotFound
 import logging
 logger = logging.getLogger(__name__)
 
-from apps.posts.models import Testimony
+from apps.posts.models.testimony import Testimony
 from apps.posts.serializers.testimonies import TestimonySerializer
-from apps.posts.mixins.mixins import CommentMixin, OrganizationActionMixin
+from apps.posts.mixins.mixins import  OrganizationActionMixin
 from apps.profilesOrg.models import Organization, Church, MissionOrganization, ChristianPublishingHouse, ChristianCounselingCenter, ChristianWorshipMinistry, ChristianConferenceCenter, ChristianEducationalInstitution, ChristianChildrenOrganization, ChristianYouthOrganization, ChristianWomensOrganization, ChristianMensOrganization
 
 from django.db.models import Q

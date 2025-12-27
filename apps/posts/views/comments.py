@@ -13,7 +13,7 @@ import logging
 
 from django.db.models import Prefetch, Count
 from apps.core.pagination import ConfigurablePagination
-from apps.posts.models import Comment
+from apps.posts.models.comment import Comment
 from apps.posts.serializers.comments import (
     CommentReadSerializer,
     CommentWriteSerializer,

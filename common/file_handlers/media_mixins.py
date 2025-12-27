@@ -7,6 +7,7 @@ def _get_setting(name: str, default=None):
     return getattr(settings, name, default)
 
 
+# Audio File Mixin --------------------------------------------------------------------------------
 class AudioFileMixin(BaseS3URLMixin):
     """
     Provides signed/public URL for an `audio` FileField.
@@ -24,6 +25,7 @@ class AudioFileMixin(BaseS3URLMixin):
         return rep
 
 
+# Video File Mixin --------------------------------------------------------------------------------
 class VideoFileMixin(BaseS3URLMixin):
     """
     Provides signed/public URL for a `video` FileField.
@@ -41,6 +43,7 @@ class VideoFileMixin(BaseS3URLMixin):
         return rep
 
 
+# Thumbnail File Mixin ----------------------------------------------------------------------------
 class ThumbnailFileMixin(BaseS3URLMixin):
     """Signed/public URL for single `thumbnail` field."""
     signed_fields = {
@@ -51,4 +54,26 @@ class ThumbnailFileMixin(BaseS3URLMixin):
         rep = super().to_representation(instance)
         if 'thumbnail_url' in rep:
             rep['thumbnail_signed_url'] = rep.pop('thumbnail_url')
+        return rep
+
+
+# Image File Mixin --------------------------------------------------------------------------------
+class ImageFileMixin(BaseS3URLMixin):
+    """
+    Provides signed/public URL for an `image` ImageField.
+    Adds:
+      - image_key
+      - image_signed_url  (renamed from image_url)
+
+    Default placeholder can be set via:
+      settings.DEFAULT_IMAGE_PLACEHOLDER_URL
+    """
+    signed_fields = {
+        'image': _get_setting('DEFAULT_IMAGE_PLACEHOLDER_URL', None)
+    }
+
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        if 'image_url' in rep:
+            rep['image_signed_url'] = rep.pop('image_url')
         return rep

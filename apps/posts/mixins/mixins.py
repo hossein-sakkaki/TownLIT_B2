@@ -1,5 +1,4 @@
 from django.contrib.contenttypes.models import ContentType
-from django.contrib.contenttypes.fields import GenericRelation
 from django.utils import timezone
 
 from rest_framework import status
@@ -7,75 +6,11 @@ from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 
-from apps.posts.models import (
-                    Reaction, Comment, Resource,
-                )
-from apps.posts.serializers.reactions import ReactionSerializer
-from apps.posts.serializers.comments import CommentReadSerializer, CommentWriteSerializer
+from apps.posts.models.common import Resource
 from apps.posts.serializers.common import ResourceSerializer
-
 from apps.profilesOrg.models import Organization
 from common.permissions import IsFullAccessAdmin, IsLimitedAccessAdmin
 
-from django.db import transaction
-from django.db.models import Count
-
-
-
-
-
-# COMMENT Mixin -------------------------------------------------------------------------------
-class CommentMixin:
-    # Mixin for handling comments related to any model with GenericForeignKey.
-    @action(detail=True, methods=['get', 'post'], url_path='comments', permission_classes=[IsAuthenticated])
-    def comments(self, request, slug=None):
-        instance = self.get_object()
-        try:
-            content_type = ContentType.objects.get_for_model(instance)
-        except ContentType.DoesNotExist:
-            return Response({"error": "Invalid content type"}, status=status.HTTP_400_BAD_REQUEST)
-
-        if request.method == 'GET':
-            # Retrieve all comments for this object
-            comments = Comment.objects.filter(content_type=content_type, object_id=instance.id)
-            serializer = CommentReadSerializer(comments, many=True)
-            return Response(serializer.data, status=status.HTTP_200_OK)
-
-        if request.method == 'POST':
-            # Add a new comment for this object
-            serializer = CommentWriteSerializer(data=request.data)
-            if serializer.is_valid():
-                try:
-                    serializer.save(content_type=content_type, object_id=instance.id)
-                    return Response(serializer.data, status=status.HTTP_201_CREATED)
-                except Exception as e:
-                    return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-    @action(detail=True, methods=['post'], url_path='update-comment', permission_classes=[IsAuthenticated])
-    def update_comment(self, request, slug=None):
-        instance = self.get_object()
-        content_type = ContentType.objects.get_for_model(instance)
-        try:
-            comment = Comment.objects.get(content_type=content_type, object_id=instance.id, name=request.user)
-            serializer = CommentReadSerializer(comment, data=request.data, partial=True)
-            if serializer.is_valid():
-                serializer.save()
-                return Response(serializer.data, status=status.HTTP_200_OK)
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        except Comment.DoesNotExist:
-            return Response({"error": "Comment not found or you don't have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
-
-    @action(detail=True, methods=['delete'], url_path='delete-comment', permission_classes=[IsAuthenticated])
-    def delete_comment(self, request, slug=None):
-        instance = self.get_object()
-        content_type = ContentType.objects.get_for_model(instance)
-        try:
-            comment = Comment.objects.get(content_type=content_type, object_id=instance.id, name=request.user)
-            comment.delete()
-            return Response({"message": "Comment deleted successfully"}, status=status.HTTP_204_NO_CONTENT)
-        except Comment.DoesNotExist:
-            return Response({"error": "Comment not found or you don't have permission to delete it"}, status=status.HTTP_404_NOT_FOUND)
 
 
 # MEMBER ACTION Mixin ----------------------------------------------------------------------------

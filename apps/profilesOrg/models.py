@@ -6,7 +6,7 @@ from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from apps.accounts.models import Address
 from apps.profiles.models import Member
-from apps.posts.models import Testimony
+from apps.posts.models.testimony import Testimony
 
 from apps.profiles.constants import EDUCATION_DEGREE_CHOICES
 from apps.profilesOrg.constants import (

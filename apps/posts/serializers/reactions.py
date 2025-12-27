@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.apps import apps
 from django.contrib.contenttypes.models import ContentType
-from apps.posts.models import Reaction
+from apps.posts.models.reaction import Reaction
 
 from apps.posts.constants import REACTION_TYPE_CHOICES
 import logging

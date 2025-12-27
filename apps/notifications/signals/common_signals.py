@@ -6,7 +6,9 @@ from django.contrib.contenttypes.models import ContentType
 from django.db import models
 
 from apps.notifications.models import Notification
-from apps.posts.models import Comment, Reaction, Testimony
+from apps.posts.models.testimony import Testimony
+from apps.posts.models.reaction import Reaction
+from apps.posts.models.comment import Comment
 from apps.profiles.models import Friendship, Fellowship
 
 

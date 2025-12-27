@@ -6,14 +6,14 @@ from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, AllowAny
 
-from apps.posts.models import Announcement
+from apps.posts.models.announcement import Announcement
 from apps.posts.serializers.announcements import AnnouncementSerializer
-from apps.posts.mixins.mixins import CommentMixin, OrganizationActionMixin
+from apps.posts.mixins.mixins import  OrganizationActionMixin
 from apps.profilesOrg.models import Organization
 
 
 # Announcement ViewSet ---------------------------------------------------------------------------------------------------
-class AnnouncementViewSet(viewsets.ModelViewSet, CommentMixin, OrganizationActionMixin):
+class AnnouncementViewSet(viewsets.ModelViewSet,  OrganizationActionMixin):
     queryset = Announcement.objects.all()
     serializer_class = AnnouncementSerializer
     permission_classes = [IsAuthenticated]

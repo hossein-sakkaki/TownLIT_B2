@@ -41,7 +41,10 @@ class ReadMixin:
                 return
 
             try:
-                dialogue = await sync_to_async(Dialogue.objects.get)(slug=dialogue_slug)
+                dialogue = await sync_to_async(Dialogue.objects.get)(
+                    slug=dialogue_slug,
+                    participants=self.user
+                )
             except Dialogue.DoesNotExist:
                 return
 
@@ -133,8 +136,10 @@ class ReadMixin:
                 })
 
             if getattr(self, "connected", False):
-                await self.send_json({
-                    "type": "unread_count_update",
+                await self.consumer.safe_send_json({
+                    "type": "event",
+                    "app": "conversation",
+                    "event": "unread_count_update",
                     "payload": results,
                 })
 

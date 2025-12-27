@@ -29,10 +29,10 @@ class DeliveryMixin:
         if not recipient:
             return
 
+        await mark_message_as_delivered_atomic(message)
+
         if not await self._is_user_online(recipient.id):
             return  # no delivery
-
-        await mark_message_as_delivered_atomic(message)
 
         # Notify current session
         await self._send_local_delivery_update(message, recipient.id)
@@ -91,7 +91,7 @@ class DeliveryMixin:
     # SERVER-TO-CLIENT EVENT HANDLERS
     # ------------------------------------------------------------
     async def mark_as_delivered(self, event):
-        await self.send_json({
+        await self.consumer.safe_send_json({
            "type": "event",
             "app": "conversation",
             "event": "mark_as_delivered",
@@ -120,7 +120,7 @@ class DeliveryMixin:
 
 
     async def _send_local_delivery_update(self, message, recipient_id):
-        await self.send_json({
+        await self.consumer.safe_send_json({
            "type": "event",
             "app": "conversation",
             "event": "mark_as_delivered",

@@ -1,10 +1,7 @@
 from rest_framework import serializers
 from django.apps import apps
-from apps.posts.models import Announcement
-from apps.accounts.serializers import SimpleCustomUserSerializer 
-from apps.profilesOrg.serializers_min import SimpleOrganizationSerializer
+from apps.posts.models.announcement import Announcement
 
-from apps.posts.constants import REACTION_TYPE_CHOICES
 import logging
 logger = logging.getLogger(__name__)
 from django.contrib.auth import get_user_model

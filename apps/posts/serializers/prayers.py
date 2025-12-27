@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.apps import apps
-from apps.posts.models import Pray
+from apps.posts.models.pray import Pray
             
 import logging
 logger = logging.getLogger(__name__)

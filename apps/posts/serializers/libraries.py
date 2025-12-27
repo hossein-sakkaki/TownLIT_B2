@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.apps import apps
-from apps.posts.models import Library
+from apps.posts.models.library import Library
 from apps.accounts.serializers import SimpleCustomUserSerializer 
 
 

@@ -61,7 +61,7 @@ class PresenceMixin:
 
     async def user_last_seen(self, event):
         """Triggered only when user becomes fully offline."""
-        await self.send_json({
+        await self.consumer.safe_send_json({
            "type": "event",
             "app": "conversation",
             "event": "user_last_seen",
@@ -91,7 +91,10 @@ class PresenceMixin:
         from apps.conversation.models import Dialogue
 
         try:
-            dialogue = await sync_to_async(Dialogue.objects.get)(slug=dialogue_slug)
+            dialogue = await sync_to_async(Dialogue.objects.get)(
+                slug=dialogue_slug,
+                participants=self.user
+            )
         except Dialogue.DoesNotExist:
             return
 
@@ -116,24 +119,26 @@ class PresenceMixin:
             return
 
         for group in self.group_names:
-            await self.channel_layer.group_send(
-                group,
-                {
-                    "type": "dispatch_event",
-                    "app": "conversation",
-                    "event": "user_online_status",
-                    "data": {
-                        "dialogue_slug": group.split("_", 1)[1],
-                        "user_id": self.user.id,
-                        "is_online": is_online,
+            try:
+                await self.channel_layer.group_send(
+                    group,
+                    {
+                        "type": "dispatch_event",
+                        "app": "conversation",
+                        "event": "user_online_status",
+                        "data": {
+                            "dialogue_slug": group.split("_", 1)[1],
+                            "user_id": self.user.id,
+                            "is_online": is_online,
+                        },
                     },
-                },
-            ) 
-
+                ) 
+            except Exception:
+                pass
 
     async def _send_single_online_status(self, dialogue_slug: str, user_id: int, is_online: bool):
         """Unified outgoing payload for online/offline states."""
-        await self.send_json({
+        await self.consumer.safe_send_json({
            "type": "event",
             "app": "conversation",
             "event": "user_online_status",

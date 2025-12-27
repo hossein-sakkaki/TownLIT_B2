@@ -31,7 +31,7 @@ class NotificationsHandler:
         except Exception as e:
             logger.error(f"[NotifHandler] join {self.group} failed: {e}")
 
-        await self.socket.send_json({
+        await self.socket.safe_send_json({
             "app": "notifications",
             "type": "connected",
             "status": "ok"
@@ -61,13 +61,13 @@ class NotificationsHandler:
 
     # ------------------------------------------------------
     async def _ping(self):
-        await self.socket.send_json({
+        await self.socket.safe_send_json({
             "app": "notifications",
             "type": "pong"
         })
 
     async def _mark_delivered(self, payload):
-        await self.socket.send_json({
+        await self.socket.safe_send_json({
             "app": "notifications",
             "type": "ack",
             "status": "ok"
@@ -94,10 +94,10 @@ class NotificationsHandler:
             data,
         )
 
-        await self.socket.send_json({
+        await self.socket.safe_send_json({
             "app": "notifications",
-            "type": "event",          # Unified envelope
-            "event": event_type,      # "notification"
+            "type": "event",
+            "event": event_type,
             "data": data,
         })
 

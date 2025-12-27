@@ -114,7 +114,7 @@ class SanctuaryHandler:
     # ------------------------------------------------------------
     async def _send_event(self, event: str, data: dict):
         """Unified envelope to client."""
-        await self.socket.send_json({
+        await self.socket.safe_send_json({
             "type": "event",
             "app": self.APP,
             "event": event,

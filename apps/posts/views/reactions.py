@@ -8,7 +8,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from apps.posts.serializers.reactions import ReactionSerializer
 
-from apps.posts.models import Reaction
+from apps.posts.models.reaction import Reaction
 from apps.accounts.serializers import SimpleCustomUserSerializer
 
 import logging

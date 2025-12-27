@@ -3,7 +3,7 @@
 from rest_framework import permissions
 from django.contrib.contenttypes.models import ContentType
 from apps.profiles.models import Member
-from apps.posts.models import Testimony
+from apps.posts.models.testimony import Testimony
 
 class IsOwnerOfMemberTestimony(permissions.BasePermission):
     """

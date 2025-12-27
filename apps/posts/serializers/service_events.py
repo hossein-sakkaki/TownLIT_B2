@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.apps import apps
-from apps.posts.models import ServiceEvent
+from apps.posts.models.service_event import ServiceEvent
             
 
 from apps.posts.constants import REACTION_TYPE_CHOICES

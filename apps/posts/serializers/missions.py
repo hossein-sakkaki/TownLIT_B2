@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.apps import apps
-from apps.posts.models import Mission
+from apps.posts.models.mission import Mission
 from apps.accounts.serializers import SimpleCustomUserSerializer 
 
 

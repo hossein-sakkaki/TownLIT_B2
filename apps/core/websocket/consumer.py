@@ -17,6 +17,7 @@ from apps.conversation.realtime.handler import ConversationHandler
 from apps.notifications.realtime.handler import NotificationsHandler
 from apps.posts.realtime.handler import CommentsHandler
 from apps.sanctuary.realtime.handler import SanctuaryHandler
+from apps.conversation.realtime.mixins.typing import TYPING_TIMEOUTS
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -41,8 +42,19 @@ class CentralWebSocketConsumer(AsyncJsonWebsocketConsumer):
         self.connected = True
         self.user = self.scope.get("user")
 
+        # --------------------------------------------------
+        # 🛡️ PATH GUARD — block legacy WS endpoints
+        # --------------------------------------------------
+        path = self.scope.get("path", "")
+        if path not in ("/ws", "/ws/"):
+            logger.warning(f"[WS BLOCKED] invalid path: {path}")
+            self.connected = False
+            await self.close(code=4404)
+            return
+        
         # Reject anonymous users
         if not self.user or self.user.is_anonymous:
+            self.connected = False
             await self.close()
             return
 
@@ -75,12 +87,24 @@ class CentralWebSocketConsumer(AsyncJsonWebsocketConsumer):
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
         # Send handshake
-        await self.send_json({
+        await self.safe_send_json({
             "type": "connected",
             "status": "ok",
             "user_id": self.user.id,
         })
 
+
+    # ---------------------------------------------------------------
+    # SAFE SEND (ASGI-SAFE)
+    # ---------------------------------------------------------------
+    async def safe_send_json(self, data):
+        if not getattr(self, "connected", False):
+            return
+        try:
+            await self.send_json(data)
+        except Exception:
+            # Socket already closed → silently ignore
+            pass
 
 
     # ---------------------------------------------------------------
@@ -111,7 +135,7 @@ class CentralWebSocketConsumer(AsyncJsonWebsocketConsumer):
             while True:
                 # Send ping
                 try:
-                    await self.send_json({"type": "ping", "ts": int(time.time())})
+                    await self.safe_send_json({"type": "ping", "ts": int(time.time())})
                 except Exception:
                     return  # socket closed
 
@@ -135,7 +159,23 @@ class CentralWebSocketConsumer(AsyncJsonWebsocketConsumer):
     async def disconnect(self, close_code):
         self.connected = False
 
+        # --------------------------------------------------
+        # CLEANUP TYPING TIMEOUTS FOR THIS USER (CRITICAL)
+        # --------------------------------------------------
+        if getattr(self, "user", None):
+            for key in list(TYPING_TIMEOUTS.keys()):
+                uid = key
+                if uid == self.user.id:
+                    try:
+                        TYPING_TIMEOUTS[uid].cancel()
+                    except Exception:
+                        pass
+                    del TYPING_TIMEOUTS[uid]
+
+
+        # --------------------------------------------------
         # Stop heartbeat
+        # --------------------------------------------------
         if self._heartbeat_task:
             self._heartbeat_task.cancel()
             try:
@@ -174,7 +214,7 @@ class CentralWebSocketConsumer(AsyncJsonWebsocketConsumer):
         try:
             data = json.loads(text_data)
         except Exception:
-            await self.send_json({"type": "error", "message": "Invalid JSON"})
+            await self.safe_send_json({"type": "error", "message": "Invalid JSON"})
             return
 
         # Normalize unified envelope: merge payload into root
@@ -200,19 +240,19 @@ class CentralWebSocketConsumer(AsyncJsonWebsocketConsumer):
             return
 
         if not app:
-            await self.send_json({"type": "error", "message": "Missing 'app' field"})
+            await self.safe_send_json({"type": "error", "message": "Missing 'app' field"})
             return
 
         handler = self.handlers.get(app)
         if not handler:
-            await self.send_json({"type": "error", "message": f"No handler for app '{app}'"})
+            await self.safe_send_json({"type": "error", "message": f"No handler for app '{app}'"})
             return
 
         try:
             await handler.handle(data)
         except Exception as e:
             logger.error(f"[CENTRAL] Handler '{app}' error: {e}", exc_info=True)
-            await self.send_json({"type": "error", "message": "Handler failed"})
+            await self.safe_send_json({"type": "error", "message": "Handler failed"})
 
 
 
@@ -220,10 +260,15 @@ class CentralWebSocketConsumer(AsyncJsonWebsocketConsumer):
     # UTILITIES FOR HANDLERS
     # ---------------------------------------------------------------
     async def join_feature_group(self, group_name: str):
+        if not getattr(self, "connected", False):
+            return
         await self.channel_layer.group_add(group_name, self.channel_name)
         self.feature_groups.add(group_name)
 
+
     async def leave_feature_group(self, group_name: str):
+        if not getattr(self, "connected", False):
+            return
         await self.channel_layer.group_discard(group_name, self.channel_name)
         self.feature_groups.discard(group_name)
 
@@ -296,6 +341,9 @@ class CentralWebSocketConsumer(AsyncJsonWebsocketConsumer):
             }
 
             # Forward merged payload to handler
+            if not getattr(self, "connected", False):
+                return
+
             await handler.handle_backend_event(payload)
 
         except Exception as e:

@@ -7,9 +7,9 @@ from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, AllowAny
 
-from apps.posts.models import Library
+from apps.posts.models.library import Library
 from apps.posts.serializers.libraries import LibrarySerializer
-from apps.posts.mixins.mixins import CommentMixin, OrganizationActionMixin
+from apps.posts.mixins.mixins import OrganizationActionMixin
 from apps.profilesOrg.models import (
     Organization, Church, MissionOrganization, ChristianPublishingHouse, ChristianCounselingCenter,
     ChristianWorshipMinistry, ChristianConferenceCenter, ChristianEducationalInstitution,
@@ -17,7 +17,7 @@ from apps.profilesOrg.models import (
 )
 
 # Library ViewSet ---------------------------------------------------------------------------------------------------
-class LibraryViewSet(viewsets.ModelViewSet, CommentMixin, OrganizationActionMixin):
+class LibraryViewSet(viewsets.ModelViewSet, OrganizationActionMixin):
     queryset = Library.objects.all()
     serializer_class = LibrarySerializer
     permission_classes = [IsAuthenticated]

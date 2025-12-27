@@ -31,7 +31,7 @@ class MessageMixin:
         encrypted_contents = data.get("encrypted_contents", [])
 
         if not dialogue_slug:
-            await self.send_json({"type": "error", "code": "BAD_REQUEST",
+            await self.consumer.safe_send_json({"type": "error", "code": "BAD_REQUEST",
                                   "message": "dialogue_slug is required"})
             return
 
@@ -40,7 +40,7 @@ class MessageMixin:
                 slug=dialogue_slug, participants=self.user
             )
         except Dialogue.DoesNotExist:
-            await self.send_json({"type": "error", "code": "NOT_FOUND",
+            await self.consumer.safe_send_json({"type": "error", "code": "NOT_FOUND",
                                   "message": "Dialogue not found"})
             return
 
@@ -53,7 +53,7 @@ class MessageMixin:
             self.user, self.device_id, dialogue_is_group=is_group
         )
         if not verified:
-            await self.send_json({
+            await self.consumer.safe_send_json({
                 "type": "error",
                 "code": "SENDER_DEVICE_UNVERIFIED",
                 "message": "Sender device is not verified"
@@ -64,12 +64,12 @@ class MessageMixin:
         # Policy Validation
         # --------------------------
         if is_group and is_encrypted:
-            await self.send_json({"type": "error", "code": "BAD_REQUEST",
+            await self.consumer.safe_send_json({"type": "error", "code": "BAD_REQUEST",
                                   "message": "Group messages must not be encrypted"})
             return
 
         if (not is_group) and (not is_encrypted):
-            await self.send_json({"type": "error", "code": "BAD_REQUEST",
+            await self.consumer.safe_send_json({"type": "error", "code": "BAD_REQUEST",
                                   "message": "DM messages must be encrypted"})
             return
 
@@ -89,7 +89,7 @@ class MessageMixin:
             await sync_to_async(dialogue.save)(update_fields=["last_message"])
 
         except Exception as e:
-            await self.send_json({"type": "error", "message": "Failed to save message",
+            await self.consumer.safe_send_json({"type": "error", "message": "Failed to save message",
                                   "details": str(e)})
             return
 
@@ -180,7 +180,10 @@ class MessageMixin:
         """Broadcast plaintext group message to all participants."""
 
         # decode plaintext
-        plain_message = base64.b64decode(message.content_encrypted).decode("utf-8")
+        try:
+            plain_message = base64.b64decode(message.content_encrypted).decode("utf-8")
+        except Exception:
+            plain_message = ""
 
         # base immutable payload
         base_payload = {
@@ -195,8 +198,8 @@ class MessageMixin:
 
         for participant in participants:
             # skip sender self-echo if you prefer (optional)
-            # if participant.id == self.user.id:
-            #     continue
+            if participant.id == self.user.id:
+                continue
 
             delivered = online.get(participant.id, False)
 
@@ -216,10 +219,10 @@ class MessageMixin:
             )
 
             # --- delivery bookkeeping ---
-            if delivered:
-                await self.mark_message_as_delivered(message)
-            else:
-                deliver_offline_message.delay(message.id)
+            # if delivered:
+            #     await self.mark_message_as_delivered(message)
+            # else:
+            #     deliver_offline_message.delay(message.id)
 
             # --- unread counter event (consistent format) ---
             await self.channel_layer.group_send(

@@ -6,7 +6,7 @@ from django.utils.translation import gettext_lazy as _
 from django.contrib.contenttypes.fields import GenericRelation
 from apps.accounts.models import Address
 from django.core.exceptions import ValidationError
-from apps.posts.models import Testimony
+from apps.posts.models.testimony import Testimony
 from apps.profilesOrg.constants import CHURCH_DENOMINATIONS_CHOICES
 from apps.profilesOrg.constants_denominations import CHURCH_BRANCH_CHOICES, CHURCH_FAMILY_CHOICES_ALL, FAMILIES_BY_BRANCH
 from apps.profiles.gift_constants import GIFT_CHOICES, GIFT_DESCRIPTIONS, GIFT_LANGUAGE_CHOICES, ANSWER_CHOICES

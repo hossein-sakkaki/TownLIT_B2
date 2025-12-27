@@ -83,7 +83,7 @@ class EditDeleteMixin:
             self.user, self.device_id, dialogue_is_group=is_group
         )
         if not verified:
-            await self.send_json({
+            await self.consumer.safe_send_json({
                 "type": "error",
                 "code": "SENDER_DEVICE_UNVERIFIED",
                 "message": "Sender device is not verified"
@@ -112,7 +112,7 @@ class EditDeleteMixin:
         # ----------------------------
         else:
             if not isinstance(encrypted_contents, list) or not encrypted_contents:
-                await self.send_json({
+                await self.consumer.safe_send_json({
                     "type": "error",
                     "code": "BAD_REQUEST",
                     "message": "encrypted_contents required for DM edit"
@@ -136,7 +136,7 @@ class EditDeleteMixin:
                 })
 
             if not clean_items:
-                await self.send_json({
+                await self.consumer.safe_send_json({
                     "type": "error",
                     "code": "BAD_REQUEST",
                     "message": "No valid encrypted contents"
@@ -150,16 +150,6 @@ class EditDeleteMixin:
             await sync_to_async(setattr)(message, "is_edited", True)
             await sync_to_async(setattr)(message, "edited_at", now)
             await sync_to_async(message.save)()
-
-            MAX_PER_MESSAGE = 500
-            to_create = [
-                MessageEncryption(
-                    message=message,
-                    device_id=it["device_id"],
-                    encrypted_content=it["encrypted_content"]
-                )
-                for it in clean_items[:MAX_PER_MESSAGE]
-            ]
 
         # Update last_message
         dialogue.last_message = message
@@ -224,19 +214,6 @@ class EditDeleteMixin:
                 )
 
 
-    # async def edit_message(self, event):
-    #     """Forward edit_message to client unchanged."""
-    #     await self.send(text_data=json.dumps({
-    #         "type": "edit_message",
-    #         "message_id": event["message_id"],
-    #         "dialogue_slug": event["dialogue_slug"],
-    #         "edited_at": event["edited_at"],
-    #         "is_encrypted": event.get("is_encrypted", False),
-    #         "is_edited": event.get("is_edited", True),
-    #         "new_content": event.get("new_content"),
-    #         "encrypted_contents": event.get("encrypted_contents"),
-    #     }))
-
     # ------------------------------------------------------------
     # SOFT DELETE
     # ------------------------------------------------------------
@@ -281,16 +258,6 @@ class EditDeleteMixin:
                 "data": {},
             },
         )
-
-
-
-    # async def message_soft_deleted(self, event):
-    #     """Forward soft delete event to client unchanged."""
-    #     await self.send(text_data=json.dumps({
-    #         "type": "message_soft_deleted",
-    #         "message_id": event["message_id"],
-    #         "user_id": event["user_id"],
-    #     }))
 
 
     # ------------------------------------------------------------
@@ -351,7 +318,7 @@ class EditDeleteMixin:
 
         except Exception as e:
             # never crash the socket loop; optional: send error back to requester
-            await self.send_json({
+            await self.consumer.safe_send_json({
                 "type": "error",
                 "code": "HARD_DELETE_FAILED",
                 "message": "Failed to hard delete message",
@@ -389,12 +356,3 @@ class EditDeleteMixin:
                     "data": {},
                 },
             )
-
-
-    # async def message_hard_deleted(self, event):
-    #     """Forward to client unchanged."""
-    #     await self.send(text_data=json.dumps({
-    #         "type": "message_hard_deleted",
-    #         "dialogue_slug": event["dialogue_slug"],
-    #         "message_id": event["message_id"],
-    #     }))

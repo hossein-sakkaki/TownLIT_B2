@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.apps import apps
-from apps.posts.models import Witness
+from apps.posts.models.witness import Witness
             
 
 from apps.posts.constants import REACTION_TYPE_CHOICES

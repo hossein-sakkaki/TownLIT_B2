@@ -5,7 +5,7 @@ import traceback
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.auth import get_user_model
 
-from apps.posts.models import Testimony
+from apps.posts.models.testimony import Testimony
 from common.file_handlers.media_mixins import (
     AudioFileMixin, VideoFileMixin, ThumbnailFileMixin
 )

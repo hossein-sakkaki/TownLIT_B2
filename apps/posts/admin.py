@@ -1,6 +1,6 @@
 # apps/posts/admin.py
 from django.contrib import admin
-from django.contrib.admin import SimpleListFilter
+from django.contrib.admin import SimpleListFilter, DateFieldListFilter
 from django.contrib.contenttypes.models import ContentType
 import csv
 from django.http import HttpResponse
@@ -10,11 +10,24 @@ from django.urls import reverse
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from django.db.models import Q
-from .models import (
-    Reaction, Comment, Resource, ServiceEvent,
-    Testimony, Witness, Moment, Pray, Announcement, Lesson, Preach, Worship, MediaContent,
-    Library, Mission, Conference, FutureConference
-)
+
+from apps.posts.models.pray import Pray
+from apps.posts.models.moment import Moment
+from apps.posts.models.mission import Mission
+from apps.posts.models.testimony import Testimony
+from apps.posts.models.witness import Witness
+from apps.posts.models.announcement import Announcement
+from apps.posts.models.worship import Worship
+from apps.posts.models.preach import Preach
+from apps.posts.models.common import Resource
+from apps.posts.models.conference import Conference
+from apps.posts.models.future_conference import FutureConference
+from apps.posts.models.lesson import Lesson
+from apps.posts.models.library import Library
+from apps.posts.models.media_content import MediaContent
+from apps.posts.models.service_event import ServiceEvent
+from apps.posts.models.reaction import Reaction
+from apps.posts.models.comment import Comment
 
 # -------------------- Common mixins & helpers --------------------
 
@@ -777,21 +790,7 @@ class FutureConferenceAdmin(admin.ModelAdmin, MarkActiveMixin):
     )
 
 
-
-
-
 # Testimony Admin ---------------------------------------------------------------------------------------------------------
-# posts/admin.py
-
-from django.contrib import admin
-from django.contrib.admin import DateFieldListFilter
-from django.utils.safestring import mark_safe
-from django.urls import reverse
-from django.contrib.contenttypes.models import ContentType
-
-from .models import Testimony  # مسیر مدل خودت
-# اگر M2Mها در اپ‌های دیگرند، برحسب نیاز import کن
-
 @admin.register(Testimony)
 class TestimonyAdmin(admin.ModelAdmin):
     """

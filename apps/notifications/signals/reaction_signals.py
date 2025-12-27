@@ -4,7 +4,7 @@ import logging
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
-from apps.posts.models import Reaction
+from apps.posts.models.reaction import Reaction
 from apps.notifications.services.services import create_and_dispatch_notification
 
 logger = logging.getLogger(__name__)

@@ -7,9 +7,9 @@ from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, AllowAny
 
-from apps.posts.models import MediaContent
+from apps.posts.models.media_content import MediaContent
 from apps.posts.serializers.media_contents import MediaContentSerializer
-from apps.posts.mixins.mixins import CommentMixin, OrganizationActionMixin
+from apps.posts.mixins.mixins import  OrganizationActionMixin
 from apps.profilesOrg.models import (
     Organization, Church, MissionOrganization, ChristianPublishingHouse, ChristianCounselingCenter,
     ChristianWorshipMinistry, ChristianConferenceCenter, ChristianEducationalInstitution,
@@ -18,7 +18,7 @@ from apps.profilesOrg.models import (
 
 
 # Media Content ViewSet ---------------------------------------------------------------------------------------------------
-class MediaContentViewSet(viewsets.ModelViewSet, CommentMixin, OrganizationActionMixin):
+class MediaContentViewSet(viewsets.ModelViewSet,  OrganizationActionMixin):
     queryset = MediaContent.objects.all()
     serializer_class = MediaContentSerializer
     permission_classes = [IsAuthenticated]

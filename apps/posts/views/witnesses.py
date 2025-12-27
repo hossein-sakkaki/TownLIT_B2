@@ -7,14 +7,14 @@ from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, AllowAny
 
-from apps.posts.models import Witness
+from apps.posts.models.witness import Witness
 from apps.posts.serializers.witnesses import WitnessSerializer
-from apps.posts.mixins.mixins import CommentMixin, OrganizationActionMixin
+from apps.posts.mixins.mixins import  OrganizationActionMixin
 from apps.profilesOrg.models import Organization
 
 
 # Witness ViewSet ---------------------------------------------------------------------------------------------------
-class WitnessViewSet(viewsets.ModelViewSet, CommentMixin, OrganizationActionMixin):
+class WitnessViewSet(viewsets.ModelViewSet,  OrganizationActionMixin):
     queryset = Witness.objects.all()
     serializer_class = WitnessSerializer
     permission_classes = [IsAuthenticated]

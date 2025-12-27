@@ -6,7 +6,7 @@ from django.dispatch import receiver
 from apps.profiles.models import Member
 from apps.profiles.services.townlit_verification.applier import apply_townlit_verification
 from django.contrib.contenttypes.models import ContentType
-from apps.posts.models import Testimony  # adjust import path to your Testimony model
+from apps.posts.models.testimony import Testimony  # adjust import path to your Testimony model
 from apps.profiles.models import MemberSpiritualGifts
 
 
