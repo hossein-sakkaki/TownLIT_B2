@@ -1,3 +1,4 @@
+# apps/accounts/management/commands/send_invite_emails.py
 from django.core.management.base import BaseCommand
 from apps.accounts.scripts.send_invite_emails import send_pending_invite_emails
 

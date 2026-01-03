@@ -143,6 +143,8 @@ INSTALLED_APPS = [
     'apps.orders.apps.OrdersConfig',
     'apps.payment.apps.PaymentConfig',
     'apps.warehouse.apps.WarehouseConfig',
+    "apps.core.interactions",
+
     
     # pip install django-cors-headers
     'corsheaders',

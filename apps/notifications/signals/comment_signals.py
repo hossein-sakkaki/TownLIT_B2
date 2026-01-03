@@ -9,13 +9,16 @@ from apps.notifications.services.services import create_and_dispatch_notificatio
 logger = logging.getLogger(__name__)
 
 # -----------------------------------------------------
-# Helper: Resolve owner (user… or nested user)
+# Helper: Resolve owner user from any object
 # -----------------------------------------------------
 def _resolve_owner(obj):
     if not obj:
         return None
 
-    for attr in ("user", "owner", "author", "created_by", "name", "member_user", "org_owner_user"):
+    for attr in (
+        "user", "owner", "author", "created_by",
+        "name", "member_user", "org_owner_user"
+    ):
         val = getattr(obj, attr, None)
         if val is not None and hasattr(val, "id"):
             return val
@@ -27,8 +30,8 @@ def _resolve_owner(obj):
                 val = getattr(inner, attr, None)
                 if val is not None and hasattr(val, "id"):
                     return val
-    except Exception as e:
-        logger.debug(f"[Notif] Nested resolve failed: {e}")
+    except Exception:
+        pass
 
     return None
 
@@ -36,29 +39,36 @@ def _resolve_owner(obj):
 # -----------------------------------------------------
 # Main Signal: Comment Created
 # -----------------------------------------------------
-@receiver(post_save, sender=Comment, dispatch_uid="notif.comment_v4")
+@receiver(post_save, sender=Comment, dispatch_uid="notif.comment_v5")
 def on_comment_created(sender, instance: Comment, created, **kwargs):
-
     if not created:
         return
 
     actor = getattr(instance, "name", None)
     if not actor:
-        logger.error("⛔ SIGNAL: No actor found for comment %s", instance.id)
+        logger.error("⛔ No actor found for comment %s", instance.id)
         return
 
-    # Resolve target object
+    # -------------------------------------------------
+    # Resolve ROOT content (Moment / Testimony / ...)
+    # -------------------------------------------------
     try:
-        target = instance.content_type.get_object_for_this_type(pk=instance.object_id)
+        root_target = instance.content_type.get_object_for_this_type(
+            pk=instance.object_id
+        )
     except Exception as e:
-        logger.error("⛔ SIGNAL: target resolve failed for comment %s: %s", instance.id, e)
-        target = None
+        logger.error(
+            "⛔ Root target resolve failed for comment %s: %s",
+            instance.id,
+            e,
+        )
+        return
 
-    post_owner = _resolve_owner(target)
+    post_owner = _resolve_owner(root_target)
 
-    # ----------------------------
+    # =================================================
     # Case 1 — Root Comment
-    # ----------------------------
+    # =================================================
     if instance.recomment is None:
         if post_owner and post_owner.id != actor.id:
             create_and_dispatch_notification(
@@ -66,56 +76,53 @@ def on_comment_created(sender, instance: Comment, created, **kwargs):
                 actor=actor,
                 notif_type="new_comment",
                 message=f"{actor.username} commented on your post.",
-                target_obj=target,
-                action_obj=instance,
+                target_obj=root_target,      # ✅ ALWAYS ROOT
+                action_obj=instance,         # ✅ comment itself
                 extra_payload={
                     "comment_id": instance.id,
                     "parent_id": None,
                     "is_reply": False,
-                }
+                },
             )
 
-    # ----------------------------
-    # Case 2 — Reply to comment
-    # ----------------------------
+    # =================================================
+    # Case 2 — Reply to Comment
+    # =================================================
     else:
         parent = instance.recomment
         original_author = getattr(parent, "name", None)
 
+        # --- Notify original comment author ---
         if original_author and original_author.id != actor.id:
             create_and_dispatch_notification(
                 recipient=original_author,
                 actor=actor,
                 notif_type="new_reply",
                 message=f"{actor.username} replied to your comment.",
-                target_obj=parent,
+                target_obj=root_target,   # ✅ ROOT (not parent)
                 action_obj=instance,
                 extra_payload={
                     "comment_id": instance.id,
                     "parent_id": parent.id,
                     "is_reply": True,
-                }
+                },
             )
 
-        try:
-            parent_target = parent.content_type.get_object_for_this_type(pk=parent.object_id)
-        except Exception as e:
-            logger.error("⛔ SIGNAL: parent_target resolve failed %s", e)
-            parent_target = None
-
-        parent_owner = _resolve_owner(parent_target)
-
-        if parent_owner and parent_owner.id not in (actor.id, getattr(original_author, "id", None)):
+        # --- Notify post owner (if different) ---
+        if (
+            post_owner
+            and post_owner.id not in (actor.id, getattr(original_author, "id", None))
+        ):
             create_and_dispatch_notification(
-                recipient=parent_owner,
+                recipient=post_owner,
                 actor=actor,
                 notif_type="new_reply_post_owner",
                 message=f"{actor.username} replied to a comment on your post.",
-                target_obj=parent_target,
+                target_obj=root_target,   # ✅ ROOT
                 action_obj=instance,
                 extra_payload={
                     "comment_id": instance.id,
                     "parent_id": parent.id,
                     "is_reply": True,
-                }
+                },
             )

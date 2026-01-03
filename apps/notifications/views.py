@@ -48,14 +48,13 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     """
     serializer_class = NotificationSerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = NotificationPagination  # ✅ enable pagination
+    pagination_class = ConfigurablePagination
+    pagination_page_size = 20   # 🔑 only source of truth
+    page_size = 20              # backward safety
+    max_page_size = 20
 
+    # -----------------------------------------------------------------
     def get_queryset(self):
-        """
-        Base queryset for current user.
-        Additionally:
-        - auto-remove stale notifications (defense-in-depth).
-        """
         qs = (
             Notification.objects
             .filter(user=self.request.user)
@@ -68,34 +67,34 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
             .order_by("-created_at")
         )
 
+        # ⚠️ prune safely (bounded + no cascade)
         self._auto_prune_stale_notifications(qs)
+
         return qs
 
-
+    # -----------------------------------------------------------------
     def _auto_prune_stale_notifications(self, qs):
         """
-        Auto-delete notifications whose targets are no longer available.
-        This is a safety net on top of signals. Limit to first N rows
-        so that the cost remains small.
+        Bounded safety-net cleanup.
+        Does NOT affect pagination logic.
         """
-        sample_size = 200  # small bounded scan
-        stale_ids = []
+        SAMPLE_LIMIT = 200
 
-        for notif in qs[:sample_size]:
-            # `is_target_unavailable` is defined on Notification model
-            if notif.is_target_unavailable():
-                stale_ids.append(notif.id)
+        stale_ids = [
+            notif.id
+            for notif in qs[:SAMPLE_LIMIT]
+            if notif.is_target_unavailable()
+        ]
 
         if stale_ids:
             logger.info(
                 "[Notifications] Auto-pruning %d stale notifications for user %s",
                 len(stale_ids),
-                getattr(self.request.user, "pk", None),
+                self.request.user.pk,
             )
             Notification.objects.filter(id__in=stale_ids).delete()
 
-    # ---------------------- Actions ----------------------
-
+    # Mark read action ------------------------------------------------
     @action(detail=True, methods=["patch"])
     def mark_read(self, request, pk=None):
         """
@@ -107,52 +106,55 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
             notif,
             data={"is_read": True},
             partial=True,
+            context={"request": request},
         )
         serializer.is_valid(raise_exception=True)
         serializer.save()
 
-        # Refresh from DB to ensure read_at and other fields are correct
+        # Ensure read_at and computed fields are fresh
         notif.refresh_from_db()
 
-        # Serialize with full serializer, fallback on error
-        try:
-            data = NotificationSerializer(notif).data
-        except Exception as exc:
-            logger.warning(
-                "[Notif] Fallback serialization for %s: %s",
-                notif.id,
-                exc,
-            )
-            data = {
-                "id": notif.id,
-                "message": notif.message,
-                "is_read": notif.is_read,
-                "read_at": notif.read_at,
-                "notification_type": notif.notification_type,
-            }
+        return Response(
+            NotificationSerializer(
+                notif,
+                context={"request": request},
+            ).data
+        )
 
-        return Response(data)
-
+    # Mark all read action ---------------------------------------------
     @action(detail=False, methods=["post"])
     def mark_all_read(self, request):
         """
         Mark all unread notifications of current user as read.
-        (Only within the visible subset from get_queryset.)
+        (Scoped to the same visibility rules as list view.)
         """
         qs = self.get_queryset().filter(is_read=False)
+
         now = timezone.now()
-        updated = qs.update(is_read=True, read_at=now)
+        updated = qs.update(
+            is_read=True,
+            read_at=now,
+        )
+
         return Response({"updated": updated})
 
+    # Unread count action ---------------------------------------------
     @action(detail=False, methods=["get"])
     def unread_count(self, request):
-        qs = (
+        """
+        Return unread notification count for current user.
+        """
+        count = (
             Notification.objects
-            .filter(user=request.user, is_read=False)
+            .filter(
+                user=request.user,
+                is_read=False,
+            )
             .exclude(notification_type__in=NOTIFICATION_TYPES_PUSH_EMAIL_ONLY)
-            .order_by("-created_at")[:200]
+            .count()
         )
-        return Response({"unread": qs.count()})
+
+        return Response({"unread": count})
 
 
 
@@ -262,11 +264,13 @@ class UserNotificationPreferenceViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["post"])
     def reset_defaults(self, request):
         prefs = self.get_queryset()
-        for pref in prefs:
-            pref.enabled = True
-            pref.channels_mask = CHANNEL_DEFAULT
-            pref.save()
-        return Response(UserNotificationPreferenceSerializer(prefs, many=True).data)
+        prefs.update(
+            enabled=True,
+            channels_mask=CHANNEL_DEFAULT,
+        )
+        return Response(
+            UserNotificationPreferenceSerializer(prefs, many=True).data
+        )
 
     # ------------------------------------------------------------
     # Metadata endpoint

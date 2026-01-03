@@ -18,5 +18,8 @@ urlpatterns = [
     path('warehouse/', include('apps.warehouse.urls')),
     path('security/', include('apps.core.security.urls')),
 
+    # 🔥 NEW: Interactions (reactions, comments, counters)
+    path('interactions/', include('apps.core.interactions.urls')),
+    
     path('', include('apps.notifications.urls')),
 ]

@@ -91,6 +91,7 @@ class CommentViewSet(viewsets.ModelViewSet):
         .order_by("-published_at")
     )
     permission_classes = [IsAuthenticated]
+    pagination_class = ConfigurablePagination
 
     def get_serializer_class(self):
         if self.action in ["create", "update", "partial_update"]:
@@ -317,50 +318,57 @@ class CommentViewSet(viewsets.ModelViewSet):
     def thread_page(self, request):
         """
         Public endpoint: list root comments (paginated) WITHOUT replies.
-        - Params:
-            content_type: app.model | model | id
-            object_id: int
-            page_size: optional (default 10 for this endpoint)
-            page: optional (PageNumberPagination)
-        - Returns: paginated response with 'results' of RootCommentReadSerializer
         """
+
+        # 👇 page size مخصوص همین اکشن
+        self.pagination_page_size = 10
+
         ct = request.query_params.get("content_type")
         oid = request.query_params.get("object_id")
         if not ct or not oid:
-            return Response({"detail": "content_type and object_id required"}, status=400)
+            return Response(
+                {"detail": "content_type and object_id required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             cto = _resolve_content_type(ct)
         except ContentType.DoesNotExist:
-            return Response({"detail": "Invalid content type"}, status=400)
+            return Response(
+                {"detail": "Invalid content type"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             oid_int = int(oid)
         except (TypeError, ValueError):
             oid_int = oid
 
-        # Base queryset for ROOTS only (no replies)
-        roots_qs = (
-            Comment.objects.filter(
-                content_type=cto, object_id=oid_int, recomment__isnull=True
+        # ------------------------------------------------------------
+        # ROOT comments only (no replies)
+        # ------------------------------------------------------------
+        qs = (
+            Comment.objects
+            .filter(
+                content_type=cto,
+                object_id=oid_int,
+                recomment__isnull=True,
             )
             .select_related("name", "content_type")
-            # Annotate replies_count to avoid N+1 queries in serializer
             .annotate(replies_count=Count("responses"))
             .order_by("-published_at")
         )
 
-        # Use configurable pagination with default page_size=10 for THIS endpoint
-        default_size = 10
-        try:
-            size_param = int(request.query_params.get("page_size", default_size))
-        except (TypeError, ValueError):
-            size_param = default_size
-
-        paginator = ConfigurablePagination(page_size=size_param, max_page_size=50)
-        page = paginator.paginate_queryset(roots_qs, request)
-        ser = RootCommentReadSerializer(page, many=True, context=self.get_serializer_context())
-        return paginator.get_paginated_response(ser.data)
+        # ------------------------------------------------------------
+        # Pagination (CORE-AWARE)
+        # ------------------------------------------------------------
+        page = self.paginate_queryset(qs)
+        serializer = RootCommentReadSerializer(
+            page,
+            many=True,
+            context=self.get_serializer_context(),
+        )
+        return self.get_paginated_response(serializer.data)
 
 
     # -----------------------------------------------------------------
@@ -374,35 +382,43 @@ class CommentViewSet(viewsets.ModelViewSet):
     def replies(self, request):
         """
         Public endpoint: list replies (paginated) of a given root comment.
-        - Params:
-            parent_id: required (the root comment ID)
-            page_size: optional (default 10)
-            page: optional
-        - Returns: paginated response with 'results' of SimpleCommentReadSerializer
         """
+
+        # 👇 page size مخصوص replies
+        self.pagination_page_size = 10
+
         parent_id = request.query_params.get("parent_id")
         if not parent_id:
-            return Response({"detail": "parent_id required"}, status=400)
+            return Response(
+                {"detail": "parent_id required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             parent_id = int(parent_id)
         except (TypeError, ValueError):
-            return Response({"detail": "parent_id must be integer"}, status=400)
+            return Response(
+                {"detail": "parent_id must be integer"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        # Replies of that root (1-level), oldest-first
-        replies_qs = (
-            Comment.objects.filter(recomment_id=parent_id)
+        # ------------------------------------------------------------
+        # Replies (1-level only), oldest first
+        # ------------------------------------------------------------
+        qs = (
+            Comment.objects
+            .filter(recomment_id=parent_id)
             .select_related("name")
             .order_by("published_at")
         )
 
-        default_size = 10
-        try:
-            size_param = int(request.query_params.get("page_size", default_size))
-        except (TypeError, ValueError):
-            size_param = default_size
-
-        paginator = ConfigurablePagination(page_size=size_param, max_page_size=50)
-        page = paginator.paginate_queryset(replies_qs, request)
-        ser = SimpleCommentReadSerializer(page, many=True, context=self.get_serializer_context())
-        return paginator.get_paginated_response(ser.data)
+        # ------------------------------------------------------------
+        # Pagination (CORE-AWARE)
+        # ------------------------------------------------------------
+        page = self.paginate_queryset(qs)
+        serializer = SimpleCommentReadSerializer(
+            page,
+            many=True,
+            context=self.get_serializer_context(),
+        )
+        return self.get_paginated_response(serializer.data)

@@ -23,6 +23,7 @@ from .helpers import (
 )
 from apps.profilesOrg.serializers_min import SimpleOrganizationSerializer
 from apps.accounts.models import SocialMediaLink
+from apps.core.ownership.utils import resolve_owner_from_request
 from validators.files_validator import validate_http_https, soft_date_bounds
 from apps.accounts.serializers import (
                                 AddressSerializer, SimpleCustomUserSerializer,
@@ -30,10 +31,14 @@ from apps.accounts.serializers import (
                                 SocialMediaLinkReadOnlySerializer
                             )
 from common.file_handlers.document_file import DocumentFileMixin
+from apps.posts.services.feed_access import get_visible_posts
+from apps.posts.models.testimony import Testimony
+from apps.posts.serializers.testimonies import TestimonySerializer
 from apps.profilesOrg.constants_denominations import CHURCH_BRANCH_CHOICES, CHURCH_FAMILY_CHOICES_ALL, FAMILIES_BY_BRANCH
 from apps.profiles.constants import FRIENDSHIP_STATUS_CHOICES, FELLOWSHIP_RELATIONSHIP_CHOICES, RECIPROCAL_FELLOWSHIP_CHOICES, RECIPROCAL_FELLOWSHIP_MAP, STANDARD_MINISTRY_CHOICES
 from django.contrib.auth import get_user_model
-
+import logging
+logger = logging.getLogger(__name__)
 CustomUser = get_user_model()
 
 
@@ -811,25 +816,57 @@ class PublicMemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
         ).exclude(
             reciprocal_fellowship_type__in=["Confidant", "Entrusted"]
         )
-
         return FellowshipSerializer(safe_qs, many=True, context=self.context).data
 
-
     # --- testimonies ---
-    def get_testimonies(self, obj: Member):
-        from apps.posts.serializers.testimonies import TestimonySerializer
-        request = self.context.get("request")
+    def get_testimonies(self, obj):
+        try:
+            request = self.context.get("request")
 
-        # یک context یکنواخت بساز
-        ctx = {"request": request} if request else {}
+            # ✅ viewer must be CustomUser, not Member
+            viewer = (
+                request.user
+                if request and request.user.is_authenticated
+                else None
+            )
 
-        data = testimonies_for_member(obj)
+            qs = get_visible_posts(
+                model=Testimony,
+                owner=obj,      # profile owner (Member)
+                viewer=viewer,  # viewer (CustomUser)
+            )
 
-        return {
-            "audio":   TestimonySerializer(data["audio"],   context=ctx).data   if data["audio"]   else None,
-            "video":   TestimonySerializer(data["video"],   context=ctx).data   if data["video"]   else None,
-            "written": TestimonySerializer(data["written"], context=ctx).data   if data["written"] else None,
-        }
+            def pick(ttype):
+                return qs.filter(type=ttype).first()
+
+            ctx = {"request": request} if request else {}
+
+            return {
+                "audio": (
+                    TestimonySerializer(pick(Testimony.TYPE_AUDIO), context=ctx).data
+                    if pick(Testimony.TYPE_AUDIO)
+                    else None
+                ),
+                "video": (
+                    TestimonySerializer(pick(Testimony.TYPE_VIDEO), context=ctx).data
+                    if pick(Testimony.TYPE_VIDEO)
+                    else None
+                ),
+                "written": (
+                    TestimonySerializer(pick(Testimony.TYPE_WRITTEN), context=ctx).data
+                    if pick(Testimony.TYPE_WRITTEN)
+                    else None
+                ),
+            }
+
+        except Exception as e:
+            logger.exception(
+                "[PublicMemberSerializer] get_testimonies FAILED | member_id=%s | error=%s",
+                obj.id,
+                e,
+            )
+            raise
+
 
 
 # LIMITED Member Serializer -----------------------------------------------------------

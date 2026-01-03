@@ -52,6 +52,10 @@ NOTIFICATION_TYPES = [
     ("sanctuary_outcome_finalized", "Sanctuary: Outcome Finalized"),
     ("sanctuary_appeal_assignment", "Sanctuary: Appeal Assignment"),
 
+    # --- Moments ---
+    ("new_moment_image", "New Image Moment"),
+    ("new_moment_video", "New Video Moment"),
+
 ]
 
 # Types that should only send Push and Email notifications (no WebSocket) ---------
@@ -240,6 +244,20 @@ NOTIFICATION_PREF_METADATA = {
         "category": "LITSanctuary",
         "label": "Appeal assigned to admin",
         "description": "You will be notified when you are assigned to review an appeal for a Sanctuary outcome.",
+    },
+
+    # ------------------------
+    # MOMENTS
+    # ------------------------
+    "new_moment_image": {
+        "category": "Moments",
+        "label": "New image moment from a friend",
+        "description": "You will be notified when a friend shares a new image moment.",
+    },
+    "new_moment_video": {
+        "category": "Moments",
+        "label": "New video moment from a friend",
+        "description": "You will be notified when a friend shares a new video moment.",
     },
 
 }

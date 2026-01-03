@@ -17,6 +17,10 @@ from apps.notifications.constants import (
     CHANNEL_DEFAULT,
     NOTIFICATION_TYPES_PUSH_EMAIL_ONLY,
 )
+from apps.notifications.services.ui_link_resolver import (
+    build_content_link,
+    guess_entry_section,
+)
 
 from apps.notifications.tasks import send_email_notification  # Celery async task
 
@@ -79,17 +83,113 @@ def _resolve_link(target_obj, action_obj) -> Optional[str]:
 
 
 # -------------------------------------------------------------------------
-# FCM data helpers
+# Smart UI deep-link resolver (comment/reply aware)
 # -------------------------------------------------------------------------
-def _stringify_data(data: Dict[str, Any]) -> Dict[str, str]:
-    """FCM requires all data values to be strings."""
-    safe = {}
-    for k, v in data.items():
-        if v is None:
-            safe[k] = ""
-        else:
-            safe[k] = str(v)
-    return safe
+def _ct_key_for_obj(obj) -> str | None:
+    """Return 'app_label.model' for obj, or None."""
+    if not obj:
+        return None
+    try:
+        m = getattr(obj, "_meta", None)
+        if not m:
+            return None
+        return f"{m.app_label}.{m.model_name}"
+    except Exception:
+        return None
+
+
+def _safe_get_slug(obj) -> str | None:
+    """Prefer slug; fallback to pk as string."""
+    if not obj:
+        return None
+    s = getattr(obj, "slug", None)
+    if s:
+        return str(s)
+    pk = getattr(obj, "pk", None)
+    return str(pk) if pk is not None else None
+
+
+def _resolve_root_content_from_action(action_obj):
+    """
+    If action has content_type/object_id (like Comment), resolve root content object.
+    No model imports.
+    """
+    try:
+        ct = getattr(action_obj, "content_type", None)
+        oid = getattr(action_obj, "object_id", None)
+        if ct and oid:
+            return ct.get_object_for_this_type(pk=oid)
+    except Exception:
+        return None
+    return None
+
+
+def _guess_mode_for_obj(obj) -> str:
+    """
+    Guess universal viewer type.
+    - voice: audio/voice types
+    - media: video/image fields
+    - read: default
+    """
+    if not obj:
+        return "read"
+
+    t = getattr(obj, "type", None)
+    if isinstance(t, str) and t.lower() in ("audio", "voice"):
+        return "voice"
+
+    # media heuristics
+    if getattr(obj, "video", None) or getattr(obj, "video_key", None) or getattr(obj, "video_signed_url", None):
+        return "media"
+    if getattr(obj, "image", None) or getattr(obj, "image_key", None) or getattr(obj, "image_signed_url", None):
+        return "media"
+    if getattr(obj, "thumbnail", None) or getattr(obj, "thumbnail_key", None) or getattr(obj, "thumbnail_signed_url", None):
+        return "media"
+
+    return "read"
+
+
+def _smart_ui_link(target_obj, action_obj, extra_payload: dict | None) -> str | None:
+    """
+    Build correct /content deep-link for comment/reply/reaction (future-safe).
+    - prefers resolving root content from action_obj.content_type/object_id
+    - builds focus from payload when available
+    """
+    comment_id = None
+    parent_id = None
+    reaction_id = None
+
+    if isinstance(extra_payload, dict):
+        comment_id = extra_payload.get("comment_id")
+        parent_id = extra_payload.get("parent_id")
+        reaction_id = extra_payload.get("reaction_id")
+
+    # 1) Focus priority: reply > comment > reaction
+    focus = None
+    if comment_id:
+        focus = f"reply-{comment_id}:parent-{parent_id}" if parent_id else f"comment-{comment_id}"
+    elif reaction_id:
+        focus = f"reaction-{reaction_id}"
+
+    # 2) Resolve root content (critical for replies/reactions)
+    root = _resolve_root_content_from_action(action_obj) or target_obj
+    slug = _safe_get_slug(root)
+    if not slug:
+        return None
+
+    # 3) Guess mode + section
+    mode = _guess_mode_for_obj(root)
+    ct_key = _ct_key_for_obj(root)
+    section = guess_entry_section(ct_key or "")
+
+    return build_content_link(
+        slug=slug,
+        section=section,
+        focus=focus,
+        mode=mode,
+    )
+
+
 
 # -------------------------------------------------------------------------
 # Main entry point
@@ -132,8 +232,8 @@ def create_and_dispatch_notification(
     action_ct = _safe_ct(action_obj)
     action_id = getattr(action_obj, "pk", None)
 
-    # Prefer explicit link, else deep-link resolver
-    link = link or _resolve_link(target_obj, action_obj)
+    # Prefer explicit link, else smart UI link, else get_absolute_url fallback
+    link = link or _smart_ui_link(target_obj, action_obj, extra_payload) or _resolve_link(target_obj, action_obj)
 
     dedupe_key = (
         f"{recipient.id}:{actor.id if actor else 0}:"

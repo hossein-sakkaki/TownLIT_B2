@@ -6,116 +6,159 @@ from django.core.exceptions import ValidationError
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 
-from utils.common.utils import FileUpload
+from utils.mixins.slug_mixin import SlugMixin
 from utils.mixins.media_conversion import MediaConversionMixin
 from utils.mixins.media_autoconvert import MediaAutoConvertMixin
-from utils.mixins.slug_mixin import SlugMixin
 
-from validators.mediaValidators.video_validators import validate_video_file
+from apps.core.visibility.mixins import VisibilityModelMixin
+from apps.core.moderation.mixins import ModerationTargetMixin
+from apps.core.interactions.mixins import InteractionCounterMixin
+from apps.core.interactions.models import ReactionBreakdownMixin
+
+from utils.common.utils import FileUpload
+
 from validators.mediaValidators.image_validators import validate_image_file, validate_image_size
+from validators.mediaValidators.video_validators import validate_video_file
 from validators.security_validators import validate_no_executable_file
 
-import logging
-logger = logging.getLogger(__name__)
-from django.contrib.auth import get_user_model
 
-CustomUser = get_user_model()
-
-
-
-# Moment Models ----------------------------------------------------------------------------------------------------------
 class Moment(
-    MediaAutoConvertMixin,
-    MediaConversionMixin,
+    ModerationTargetMixin,        # 🔐 Sanctuary / moderation contract
+    VisibilityModelMixin,         # 👁️ user-defined visibility
+    InteractionCounterMixin,      # 🧮 counters
+    ReactionBreakdownMixin,       # ❤️ reaction types
+    MediaAutoConvertMixin,        # 🎞️ RAW → converted detection
+    MediaConversionMixin,         # 🔄 async conversion
     SlugMixin,
     models.Model
 ):
+    # -------------------------------------------------
+    # Auto-thumbnailing
+    # -------------------------------------------------
+    AUTO_THUMBNAIL_FROM_VIDEO = True
+    
+    # -------------------------------------------------
     # Upload roots
-    IMAGE = FileUpload('posts', 'images', 'moment')
-    VIDEO = FileUpload('posts', 'videos', 'moment')
+    # -------------------------------------------------
+    IMAGE = FileUpload("posts", "images", "moment")
+    VIDEO = FileUpload("posts", "videos", "moment")
 
     id = models.BigAutoField(primary_key=True)
 
+    # -------------------------------------------------
+    # Content
+    # -------------------------------------------------
     caption = models.TextField(
-        null=True, blank=True, verbose_name="Caption"
+        null=True,
+        blank=True,
+        verbose_name="Caption"
     )
 
     image = models.ImageField(
         upload_to=IMAGE.dir_upload,
-        null=True, blank=True,
-        validators=[validate_image_file, validate_image_size, validate_no_executable_file],
-        verbose_name="Moment Image"
+        null=True,
+        blank=True,
+        validators=[
+            validate_image_file,
+            validate_image_size,
+            validate_no_executable_file,
+        ],
+        verbose_name="Image",
     )
 
     video = models.FileField(
         upload_to=VIDEO.dir_upload,
-        null=True, blank=True,
-        validators=[validate_video_file, validate_no_executable_file],
-        verbose_name="Moment Video"
+        null=True,
+        blank=True,
+        validators=[
+            validate_video_file,
+            validate_no_executable_file,
+        ],
+        verbose_name="Video",
     )
 
     thumbnail = models.ImageField(
         upload_to=IMAGE.dir_upload,
-        null=True, blank=True,
-        validators=[validate_image_file, validate_image_size, validate_no_executable_file],
-        verbose_name="Thumbnail"
+        null=True,
+        blank=True,
+        validators=[
+            validate_image_file,
+            validate_image_size,
+            validate_no_executable_file,
+        ],
+        verbose_name="Thumbnail",
     )
 
-    # tags
-    org_tags = models.ManyToManyField(
-        'profilesOrg.Organization',
-        blank=True, related_name='tagged_in_moments', db_index=True
-    )
-    user_tags = models.ManyToManyField(
-        CustomUser,
-        blank=True, related_name='tagged_in_moments', db_index=True
-    )
-
-    # polymorphic owner
+    # -------------------------------------------------
+    # Polymorphic owner (Member / Organization / Guest)
+    # -------------------------------------------------
     content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
     object_id = models.PositiveIntegerField()
-    content_object = GenericForeignKey()
+    content_object = GenericForeignKey("content_type", "object_id")
 
-    # moderation
-    is_suspended = models.BooleanField(default=False)
-    reports_count = models.IntegerField(default=0)
-    is_restricted = models.BooleanField(default=False)
-    is_hidden = models.BooleanField(default=False)
-    is_active = models.BooleanField(default=True)
+    # -------------------------------------------------
+    # Analytics (internal only)
+    # -------------------------------------------------
+    view_count_internal = models.PositiveBigIntegerField(default=0)
+    last_viewed_at = models.DateTimeField(null=True, blank=True)
 
-    # publishing
+    # -------------------------------------------------
+    # Publishing
+    # -------------------------------------------------
     published_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(null=True, blank=True)
 
-    # media pipeline
+    # -------------------------------------------------
+    # Media pipeline
+    # -------------------------------------------------
     is_converted = models.BooleanField(default=False)
 
     url_name = "posts:moment-detail"
 
     media_conversion_config = {
-        "image":     {"upload": IMAGE, "kind": "image"},
-        "video":     {"upload": VIDEO, "kind": "video"},
+        "image": {"upload": IMAGE, "kind": "image"},
+        "video": {"upload": VIDEO, "kind": "video"},
         "thumbnail": {"upload": IMAGE, "kind": "image"},
     }
 
+    # -------------------------------------------------
+    # Validation
+    # -------------------------------------------------
     def clean(self):
         if self.image and self.video:
-            raise ValidationError("Moment can have either image or video, not both.")
+            raise ValidationError(
+                "Moment can have either image or video, not both."
+            )
         if not self.image and not self.video:
-            raise ValidationError("Moment requires an image or a video.")
+            raise ValidationError(
+                "Moment requires an image or a video."
+            )
 
     def get_slug_source(self):
-        owner = getattr(self.content_object, "user", None)
-        base = owner.username if owner else "moment"
-        return f"{base}-{self.published_at.strftime('%Y%m%d%H%M%S')}"
+        return f"moment-{self.published_at.strftime('%Y%m%d%H%M%S')}"
 
     def __str__(self):
-        return f"Moment {self.pk}"
+        return f"Moment #{self.pk}"
 
     class Meta:
         verbose_name = "Moment"
         verbose_name_plural = "Moments"
         indexes = [
-            models.Index(fields=["published_at"]),
-            models.Index(fields=["content_type", "object_id"]),
+            models.Index(
+                fields=["visibility", "-published_at", "-id"],
+                name="moment_vis_pub_id_idx",
+            ),
+            models.Index(
+                fields=["content_type", "object_id", "published_at"],
+                name="moment_owner_pub_idx",
+            ),
+            models.Index(
+                fields=["is_active", "is_hidden", "published_at"],
+                name="moment_mod_pub_idx",
+            ),
+            models.Index(
+                fields=["published_at"],
+                name="moment_pub_idx",
+            ),
         ]
+

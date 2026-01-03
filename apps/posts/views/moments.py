@@ -1,27 +1,240 @@
-# apps/posts/views/missions.py
+# apps/posts/views/moments.py
 
+from django.contrib.contenttypes.models import ContentType
 from django.utils import timezone
-from django.contrib.contenttypes.models import ContentType 
-from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from django.db.models import F
+
 from rest_framework import viewsets
+from rest_framework.permissions import IsAuthenticated    
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework.exceptions import PermissionDenied
 
 from apps.posts.models.moment import Moment
 from apps.posts.serializers.moments import MomentSerializer
+from apps.core.visibility.query import VisibilityQuery
+from apps.core.visibility.constants import VISIBILITY_GLOBAL
+from apps.core.pagination import ConfigurablePagination, FeedCursorPagination
 
+from apps.core.feed.trending import TrendingEngine
+from apps.core.feed.hybrid import HybridFeedEngine
+from apps.core.feed.personalized_trending import PersonalizedTrendingEngine
 
+import logging
+logger = logging.getLogger(__name__)
 
-# Moment ViewSet ---------------------------------------------------------------------------------------------------
-# apps/posts/views/moments.py
 class MomentViewSet(viewsets.ModelViewSet):
+    """
+    Moment API
+    -------------------------
+    - visibility-aware (VisibilityQuery)
+    - owner-safe (Member / Guest / future Organization)
+    - feed: cursor-based pagination (Instagram-like)
+    - explore / me: page-number pagination
+    """
     serializer_class = MomentSerializer
     permission_classes = [IsAuthenticated]
-    queryset = Moment.objects.filter(is_active=True).select_related("content_type")
     lookup_field = "slug"
+    pagination_class = ConfigurablePagination
+    pagination_page_size = 12
 
+    # -------------------------------------------------
+    # Base queryset (NO visibility logic here)
+    # -------------------------------------------------
+    def get_queryset(self):
+        base = (
+            Moment.objects
+            .select_related("content_type")   # cheap, needed for owner
+            .order_by("-published_at")
+        )
+
+        return VisibilityQuery.for_viewer(
+            viewer=self.request.user,
+            base_queryset=base,
+        )
+
+    # -------------------------------------------------
+    # Owner resolution (DRY)
+    # -------------------------------------------------
+    def _get_request_owner(self):
+        user = self.request.user
+
+        if hasattr(user, "member_profile"):
+            return user.member_profile
+
+        if hasattr(user, "guest_profile"):
+            return user.guest_profile
+
+        return None
+
+    def _assert_is_owner(self, obj):
+        owner = self._get_request_owner()
+        if not owner:
+            raise PermissionDenied("Invalid owner context.")
+
+        owner_ct = ContentType.objects.get_for_model(owner.__class__)
+
+        if (
+            obj.content_type_id != owner_ct.id
+            or obj.object_id != owner.id
+        ):
+            raise PermissionDenied("You do not own this Moment.")
+
+    # -------------------------------------------------
+    # Create
+    # -------------------------------------------------
     def perform_create(self, serializer):
-        owner = getattr(self.request.user, "member", None)
+        owner = self._get_request_owner()
+
+        print("FILES:", self.request.FILES)
+        print("DATA:", self.request.data)
+
+        if not owner:
+            raise PermissionDenied(
+                "Only members or guest users can create moments."
+            )
+
         serializer.save(
             content_type=ContentType.objects.get_for_model(owner.__class__),
             object_id=owner.id,
         )
+
+
+    # -------------------------------------------------
+    # Update
+    # -------------------------------------------------
+    def perform_update(self, serializer):
+        obj = self.get_object()
+        self._assert_is_owner(obj)
+
+        serializer.save(
+            updated_at=timezone.now()
+        )
+
+    # -------------------------------------------------
+    # Delete
+    # -------------------------------------------------
+    def perform_destroy(self, instance):
+        self._assert_is_owner(instance)
+        instance.delete()
+
+    # -------------------------------------------------
+    # Feed (home timeline – cursor based)
+    # -------------------------------------------------
+    @action(
+        detail=False,
+        methods=["get"],
+        pagination_class=FeedCursorPagination,
+    )
+    def feed(self, request):
+        qs = HybridFeedEngine.apply(
+            self.get_queryset(),
+            viewer=request.user,
+        )
+        page = self.paginate_queryset(qs)
+        serializer = self.get_serializer(page, many=True)
+        return self.get_paginated_response(serializer.data)
+
+    # -------------------------------------------------
+    # Trending for me (cursor based)
+    # -------------------------------------------------
+    @action(
+        detail=False,
+        methods=["get"],
+        pagination_class=FeedCursorPagination,
+    )
+    def trending_for_me(self, request):
+        qs = PersonalizedTrendingEngine.apply(
+            self.get_queryset(),
+            viewer=request.user,
+        )
+        page = self.paginate_queryset(qs)
+        serializer = self.get_serializer(page, many=True)
+        return self.get_paginated_response(serializer.data)
+
+    # -------------------------------------------------
+    # Trending (cursor based)
+    # -------------------------------------------------
+    @action(
+        detail=False,
+        methods=["get"],
+        pagination_class=FeedCursorPagination,
+    )
+    def trending(self, request):
+        qs = TrendingEngine.apply(
+            self.get_queryset(),
+            window_seconds=24 * 60 * 60,
+        )
+        page = self.paginate_queryset(qs)
+        serializer = self.get_serializer(page, many=True)
+        return self.get_paginated_response(serializer.data)
+
+    # -------------------------------------------------
+    # My moments (owner only)
+    # -------------------------------------------------
+    @action(detail=False, methods=["get"])
+    def me(self, request):
+        try:
+            owner = self._get_request_owner()
+            if not owner:
+                raise PermissionDenied("Invalid owner type.")
+
+            owner_ct = ContentType.objects.get_for_model(owner.__class__)
+
+            qs = (
+                self.get_queryset()
+                .filter(
+                    content_type_id=owner_ct.id,
+                    object_id=owner.id,
+                )
+            )
+
+            logger.info("Moment.me queryset count=%s", qs.count())
+
+            page = self.paginate_queryset(qs)
+            logger.info("Moment.me page size=%s", len(page) if page else 0)
+
+            serializer = self.get_serializer(page, many=True)
+            data = serializer.data   # ⬅️ این خط معمولاً منفجر می‌شود
+
+            logger.info("Moment.me serialization OK")
+            return self.get_paginated_response(data)
+
+        except Exception as e:
+            logger.exception("🔥 Moment.me failed")
+            raise
+
+
+    # -------------------------------------------------
+    # Explore (public discover)
+    # -------------------------------------------------
+    @action(detail=False, methods=["get"])
+    def explore(self, request):
+        """
+        Public discovery feed.
+        Only GLOBAL visibility.
+        """
+        qs = (
+            self.get_queryset()
+            .filter(visibility=VISIBILITY_GLOBAL)
+        )
+
+        page = self.paginate_queryset(qs)
+        serializer = self.get_serializer(page, many=True)
+
+        return self.get_paginated_response(serializer.data)
+
+    # -------------------------------------------------
+    # Retrieve (internal analytics only)
+    # -------------------------------------------------
+    def retrieve(self, request, *args, **kwargs):
+        obj = self.get_object()
+
+        # Atomic + cheap (no serializer side effects)
+        Moment.objects.filter(pk=obj.pk).update(
+            view_count_internal=F("view_count_internal") + 1,
+            last_viewed_at=timezone.now(),
+        )
+
+        serializer = self.get_serializer(obj)
+        return Response(serializer.data)

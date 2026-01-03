@@ -11,8 +11,11 @@ from utils.common.image_utils import convert_image_to_jpg
 from utils.common.video_utils import convert_video_to_multi_hls
 from utils.common.audio_utils import convert_audio_to_mp3
 
-logger = logging.getLogger(__name__)
+import os, time, logging, tempfile, subprocess
+from django.core.files.base import ContentFile
 
+
+logger = logging.getLogger(__name__)
 
 def get_instance(app_label, model_name, pk, retries=3, delay=0.2):
     """
@@ -27,6 +30,93 @@ def get_instance(app_label, model_name, pk, retries=3, delay=0.2):
                 time.sleep(delay)
                 continue
             raise
+
+# --- Utility functions ---------------------------------------------------
+def _extract_video_thumb_and_store(instance, source_path: str, seconds: float = 1.0) -> str | None:
+    """
+    Extract 1 frame from source video and upload it to thumbnail upload_to path.
+    Returns storage-relative path or None.
+    """
+    # Skip if already has thumbnail
+    thumb = getattr(instance, "thumbnail", None)
+    if thumb and getattr(thumb, "name", None):
+        return None
+
+    if not source_path or not default_storage.exists(source_path):
+        return None
+
+    with tempfile.TemporaryDirectory() as tmp:
+        in_path = os.path.join(tmp, "input_video")
+        out_path = os.path.join(tmp, "thumb.jpg")
+
+        # Download video from storage to local temp
+        with default_storage.open(source_path, "rb") as rf:
+            with open(in_path, "wb") as wf:
+                wf.write(rf.read())
+
+        # ffmpeg: capture a frame
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-ss", str(seconds),
+            "-i", in_path,
+            "-frames:v", "1",
+            "-vf", "scale=720:-2",
+            "-q:v", "3",
+            out_path,
+        ]
+
+        try:
+            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            logger.warning("thumb: ffmpeg failed id=%s err=%s", getattr(instance, "pk", None), e)
+            return None
+
+        if not os.path.exists(out_path):
+            return None
+
+        with open(out_path, "rb") as f:
+            jpg = f.read()
+
+    # Build upload_to path using the field itself (respects your upload_to policy)
+    filename = f"thumb_{instance.pk}.jpg"
+    rel_path = instance.thumbnail.field.generate_filename(instance, filename)
+
+    # Upload to storage
+    default_storage.save(rel_path, ContentFile(jpg))
+    return rel_path
+
+# --- Thumbnail auto-generation check ------------------------------------
+def _can_autogen_thumbnail(instance) -> bool:
+    """
+    Auto-thumbnail only if:
+    - model has a 'thumbnail' field
+    - thumbnail is empty
+    - instance has a video
+    """
+    logger.warning(
+        "AUTO_THUMB? %s attrs=%s",
+        getattr(instance, "AUTO_THUMBNAIL_FROM_VIDEO", "❌ MISSING"),
+        dir(instance.__class__)
+    )
+
+    # Field must exist
+    try:
+        instance._meta.get_field("thumbnail")
+    except Exception:
+        return False
+
+    # Must have video
+    if not getattr(instance, "video", None):
+        return False
+
+    # Do not override user-uploaded thumbnail
+    thumb = getattr(instance, "thumbnail", None)
+    if thumb and getattr(thumb, "name", None):
+        return False
+
+    return True
+
 
 
 # --- Optional activation hook --------------------------------------------
@@ -92,34 +182,88 @@ def handle_converted_file_update(model_name: str, app_label: str, instance_id: i
 
 # ------------------ VIDEO -----------------------------------------------
 @shared_task(queue="video")
-def convert_video_to_multi_hls_task(model_name, app_label, instance_id, field_name, source_path, fileupload):
-    """
-    Convert uploaded video to multi-bitrate HLS and update the model field.
-    """
+def convert_video_to_multi_hls_task(
+    model_name,
+    app_label,
+    instance_id,
+    field_name,
+    source_path,
+    fileupload
+):
     try:
         close_old_connections()
-        logger.info("🚧 Celery Task triggered for video conversion: %s (id=%s)", model_name, instance_id)
+        logger.info(
+            "🚧 Celery Task triggered for video conversion: %s (id=%s)",
+            model_name,
+            instance_id,
+        )
 
         instance = get_instance(app_label, model_name, instance_id)
         upload = FileUpload(**fileupload)
 
-        # Convert & upload; returns storage-relative master.m3u8
-        relative_path = convert_video_to_multi_hls(source_path, instance, upload)
+        # --------------------------------------------------
+        # 1️⃣ OPTIONAL: auto-generate thumbnail FIRST
+        # --------------------------------------------------
+        thumb_rel = None
+        try:
+            if _can_autogen_thumbnail(instance):
+                thumb_rel = _extract_video_thumb_and_store(
+                    instance,
+                    source_path,
+                    seconds=1.0,
+                )
+                if thumb_rel:
+                    handle_converted_file_update(
+                        model_name,
+                        app_label,
+                        instance_id,
+                        "thumbnail",
+                        thumb_rel,
+                    )
+                    logger.info("🖼️ Thumbnail created: %s", thumb_rel)
+        except Exception as e:
+            logger.warning(
+                "⚠️ Thumbnail generation skipped for %s[%s]: %s",
+                model_name,
+                instance_id,
+                e,
+            )
 
-        # Unified update (no re-upload)
-        handle_converted_file_update(model_name, app_label, instance_id, field_name, relative_path)
+        # --------------------------------------------------
+        # 2️⃣ Convert video → multi-bitrate HLS
+        # --------------------------------------------------
+        relative_path = convert_video_to_multi_hls(
+            source_path,
+            instance,
+            upload,
+        )
+
+        handle_converted_file_update(
+            model_name,
+            app_label,
+            instance_id,
+            field_name,
+            relative_path,
+        )
+
         logger.info("✅ HLS conversion complete: %s", relative_path)
 
-        # Optional: cleanup original
+        # --------------------------------------------------
+        # 3️⃣ Cleanup RAW source (LAST STEP)
+        # --------------------------------------------------
         if source_path and default_storage.exists(source_path):
             default_storage.delete(source_path)
             logger.info("🗑️ Deleted original uploaded file: %s", source_path)
 
     except Exception as e:
-        logger.error("❌ convert_video_to_multi_hls_task failed for %s (id=%s) – error: %s",
-                     model_name, instance_id, e)
+        logger.error(
+            "❌ convert_video_to_multi_hls_task failed for %s (id=%s): %s",
+            model_name,
+            instance_id,
+            e,
+        )
         raise
-        
+
         
 # ------------------ IMAGE -----------------------------------------------
 @shared_task(queue="video")

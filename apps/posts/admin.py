@@ -436,7 +436,463 @@ class CommentAdmin(MarkActiveMixin, admin.ModelAdmin):
             ])
         return response
 
-    
+
+
+#  Moment Admin ------------------------------------------------------------------------------------------------------------
+@admin.register(Moment)
+class MomentAdmin(admin.ModelAdmin):
+    """
+    Admin for Moment
+    - Moderation friendly
+    - Visibility aware
+    - Scales for large datasets
+    """
+
+    # -------------------------------------------------
+    # List view
+    # -------------------------------------------------
+    list_display = (
+        "id",
+        "owner_display",
+        "media_type",
+        "visibility",
+        "is_active",
+        "is_hidden",
+        "is_suspended",
+        "reactions_count",
+        "comments_count",
+        "published_at",
+    )
+
+    list_filter = (
+        "visibility",
+        "is_active",
+        "is_hidden",
+        "is_suspended",
+        "published_at",
+    )
+
+    search_fields = (
+        "caption",
+        "object_id",
+    )
+
+    ordering = ("-published_at",)
+    date_hierarchy = "published_at"
+
+    readonly_fields = (
+        "id",
+        "owner_display",
+        "reactions_count",
+        "recomments_count",
+        "comments_count",
+        "reactions_breakdown",
+        "view_count_internal",
+        "last_viewed_at",
+        "published_at",
+        "updated_at",
+    )
+
+    # -------------------------------------------------
+    # Field layout
+    # -------------------------------------------------
+    fieldsets = (
+        (
+            "Owner",
+            {
+                "fields": (
+                    "owner_display",
+                    "content_type",
+                    "object_id",
+                )
+            },
+        ),
+        (
+            "Content",
+            {
+                "fields": (
+                    "caption",
+                    "image",
+                    "video",
+                    "thumbnail",
+                )
+            },
+        ),
+        (
+            "Visibility",
+            {
+                "fields": (
+                    "visibility",
+                    "is_hidden",
+                )
+            },
+        ),
+        (
+            "Moderation",
+            {
+                "fields": (
+                    "is_active",
+                    "is_suspended",
+                    "reports_count",
+                    "suspended_at",
+                    "suspension_reason",
+                )
+            },
+        ),
+        (
+            "Interactions (denormalized)",
+            {
+                "fields": (
+                    "reactions_count",
+                    "reactions_breakdown",
+                    "comments_count",
+                    "recomments_count",
+                )
+            },
+        ),
+        (
+            "Analytics",
+            {
+                "fields": (
+                    "view_count_internal",
+                    "last_viewed_at",
+                )
+            },
+        ),
+        (
+            "Timestamps",
+            {
+                "fields": (
+                    "published_at",
+                    "updated_at",
+                )
+            },
+        ),
+    )
+
+    # -------------------------------------------------
+    # Admin helpers
+    # -------------------------------------------------
+    def owner_display(self, obj):
+        """
+        Human-readable owner representation.
+        """
+        try:
+            ct = ContentType.objects.get_for_id(obj.content_type_id)
+            model_name = ct.model
+            return f"{model_name} #{obj.object_id}"
+        except Exception:
+            return "Unknown"
+
+    owner_display.short_description = "Owner"
+    owner_display.admin_order_field = "object_id"
+
+    def media_type(self, obj):
+        if obj.image:
+            return "Image"
+        if obj.video:
+            return "Video"
+        return "-"
+
+    media_type.short_description = "Media"
+
+
+
+
+
+# Testimony Admin ---------------------------------------------------------------------------------------------------------
+@admin.register(Testimony)
+class TestimonyAdmin(admin.ModelAdmin):
+    """
+    Admin focused on observability & troubleshooting of media conversion.
+    """
+    # -------- List view --------
+    list_display = (
+        "id",
+        "slug",
+        "type",
+        "owner_repr",
+        "is_active",
+        "is_converted",
+        "media_flags",
+        "published_at",
+        "updated_at",
+    )
+    list_filter = (
+        "type",
+        "is_active",
+        "is_converted",
+        "is_hidden",
+        # "is_restricted",
+        "is_suspended",
+        ("published_at", DateFieldListFilter),
+        "content_type",    # lets you filter by owner model (Member, Organization, …)
+    )
+    search_fields = (
+        "slug",
+        "title",
+        "content",
+        "audio",
+        "video",
+        "thumbnail",
+    )
+    ordering = ("-id",)
+
+    # Speed & UX for large M2M sets
+    filter_horizontal = ("org_tags", "user_tags")
+    raw_id_fields = ("user_tags", "org_tags")
+
+    # Fields layout on detail
+    readonly_fields = (
+        "owner_link",
+        "preview_media",
+        "file_links",
+        "diagnostics",
+        # timestamps are usually readonly in admin
+        "published_at",
+        "updated_at",
+    )
+
+    fieldsets = (
+        ("Basic", {
+            "fields": (
+                ("type", "title", "slug"),
+                "content",
+            )
+        }),
+        ("Owner (Generic)", {
+            "fields": (
+                ("content_type", "object_id"),
+                "owner_link",
+            )
+        }),
+        ("Media", {
+            "fields": (
+                "thumbnail",
+                "audio",
+                "video",
+                "preview_media",
+                "file_links",
+            )
+        }),
+        ("Moderation & Visibility", {
+            "fields": (
+                ("is_active", "is_hidden", "is_suspended"),
+                "reports_count",
+            )
+        }),
+        ("System", {
+            "fields": (
+                ("is_converted",),
+                ("published_at", "updated_at"),
+                "diagnostics",
+            )
+        }),
+        ("Tags (optional)", {
+            "classes": ("collapse",),
+            "fields": ("org_tags", "user_tags"),
+        }),
+    )
+
+    # -------- Computed columns / helpers --------
+    def owner_repr(self, obj: Testimony):
+        """Compact owner representation for the changelist."""
+        try:
+            return f"{obj.content_type.model}#{obj.object_id}"
+        except Exception:
+            return "-"
+
+    owner_repr.short_description = "Owner"
+
+    def owner_link(self, obj: Testimony):
+        """Clickable link to owner object in admin (if available)."""
+        try:
+            ct: ContentType = obj.content_type
+            url = reverse(f"admin:{ct.app_label}_{ct.model}_change", args=[obj.object_id])
+            return mark_safe(f'<a href="{url}">{ct.app_label}.{ct.model} #{obj.object_id}</a>')
+        except Exception:
+            return "-"
+
+    owner_link.short_description = "Owner link"
+
+    def media_flags(self, obj: Testimony):
+        """Quick flags: A/V/T presence."""
+        a = "A✔" if getattr(obj, "audio") else "A–"
+        v = "V✔" if getattr(obj, "video") else "V–"
+        t = "T✔" if getattr(obj, "thumbnail") else "T–"
+        return f"{a} {v} {t}"
+
+    media_flags.short_description = "Media"
+
+    def preview_media(self, obj: Testimony):
+        """Inline preview (best-effort). HLS may only play natively on Safari."""
+        parts = []
+        try:
+            if obj.thumbnail:
+                parts.append(f'<div><img src="{obj.thumbnail.url}" alt="thumb" style="max-width:220px;height:auto;border:1px solid #ddd;padding:2px"/></div>')
+        except Exception:
+            pass
+
+        try:
+            if obj.audio:
+                parts.append(f'''
+                    <div style="margin-top:8px">
+                      <audio controls preload="metadata" style="width:280px">
+                        <source src="{obj.audio.url}"/>
+                        Your browser does not support the audio element.
+                      </audio>
+                    </div>
+                ''')
+        except Exception:
+            pass
+
+        # HLS playback via <video src=master.m3u8> works natively on Safari; others may need hls.js
+        try:
+            if obj.video:
+                parts.append(f'''
+                    <div style="margin-top:8px">
+                      <video controls preload="metadata" style="max-width:420px;height:auto">
+                        <source src="{obj.video.url}" type="application/vnd.apple.mpegurl"/>
+                        Your browser may not play HLS natively.
+                      </video>
+                    </div>
+                ''')
+        except Exception:
+            pass
+
+        return mark_safe("".join(parts) or "<em>No preview</em>")
+
+    preview_media.short_description = "Preview"
+
+    def file_links(self, obj: Testimony):
+        """Direct links to storage paths (helpful for verifying S3 uploads)."""
+        rows = []
+        for label in ("thumbnail", "audio", "video"):
+            f = getattr(obj, label, None)
+            if f:
+                try:
+                    rows.append(f'<div><strong>{label}</strong>: <a href="{f.url}" target="_blank" rel="noopener">{f.name}</a></div>')
+                except Exception:
+                    rows.append(f'<div><strong>{label}</strong>: {getattr(f, "name", "-")}</div>')
+            else:
+                rows.append(f"<div><strong>{label}</strong>: <em>—</em></div>")
+        return mark_safe("".join(rows))
+
+    file_links.short_description = "File URLs"
+
+    def diagnostics(self, obj: Testimony):
+        """
+        Quick consistency check: flags common causes of 'file on S3 but no DB/404' or conversion stalls.
+        """
+        issues = []
+
+        # type/content coherence (mirrors model.clean)
+        if obj.type == Testimony.TYPE_AUDIO:
+            if not obj.audio:
+                issues.append("Audio testimony has no audio file.")
+            if obj.content:
+                issues.append("Audio testimony should not have content.")
+            if obj.video:
+                issues.append("Audio testimony should not have video.")
+        elif obj.type == Testimony.TYPE_VIDEO:
+            if not obj.video:
+                issues.append("Video testimony has no video file.")
+            if obj.content:
+                issues.append("Video testimony should not have content.")
+            if obj.audio:
+                issues.append("Video testimony should not have audio.")
+        elif obj.type == Testimony.TYPE_WRITTEN:
+            if not obj.content:
+                issues.append("Written testimony requires content.")
+            if obj.audio or obj.video:
+                issues.append("Written testimony should not have audio/video.")
+
+        # conversion hints
+        try:
+            if obj.type in (Testimony.TYPE_AUDIO, Testimony.TYPE_VIDEO):
+                if not obj.is_converted:
+                    issues.append("Media not converted yet (is_converted=False).")
+                # if audio present and name already endswith .mp3 but is_converted False
+                if obj.type == Testimony.TYPE_AUDIO and getattr(obj, "audio") and str(obj.audio.name).lower().endswith(".mp3") and not obj.is_converted:
+                    issues.append("Audio is MP3 but is_converted=False (no-op case).")
+        except Exception:
+            pass
+
+        # visibility
+        if not obj.is_active:
+            issues.append("Item is inactive.")
+        if obj.is_hidden:
+            issues.append("Item is hidden.")
+        # if obj.is_restricted:
+        #     issues.append("Item is restricted.")
+        if obj.is_suspended:
+            issues.append("Item is suspended.")
+
+        if not issues:
+            return mark_safe('<span style="color:#0a0">No issues detected</span>')
+
+        lis = "".join(f"<li>{admin.utils.escape(i)}</li>" for i in issues)
+        return mark_safe(f'<ul style="margin:0;padding-left:16px;color:#a00">{lis}</ul>')
+
+    diagnostics.short_description = "Diagnostics"
+
+    # -------- Actions --------
+    actions = ("action_mark_active", "action_mark_inactive", "action_requeue_conversion", "action_rebuild_slug")
+
+    @admin.action(description="Mark selected as Active")
+    def action_mark_active(self, request, queryset):
+        updated = queryset.update(is_active=True)
+        self.message_user(request, f"{updated} item(s) marked active.")
+
+    @admin.action(description="Mark selected as Inactive")
+    def action_mark_inactive(self, request, queryset):
+        updated = queryset.update(is_active=False)
+        self.message_user(request, f"{updated} item(s) marked inactive.")
+
+    @admin.action(description="Requeue media conversion")
+    def action_requeue_conversion(self, request, queryset):
+        # Force reconversion and (re)enqueue tasks
+        cnt = 0
+        for obj in queryset:
+            try:
+                obj.is_converted = False
+                obj.save(update_fields=["is_converted"])
+                obj.convert_uploaded_media_async()  # from MediaConversionMixin
+                cnt += 1
+            except Exception as e:
+                self.message_user(request, f"Failed to requeue for {obj.pk}: {e}", level="error")
+        self.message_user(request, f"{cnt} item(s) requeued for conversion.")
+
+    @admin.action(description="Rebuild slug (unique)")
+    def action_rebuild_slug(self, request, queryset):
+        """
+        Useful if you suspect slug collision caused DB rollback:
+        regenerates slug using SlugMixin logic by clearing and re-saving.
+        """
+        cnt = 0
+        for obj in queryset:
+            try:
+                # Keep a stable source; SlugMixin will regenerate
+                obj.slug = None
+                obj.save(update_fields=["slug"])  # triggers SlugMixin.save
+                cnt += 1
+            except Exception as e:
+                self.message_user(request, f"Failed to rebuild slug for {obj.pk}: {e}", level="error")
+        self.message_user(request, f"{cnt} slug(s) rebuilt.")
+
+    # -------- Search tweaks --------
+    def get_search_results(self, request, queryset, search_term):
+        """
+        Extend default search to allow quick owner lookup by 'object_id' when the term is numeric.
+        """
+        qs, use_distinct = super().get_search_results(request, queryset, search_term)
+        if search_term.isdigit():
+            qs = qs | queryset.filter(object_id=int(search_term))
+        return qs, use_distinct
+
+
+
+
 # Resource Admin -----------------------------------------------------------------------------------
 @admin.register(Resource)
 class ResourceAdmin(admin.ModelAdmin, MarkActiveMixin):
@@ -532,30 +988,6 @@ class WitnessAdmin(admin.ModelAdmin, MarkActiveMixin):
         return obj.title[:50] + "..." if len(obj.title) > 50 else obj.title
     title_summary.short_description = 'Title'
 
-
-# Moment Admin --------------------------------------------------------------------------------------------------------------
-@admin.register(Moment)
-class MomentAdmin(admin.ModelAdmin, MarkActiveMixin):
-    list_display = ['content_summary', 'published_at', 'is_active', 'is_hidden', 'is_restricted']
-    list_filter = ['is_active', 'is_hidden', 'is_restricted', 'published_at']
-    search_fields = ['content']
-    filter_horizontal = ['org_tags', 'user_tags']
-    fieldsets = (
-        ('Moment Content', {
-            'fields': ('content', 'moment_file')
-        }),
-        ('Tags', {
-            'fields': ('org_tags', 'user_tags')
-        }),
-        ('Status & Dates', {
-            'fields': ('published_at', 'updated_at', 'is_active', 'is_hidden', 'is_restricted')
-        })
-    )
-
-    def content_summary(self, obj):
-        """Display a short snippet of the moment content for better admin overview."""
-        return obj.content[:50] + "..." if len(obj.content) > 50 else obj.content
-    content_summary.short_description = 'Moment Content'
 
 
 # Pray Admin --------------------------------------------------------------------------------------------------------------@admin.register(Pray)
@@ -790,292 +1222,3 @@ class FutureConferenceAdmin(admin.ModelAdmin, MarkActiveMixin):
     )
 
 
-# Testimony Admin ---------------------------------------------------------------------------------------------------------
-@admin.register(Testimony)
-class TestimonyAdmin(admin.ModelAdmin):
-    """
-    Admin focused on observability & troubleshooting of media conversion.
-    """
-    # -------- List view --------
-    list_display = (
-        "id",
-        "slug",
-        "type",
-        "owner_repr",
-        "is_active",
-        "is_converted",
-        "media_flags",
-        "published_at",
-        "updated_at",
-    )
-    list_filter = (
-        "type",
-        "is_active",
-        "is_converted",
-        "is_hidden",
-        "is_restricted",
-        "is_suspended",
-        ("published_at", DateFieldListFilter),
-        "content_type",    # lets you filter by owner model (Member, Organization, …)
-    )
-    search_fields = (
-        "slug",
-        "title",
-        "content",
-        "audio",
-        "video",
-        "thumbnail",
-    )
-    ordering = ("-id",)
-
-    # Speed & UX for large M2M sets
-    filter_horizontal = ("org_tags", "user_tags")
-    raw_id_fields = ("user_tags", "org_tags")
-
-    # Fields layout on detail
-    readonly_fields = (
-        "owner_link",
-        "preview_media",
-        "file_links",
-        "diagnostics",
-        # timestamps are usually readonly in admin
-        "published_at",
-        "updated_at",
-    )
-
-    fieldsets = (
-        ("Basic", {
-            "fields": (
-                ("type", "title", "slug"),
-                "content",
-            )
-        }),
-        ("Owner (Generic)", {
-            "fields": (
-                ("content_type", "object_id"),
-                "owner_link",
-            )
-        }),
-        ("Media", {
-            "fields": (
-                "thumbnail",
-                "audio",
-                "video",
-                "preview_media",
-                "file_links",
-            )
-        }),
-        ("Moderation & Visibility", {
-            "fields": (
-                ("is_active", "is_hidden", "is_restricted", "is_suspended"),
-                "reports_count",
-            )
-        }),
-        ("System", {
-            "fields": (
-                ("is_converted",),
-                ("published_at", "updated_at"),
-                "diagnostics",
-            )
-        }),
-        ("Tags (optional)", {
-            "classes": ("collapse",),
-            "fields": ("org_tags", "user_tags"),
-        }),
-    )
-
-    # -------- Computed columns / helpers --------
-    def owner_repr(self, obj: Testimony):
-        """Compact owner representation for the changelist."""
-        try:
-            return f"{obj.content_type.model}#{obj.object_id}"
-        except Exception:
-            return "-"
-
-    owner_repr.short_description = "Owner"
-
-    def owner_link(self, obj: Testimony):
-        """Clickable link to owner object in admin (if available)."""
-        try:
-            ct: ContentType = obj.content_type
-            url = reverse(f"admin:{ct.app_label}_{ct.model}_change", args=[obj.object_id])
-            return mark_safe(f'<a href="{url}">{ct.app_label}.{ct.model} #{obj.object_id}</a>')
-        except Exception:
-            return "-"
-
-    owner_link.short_description = "Owner link"
-
-    def media_flags(self, obj: Testimony):
-        """Quick flags: A/V/T presence."""
-        a = "A✔" if getattr(obj, "audio") else "A–"
-        v = "V✔" if getattr(obj, "video") else "V–"
-        t = "T✔" if getattr(obj, "thumbnail") else "T–"
-        return f"{a} {v} {t}"
-
-    media_flags.short_description = "Media"
-
-    def preview_media(self, obj: Testimony):
-        """Inline preview (best-effort). HLS may only play natively on Safari."""
-        parts = []
-        try:
-            if obj.thumbnail:
-                parts.append(f'<div><img src="{obj.thumbnail.url}" alt="thumb" style="max-width:220px;height:auto;border:1px solid #ddd;padding:2px"/></div>')
-        except Exception:
-            pass
-
-        try:
-            if obj.audio:
-                parts.append(f'''
-                    <div style="margin-top:8px">
-                      <audio controls preload="metadata" style="width:280px">
-                        <source src="{obj.audio.url}"/>
-                        Your browser does not support the audio element.
-                      </audio>
-                    </div>
-                ''')
-        except Exception:
-            pass
-
-        # HLS playback via <video src=master.m3u8> works natively on Safari; others may need hls.js
-        try:
-            if obj.video:
-                parts.append(f'''
-                    <div style="margin-top:8px">
-                      <video controls preload="metadata" style="max-width:420px;height:auto">
-                        <source src="{obj.video.url}" type="application/vnd.apple.mpegurl"/>
-                        Your browser may not play HLS natively.
-                      </video>
-                    </div>
-                ''')
-        except Exception:
-            pass
-
-        return mark_safe("".join(parts) or "<em>No preview</em>")
-
-    preview_media.short_description = "Preview"
-
-    def file_links(self, obj: Testimony):
-        """Direct links to storage paths (helpful for verifying S3 uploads)."""
-        rows = []
-        for label in ("thumbnail", "audio", "video"):
-            f = getattr(obj, label, None)
-            if f:
-                try:
-                    rows.append(f'<div><strong>{label}</strong>: <a href="{f.url}" target="_blank" rel="noopener">{f.name}</a></div>')
-                except Exception:
-                    rows.append(f'<div><strong>{label}</strong>: {getattr(f, "name", "-")}</div>')
-            else:
-                rows.append(f"<div><strong>{label}</strong>: <em>—</em></div>")
-        return mark_safe("".join(rows))
-
-    file_links.short_description = "File URLs"
-
-    def diagnostics(self, obj: Testimony):
-        """
-        Quick consistency check: flags common causes of 'file on S3 but no DB/404' or conversion stalls.
-        """
-        issues = []
-
-        # type/content coherence (mirrors model.clean)
-        if obj.type == Testimony.TYPE_AUDIO:
-            if not obj.audio:
-                issues.append("Audio testimony has no audio file.")
-            if obj.content:
-                issues.append("Audio testimony should not have content.")
-            if obj.video:
-                issues.append("Audio testimony should not have video.")
-        elif obj.type == Testimony.TYPE_VIDEO:
-            if not obj.video:
-                issues.append("Video testimony has no video file.")
-            if obj.content:
-                issues.append("Video testimony should not have content.")
-            if obj.audio:
-                issues.append("Video testimony should not have audio.")
-        elif obj.type == Testimony.TYPE_WRITTEN:
-            if not obj.content:
-                issues.append("Written testimony requires content.")
-            if obj.audio or obj.video:
-                issues.append("Written testimony should not have audio/video.")
-
-        # conversion hints
-        try:
-            if obj.type in (Testimony.TYPE_AUDIO, Testimony.TYPE_VIDEO):
-                if not obj.is_converted:
-                    issues.append("Media not converted yet (is_converted=False).")
-                # if audio present and name already endswith .mp3 but is_converted False
-                if obj.type == Testimony.TYPE_AUDIO and getattr(obj, "audio") and str(obj.audio.name).lower().endswith(".mp3") and not obj.is_converted:
-                    issues.append("Audio is MP3 but is_converted=False (no-op case).")
-        except Exception:
-            pass
-
-        # visibility
-        if not obj.is_active:
-            issues.append("Item is inactive.")
-        if obj.is_hidden:
-            issues.append("Item is hidden.")
-        if obj.is_restricted:
-            issues.append("Item is restricted.")
-        if obj.is_suspended:
-            issues.append("Item is suspended.")
-
-        if not issues:
-            return mark_safe('<span style="color:#0a0">No issues detected</span>')
-
-        lis = "".join(f"<li>{admin.utils.escape(i)}</li>" for i in issues)
-        return mark_safe(f'<ul style="margin:0;padding-left:16px;color:#a00">{lis}</ul>')
-
-    diagnostics.short_description = "Diagnostics"
-
-    # -------- Actions --------
-    actions = ("action_mark_active", "action_mark_inactive", "action_requeue_conversion", "action_rebuild_slug")
-
-    @admin.action(description="Mark selected as Active")
-    def action_mark_active(self, request, queryset):
-        updated = queryset.update(is_active=True)
-        self.message_user(request, f"{updated} item(s) marked active.")
-
-    @admin.action(description="Mark selected as Inactive")
-    def action_mark_inactive(self, request, queryset):
-        updated = queryset.update(is_active=False)
-        self.message_user(request, f"{updated} item(s) marked inactive.")
-
-    @admin.action(description="Requeue media conversion")
-    def action_requeue_conversion(self, request, queryset):
-        # Force reconversion and (re)enqueue tasks
-        cnt = 0
-        for obj in queryset:
-            try:
-                obj.is_converted = False
-                obj.save(update_fields=["is_converted"])
-                obj.convert_uploaded_media_async()  # from MediaConversionMixin
-                cnt += 1
-            except Exception as e:
-                self.message_user(request, f"Failed to requeue for {obj.pk}: {e}", level="error")
-        self.message_user(request, f"{cnt} item(s) requeued for conversion.")
-
-    @admin.action(description="Rebuild slug (unique)")
-    def action_rebuild_slug(self, request, queryset):
-        """
-        Useful if you suspect slug collision caused DB rollback:
-        regenerates slug using SlugMixin logic by clearing and re-saving.
-        """
-        cnt = 0
-        for obj in queryset:
-            try:
-                # Keep a stable source; SlugMixin will regenerate
-                obj.slug = None
-                obj.save(update_fields=["slug"])  # triggers SlugMixin.save
-                cnt += 1
-            except Exception as e:
-                self.message_user(request, f"Failed to rebuild slug for {obj.pk}: {e}", level="error")
-        self.message_user(request, f"{cnt} slug(s) rebuilt.")
-
-    # -------- Search tweaks --------
-    def get_search_results(self, request, queryset, search_term):
-        """
-        Extend default search to allow quick owner lookup by 'object_id' when the term is numeric.
-        """
-        qs, use_distinct = super().get_search_results(request, queryset, search_term)
-        if search_term.isdigit():
-            qs = qs | queryset.filter(object_id=int(search_term))
-        return qs, use_distinct

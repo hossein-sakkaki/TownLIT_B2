@@ -14,25 +14,32 @@ from apps.posts.views.service_events import ServiceEventViewSet
 from apps.posts.views.conferences import ConferenceViewSet
 from apps.posts.views.future_conferences import FutureConferenceViewSet
 
-from apps.posts.views.testimonies import TestimonyViewSet, MeTestimonyViewSet
+from apps.posts.views.testimonies import TestimonyViewSet
 from apps.posts.views.reactions import ReactionViewSet
 from apps.posts.views.comments import CommentViewSet
 
 app_name = 'posts'
 router = DefaultRouter()
 
-# owner-scoped
-router.register(r'me/testimonies', MeTestimonyViewSet, basename='me-testimonies')
+
+# router.register(r'me/testimonies', MeTestimonyViewSet, basename='me-testimonies')
+router.register(
+    r'testimonies',
+    TestimonyViewSet,
+    basename='testimonies',
+)
 
 # centralized reactions
 router.register(r'reactions', ReactionViewSet, basename='reaction')
 
-# centralized comments ✅ NEW
+# centralized comments 
 router.register(r'comments', CommentViewSet, basename='comment')
 
-# public/organizational resources
-router.register(r'testimonies', TestimonyViewSet, basename='testimony')
 router.register(r'moments', MomentViewSet, basename='moment')
+
+
+# public/organizational resources
+# router.register(r'testimonies', TestimonyViewSet, basename='testimony')
 router.register(r'prayers', PrayViewSet, basename='prayer')
 router.register(r'announcements', AnnouncementViewSet, basename='announcement')
 router.register(r'witnesses', WitnessViewSet, basename='witness')

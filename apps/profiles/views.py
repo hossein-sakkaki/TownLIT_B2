@@ -14,6 +14,12 @@ from rest_framework.decorators import action
 from rest_framework import serializers
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.exceptions import MethodNotAllowed, PermissionDenied
+from django.contrib.contenttypes.models import ContentType
+
+from apps.posts.models.moment import Moment
+from apps.posts.serializers.moments import MomentSerializer
+from apps.core.visibility.query import VisibilityQuery
+from apps.core.visibility.constants import VISIBILITY_GLOBAL
 
 from apps.core.security.decorators import require_litshield_access
 from cryptography.fernet import Fernet
@@ -55,7 +61,7 @@ from django.template.loader import render_to_string
 from services.friendship_suggestions import suggest_friends_for_friends_tab, suggest_friends_for_requests_tab
 from django.contrib.auth import get_user_model
 from apps.core.pagination import ConfigurablePagination
-import logging, traceback
+import logging
 CustomUser = get_user_model()
 logger = logging.getLogger(__name__)
 
@@ -609,11 +615,13 @@ The TownLIT Team 🌍
         return Response({"message": "Academic record deleted successfully."}, status=status.HTTP_200_OK)
 
 # Visitor Profile ViewSet ---------------------------------------------------------------------------------------
-class VisitorProfileViewSet(viewsets.ViewSet):
+class VisitorProfileViewSet(viewsets.GenericViewSet):
     """
     Public-facing profile with privacy gates.
     """
     permission_classes = [AllowAny]
+    pagination_class = ConfigurablePagination
+    pagination_page_size = 12
 
     # --- helpers -------------------------------------------------
     def _get_member(self, username: str):
@@ -661,7 +669,27 @@ class VisitorProfileViewSet(viewsets.ViewSet):
             status__iexact='accepted',
         ).exists()
 
-    # --- action --------------------------------------------------
+    def _visible_moments_qs(self, request, member):
+        """Return moments for this member respecting visibility."""
+        base = (
+            Moment.objects
+            .select_related("content_type")
+            .order_by("-published_at", "-id")
+        )
+
+        # Anonymous => GLOBAL only
+        if not request.user or not request.user.is_authenticated:
+            base = base.filter(visibility=VISIBILITY_GLOBAL)
+        else:
+            base = VisibilityQuery.for_viewer(
+                viewer=request.user,
+                base_queryset=base,
+            )
+
+        owner_ct = ContentType.objects.get_for_model(member.__class__)
+        return base.filter(content_type_id=owner_ct.id, object_id=member.id)
+    
+    # Profile -----------------------------------------------------
     @action(detail=False, methods=["get"], url_path=r'profile/(?P<username>[^/]+)')
     def profile(self, request, username=None):
         """
@@ -713,6 +741,25 @@ class VisitorProfileViewSet(viewsets.ViewSet):
         # 5) Default => Public
         data = PublicMemberSerializer(member, context={"request": request}).data
         return Response(data, status=status.HTTP_200_OK)
+
+    # Moments -----------------------------------------------------
+    @action(detail=False, methods=["get"], url_path=r'profile/(?P<username>[^/]+)/moments')
+    def moments(self, request, username=None):
+        """
+        GET /profiles/members/profile/<username>/moments/?page=1
+
+        Policy:
+          - AllowAny
+          - Visibility-aware
+          - Returns only this owner's moments
+        """
+        member = self._get_member(username)
+        qs = self._visible_moments_qs(request, member)
+
+        page = self.paginate_queryset(qs)
+        serializer = MomentSerializer(page, many=True, context={"request": request})
+        return self.get_paginated_response(serializer.data)
+
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -903,19 +950,19 @@ class GuestUserViewSet(viewsets.ModelViewSet):
         except GuestUser.DoesNotExist:
             return Response({"error": "Profile not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    @action(detail=False, methods=['post'], url_path='request-delete', permission_classes=[IsAuthenticated])
-    def request_delete_profile(self, request):
-        try:
-            guest_user = request.user.guest_profile
-            if guest_user.user.is_suspended:
-                return Response({"error": "Your account is suspended. You cannot request profile deletion."}, status=status.HTTP_403_FORBIDDEN)
-            serializer = GuestUserDeleteRequestSerializer(guest_user, data=request.data, partial=True)
-            if serializer.is_valid():
-                serializer.save()
-                return Response({"message": "Profile deletion requested. You can return within 1 year."}, status=status.HTTP_200_OK)
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        except GuestUser.DoesNotExist:
-            return Response({"error": "Profile not found"}, status=status.HTTP_404_NOT_FOUND)
+    # @action(detail=False, methods=['post'], url_path='request-delete', permission_classes=[IsAuthenticated])
+    # def request_delete_profile(self, request):
+    #     try:
+    #         guest_user = request.user.guest_profile
+    #         if guest_user.user.is_suspended:
+    #             return Response({"error": "Your account is suspended. You cannot request profile deletion."}, status=status.HTTP_403_FORBIDDEN)
+    #         serializer = GuestUserDeleteRequestSerializer(guest_user, data=request.data, partial=True)
+    #         if serializer.is_valid():
+    #             serializer.save()
+    #             return Response({"message": "Profile deletion requested. You can return within 1 year."}, status=status.HTTP_200_OK)
+    #         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    #     except GuestUser.DoesNotExist:
+    #         return Response({"error": "Profile not found"}, status=status.HTTP_404_NOT_FOUND)
 
     @action(detail=False, methods=['post'], url_path='reactivate', permission_classes=[IsAuthenticated])
     def reactivate_profile(self, request):
@@ -941,6 +988,8 @@ class FriendshipViewSet(viewsets.ModelViewSet):
     queryset = Friendship.objects.all()
     serializer_class = FriendshipSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = ConfigurablePagination
+    pagination_page_size = 20
 
     def get_queryset(self):
         user = self.request.user
@@ -1020,7 +1069,7 @@ class FriendshipViewSet(viewsets.ModelViewSet):
         """
         Fast user search with:
         - optimized queryset (select_related + only)
-        - pagination
+        - view-aware pagination (ConfigurablePagination)
         - friend status (friend / sent request / received request)
         - excluding deleted users and self
         """
@@ -1029,10 +1078,12 @@ class FriendshipViewSet(viewsets.ModelViewSet):
             return Response([], status=status.HTTP_200_OK)
 
         try:
-            # --- Optimized user lookup ---
+            # ------------------------------------------------------------
+            # Optimized user lookup
+            # ------------------------------------------------------------
             users = (
                 CustomUser.objects
-                .select_related("label", "member_profile")  # preload relations for serializer
+                .select_related("label", "member_profile")
                 .only(
                     "id", "username", "name", "family", "email",
                     "label__id", "label__name",
@@ -1050,48 +1101,42 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                 .distinct()
             )
 
-            # --- Pagination (configurable) ---
-            paginator = ConfigurablePagination(page_size=20, max_page_size=100)
-            paginated_users = paginator.paginate_queryset(users, request)
-
-            # ============================================================
-            #           FRIENDSHIPS + REQUESTS STATUS LOOKUPS
-            # ============================================================
-
-            # --- Build friend ID set (fast lookup) ---
+            # ------------------------------------------------------------
+            # Friendship + request state lookups
+            # ------------------------------------------------------------
             friend_edges = Friendship.objects.filter(
                 Q(from_user=request.user, status="accepted") |
                 Q(to_user=request.user, status="accepted")
             ).values("from_user", "to_user")
 
-            friend_ids = set()
             uid = request.user.id
-            for e in friend_edges:
-                fu, tu = e["from_user"], e["to_user"]
-                friend_ids.add(tu if fu == uid else fu)
+            friend_ids = {
+                e["to_user"] if e["from_user"] == uid else e["from_user"]
+                for e in friend_edges
+            }
 
-            # --- Pending requests sent by current user ---
-            sent_requests = Friendship.objects.filter(
-                from_user=request.user,
-                status="pending"
-            ).values("to_user", "id")
+            sent_request_map = {
+                r["to_user"]: r["id"]
+                for r in Friendship.objects.filter(
+                    from_user=request.user,
+                    status="pending"
+                ).values("to_user", "id")
+            }
 
-            sent_request_map = {item["to_user"]: item["id"] for item in sent_requests}
+            received_request_map = {
+                r["from_user"]: r["id"]
+                for r in Friendship.objects.filter(
+                    to_user=request.user,
+                    status="pending"
+                ).values("from_user", "id")
+            }
 
-            # --- Pending requests received by current user ---
-            received_requests = Friendship.objects.filter(
-                to_user=request.user,
-                status="pending"
-            ).values("from_user", "id")
-
-            received_request_map = {item["from_user"]: item["id"] for item in received_requests}
-
-            # ============================================================
-            #                      SERIALIZATION
-            # ============================================================
-
+            # ------------------------------------------------------------
+            # Pagination (VIEW-AWARE, CORE-COMPATIBLE)
+            # ------------------------------------------------------------
+            page = self.paginate_queryset(users)
             serializer = SimpleCustomUserSerializer(
-                paginated_users,
+                page,
                 many=True,
                 context={
                     "request": request,
@@ -1101,11 +1146,15 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                 }
             )
 
-            return paginator.get_paginated_response(serializer.data)
+            return self.get_paginated_response(serializer.data)
 
         except Exception as e:
-            logger.error(f"Error during search_users: {e}")
-            return Response({'error': 'Unable to search users'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.exception("🔥 search_users failed")
+            return Response(
+                {"error": "Unable to search users"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 
 
     # ------------------------------------------------------------------------------------------------------
@@ -1571,6 +1620,8 @@ class FellowshipViewSet(viewsets.ModelViewSet):
     queryset = Fellowship.objects.all()
     serializer_class = FellowshipSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = ConfigurablePagination
+    pagination_page_size = 20
 
     # --- helper: serialize list and drop None items ---
     def _serialize_nonnull(self, qs):
@@ -1676,29 +1727,47 @@ class FellowshipViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='search-friends', permission_classes=[IsAuthenticated])
     @require_litshield_access("covenant")
     def search_friends(self, request):
+        """
+        Search within accepted friends only, with:
+        - optimized queryset
+        - view-aware pagination (ConfigurablePagination)
+        - confidant safety rules
+        """
         query = request.query_params.get('q', '').strip()
         if not query:
             return Response([], status=status.HTTP_200_OK)
 
         try:
-            # accepted friendships excluding deleted endpoints
-            friendships = (
+            # ------------------------------------------------------------
+            # Collect accepted friendship counterpart IDs (fast + safe)
+            # ------------------------------------------------------------
+            edges = (
                 Friendship.objects
-                .filter(Q(from_user=request.user) | Q(to_user=request.user), status='accepted')
+                .filter(
+                    Q(from_user=request.user) | Q(to_user=request.user),
+                    status="accepted",
+                    is_active=True,
+                )
                 .filter(from_user__is_deleted=False, to_user__is_deleted=False)
-                .values('from_user_id', 'to_user_id')
+                .values("from_user_id", "to_user_id")
             )
 
-            # collect counterpart ids
-            friend_ids = []
-            for e in friendships:
-                fid, tid = e['from_user_id'], e['to_user_id']
-                friend_ids.append(tid if fid == request.user.id else fid)
+            uid = request.user.id
+            friend_ids = {
+                e["to_user_id"] if e["from_user_id"] == uid else e["from_user_id"]
+                for e in edges
+            }
 
+            if not friend_ids:
+                return Response([], status=status.HTTP_200_OK)
+
+            # ------------------------------------------------------------
+            # Base friends queryset
+            # ------------------------------------------------------------
             friends = (
                 CustomUser.objects
                 .select_related("label", "member_profile")
-                .filter(id__in=friend_ids, is_deleted=False)
+                .filter(id__in=friend_ids, is_deleted=False, is_active=True)
                 .filter(
                     Q(username__icontains=query) |
                     Q(email__icontains=query) |
@@ -1708,8 +1777,9 @@ class FellowshipViewSet(viewsets.ModelViewSet):
                 .distinct()
             )
 
-            # --- Confidant safety: hide already-accepted Confidants when hide_confidants is active ---
-            # If user is in 'hide_confidants' mode, do not show Confidants in search results.
+            # ------------------------------------------------------------
+            # Confidant safety (hide accepted confidants if enabled)
+            # ------------------------------------------------------------
             try:
                 member = request.user.member_profile
                 hide_confidants = getattr(member, "hide_confidants", False)
@@ -1717,7 +1787,6 @@ class FellowshipViewSet(viewsets.ModelViewSet):
                 hide_confidants = False
 
             if hide_confidants:
-                # Only Confidants where this user is the 'from_user' are hidden
                 hidden_confidant_ids = Fellowship.objects.filter(
                     from_user=request.user,
                     fellowship_type="Confidant",
@@ -1726,15 +1795,24 @@ class FellowshipViewSet(viewsets.ModelViewSet):
 
                 friends = friends.exclude(id__in=hidden_confidant_ids)
 
-            paginator = ConfigurablePagination(page_size=20, max_page_size=100)
-            paginated_friends = paginator.paginate_queryset(friends, request)
-            serializer = SimpleCustomUserSerializer(paginated_friends, many=True, context={'request': request})
-            return paginator.get_paginated_response(serializer.data)
+            # ------------------------------------------------------------
+            # Pagination (VIEW-AWARE, CORE-COMPATIBLE)
+            # ------------------------------------------------------------
+            page = self.paginate_queryset(friends)
+            serializer = SimpleCustomUserSerializer(
+                page,
+                many=True,
+                context={"request": request}
+            )
 
-        except Exception as e:
-            logger.error(f"Error in search_friends: {e}")
-            return Response({'error': 'Unable to search friends'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return self.get_paginated_response(serializer.data)
 
+        except Exception:
+            logger.exception("🔥 search_friends failed")
+            return Response(
+                {"error": "Unable to search friends"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
     # ---------------------------------------------------------------------------------------------------------------

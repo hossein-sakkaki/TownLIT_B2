@@ -48,6 +48,11 @@ custom_paths = [
         VisitorProfileViewSet.as_view({'get': 'profile'}),
         name='profile-detail'
     ),    
+    path(
+        'members/profile/<str:username>/moments/',
+        VisitorProfileViewSet.as_view({'get': 'moments'}),
+        name='profile-moments'
+    ),
     path('guestusers/<int:pk>/',            
          GuestUserViewSet.as_view({'get': 'view_guest_profile'}), 
          name='guestuser-detail'),
