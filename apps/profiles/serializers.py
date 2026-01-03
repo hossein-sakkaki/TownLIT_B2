@@ -604,14 +604,14 @@ class MemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
 
     # --- simple field validations ---
     def validate_biography(self, value):
-        # ensure biography <= 1000 chars
-        if value and len(value) > 1000:
+        # ensure biography <= 2000 chars
+        if value and len(value) > 2000:
             raise serializers.ValidationError({"error": "Biography cannot exceed 1000 characters."})
         return value
 
     def validate_vision(self, value):
-        # ensure vision <= 1000 chars
-        if value and len(value) > 1000:
+        # ensure vision <= 2000 chars
+        if value and len(value) > 2000:
             raise serializers.ValidationError({"error": "Vision cannot exceed 1000 characters."})
         return value
 

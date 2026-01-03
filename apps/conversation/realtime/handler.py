@@ -205,6 +205,7 @@ class ConversationHandler(
             # Messages that were sent to ME while I was offline (or not delivered yet)
             undelivered = await sync_to_async(list)(
                 dialogue.messages
+                    .select_related("sender") 
                     .filter(is_delivered=False)
                     .exclude(sender=self.user)
             )
@@ -220,9 +221,6 @@ class ConversationHandler(
                     )()
 
                     # 3) Build payload
-                    # IMPORTANT RULE:
-                    # - If E2EE DM: NEVER decrypt on backend. Send encrypted payload for this device only.
-                    # - Else (plain/non-E2EE): backend can send decrypted/plain text.
                     payload = {
                         "message_id": msg.id,
                         "dialogue_slug": dialogue.slug,
@@ -237,7 +235,13 @@ class ConversationHandler(
                         "system_event": getattr(msg, "system_event", None),
                     }
 
-                    if has_encryptions and getattr(msg, "is_encrypted", False):
+                    # -------------------------------------------------
+                    # IMPORTANT RULE:
+                    # - If E2EE DM: NEVER decrypt on backend. Send encrypted payload for this device only.
+                    # - Else: backend can send decrypted/plain text.
+                    # -------------------------------------------------
+
+                    if has_encryptions:
                         # ✅ E2EE DM replay (NO backend decrypt)
                         device_id = getattr(self, "device_id", None)
 
@@ -249,10 +253,8 @@ class ConversationHandler(
 
                         payload.update({
                             "is_encrypted": True,
-                            # Send only the encrypted blob for THIS device (if available)
                             "content": enc_row.encrypted_content if enc_row else None,
                             "encrypted_for_device": device_id,
-                            # Do NOT send decrypted_content at all (prevents "[Failed to decrypt message]" leak)
                             "decrypted_content": None,
                         })
 

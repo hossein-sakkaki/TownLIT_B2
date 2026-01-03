@@ -345,8 +345,8 @@ class Member(SlugMixin):
     service_types = models.ManyToManyField(MemberServiceType, blank=True, db_index=True, related_name='member_service_types', verbose_name='Service Types')
     organization_memberships = models.ManyToManyField('profilesOrg.Organization', blank=True, db_index=True, related_name='memberships', verbose_name='Organization Memberships')
     
-    biography = models.CharField(max_length=1000, null=True, blank=True, verbose_name='Biography')
-    vision = models.CharField(max_length=1000, null=True, blank=True, verbose_name='Vision')
+    biography = models.CharField(max_length=2000, null=True, blank=True, verbose_name='Biography')
+    vision = models.CharField(max_length=2000, null=True, blank=True, verbose_name='Vision')
     spiritual_rebirth_day = models.DateField(auto_now=False, auto_now_add=False, null=True, blank=True, verbose_name='Spiritual Rebirth Days')
     academic_record = models.OneToOneField(AcademicRecord, on_delete=models.SET_NULL, null=True, blank=True, related_name="member_academic_record")
 

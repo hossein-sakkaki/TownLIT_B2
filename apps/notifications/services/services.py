@@ -19,8 +19,9 @@ from apps.notifications.constants import (
 )
 from apps.notifications.services.ui_link_resolver import (
     build_content_link,
-    guess_entry_section,
-)
+    guess_entry_section, 
+    ENTRY_BY_CT
+) 
 
 from apps.notifications.tasks import send_email_notification  # Celery async task
 
@@ -151,39 +152,44 @@ def _guess_mode_for_obj(obj) -> str:
 
 def _smart_ui_link(target_obj, action_obj, extra_payload: dict | None) -> str | None:
     """
-    Build correct /content deep-link for comment/reply/reaction (future-safe).
-    - prefers resolving root content from action_obj.content_type/object_id
-    - builds focus from payload when available
+    Build /content deep-link ONLY for registered content types in ENTRY_BY_CT.
+    For non-content models (Friendship/Fellowship), return None to allow fallback.
     """
-    comment_id = None
-    parent_id = None
-    reaction_id = None
 
+    # 0) Resolve root (for comment/reply/reaction)
+    root = _resolve_root_content_from_action(action_obj) or target_obj
+    if not root:
+        return None
+
+    # 1) Only content types we explicitly support
+    ct_key = _ct_key_for_obj(root) or ""
+    if ct_key not in ENTRY_BY_CT:
+        return None  # ✅ prevents /content/<pk> for Friendship/Fellowship
+
+    # 2) Focus (reply > comment > reaction)
+    comment_id = parent_id = reaction_id = None
     if isinstance(extra_payload, dict):
         comment_id = extra_payload.get("comment_id")
         parent_id = extra_payload.get("parent_id")
         reaction_id = extra_payload.get("reaction_id")
 
-    # 1) Focus priority: reply > comment > reaction
     focus = None
     if comment_id:
         focus = f"reply-{comment_id}:parent-{parent_id}" if parent_id else f"comment-{comment_id}"
     elif reaction_id:
         focus = f"reaction-{reaction_id}"
 
-    # 2) Resolve root content (critical for replies/reactions)
-    root = _resolve_root_content_from_action(action_obj) or target_obj
-    slug = _safe_get_slug(root)
+    # 3) Slug (content objects should have slug)
+    slug = getattr(root, "slug", None)
     if not slug:
-        return None
+        return None  # ✅ no pk fallback here
 
-    # 3) Guess mode + section
+    # 4) Mode + section
     mode = _guess_mode_for_obj(root)
-    ct_key = _ct_key_for_obj(root)
-    section = guess_entry_section(ct_key or "")
+    section = guess_entry_section(ct_key)
 
     return build_content_link(
-        slug=slug,
+        slug=str(slug),
         section=section,
         focus=focus,
         mode=mode,
@@ -242,35 +248,38 @@ def create_and_dispatch_notification(
 
     def _persist():
         try:
-            notif = Notification.objects.create(
-                user=recipient,
-                actor=actor,
-                message=message,
-                notification_type=notif_type,
-                target_content_type=target_ct,
-                target_object_id=target_id,
-                action_content_type=action_ct,
-                action_object_id=action_id,
-                link=link,
-                dedupe_key=dedupe_key,
-            )
+            if dedupe:
+                notif, created = Notification.objects.get_or_create(
+                    dedupe_key=dedupe_key,
+                    defaults=dict(
+                        user=recipient,
+                        actor=actor,
+                        message=message,
+                        notification_type=notif_type,
+                        target_content_type=target_ct,
+                        target_object_id=target_id,
+                        action_content_type=action_ct,
+                        action_object_id=action_id,
+                        link=link,
+                    ),
+                )
+                if created:
+                    _deliver_notification(notif, channels_mask, extra_payload)
+                else:
+                    logger.info("[Notif] Dedup hit → notif_id=%s dedupe_key=%s", notif.id, dedupe_key)
+                return notif
 
-            # Fan-out to WS / Push / Email according to channels_mask
+            # old behavior
+            notif = Notification.objects.create(...)
             _deliver_notification(notif, channels_mask, extra_payload)
-
             return notif
 
         except Exception as e:
-            logger.error(
-                "⛔ DB WRITE FAILED → user=%s | error=%s",
-                recipient.id,
-                e,
-                exc_info=True,
-            )
+            logger.error(..., exc_info=True)
             return None
 
     if transaction.get_connection().in_atomic_block:
-        logger.error("⚠️ In atomic block → using on_commit")
+        logger.warning("[Notif] in_atomic → scheduling on_commit (type=%s user=%s)", notif_type, recipient.id)
         transaction.on_commit(lambda: _persist())
     else:
         _persist()
@@ -399,43 +408,42 @@ def _deliver_notification(
     # 3) Email Delivery
     # ------------------------------------------------------------------
     try:
+        logger.info(
+            "[Notif] EMAIL DECISION → notif_id=%s type=%s mask=%s email=%s",
+            notif.id,
+            notif.notification_type,
+            channels_mask,
+            getattr(notif.user, "email", None),
+        )
+
         if channels_mask & CHANNEL_EMAIL:
             email = getattr(notif.user, "email", None)
+            if not email:
+                logger.info("[Notif] No email for user %s (notif %s)", notif.user_id, notif.id)
+                return
 
-            if email:
-                subject = "New Notification from TownLIT"
+            subject = "New Notification from TownLIT"
+            body_text = f"{notif.message}"
 
-                email_extra = ""
-                if extra_payload:
-                    for k, v in extra_payload.items():
-                        email_extra += f"\n{k}: {v}"
+            res = send_email_notification.delay(
+                email,
+                subject,
+                body_text,
+                notif.link,
+            )
 
-                body_text = (
-                    f"{notif.message}"
-                )
-
-                send_email_notification.delay(
-                    email,
-                    subject,
-                    body_text,
-                    notif.link,
-                )
-
-                logger.debug(
-                    "[Notif] Email queued to %s",
-                    email,
-                )
-
-            else:
-                logger.info(
-                    "[Notif] No email found for user %s",
-                    notif.user_id,
-                )
+            logger.info(
+                "[Notif] Email task queued → notif_id=%s task_id=%s to=%s",
+                notif.id,
+                getattr(res, "id", None),
+                email,
+            )
 
     except Exception as e:
         logger.warning(
-            "[Notif] Email delivery failed for user %s: %s",
+            "[Notif] Email delivery failed for user %s notif %s: %s",
             notif.user_id,
+            notif.id,
             e,
             exc_info=True,
         )

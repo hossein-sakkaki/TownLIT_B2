@@ -3398,7 +3398,7 @@ QUESTIONS = [
     "question_number": 122,
     "question_text": {
       "en": "My intuitions are clear and correct.",
-      "fa": "شهود من روشن و درست است.",
+      "fa": "حس درونی و شهود من روشن و درست است.",
       "tr": "Sezgilerim net ve doğrudur.",
       "es": "Mis intuiciones son claras y correctas.",
       "zh": "我的直觉清晰且正确。",
