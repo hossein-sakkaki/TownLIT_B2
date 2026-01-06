@@ -209,6 +209,7 @@ class InviteCodeAdmin(admin.ModelAdmin):
     list_display = ['code', 'email', 'is_used', 'used_by', 'created_at', 'used_at', 'invite_email_sent', 'invite_email_sent_at']
     search_fields = ['code', 'email']
     list_filter = ['is_used']
+    list_editable = ['invite_email_sent']
     
 
 # User Device Key Admin ------------------------------------------------------------------

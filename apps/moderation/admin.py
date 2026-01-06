@@ -153,7 +153,7 @@ class AccessRequestAdmin(admin.ModelAdmin):
     search_fields = ("first_name", "last_name", "email", "country", "message")
     readonly_fields = ("submitted_at",)
     ordering = ("-submitted_at",)
-
+    list_editable  = ["invite_code_sent"]
     fieldsets = (
         ("Applicant Info", {
             "fields": ("first_name", "last_name", "email", "country", "how_found_us")
