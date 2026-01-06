@@ -1,12 +1,12 @@
 {% extends 'base_email.html' %}
 
 {% block subject %}
-  Welcome to TownLIT
+  There’s a place for you — TownLIT
 {% endblock %}
 
 {% block content %}
   <p>
-    Hi <strong>{{ first_name|default:'Friend' }}</strong>,
+    Grace and peace to you, dear <strong>{{ first_name|default:'Friend' }}</strong>,
   </p>
   <br>
 
@@ -20,16 +20,12 @@
   </p>
 
   <p>
-    We simply wanted to let you know that you’re warmly welcome to join and become part of this growing journey.
-  </p>
-
-  <p>
-    If and when you’re ready, you can use your personal invitation code below:
+    We simply wanted to let you know that you’re warmly welcome to join and become part of this growing journey. If and when you’re ready, you can use your personal invitation code below:
   </p>
 
   <div class="email-code-container">
     <div class="text-code-box">YOUR PERSONAL INVITATION CODE</div>
-    <div class="code-box">{{ invitation_code }}</div>
+    <div class="code-box">{{ invite_code }}</div>
   </div>
 
   <p>
@@ -37,12 +33,12 @@
   </p>
 
   <div class="email-button-container">
-    <a href="{{ signup_link }}" class="email-button">Enter TownLIT</a>
+    <a href="https://townlit.com/register" class="email-button">Step into TownLIT</a>
   </div>
 
   <p class="email-reflection">
-    “Unless the Lord builds the house, the builders labor in vain.”<br />
-    <span style="font-size: 14px;">– Psalm 127:1</span>
+    “The city does not need the sun or the moon to shine on it, for the glory of God gives it light, and the Lamb is its lamp.”<br />
+    <span style="font-size: 14px;">– Revelation 21:23</span>
   </p>
 
   <p>
