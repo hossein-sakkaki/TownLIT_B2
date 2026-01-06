@@ -19,7 +19,7 @@ from apps.core.interactions.mixins import InteractionCounterMixin
 from apps.core.interactions.models import ReactionBreakdownMixin
 
 from validators.mediaValidators.audio_validators import validate_audio_file
-from validators.mediaValidators.video_validators import validate_video_file
+from validators.mediaValidators.video_validators import validate_testimony_video_file
 from validators.mediaValidators.image_validators import (
     validate_image_file,
     validate_image_size,
@@ -97,7 +97,7 @@ class Testimony(
         upload_to=VIDEO.dir_upload,
         null=True,
         blank=True,
-        validators=[validate_video_file, validate_no_executable_file],
+        validators=[validate_testimony_video_file, validate_no_executable_file],
         verbose_name="Testimony Video",
     )
 

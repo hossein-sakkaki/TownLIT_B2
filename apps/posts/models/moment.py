@@ -18,7 +18,7 @@ from apps.core.interactions.models import ReactionBreakdownMixin
 from utils.common.utils import FileUpload
 
 from validators.mediaValidators.image_validators import validate_image_file, validate_image_size
-from validators.mediaValidators.video_validators import validate_video_file
+from validators.mediaValidators.video_validators import validate_moment_video_file
 from validators.security_validators import validate_no_executable_file
 
 
@@ -71,11 +71,11 @@ class Moment(
         null=True,
         blank=True,
         validators=[
-            validate_video_file,
+            validate_moment_video_file,
             validate_no_executable_file,
         ],
         verbose_name="Video",
-    )
+    )   
 
     thumbnail = models.ImageField(
         upload_to=IMAGE.dir_upload,

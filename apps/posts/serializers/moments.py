@@ -69,6 +69,12 @@ class MomentSerializer(
             "comment_target",
             "reaction_target",
             "owner",
+
+            # counters should never be writable
+            "comments_count",
+            "recomments_count",
+            "reactions_count",
+            "reactions_breakdown",
         ]
 
     # -------------------------------------------------
@@ -76,12 +82,12 @@ class MomentSerializer(
     # -------------------------------------------------
     def get_owner(self, obj):
         """
-        Returns OwnerDTO or None
+        Returns OwnerDTO (public or full) or None
         """
         try:
             request = self.context.get("request")
 
-            # Avoid redundant owner during POST response if needed
+            # Skip owner during POST response
             if request and request.method == "POST":
                 return None
 
@@ -90,12 +96,34 @@ class MomentSerializer(
                 context=self.context,
             )
 
+            if not owner:
+                return None
+
+            # ---------------------------------------------
+            # Visitor-safe owner hardening
+            # ---------------------------------------------
+            is_authenticated = (
+                request
+                and request.user
+                and request.user.is_authenticated
+            )
+
+            if not is_authenticated:
+                # Strip sensitive/internal fields for visitors
+                owner.pop("email", None)
+                owner.pop("mobile_number", None)
+                owner.pop("last_seen", None)
+                owner.pop("is_online", None)
+                owner.pop("internal_roles", None)
+                owner.pop("permissions", None)
+
             logger.debug("Moment owner dto=%s", owner)
-            return owner  # ← None is valid
+            return owner
 
         except Exception:
             logger.exception("🔥 get_owner failed for moment id=%s", obj.id)
             return None
+
 
     # -------------------------------------------------
     # Ownership helpers
@@ -174,31 +202,52 @@ class MomentSerializer(
     # Cross-field validation
     # -------------------------------------------------
     def validate(self, attrs):
-        # -------------------------------------------------
-        # Defensive guard: forbid ownership injection
-        # -------------------------------------------------
-        forbidden = {"content_type", "object_id"}
-        for key in forbidden:
-            if key in self.initial_data:
-                raise serializers.ValidationError({
-                    key: "This field is not allowed."
-                })
+        request = self.context.get("request")
 
-        # -------------------------------------------------
-        # Cross-field media validation
-        # -------------------------------------------------
-        image = attrs.get("image") or getattr(self.instance, "image", None)
-        video = attrs.get("video") or getattr(self.instance, "video", None)
+        # Only enforce on write
+        if request and request.method in ("POST", "PUT", "PATCH"):
+            # -------------------------------------------------
+            # Defensive guard: forbid ownership injection
+            # -------------------------------------------------
+            forbidden = {"content_type", "object_id"}
+            for key in forbidden:
+                if key in self.initial_data:
+                    raise serializers.ValidationError({
+                        key: "This field is not allowed."
+                    })
 
-        if image and video:
-            raise serializers.ValidationError(
-                "Moment cannot contain both image and video."
-            )
+            # -------------------------------------------------
+            # Cross-field media validation
+            # -------------------------------------------------
+            image = attrs.get("image") or getattr(self.instance, "image", None)
+            video = attrs.get("video") or getattr(self.instance, "video", None)
 
-        if not image and not video:
-            raise serializers.ValidationError(
-                "Moment must contain either an image or a video."
-            )
+            if image and video:
+                raise serializers.ValidationError(
+                    "Moment cannot contain both image and video."
+                )
+
+            if not image and not video:
+                raise serializers.ValidationError(
+                    "Moment must contain either an image or a video."
+                )
 
         return attrs
 
+
+    # -------------------------------------------------
+    # Representation hardening (Visitor-safe)
+    # -------------------------------------------------
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+
+        request = self.context.get("request")
+        is_visitor = not (request and request.user and request.user.is_authenticated)
+
+        if is_visitor:
+            # Hide internal / moderation / tuning fields
+            data.pop("visibility", None)
+            data.pop("is_hidden", None)
+            data.pop("reactions_breakdown", None)
+
+        return data

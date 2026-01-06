@@ -5,7 +5,7 @@ from django.utils import timezone
 from django.db.models import F
 
 from rest_framework import viewsets
-from rest_framework.permissions import IsAuthenticated    
+from rest_framework.permissions import IsAuthenticated, AllowAny    
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
@@ -37,6 +37,22 @@ class MomentViewSet(viewsets.ModelViewSet):
     lookup_field = "slug"
     pagination_class = ConfigurablePagination
     pagination_page_size = 12
+
+    # -------------------------------------------------
+    # Permissions (Visitor-safe)
+    # -------------------------------------------------
+    def get_permissions(self):
+        """
+        Allow public (unauthenticated) access ONLY for safe read actions.
+        """
+        if self.action in [
+            "retrieve",     # view a single moment
+            "explore",      # public discover
+            "trending",     # public trending
+        ]:
+            return [AllowAny()]
+
+        return super().get_permissions()
 
     # -------------------------------------------------
     # Base queryset (NO visibility logic here)
@@ -159,6 +175,7 @@ class MomentViewSet(viewsets.ModelViewSet):
         detail=False,
         methods=["get"],
         pagination_class=FeedCursorPagination,
+        permission_classes=[AllowAny],
     )
     def trending(self, request):
         qs = TrendingEngine.apply(
@@ -168,6 +185,7 @@ class MomentViewSet(viewsets.ModelViewSet):
         page = self.paginate_queryset(qs)
         serializer = self.get_serializer(page, many=True)
         return self.get_paginated_response(serializer.data)
+
 
     # -------------------------------------------------
     # My moments (owner only)
@@ -208,12 +226,12 @@ class MomentViewSet(viewsets.ModelViewSet):
     # -------------------------------------------------
     # Explore (public discover)
     # -------------------------------------------------
-    @action(detail=False, methods=["get"])
+    @action(
+        detail=False,
+        methods=["get"],
+        permission_classes=[AllowAny],
+    )
     def explore(self, request):
-        """
-        Public discovery feed.
-        Only GLOBAL visibility.
-        """
         qs = (
             self.get_queryset()
             .filter(visibility=VISIBILITY_GLOBAL)
@@ -221,16 +239,21 @@ class MomentViewSet(viewsets.ModelViewSet):
 
         page = self.paginate_queryset(qs)
         serializer = self.get_serializer(page, many=True)
-
         return self.get_paginated_response(serializer.data)
 
+
     # -------------------------------------------------
-    # Retrieve (internal analytics only)
+    # Retrieve (public-safe, analytics counted)
     # -------------------------------------------------
     def retrieve(self, request, *args, **kwargs):
         obj = self.get_object()
 
-        # Atomic + cheap (no serializer side effects)
+        # 🔐 Extra safety: visitors can only see GLOBAL moments
+        if not request.user.is_authenticated:
+            if obj.visibility != VISIBILITY_GLOBAL:
+                raise PermissionDenied("This moment is not public.")
+
+        # 📊 Atomic + cheap analytics
         Moment.objects.filter(pk=obj.pk).update(
             view_count_internal=F("view_count_internal") + 1,
             last_viewed_at=timezone.now(),
