@@ -16,7 +16,7 @@ def send_pending_invite_emails():
         first_name = invite.first_name or email.split("@")[0].split(".")[0].title()
         last_name = invite.last_name or ""
 
-        subject = f"🌟 Welcome to TownLIT, {first_name}!"
+        subject = f"🌿 There’s a place for you, {first_name} — TownLIT"
 
         context = {
             'first_name': first_name,
