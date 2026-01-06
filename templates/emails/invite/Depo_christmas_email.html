@@ -1,0 +1,51 @@
+{% extends 'base_email.html' %}
+
+{% block subject %}
+  Merry Christmas — Welcome to TownLIT
+{% endblock %}
+
+{% block content %}
+  <p>
+    Hi <strong>{{ first_name|default:'Friend' }}</strong>,
+  </p> <br>
+  
+  <p>
+    Today is a meaningful day for all of us — a celebration of Christ’s birth, and the moment TownLIT begins to open its doors for the first time.
+  </p>
+
+
+  <p>
+    TownLIT was shaped slowly, through prayer, care, and a shared desire to create a space that feels alive and purposeful. It is not just a digital platform, but a growing city — one formed by people who believe in light, truth, and walking together in faith.
+  </p>
+
+  <p>
+    You are among the first invited to enter this space. Your invitation represents more than early access; it reflects trust, shared hope, and a place in the foundation of what is being built. TownLIT will take shape through the presence of its people, and every presence matters.
+  </p>
+
+  <div class="email-code-container">
+    <div class="text-code-box">YOUR PERSONAL INVITATION CODE</div>
+    <div class="code-box">{{ invite_code }}</div>
+  </div>
+
+  <p>
+    Use your personal invitation code above to create your account and step into TownLIT:
+  </p>
+
+  <div class="email-button-container">
+    <a href="https://townlit.com/register" class="email-button">Step into TownLIT</a>
+  </div>
+
+  <p class="email-reflection">
+    “You are the light of the world. A city built on a hill cannot be hidden.”<br />
+    <span style="font-size: 14px;">– Matthew 5:14</span>
+  </p>
+
+  <p>
+    As TownLIT opens on this Christmas Day, we do so with intention and humility. We are ready to welcome people into something built with heart — a place created not in haste, but with care, faith, and genuine love for community.
+  </p>
+
+  <p class="email-signature">
+    With warmth and hope,<br />
+    TownLIT
+  </p>
+{% endblock %}
