@@ -40,6 +40,9 @@ class Testimony(
     SlugMixin,
     models.Model,
 ):
+  
+    AUTO_THUMBNAIL_FROM_VIDEO = False
+
     # -------------------------------------------------
     # Types
     # -------------------------------------------------
@@ -76,7 +79,7 @@ class Testimony(
         max_length=50,
         null=True,
         blank=True,
-        verbose_name="Title",
+        verbose_name="Title", 
     )
 
     content = models.TextField(

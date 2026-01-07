@@ -4,7 +4,7 @@ import mimetypes
 import logging
 from django.db import transaction
 
-from apps.media_conversion.tasks import (
+from apps.media_conversion.tasks import ( 
     convert_image_to_jpg_task,
     convert_video_to_multi_hls_task,
     convert_audio_to_mp3_task,

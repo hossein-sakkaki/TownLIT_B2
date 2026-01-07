@@ -136,21 +136,48 @@ def _maybe_activate_after_convert(instance, field_name: str, update_fields: list
 
 
 # --- Bind converted path to FileField (no re-upload) ----------------------
-def handle_converted_file_update(model_name: str, app_label: str, instance_id: int,
-                                 field_name: str, relative_path: str) -> None:
+from django.core.exceptions import ObjectDoesNotExist
+
+def handle_converted_file_update(
+    model_name: str,
+    app_label: str,
+    instance_id: int,
+    field_name: str,
+    relative_path: str,
+) -> None:
     """
     Bind already-uploaded converted file (at `relative_path`) to model field.
     IMPORTANT: Do NOT re-upload; just set .name and save(update_fields=...).
+
+    Patch:
+    - If instance is deleted/replaced while task runs, do NOT raise.
+    - Optionally clean up orphan artifacts if you want (commented).
     """
     try:
         if os.path.isabs(relative_path):
             raise ValueError("Relative path expected, got absolute path.")
 
-        # use the same retry-aware getter we use elsewhere
-        instance = get_instance(app_label, model_name, instance_id)
+        # ✅ tolerant: instance may be deleted/replaced while conversion was running
+        try:
+            instance = get_instance(app_label, model_name, instance_id)
+        except ObjectDoesNotExist:
+            logger.warning(
+                "⚠️ %s[%s] no longer exists. Skipping update of '%s' -> %s",
+                model_name, instance_id, field_name, relative_path
+            )
+            # Optional: cleanup orphan converted artifact
+            # try:
+            #     if default_storage.exists(relative_path):
+            #         default_storage.delete(relative_path)
+            #         logger.info("🧹 Deleted orphan converted artifact: %s", relative_path)
+            # except Exception:
+            #     logger.exception("⚠️ Failed to cleanup orphan artifact: %s", relative_path)
+            return  # ✅ IMPORTANT: do not raise
 
         if not hasattr(instance, field_name):
-            raise AttributeError(f"Field '{field_name}' does not exist on model '{model_name}'")
+            raise AttributeError(
+                f"Field '{field_name}' does not exist on model '{model_name}'"
+            )
 
         # Defensive: ensure uploaded object exists in storage
         if not default_storage.exists(relative_path):
@@ -170,12 +197,16 @@ def handle_converted_file_update(model_name: str, app_label: str, instance_id: i
         _maybe_activate_after_convert(instance, field_name, update_fields)
 
         instance.save(update_fields=update_fields)
-        logger.info("✅ File field '%s' updated on %s[%s] -> %s",
-                    field_name, model_name, instance_id, relative_path)
+        logger.info(
+            "✅ File field '%s' updated on %s[%s] -> %s",
+            field_name, model_name, instance_id, relative_path
+        )
 
     except Exception as e:
-        logger.error("❌ Failed to update file field '%s' on %s[%s]: %s",
-                     field_name, model_name, instance_id, e)
+        logger.error(
+            "❌ Failed to update file field '%s' on %s[%s]: %s",
+            field_name, model_name, instance_id, e
+        )
         raise
 
 
@@ -198,7 +229,23 @@ def convert_video_to_multi_hls_task(
             instance_id,
         )
 
-        instance = get_instance(app_label, model_name, instance_id)
+        # ✅ tolerant: instance may be deleted/replaced before the task runs
+        try:
+            instance = get_instance(app_label, model_name, instance_id)
+        except ObjectDoesNotExist:
+            logger.warning(
+                "⚠️ %s[%s] no longer exists BEFORE convert. Skipping conversion task.",
+                model_name, instance_id
+            )
+            # Optional: cleanup original raw upload to prevent orphans
+            # try:
+            #     if source_path and default_storage.exists(source_path):
+            #         default_storage.delete(source_path)
+            #         logger.info("🧹 Deleted orphan RAW upload: %s", source_path)
+            # except Exception:
+            #     logger.exception("⚠️ Failed to cleanup orphan RAW upload: %s", source_path)
+            return  # ✅ IMPORTANT: do not raise
+
         upload = FileUpload(**fileupload)
 
         # --------------------------------------------------
@@ -263,7 +310,6 @@ def convert_video_to_multi_hls_task(
             e,
         )
         raise
-
         
 # ------------------ IMAGE -----------------------------------------------
 @shared_task(queue="video")
