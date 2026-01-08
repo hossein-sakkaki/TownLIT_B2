@@ -868,7 +868,6 @@ class PublicMemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
             raise
 
 
-
 # LIMITED Member Serializer -----------------------------------------------------------
 class LimitedMemberSerializer(serializers.ModelSerializer):
     """
@@ -893,6 +892,7 @@ class LimitedMemberSerializer(serializers.ModelSerializer):
             context=self.context,
             read_only=True
         )
+
 
     
 # MEMBER'S GIFT serializer -----------------------------------------------------------------------------

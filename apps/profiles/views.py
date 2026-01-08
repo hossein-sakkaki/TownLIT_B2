@@ -607,7 +607,6 @@ The TownLIT Team 🌍
         if not member.academic_record:
             return Response({"message": "No academic record found to delete."}, status=status.HTTP_200_OK)
 
-        # حذف رکورد از DB
         member.academic_record.delete()
         member.academic_record = None
         member.save(update_fields=["academic_record"])
@@ -639,7 +638,6 @@ class VisitorProfileViewSet(viewsets.GenericViewSet):
             )
         except Member.DoesNotExist:
             raise Http404
-
 
     def _is_friend(self, viewer, owner_user) -> bool:
         # True if there's an accepted friendship in either direction
@@ -730,12 +728,21 @@ class VisitorProfileViewSet(viewsets.GenericViewSet):
                 data = LimitedMemberSerializer(member, context={"request": request}).data
             return Response(data, status=status.HTTP_200_OK)
 
-        # 4) Privacy-on => Limited; friend can see Public
+        # 4) Privacy-on => Limited; friend can see Public 
         if getattr(member, "is_privacy", False):
             if self._is_friend(viewer, user):
                 data = PublicMemberSerializer(member, context={"request": request}).data
-            else:
-                data = LimitedMemberSerializer(member, context={"request": request}).data
+                return Response(data, status=status.HTTP_200_OK)
+
+            # 👇 Limited + profile redirect intent
+            data = LimitedMemberSerializer(member, context={"request": request}).data
+
+            data["profile_gate"] = {
+                "key": "profile_privacy_redirect",
+                "reason": "private_profile",
+                "redirect_to": f"/lit/{user.username}",
+            }
+
             return Response(data, status=status.HTTP_200_OK)
 
         # 5) Default => Public

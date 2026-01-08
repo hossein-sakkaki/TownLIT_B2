@@ -22,22 +22,27 @@ class VisibilityPolicy:
     """
 
     @staticmethod
+    def _viewer_or_none(viewer):
+        # Normalize viewer for anonymous requests
+        if not viewer:
+            return None
+        if getattr(viewer, "is_authenticated", False):
+            return viewer
+        return None
+
+    @staticmethod
     def can_view(*, viewer, obj) -> bool:
-        # -------------------------------------------------
-        # 1️⃣ Moderation gates
-        # -------------------------------------------------
-        if not obj.is_active or obj.is_hidden:
+        viewer = VisibilityPolicy._viewer_or_none(viewer)
+
+        # 1) Moderation gates
+        if not getattr(obj, "is_active", True) or getattr(obj, "is_hidden", False):
             return False
 
-        # -------------------------------------------------
-        # 2️⃣ Owner always can view
-        # -------------------------------------------------
+        # 2) Owner can always view
         if viewer and is_owner(viewer, obj):
             return True
 
-        # -------------------------------------------------
-        # 3️⃣ Explicit visibility override
-        # -------------------------------------------------
+        # 3) Explicit visibility
         if obj.visibility == VISIBILITY_PRIVATE:
             return False
 
@@ -52,10 +57,33 @@ class VisibilityPolicy:
         if obj.visibility == VISIBILITY_COVENANT:
             return viewer is not None and is_in_covenant(viewer, owner)
 
-        # -------------------------------------------------
-        # 4️⃣ DEFAULT → follow profile privacy
-        # -------------------------------------------------
+        # 4) DEFAULT follows profile privacy
         if is_profile_private(owner):
             return viewer is not None and are_friends(viewer, owner)
 
         return True
+
+    @staticmethod
+    def gate_reason(*, viewer, obj) -> str | None:
+        """
+        Returns:
+          - None: allowed
+          - "hidden": inactive/hidden
+          - "login_required": viewer is anonymous but might gain access by login
+          - "forbidden": viewer is logged-in but not eligible
+        """
+        v = VisibilityPolicy._viewer_or_none(viewer)
+
+        # Moderation gates: treat as hidden
+        if not getattr(obj, "is_active", True) or getattr(obj, "is_hidden", False):
+            return "hidden"
+
+        # Allowed?
+        if VisibilityPolicy.can_view(viewer=v or viewer, obj=obj):
+            return None
+
+        # Not allowed
+        if v is None:
+            return "login_required"
+
+        return "forbidden"

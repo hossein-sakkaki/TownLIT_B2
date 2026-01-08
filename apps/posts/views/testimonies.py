@@ -5,7 +5,9 @@ from django.db import transaction
 from django.utils import timezone
 from django.db.models import F
 
-from rest_framework import viewsets, permissions
+from rest_framework import viewsets
+from rest_framework.permissions import IsAuthenticated, AllowAny    
+
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied, NotFound
@@ -15,7 +17,7 @@ from apps.posts.models.testimony import Testimony
 from apps.posts.serializers.testimonies import TestimonySerializer
 from apps.core.visibility.query import VisibilityQuery
 from apps.core.pagination import ConfigurablePagination, FeedCursorPagination
-from apps.core.visibility.constants import VISIBILITY_GLOBAL
+from apps.core.visibility.policy import VisibilityPolicy
 from apps.core.ownership.utils import resolve_owner_from_request
 import logging
 logger = logging.getLogger(__name__)
@@ -32,10 +34,26 @@ class TestimonyViewSet(viewsets.ModelViewSet):
     """
 
     serializer_class = TestimonySerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     lookup_field = "slug"
+    lookup_url_kwarg = "slug" 
     pagination_class = ConfigurablePagination
     parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    # -------------------------------------------------
+    # Permissions (Visitor-safe)
+    # -------------------------------------------------
+    def get_permissions(self):
+        """
+        Allow public access ONLY for safe read actions.
+        """
+        if self.action in [
+            "retrieve",   # public watch page needs this
+            "explore",    # public discover
+        ]:
+            return [AllowAny()]
+
+        return super().get_permissions()
 
     # -------------------------------------------------
     # Base queryset (ordering only)
@@ -47,16 +65,20 @@ class TestimonyViewSet(viewsets.ModelViewSet):
             .order_by("-published_at", "-id")
         )
 
-        # 🔥 NO visibility filtering for single-object ops
-        if self.action in ("retrieve", "destroy", "update", "partial_update"):
+        # IMPORTANT: retrieve must not be pre-filtered by Query
+        if self.action == "retrieve":
             return base
 
-        viewer_owner = resolve_owner_from_request(self.request)
+        # public explore (visitor-safe)
+        if self.action == "explore" and not self.request.user.is_authenticated:
+            return base.filter(visibility="global")  # keep existing behavior
 
+        # IMPORTANT: Query should use request.user for consistency
         return VisibilityQuery.for_viewer(
-            viewer=viewer_owner,
+            viewer=self.request.user,
             base_queryset=base,
         )
+
 
 
     # -------------------------------------------------
@@ -160,15 +182,17 @@ class TestimonyViewSet(viewsets.ModelViewSet):
     # -------------------------------------------------
     # Explore (public discover)
     # -------------------------------------------------
-    @action(detail=False, methods=["get"])
+    @action(
+        detail=False,
+        methods=["get"],
+        permission_classes=[AllowAny],
+    )
     def explore(self, request):
-        qs = self.get_queryset().filter(
-            visibility=VISIBILITY_GLOBAL
-        )
-
+        qs = self.get_queryset()  # already visitor-safe
         page = self.paginate_queryset(qs)
         serializer = self.get_serializer(page, many=True)
         return self.get_paginated_response(serializer.data)
+
 
     # -------------------------------------------------
     # Profile summary (1 per type)
@@ -213,23 +237,31 @@ class TestimonyViewSet(viewsets.ModelViewSet):
         })
 
     # -------------------------------------------------
-    # Retrieve (analytics-safe)
+    # Retrieve (public-safe, analytics counted)
     # -------------------------------------------------
     def retrieve(self, request, *args, **kwargs):
         obj = self.get_object()
+
+        reason = VisibilityPolicy.gate_reason(viewer=request.user, obj=obj)
+        if reason is not None:
+            return Response(
+                {
+                    "detail": "Access restricted.",
+                    "code": reason,  # "login_required" | "forbidden" | "hidden"
+                    "content_type": "testimony",
+                    "slug": obj.slug,
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Analytics safe
         try:
             Testimony.objects.filter(pk=obj.pk).update(
                 view_count_internal=F("view_count_internal") + 1,
                 last_viewed_at=timezone.now(),
             )
-            logger.error("✅ analytics updated")
         except Exception:
-            logger.exception("🔥 analytics update failed")
+            logger.exception("🔥 testimony analytics update failed")
 
-        try:
-            data = self.get_serializer(obj).data
-            return Response(data)
-        except Exception:
-            logger.exception("🔥 serialization failed")
-            raise
-
+        serializer = self.get_serializer(obj)
+        return Response(serializer.data)

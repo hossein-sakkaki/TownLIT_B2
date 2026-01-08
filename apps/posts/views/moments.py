@@ -5,20 +5,23 @@ from django.utils import timezone
 from django.db.models import F
 
 from rest_framework import viewsets
-from rest_framework.permissions import IsAuthenticated, AllowAny    
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, NotFound
+from rest_framework import status
 
 from apps.posts.models.moment import Moment
 from apps.posts.serializers.moments import MomentSerializer
 from apps.core.visibility.query import VisibilityQuery
-from apps.core.visibility.constants import VISIBILITY_GLOBAL
+from apps.core.visibility.policy import VisibilityPolicy
 from apps.core.pagination import ConfigurablePagination, FeedCursorPagination
 
 from apps.core.feed.trending import TrendingEngine
 from apps.core.feed.hybrid import HybridFeedEngine
 from apps.core.feed.personalized_trending import PersonalizedTrendingEngine
+
+from apps.core.visibility.constants import VISIBILITY_GLOBAL
 
 import logging
 logger = logging.getLogger(__name__)
@@ -60,9 +63,13 @@ class MomentViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         base = (
             Moment.objects
-            .select_related("content_type")   # cheap, needed for owner
+            .select_related("content_type")
             .order_by("-published_at")
         )
+
+        # IMPORTANT: retrieve must not be pre-filtered by Query
+        if self.action == "retrieve":
+            return base
 
         return VisibilityQuery.for_viewer(
             viewer=self.request.user,
@@ -248,16 +255,29 @@ class MomentViewSet(viewsets.ModelViewSet):
     def retrieve(self, request, *args, **kwargs):
         obj = self.get_object()
 
-        # 🔐 Extra safety: visitors can only see GLOBAL moments
-        if not request.user.is_authenticated:
-            if obj.visibility != VISIBILITY_GLOBAL:
-                raise PermissionDenied("This moment is not public.")
+        # Single source of truth (+ frontend-friendly hint)
+        reason = VisibilityPolicy.gate_reason(viewer=request.user, obj=obj)
+        if reason is not None:
+            # Return a safe hint without leaking content
+            return Response(
+                {
+                    "detail": "Access restricted.",
+                    "code": reason,  # "login_required" | "forbidden" | "hidden"
+                    "content_type": "moment",
+                    "slug": obj.slug,
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
-        # 📊 Atomic + cheap analytics
-        Moment.objects.filter(pk=obj.pk).update(
-            view_count_internal=F("view_count_internal") + 1,
-            last_viewed_at=timezone.now(),
-        )
+        # Analytics must never crash request
+        try:
+            Moment.objects.filter(pk=obj.pk).update(
+                view_count_internal=F("view_count_internal") + 1,
+                last_viewed_at=timezone.now(),
+            )
+        except Exception:
+            logger.exception("🔥 moment analytics update failed")
 
         serializer = self.get_serializer(obj)
         return Response(serializer.data)
+    

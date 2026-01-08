@@ -20,44 +20,49 @@ class VisibilityQuery:
     """
 
     @staticmethod
+    def _normalize_viewer(viewer):
+        """Anonymous -> None (keep authenticated user)."""
+        if not viewer:
+            return None
+        if getattr(viewer, "is_authenticated", False):
+            return viewer
+        return None
+
+    @staticmethod
     def for_viewer(*, viewer, base_queryset):
-        # -------------------------------------------------
-        # 1) Base moderation filters (always applied)
-        # -------------------------------------------------
+        viewer = VisibilityQuery._normalize_viewer(viewer)
+
+        # 1) Base moderation filters
         qs = base_queryset.filter(
             is_active=True,
             is_hidden=False,
         )
 
-        # -------------------------------------------------
-        # 2) Anonymous viewer
-        # -------------------------------------------------
-        if not viewer or not viewer.is_authenticated:
+        # 2) Visitor: only GLOBAL + DEFAULT (DEFAULT validated later in Policy)
+        if viewer is None:
             return qs.filter(
                 visibility__in=[VISIBILITY_GLOBAL, VISIBILITY_DEFAULT]
             )
 
         user = viewer
 
-        # -------------------------------------------------
-        # 3) Resolve ALL owner identities (polymorphic-safe)
-        # -------------------------------------------------
+        # 3) Resolve owner identities (polymorphic-safe)
         owner_q = Q()
 
         member = getattr(user, "member_profile", None)
         guest = getattr(user, "guest_profile", None)
 
-        # ---- Member owner ----
+        # Member owner
         if member:
             ct = ContentType.objects.get_for_model(member.__class__)
             owner_q |= Q(content_type_id=ct.id, object_id=member.id)
 
-        # ---- Guest owner ----
+        # Guest owner
         if guest:
             ct = ContentType.objects.get_for_model(guest.__class__)
             owner_q |= Q(content_type_id=ct.id, object_id=guest.id)
 
-        # ---- Organization owner (membership-based) ----
+        # Organization owner (membership-based)
         if member:
             from apps.profilesOrg.models import Organization
 
@@ -72,9 +77,7 @@ class VisibilityQuery:
                     object_id__in=org_ids,
                 )
 
-        # -------------------------------------------------
         # 4) Friends visibility (Member only)
-        # -------------------------------------------------
         friends_q = Q()
         if member:
             from apps.profiles.models import Friendship
@@ -92,9 +95,7 @@ class VisibilityQuery:
                 )
             )
 
-        # -------------------------------------------------
         # 5) Covenant visibility (Member only)
-        # -------------------------------------------------
         covenant_q = Q()
         if member:
             from apps.profiles.models import Fellowship
@@ -111,21 +112,15 @@ class VisibilityQuery:
                 )
             )
 
-        # -------------------------------------------------
-        # 6) Public visibility
-        # -------------------------------------------------
+        # 6) Public (GLOBAL + DEFAULT)
         public_q = Q(
             visibility__in=[VISIBILITY_GLOBAL, VISIBILITY_DEFAULT]
         )
 
-        # -------------------------------------------------
-        # 7) Private visibility (owner-only)
-        # -------------------------------------------------
+        # 7) Private (owner-only)
         private_q = Q(visibility=VISIBILITY_PRIVATE) & owner_q
 
-        # -------------------------------------------------
-        # 8) Final visibility composition
-        # -------------------------------------------------
+        # 8) Final composition
         return qs.filter(
             owner_q |
             private_q |

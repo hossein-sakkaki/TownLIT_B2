@@ -617,6 +617,7 @@ class TestimonyAdmin(admin.ModelAdmin):
         "media_flags",
         "published_at",
         "updated_at",
+        "visibility",
     )
     list_filter = (
         "type",
@@ -638,6 +639,10 @@ class TestimonyAdmin(admin.ModelAdmin):
     )
     ordering = ("-id",)
 
+    list_editable = (
+        "visibility",
+    )
+    
     # Speed & UX for large M2M sets
     filter_horizontal = ("org_tags", "user_tags")
     raw_id_fields = ("user_tags", "org_tags")
@@ -677,7 +682,7 @@ class TestimonyAdmin(admin.ModelAdmin):
         }),
         ("Moderation & Visibility", {
             "fields": (
-                ("is_active", "is_hidden", "is_suspended"),
+                ("is_active", "is_hidden", "is_suspended", "visibility"),
                 "reports_count",
             )
         }),
