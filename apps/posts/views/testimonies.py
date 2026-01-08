@@ -19,11 +19,13 @@ from apps.core.visibility.query import VisibilityQuery
 from apps.core.pagination import ConfigurablePagination, FeedCursorPagination
 from apps.core.visibility.policy import VisibilityPolicy
 from apps.core.ownership.utils import resolve_owner_from_request
+from apps.core.ownership.owner_gate_mixins import OwnerGateMixin
+
 import logging
 logger = logging.getLogger(__name__)
 
 
-class TestimonyViewSet(viewsets.ModelViewSet):
+class TestimonyViewSet(OwnerGateMixin ,viewsets.ModelViewSet):
     """
     Testimony API (post-like)
 
@@ -236,6 +238,9 @@ class TestimonyViewSet(viewsets.ModelViewSet):
             "written": pack(Testimony.TYPE_WRITTEN),
         })
 
+    # -------------------------------------------------
+    # Helpers
+    # -------------------------------------------------
     def _resolve_owner_object(self, obj):
         """
         Resolve owner object from (content_type, object_id).
@@ -287,7 +292,110 @@ class TestimonyViewSet(viewsets.ModelViewSet):
         # Other owners (Organization, GuestUser, etc.)
         return None, None, owner_obj
 
+    def _profile_gate_payload(self, owner_user, reason):
+        """
+        Build a stable profile_gate contract for frontend.
+        """
+        return {
+            "profile_gate": {
+                "key": "profile_privacy_redirect",
+                "reason": reason,  # private_profile | hidden_by_confidants | account_paused | account_suspended
+                "redirect_to": f"/lit/{owner_user.username}",
+            }
+        }
 
+    def _safe_is_friend(self, viewer, owner_user):
+        """
+        Safe friend check: uses self._is_friend if present.
+        """
+        if not viewer or not getattr(viewer, "is_authenticated", False):
+            return False
+        fn = getattr(self, "_is_friend", None)
+        if callable(fn):
+            try:
+                return bool(fn(viewer, owner_user))
+            except Exception:
+                logger.exception("Friendship check failed")
+        return False
+
+
+    def _safe_is_confidant(self, viewer, owner_member):
+        """
+        Safe confidant check: uses self._is_confidant if present.
+        """
+        if not viewer or not getattr(viewer, "is_authenticated", False):
+            return False
+        fn = getattr(self, "_is_confidant", None)
+        if callable(fn):
+            try:
+                return bool(fn(viewer, owner_member))
+            except Exception:
+                logger.exception("Confidant check failed")
+        return False
+
+    def _apply_owner_profile_gate_if_needed(self, request, obj):
+        """
+        Apply profile-level gates based on owner's Member/CustomUser flags.
+
+        Rules (match Member profile view behavior):
+        - is_deleted             -> 404
+        - is_suspended           -> 200 + profile_gate
+        - is_account_paused      -> 200 + profile_gate
+        - is_hidden_by_confidants-> 200 + profile_gate (unless confidant)
+        - is_privacy             -> 200 + profile_gate (unless friend)
+        """
+        viewer = request.user if request.user.is_authenticated else None
+        owner_user, owner_member, owner_obj = self._resolve_owner_user_and_member(obj)
+
+        # Only when we have a real owner user (for redirect URL)
+        if not owner_user:
+            return None  # no gate
+
+        # If we don't have Member, we can't read member flags
+        if not owner_member:
+            return None  # no gate
+
+        # Owner can always view their own content
+        if viewer and viewer.is_authenticated and viewer.id == owner_user.id:
+            return None  # no gate
+
+        # 1) Hard deleted -> pretend not found
+        if getattr(owner_user, "is_deleted", False):
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # 2) Suspended -> limited + gate
+        if getattr(owner_user, "is_suspended", False):
+            return Response(
+                self._profile_gate_payload(owner_user, reason="account_suspended"),
+                status=status.HTTP_200_OK,
+            )
+
+        # 3) Paused -> limited + gate
+        if getattr(owner_user, "is_account_paused", False):
+            return Response(
+                self._profile_gate_payload(owner_user, reason="account_paused"),
+                status=status.HTTP_200_OK,
+            )
+
+        # 4) Hidden by confidants -> gate unless confidant
+        if getattr(owner_member, "is_hidden_by_confidants", False):
+            if self._safe_is_confidant(viewer, owner_member):
+                return None  # allowed
+            return Response(
+                self._profile_gate_payload(owner_user, reason="hidden_by_confidants"),
+                status=status.HTTP_200_OK,
+            )
+
+        # 5) Privacy -> gate unless friend
+        if getattr(owner_member, "is_privacy", False):
+            if self._safe_is_friend(viewer, owner_user):
+                return None  # allowed
+            return Response(
+                self._profile_gate_payload(owner_user, reason="private_profile"),
+                status=status.HTTP_200_OK,
+            )
+
+        return None  # no gate
 
     # -------------------------------------------------
     # Retrieve (public-safe, analytics counted)
@@ -296,55 +404,35 @@ class TestimonyViewSet(viewsets.ModelViewSet):
         obj = self.get_object()
 
         # -------------------------------------------------
-        # 0) Profile-privacy redirect gate (anon/outsiders)
+        # 0) HARD owner-level gate (no leak, 404-like)
         # -------------------------------------------------
-        try:
-            viewer = request.user if request.user.is_authenticated else None
+        # Covers:
+        # - user.is_deleted
+        # - user.is_suspended
+        # - member.is_hidden_by_confidants
+        self.apply_hard_owner_gate(request, obj)
 
-            owner_user, owner_member, owner_obj = self._resolve_owner_user_and_member(obj)
-
-            # Debug prints (temporary)
-            print("owner_obj:", type(owner_obj).__name__ if owner_obj else None)
-            print("owner_user:", getattr(owner_user, "username", None) if owner_user else None)
-            print("owner_member_privacy:", getattr(owner_member, "is_privacy", None) if owner_member else None)
-
-            # Only apply when we have a member privacy flag + a user username
-            if owner_user and owner_member and getattr(owner_member, "is_privacy", False):
-                # Owner can view
-                if viewer and viewer.id == owner_user.id:
-                    pass
-                else:
-                    # Optional friend check (if you have it)
-                    is_friend = False
-                    try:
-                        # is_friend = self._is_friend(viewer, owner_user)
-                        pass
-                    except Exception:
-                        logger.exception("Friendship check failed")
-
-                    if not is_friend:
-                        return Response(
-                            {
-                                "profile_gate": {
-                                    "key": "profile_privacy_redirect",
-                                    "reason": "private_profile",
-                                    "redirect_to": f"/lit/{owner_user.username}",
-                                }
-                            },
-                            status=status.HTTP_200_OK,
-                        )
-        except Exception:
-            logger.exception("profile_gate check failed")
+        # -------------------------------------------------
+        # 0.5) SOFT profile privacy gate (redirect intent)
+        # -------------------------------------------------
+        # Covers:
+        # - member.is_privacy
+        redirect_response = self.apply_profile_privacy_gate(request, obj)
+        if redirect_response:
+            return redirect_response
 
         # -------------------------------------------------
         # 1) Visibility gate (content-level policy)
         # -------------------------------------------------
-        reason = VisibilityPolicy.gate_reason(viewer=request.user, obj=obj)
+        reason = VisibilityPolicy.gate_reason(
+            viewer=request.user,
+            obj=obj
+        )
         if reason is not None:
             return Response(
                 {
                     "detail": "Access restricted.",
-                    "code": reason,  # "login_required" | "forbidden" | "hidden"
+                    "code": reason,  # login_required | forbidden | hidden
                     "content_type": "testimony",
                     "slug": obj.slug,
                 },
@@ -352,7 +440,7 @@ class TestimonyViewSet(viewsets.ModelViewSet):
             )
 
         # -------------------------------------------------
-        # 2) Analytics (safe)
+        # 2) Analytics (must never crash)
         # -------------------------------------------------
         try:
             Testimony.objects.filter(pk=obj.pk).update(
@@ -362,5 +450,8 @@ class TestimonyViewSet(viewsets.ModelViewSet):
         except Exception:
             logger.exception("testimony analytics update failed")
 
+        # -------------------------------------------------
+        # 3) Normal response
+        # -------------------------------------------------
         serializer = self.get_serializer(obj)
         return Response(serializer.data)

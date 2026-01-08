@@ -686,7 +686,19 @@ class VisitorProfileViewSet(viewsets.GenericViewSet):
 
         owner_ct = ContentType.objects.get_for_model(member.__class__)
         return base.filter(content_type_id=owner_ct.id, object_id=member.id)
-    
+
+    # Helpers -----------------------------------------------------
+    def _with_profile_gate(self, data, user, reason):
+        """
+        Attach profile_gate to a limited serializer response.
+        """
+        data["profile_gate"] = {
+            "key": "profile_privacy_redirect",
+            "reason": reason,  # e.g. private_profile | hidden_by_confidants | account_paused
+            "redirect_to": f"/lit/{user.username}",
+        }
+        return data
+
     # Profile -----------------------------------------------------
     @action(detail=False, methods=["get"], url_path=r'profile/(?P<username>[^/]+)')
     def profile(self, request, username=None):
@@ -694,60 +706,110 @@ class VisitorProfileViewSet(viewsets.GenericViewSet):
         GET /profiles/members/profile/<username>/
 
         Policy:
-          - Deleted         -> 404 (no data)
-          - Suspended       -> Limited only (non-punitive)
-          - Paused          -> Limited only
-          - Hidden-by-conf. -> Limited; confidant sees Public
-          - Privacy-on      -> Limited; friend sees Public
-          - Default         -> Public
+        - Deleted         -> 404
+        - Suspended       -> Limited (+ gate)
+        - Paused          -> Limited (+ gate)
+        - Hidden-by-conf. -> Limited (+ gate); confidant sees Public
+        - Privacy-on      -> Limited (+ gate); friend sees Public
+        - Default         -> Public
         """
         member = self._get_member(username)
         user = member.user
-
-        # 0) Hard-deleted => pretend not found
-        if getattr(user, "is_deleted", False):
-            return Response({"error": "Member not found"}, status=status.HTTP_404_NOT_FOUND)
-
         viewer = request.user if request.user.is_authenticated else None
 
-        # 1) Suspended => Limited only (protective, not punitive)
+        # -------------------------------------------------
+        # 0) Hard deleted -> 404
+        # -------------------------------------------------
+        if getattr(user, "is_deleted", False):
+            return Response(
+                {"error": "Member not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # -------------------------------------------------
+        # 1) Suspended -> Limited (+ gate)
+        # -------------------------------------------------
         if getattr(user, "is_suspended", False):
-            data = LimitedMemberSerializer(member, context={"request": request}).data
-            return Response(data, status=status.HTTP_200_OK)
+            data = LimitedMemberSerializer(
+                member, context={"request": request}
+            ).data
+            return Response(
+                self._with_profile_gate(
+                    data,
+                    user,
+                    reason="account_suspended",
+                ),
+                status=status.HTTP_200_OK,
+            )
 
-        # 2) Paused => Limited only
+        # -------------------------------------------------
+        # 2) Account paused -> Limited (+ gate)
+        # -------------------------------------------------
         if getattr(user, "is_account_paused", False):
-            data = LimitedMemberSerializer(member, context={"request": request}).data
-            return Response(data, status=status.HTTP_200_OK)
+            data = LimitedMemberSerializer(
+                member, context={"request": request}
+            ).data
+            return Response(
+                self._with_profile_gate(
+                    data,
+                    user,
+                    reason="account_paused",
+                ),
+                status=status.HTTP_200_OK,
+            )
 
-        # 3) Hidden by confidants => Limited; confidant can see Public
+        # -------------------------------------------------
+        # 3) Hidden by confidants
+        # -------------------------------------------------
         if getattr(member, "is_hidden_by_confidants", False):
             if self._is_confidant(viewer, member):
-                data = PublicMemberSerializer(member, context={"request": request}).data
-            else:
-                data = LimitedMemberSerializer(member, context={"request": request}).data
-            return Response(data, status=status.HTTP_200_OK)
-
-        # 4) Privacy-on => Limited; friend can see Public 
-        if getattr(member, "is_privacy", False):
-            if self._is_friend(viewer, user):
-                data = PublicMemberSerializer(member, context={"request": request}).data
+                data = PublicMemberSerializer(
+                    member, context={"request": request}
+                ).data
                 return Response(data, status=status.HTTP_200_OK)
 
-            # 👇 Limited + profile redirect intent
-            data = LimitedMemberSerializer(member, context={"request": request}).data
+            data = LimitedMemberSerializer(
+                member, context={"request": request}
+            ).data
+            return Response(
+                self._with_profile_gate(
+                    data,
+                    user,
+                    reason="hidden_by_confidants",
+                ),
+                status=status.HTTP_200_OK,
+            )
 
-            data["profile_gate"] = {
-                "key": "profile_privacy_redirect",
-                "reason": "private_profile",
-                "redirect_to": f"/lit/{user.username}",
-            }
+        # -------------------------------------------------
+        # 4) Privacy enabled
+        # -------------------------------------------------
+        if getattr(member, "is_privacy", False):
+            if self._is_friend(viewer, user):
+                data = PublicMemberSerializer(
+                    member, context={"request": request}
+                ).data
+                return Response(data, status=status.HTTP_200_OK)
 
-            return Response(data, status=status.HTTP_200_OK)
+            data = LimitedMemberSerializer(
+                member, context={"request": request}
+            ).data
+            return Response(
+                self._with_profile_gate(
+                    data,
+                    user,
+                    reason="private_profile",
+                ),
+                status=status.HTTP_200_OK,
+            )
 
-        # 5) Default => Public
-        data = PublicMemberSerializer(member, context={"request": request}).data
+        # -------------------------------------------------
+        # 5) Default -> Public
+        # -------------------------------------------------
+        data = PublicMemberSerializer(
+            member, context={"request": request}
+        ).data
         return Response(data, status=status.HTTP_200_OK)
+
 
     # Moments -----------------------------------------------------
     @action(detail=False, methods=["get"], url_path=r'profile/(?P<username>[^/]+)/moments')

@@ -89,7 +89,7 @@ app.conf.beat_schedule = {
     },
     
     'delete-abandoned-users-daily': {
-        'task': 'accounts.tasks.delete_abandoned_users',
+        'task': 'apps.accounts.tasks.delete_abandoned_users',
         'schedule': crontab(hour=3, minute=0),  # هر روز ساعت ۳ صبح
     },
 

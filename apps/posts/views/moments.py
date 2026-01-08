@@ -20,13 +20,13 @@ from apps.core.pagination import ConfigurablePagination, FeedCursorPagination
 from apps.core.feed.trending import TrendingEngine
 from apps.core.feed.hybrid import HybridFeedEngine
 from apps.core.feed.personalized_trending import PersonalizedTrendingEngine
-
+from apps.core.ownership.owner_gate_mixins import OwnerGateMixin
 from apps.core.visibility.constants import VISIBILITY_GLOBAL
 
 import logging
 logger = logging.getLogger(__name__)
 
-class MomentViewSet(viewsets.ModelViewSet):
+class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
     """
     Moment API
     -------------------------
@@ -255,29 +255,30 @@ class MomentViewSet(viewsets.ModelViewSet):
     def retrieve(self, request, *args, **kwargs):
         obj = self.get_object()
 
-        # Single source of truth (+ frontend-friendly hint)
+        # 0) HARD owner-level gate
+        self.apply_hard_owner_gate(request, obj)
+
+        # 1) Visibility gate (existing behavior)
         reason = VisibilityPolicy.gate_reason(viewer=request.user, obj=obj)
         if reason is not None:
-            # Return a safe hint without leaking content
             return Response(
                 {
                     "detail": "Access restricted.",
-                    "code": reason,  # "login_required" | "forbidden" | "hidden"
+                    "code": reason,
                     "content_type": "moment",
                     "slug": obj.slug,
                 },
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # Analytics must never crash request
+        # 2) Analytics
         try:
             Moment.objects.filter(pk=obj.pk).update(
                 view_count_internal=F("view_count_internal") + 1,
                 last_viewed_at=timezone.now(),
             )
         except Exception:
-            logger.exception("🔥 moment analytics update failed")
+            logger.exception("moment analytics update failed")
 
         serializer = self.get_serializer(obj)
         return Response(serializer.data)
-    
