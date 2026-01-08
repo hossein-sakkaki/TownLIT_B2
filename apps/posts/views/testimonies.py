@@ -7,9 +7,9 @@ from django.db.models import F
 
 from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated, AllowAny    
-
-from rest_framework.decorators import action
+from rest_framework import status
 from rest_framework.response import Response
+from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, NotFound
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
@@ -236,12 +236,109 @@ class TestimonyViewSet(viewsets.ModelViewSet):
             "written": pack(Testimony.TYPE_WRITTEN),
         })
 
+    def _resolve_owner_object(self, obj):
+        """
+        Resolve owner object from (content_type, object_id).
+        Returns model instance (e.g., Member / Organization / CustomUser) or None.
+        """
+        try:
+            ct = obj.content_type
+            if not ct or not obj.object_id:
+                return None
+
+            model_cls = ct.model_class()
+            if not model_cls:
+                return None
+
+            return model_cls.objects.filter(pk=obj.object_id).first()
+        except Exception:
+            logger.exception("Failed to resolve testimony owner object")
+            return None
+
+
+    def _resolve_owner_user_and_member(self, obj):
+        """
+        Normalize owner into:
+        - owner_user: CustomUser or None
+        - owner_member: Member or None (where is_privacy lives)
+        - owner_obj: raw resolved owner object (Member/Org/User/...)
+        """
+        owner_obj = self._resolve_owner_object(obj)
+        if not owner_obj:
+            return None, None, None
+
+        # Case A) owner is Member -> user lives on member.user
+        # NOTE: adjust attribute name if your Member uses a different field name
+        if hasattr(owner_obj, "user"):
+            owner_user = getattr(owner_obj, "user", None)
+            owner_member = owner_obj  # privacy is on Member itself
+            return owner_user, owner_member, owner_obj
+
+        # Case B) owner is CustomUser directly -> member is user.member_profile
+        try:
+            from apps.accounts.models import CustomUser  # adjust if needed
+            if isinstance(owner_obj, CustomUser):
+                owner_user = owner_obj
+                owner_member = getattr(owner_user, "member_profile", None)  # related_name you mentioned ✅
+                return owner_user, owner_member, owner_obj
+        except Exception:
+            logger.exception("CustomUser import/type check failed")
+
+        # Other owners (Organization, GuestUser, etc.)
+        return None, None, owner_obj
+
+
+
     # -------------------------------------------------
     # Retrieve (public-safe, analytics counted)
     # -------------------------------------------------
     def retrieve(self, request, *args, **kwargs):
         obj = self.get_object()
 
+        # -------------------------------------------------
+        # 0) Profile-privacy redirect gate (anon/outsiders)
+        # -------------------------------------------------
+        try:
+            viewer = request.user if request.user.is_authenticated else None
+
+            owner_user, owner_member, owner_obj = self._resolve_owner_user_and_member(obj)
+
+            # Debug prints (temporary)
+            print("owner_obj:", type(owner_obj).__name__ if owner_obj else None)
+            print("owner_user:", getattr(owner_user, "username", None) if owner_user else None)
+            print("owner_member_privacy:", getattr(owner_member, "is_privacy", None) if owner_member else None)
+
+            # Only apply when we have a member privacy flag + a user username
+            if owner_user and owner_member and getattr(owner_member, "is_privacy", False):
+                # Owner can view
+                if viewer and viewer.id == owner_user.id:
+                    pass
+                else:
+                    # Optional friend check (if you have it)
+                    is_friend = False
+                    try:
+                        # is_friend = self._is_friend(viewer, owner_user)
+                        pass
+                    except Exception:
+                        logger.exception("Friendship check failed")
+
+                    if not is_friend:
+                        return Response(
+                            {
+                                "profile_gate": {
+                                    "key": "profile_privacy_redirect",
+                                    "reason": "private_profile",
+                                    "redirect_to": f"/lit/{owner_user.username}",
+                                }
+                            },
+                            status=status.HTTP_200_OK,
+                        )
+        except Exception:
+            logger.exception("profile_gate check failed")
+
+        # -------------------------------------------------
+        # 1) Visibility gate (content-level policy)
+        # -------------------------------------------------
         reason = VisibilityPolicy.gate_reason(viewer=request.user, obj=obj)
         if reason is not None:
             return Response(
@@ -254,14 +351,16 @@ class TestimonyViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # Analytics safe
+        # -------------------------------------------------
+        # 2) Analytics (safe)
+        # -------------------------------------------------
         try:
             Testimony.objects.filter(pk=obj.pk).update(
                 view_count_internal=F("view_count_internal") + 1,
                 last_viewed_at=timezone.now(),
             )
         except Exception:
-            logger.exception("🔥 testimony analytics update failed")
+            logger.exception("testimony analytics update failed")
 
         serializer = self.get_serializer(obj)
         return Response(serializer.data)
