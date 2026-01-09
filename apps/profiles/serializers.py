@@ -12,15 +12,15 @@ from .models import (
                 SpiritualGift, SpiritualGiftSurveyQuestion, SpiritualGiftSurveyResponse, MemberSpiritualGifts,
                 SpiritualService
             )
+from django.db.models.functions import Lower
 from .helpers import (
-    testimonies_for_member,
     social_links_for_user,
     fellowships_visible,
-    randomized_friends_for_member,
-    journey_weights_for,
-    friends_queryset_for,
     humanize_service_code,
 )
+
+from apps.profiles.friends_priority.service import get_friends_for_profile
+
 from apps.profilesOrg.serializers_min import SimpleOrganizationSerializer
 from apps.accounts.models import SocialMediaLink
 from apps.core.ownership.utils import resolve_owner_from_request
@@ -445,6 +445,7 @@ class MemberServiceTypeSerializer(DocumentFileMixin, serializers.ModelSerializer
 # -----------------------------------------------------------------------
 class FriendsBlockMixin:
     """Reusable friends getter for serializers with Member obj + request in context."""
+
     def _build_friends_payload(self, member_obj):
         request = self.context.get("request")
         q = getattr(request, "query_params", {}) if request else {}
@@ -458,25 +459,20 @@ class FriendsBlockMixin:
         except (TypeError, ValueError):
             limit = None
 
-        if not random_flag:
-            qs = friends_queryset_for(member_obj.user).annotate(
-                username_lower=Lower('username')
-            ).order_by('username_lower')
-            if isinstance(limit, int) and limit > 0:
-                qs = qs[:limit]
-            return SimpleCustomUserSerializer(qs, many=True, context=self.context).data
+        try:
+            friends = get_friends_for_profile(
+                member_obj.user,
+                random=random_flag,
+                daily=daily_flag,
+                seed=seed,
+                limit=limit,
+            )
+            return SimpleCustomUserSerializer(friends, many=True, context=self.context).data
+        except Exception:
+            # Never break profile response
+            logger.exception("friends block failed for user_id=%s", getattr(member_obj.user, "id", None))
+            return []
 
-        base_ids = list(friends_queryset_for(member_obj.user).values_list("id", flat=True))
-        j_weights = journey_weights_for(member_obj.user, base_ids)
-
-        ordered = randomized_friends_for_member(
-            member_obj.user,
-            daily=daily_flag,
-            seed=seed,
-            limit=limit,
-            journey_weight_map=j_weights,
-        )
-        return SimpleCustomUserSerializer(ordered, many=True, context=self.context).data
 
 # MEMBER Serializer ------------------------------------------------------------------------------
 def _titleize_slug(value: str) -> str:
@@ -520,7 +516,7 @@ class MemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
             'is_townlit_verified', 'townlit_verified_at',
             'is_privacy', 'is_migrated', 'is_active', 
             'litcovenant', 'spiritual_gifts',
-             'friends',
+            'friends',
         ]
         read_only_fields = [
             'register_date', 'is_migrated', 'is_active',

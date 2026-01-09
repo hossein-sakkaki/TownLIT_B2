@@ -1224,8 +1224,6 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-
-
     # ------------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['get'], url_path='sent-requests', permission_classes=[IsAuthenticated])
     def sent_requests(self, request):
