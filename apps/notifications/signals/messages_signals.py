@@ -1,7 +1,7 @@
 # apps/notifications/signals/messages_signals.py
 
 import logging
-from django.db.models.signals import post_save
+from django.db.models.signals import post_save 
 from django.dispatch import receiver
 
 from apps.conversation.models import Message

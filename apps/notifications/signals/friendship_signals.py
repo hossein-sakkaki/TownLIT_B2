@@ -28,7 +28,7 @@ def friendship_notifications(sender, instance, created, **kwargs):
             "friendship_id": friendship_id,
             "status": status,
             "relation": "friend",
-        }
+        } 
 
         # ----------------------------------------------------
         # 1️⃣ Request Sent
@@ -38,7 +38,7 @@ def friendship_notifications(sender, instance, created, **kwargs):
                 recipient=to_user,
                 actor=from_user,
                 notif_type="friend_request_received",
-                message=f"{from_user.username} sent you a friend request.",
+                message=f"{from_user.username} has reached out to walk this journey together with you on TownLIT ✨",
                 target_obj=instance,
                 action_obj=instance,
                 extra_payload=payload,
@@ -54,7 +54,7 @@ def friendship_notifications(sender, instance, created, **kwargs):
                 recipient=from_user,
                 actor=to_user,
                 notif_type="friend_request_accepted",
-                message=f"{to_user.username} accepted your friend request.",
+                message=f"{to_user.username} accepted your connection request — welcome to a new shared journey 🤍",
                 target_obj=instance,
                 action_obj=instance,
                 extra_payload=payload,
@@ -70,7 +70,7 @@ def friendship_notifications(sender, instance, created, **kwargs):
                 recipient=from_user,
                 actor=to_user,
                 notif_type="friend_request_declined",
-                message=f"{to_user.username} declined your friend request.",
+                message=f"{to_user.username} wasn’t able to accept your connection request right now.",
                 target_obj=instance,
                 action_obj=instance,
                 extra_payload=payload,
@@ -86,7 +86,7 @@ def friendship_notifications(sender, instance, created, **kwargs):
                 recipient=to_user,
                 actor=from_user,
                 notif_type="friend_request_cancelled",
-                message=f"{from_user.username} cancelled the friend request.",
+                message=f"{from_user.username} decided not to continue the connection request.",
                 target_obj=instance,
                 action_obj=instance,
                 extra_payload=payload,
@@ -102,7 +102,7 @@ def friendship_notifications(sender, instance, created, **kwargs):
                 recipient=to_user,
                 actor=from_user,
                 notif_type="friendship_deleted",
-                message=f"{from_user.username} removed you from their friend list.",
+                message=f"Paths sometimes change between you and {from_user.username}, but your journey continues — may new connections bring light and encouragement 🤍",
                 target_obj=instance,
                 action_obj=instance,
                 extra_payload=payload,

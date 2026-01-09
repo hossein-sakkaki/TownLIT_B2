@@ -76,7 +76,6 @@ def _classify_moment_kind(moment: Moment) -> str:
         return "video"
     return "image"
 
-
 def _pick_notif_type(kind: str) -> str:
     return (
         "new_moment_video"
@@ -84,12 +83,19 @@ def _pick_notif_type(kind: str) -> str:
         else "new_moment_image"
     )
 
-
 def _build_message(author, kind: str) -> str:
     username = getattr(author, "username", "Someone")
+
     if kind == "video":
-        return f"{username} shared a new video moment"
-    return f"{username} shared a new image moment"
+        return (
+            f"{username} shared a moment — "
+            f"a glimpse of life, meaning, and presence in motion ✨"
+        )
+
+    return (
+        f"{username} shared a moment — "
+        f"a quiet glimpse of life worth pausing for ✨"
+    )
 
 
 # ---------------------------------------------------------

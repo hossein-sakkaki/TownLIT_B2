@@ -206,19 +206,33 @@ def _pick_notif_type_for_kind(kind: str) -> str:
 
 def _build_notification_message(author: CustomUser, kind: str) -> str:
     """
-    Human-readable message for notification – include testimony type.
+    Brand-aligned, warm notification message for shared testimonies.
     """
     username = getattr(author, "username", "Someone")
 
     if kind == "audio":
-        return f"New audio testimony from {username}"
-    if kind == "video":
-        return f"New video testimony from {username}"
-    if kind == "written":
-        return f"New written testimony from {username}"
+        return (
+            f"{username} has shared an audio testimony — "
+            f"a living voice of faith, hope, and reflection 🤍"
+        )
 
-    # Fallback – should not happen, but safe
-    return f"New testimony from {username}"
+    if kind == "video":
+        return (
+            f"{username} has shared a video testimony — "
+            f"a moment of truth and light worth witnessing 🤍"
+        )
+
+    if kind == "written":
+        return (
+            f"{username} has shared a written testimony — "
+            f"words shaped by journey, grace, and faith 🤍"
+        )
+
+    # Fallback – safe and brand-consistent
+    return (
+        f"{username} has shared a testimony — "
+        f"a glimpse of light from a living journey 🤍"
+    )
 
 
 # ---------------------------------------------------------

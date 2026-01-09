@@ -75,7 +75,9 @@ def on_comment_created(sender, instance: Comment, created, **kwargs):
                 recipient=post_owner,
                 actor=actor,
                 notif_type="new_comment",
-                message=f"{actor.username} commented on your post.",
+                message=(
+                    f"{actor.username} left a thoughtful note on your shared moment 🤍"
+                ),
                 target_obj=root_target,      # ✅ ALWAYS ROOT
                 action_obj=instance,         # ✅ comment itself
                 extra_payload={
@@ -98,7 +100,9 @@ def on_comment_created(sender, instance: Comment, created, **kwargs):
                 recipient=original_author,
                 actor=actor,
                 notif_type="new_reply",
-                message=f"{actor.username} replied to your comment.",
+                message=(
+                    f"{actor.username} continued the conversation you began 🤍"
+                ),
                 target_obj=root_target,   # ✅ ROOT (not parent)
                 action_obj=instance,
                 extra_payload={
@@ -117,7 +121,9 @@ def on_comment_created(sender, instance: Comment, created, **kwargs):
                 recipient=post_owner,
                 actor=actor,
                 notif_type="new_reply_post_owner",
-                message=f"{actor.username} replied to a comment on your post.",
+                message=(
+                    f"{actor.username} joined the conversation unfolding around your shared moment ✨"
+                ),
                 target_obj=root_target,   # ✅ ROOT
                 action_obj=instance,
                 extra_payload={

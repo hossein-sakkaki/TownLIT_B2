@@ -14,15 +14,47 @@ logger = logging.getLogger(__name__)
 # reaction_type -> (message suffix, notif_type)
 # ----------------------------------------------------
 REACTION_MAP = {
-    "like":          ("liked your post",              "new_reaction_like"),
-    "bless":         ("sent you a blessing",          "new_reaction_bless"),
-    "gratitude":     ("expressed gratitude",          "new_reaction_gratitude"),
-    "amen":          ("said Amen to your post",       "new_reaction_amen"),
-    "encouragement": ("encouraged your post",         "new_reaction_encouragement"),
-    "empathy":       ("expressed empathy",            "new_reaction_empathy"),
-    "faithfire":     ("was inspired by your faith",   "new_reaction_faithfire"),
-    "support":       ("stands with you in support",   "new_reaction_support"),
+    "like": (
+        "noticed and appreciated what you shared",
+        "new_reaction_like",
+    ),
+
+    "bless": (
+        "sent a prayerful blessing your way",
+        "new_reaction_bless",
+    ),
+
+    "gratitude": (
+        "responded with gratitude to your sharing",
+        "new_reaction_gratitude",
+    ),
+
+    "amen": (
+        "said Amen in agreement with your heart",
+        "new_reaction_amen",
+    ),
+
+    "encouragement": (
+        "offered words of encouragement on your journey",
+        "new_reaction_encouragement",
+    ),
+
+    "empathy": (
+        "responded with empathy and understanding",
+        "new_reaction_empathy",
+    ),
+
+    "faithfire": (
+        "was stirred in faith by what you shared",
+        "new_reaction_faithfire",
+    ),
+
+    "support": (
+        "stood with you in support",
+        "new_reaction_support",
+    ),
 }
+
 
 
 def _reaction_template(username: str, reaction_code: str):
