@@ -1,10 +1,8 @@
+# utils/common/utils.py
+
 import logging
 logger = logging.getLogger(__name__)
 from django.conf import settings
-
-
-# MAIN URL ------------------------------------------------------------------
-MAIN_URL = 'http://localhost:3000'
 
 
 # FILE DIRECTION Handler ------------------------------------------

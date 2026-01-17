@@ -74,7 +74,7 @@ from apps.profiles.models import Member, GuestUser
 from apps.conversation.models import Message, MessageEncryption
 from apps.main.models import TermsAndPolicy, UserAgreement
 from apps.communication.models import ExternalContact
-from utils.common.utils import create_active_code, MAIN_URL
+from utils.common.utils import create_active_code
 from utils.common.ip import get_client_ip, get_location_from_ip
 from utils.email.email_tools import send_custom_email
 from utils.security.destructive_actions import handle_destructive_pin_actions
@@ -750,7 +750,7 @@ class AuthViewSet(viewsets.ViewSet):
                 user.reset_token = reset_token
                 user.reset_token_expiration = expiration_time
                 user.save()
-                reset_link = f'{MAIN_URL}/reset-password/{reset_token}/'
+                reset_link = f'{settings.SITE_URL}/reset-password/{reset_token}/' 
                 
                 # Send reset your password link via email
                 subject = "Password Reset Link"

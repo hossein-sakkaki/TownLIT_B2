@@ -10,21 +10,30 @@ from common.file_handlers.media_mixins import (
     VideoFileMixin,
     ThumbnailFileMixin,
 )
+from apps.posts.serializers.common import FilterNoneListSerializer
 from .serializers_owner_min import build_owner_dto_from_content_object
+from apps.media_conversion.services.serializer_gate import gate_media_payload
+from apps.core.ownership.utils import resolve_owner_from_request
+
 import logging
 logger = logging.getLogger(__name__)
 
 class MomentSerializer(
     InstanceTargetMixin,
-    ImageFileMixin,
+    ImageFileMixin, 
     VideoFileMixin,
     ThumbnailFileMixin,
     serializers.ModelSerializer,
 ):
     owner = serializers.SerializerMethodField(read_only=True)
 
+    # thumbnail is generated automatically during video conversion
+    # DO NOT require thumbnail on upload for Moment
+    thumbnail = serializers.ImageField(required=False, allow_null=True, use_url=True)
+
     class Meta:
         model = Moment
+        list_serializer_class = FilterNoneListSerializer
         fields = [
             "id",
             "slug",
@@ -236,16 +245,51 @@ class MomentSerializer(
 
 
     # -------------------------------------------------
-    # Representation hardening (Visitor-safe)
+    # Representation hardening (SAFE)
     # -------------------------------------------------
-    def to_representation(self, instance):
-        data = super().to_representation(instance)
-
+    def to_representation(self, obj):
         request = self.context.get("request")
-        is_visitor = not (request and request.user and request.user.is_authenticated)
+        viewer = request.user if request and request.user.is_authenticated else None
 
-        if is_visitor:
-            # Hide internal / moderation / tuning fields
+        # -------------------------------------------------
+        # 🔐 HARD MEDIA VISIBILITY GATE (Moment)
+        # -------------------------------------------------
+        if obj.video and not obj.is_converted:
+            owner = resolve_owner_from_request(request) if request else None
+
+            # 🚫 visitor: completely invisible
+            if not owner or (
+                obj.content_type_id
+                != ContentType.objects.get_for_model(owner.__class__).id
+                or obj.object_id != owner.id
+            ):
+                return None
+
+        # 👇 IMPORTANT: do NOT return None for owner
+        data = super().to_representation(obj)
+
+        # -------------------------------------------------
+        # 🧠 OWNER conversion-safe payload
+        # -------------------------------------------------
+        if obj.video and not obj.is_converted:
+            # 1) strip unsafe media fields
+            data["video"] = None
+            data["thumbnail"] = None
+
+            # 2) attach conversion job metadata
+            data = gate_media_payload(
+                obj=obj,
+                data=data,
+                viewer=viewer,
+                field_name="video",
+                require_job=True,
+                include_job_target=True,
+            )
+
+        # -------------------------------------------------
+        # Visitor hardening
+        # -------------------------------------------------
+        if not viewer:
             data.pop("visibility", None)
             data.pop("is_hidden", None)
             data.pop("reactions_breakdown", None)

@@ -52,6 +52,7 @@ from .serializers import (
                 )
 from apps.accounts.serializers import SimpleCustomUserSerializer
 from apps.profiles.services.listing import build_friends_list
+from apps.media_conversion.services.readiness import get_media_ready_state  
 
 from validators.user_validators import validate_phone_number
 from django.core.exceptions import ValidationError
@@ -61,6 +62,8 @@ from django.template.loader import render_to_string
 from services.friendship_suggestions import suggest_friends_for_friends_tab, suggest_friends_for_requests_tab
 from django.contrib.auth import get_user_model
 from apps.core.pagination import ConfigurablePagination
+
+
 import logging
 CustomUser = get_user_model()
 logger = logging.getLogger(__name__)
@@ -560,42 +563,90 @@ The TownLIT Team 🌍
     # My Testimonies Summary -----------------------------------------------------------------
     @action(detail=False, methods=['get'], url_path='my-testimonies-summary',permission_classes=[IsAuthenticated])
     def my_testimonies_summary(self, request):
-        """
-        Lightweight proxy to return audio/video/written summary for current member.
-        No CRUD here; use MeTestimonyViewSet for create/update/delete.
-        """
         from apps.posts.models.testimony import Testimony
-        from django.contrib.contenttypes.models import ContentType
-        member = getattr(request.user, 'member_profile', None) or getattr(request.user, 'member', None)
+
+        member = getattr(request.user, "member_profile", None) or getattr(request.user, "member", None)
         if not member:
             return Response(
-                {"type": "about:blank", "title": "Not Found", "status": 404,
-                 "detail": "Profile not found."},
+                {"type": "about:blank", "title": "Not Found", "status": 404, "detail": "Profile not found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        ct = ContentType.objects.get_for_model(Member)
+        ct = ContentType.objects.get_for_model(Member, for_concrete_model=False)
         base_qs = Testimony.objects.filter(content_type=ct, object_id=member.id, is_active=True)
 
-        def pack(ttype):
+        def pack_written(t: Testimony):
+            # Written is not conversion-dependent
+            return {
+                "exists": True,
+                "type": Testimony.TYPE_WRITTEN,
+                "id": t.id,
+                "slug": t.slug,
+                "title": t.title,
+                "published_at": t.published_at,
+                "converting": False,
+                "excerpt": (t.content[:140] + "…") if t.content and len(t.content) > 140 else (t.content or ""),
+            }
+
+        def pack_media(ttype: str, field_name: str):
             t = base_qs.filter(type=ttype).first()
             if not t:
                 return {"exists": False}
-            data = {"exists": True, "id": t.id, "title": t.title, "published_at": t.published_at}
-            if ttype == Testimony.TYPE_WRITTEN:
-                data["excerpt"] = (t.content[:140] + '…') if t.content and len(t.content) > 140 else t.content
-            elif ttype == Testimony.TYPE_AUDIO:
-                data["audio_key"] = getattr(t.audio, 'name', None)
-            elif ttype == Testimony.TYPE_VIDEO:
-                data["video_key"] = getattr(t.video, 'name', None)
-            return data
 
-        return Response({
-            "audio":   pack(Testimony.TYPE_AUDIO),
-            "video":   pack(Testimony.TYPE_VIDEO),
-            "written": pack(Testimony.TYPE_WRITTEN),
-        }, status=status.HTTP_200_OK)
+            # ✅ require_job=True => missing job = NOT ready (prevents race leaks)
+            st = get_media_ready_state(t, field_name, require_job=True)
 
+            if not st.ready:
+                # 🚫 Do NOT send testimony payload while converting
+                # (no id, slug, title, keys, urls, thumbnail, etc.)
+                return {
+                    "exists": False,                 # prevents "ready card" UI paths
+                    "type": ttype,
+                    "converting": True,
+                    "ready_status": st.status,
+                    "job_id": st.job_id,
+                    # ✅ only what conversion panel needs
+                    "job_target": {
+                        "content_type_model": "posts.testimony",  # must match jobs API
+                        "object_id": t.id,                        # testimony id is OK (not playable)
+                        "field_name": field_name,
+                    },
+                }
+
+            # ✅ Ready: now safe to return minimal identifiers
+            out = {
+                "exists": True,
+                "type": ttype,
+                "id": t.id,
+                "slug": t.slug,
+                "title": t.title,
+                "published_at": t.published_at,
+                "converting": False,
+                "ready_status": st.status,
+                "job_id": st.job_id,
+            }
+
+            # Keys are only meaningful when ready
+            if ttype == Testimony.TYPE_AUDIO:
+                out["audio_key"] = getattr(t.audio, "name", None)
+            else:
+                out["video_key"] = getattr(t.video, "name", None)
+
+            return out
+
+        # pick written once
+        written = base_qs.filter(type=Testimony.TYPE_WRITTEN).first()
+
+        return Response(
+            {
+                "audio": pack_media(Testimony.TYPE_AUDIO, "audio"),
+                "video": pack_media(Testimony.TYPE_VIDEO, "video"),
+                "written": pack_written(written) if written else {"exists": False},
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    # Action for Delete Academic Record -----------------------------------------------------------------------------------
     @action(detail=False, methods=['delete'], url_path='delete-academic-record', permission_classes=[IsAuthenticated])
     def delete_academic_record(self, request):
         """Allow user to delete their academic record."""
@@ -667,15 +718,18 @@ class VisitorProfileViewSet(viewsets.GenericViewSet):
             status__iexact='accepted',
         ).exists()
 
+
+    # -------------------------------------------------------------
+    # Visibility gate (Visitor profile moments)
+    # -------------------------------------------------------------
     def _visible_moments_qs(self, request, member):
-        """Return moments for this member respecting visibility."""
         base = (
             Moment.objects
             .select_related("content_type")
             .order_by("-published_at", "-id")
         )
 
-        # Anonymous => GLOBAL only
+        # 1) Visibility gate
         if not request.user or not request.user.is_authenticated:
             base = base.filter(visibility=VISIBILITY_GLOBAL)
         else:
@@ -685,7 +739,21 @@ class VisitorProfileViewSet(viewsets.GenericViewSet):
             )
 
         owner_ct = ContentType.objects.get_for_model(member.__class__)
-        return base.filter(content_type_id=owner_ct.id, object_id=member.id)
+
+        qs = base.filter(
+            content_type_id=owner_ct.id,
+            object_id=member.id,
+        )
+
+        # 2) 🔐 HARD DOMAIN RULE (Moment video)
+        # Never expose video moments until conversion is DONE
+        # - blocks False and NULL (anything not True)
+        qs = qs.exclude(
+            Q(video__isnull=False) & ~Q(is_converted=True)
+        )
+
+        return qs
+    
 
     # Helpers -----------------------------------------------------
     def _with_profile_gate(self, data, user, reason):

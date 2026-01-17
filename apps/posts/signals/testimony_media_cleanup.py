@@ -1,17 +1,22 @@
 import logging
+import os
+
 from django.db import transaction
 from django.db.models.signals import post_delete, pre_save
 from django.dispatch import receiver
-
+from django.contrib.contenttypes.models import ContentType
+from apps.media_conversion.models import MediaConversionJob
+from django.core.files.storage import default_storage
 from apps.posts.models.testimony import Testimony
 
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------
+# Helper: delete a FileField from its storage (S3/local).
+# Safe: no raise if missing or delete fails.
+# ---------------------------------------------------------
 def _safe_delete_fieldfile(field, label: str):
-    """
-    Deletes underlying object from storage (S3/local), safe-no-raise.
-    """
     try:
         if not field:
             return
@@ -19,16 +24,69 @@ def _safe_delete_fieldfile(field, label: str):
         if not name:
             return
 
-        field.delete(save=False)  # deletes from storage, doesn't touch DB
-        logger.info("✅ Testimony media deleted (%s): %s", label, name)
+        storage = getattr(field, "storage", None)
+        key = str(name).lstrip("/")
+
+        # 1) delete the file itself (playlist/mp3/jpg/etc.)
+        field.delete(save=False)
+        logger.info("✅ Testimony media deleted (%s): %s", label, key)
+
+        # 2) if this is HLS master, also delete its folder (segments + variants)
+        if label == "video" and key.lower().endswith(".m3u8") and storage:
+            prefix = os.path.dirname(key)  # folder containing m3u8 + ts
+            _safe_delete_prefix(storage, prefix, "video-hls")
+
     except Exception:
-        logger.exception(
-            "❌ Failed deleting Testimony media (%s): %s",
-            label,
-            getattr(field, "name", None),
-        )
+        logger.exception("❌ Failed deleting Testimony media (%s): %s", label, getattr(field, "name", None))
+
+# ---------------------------------------------------------
+# Helper: delete ALL objects under a prefix on S3.
+# ---------------------------------------------------------
+def _safe_delete_prefix(storage, prefix: str, label: str):
+    """
+    Delete ALL objects under prefix on S3 (best-effort).
+    Requires S3 permissions: s3:ListBucket + s3:DeleteObject/DeleteObjects
+    """
+    try:
+        if not prefix:
+            return
+
+        # normalize
+        prefix = prefix.lstrip("/")
+        if not prefix.endswith("/"):
+            prefix += "/"
+
+        bucket = getattr(storage, "bucket", None)
+        if not bucket:
+            # not S3 storage (or no bucket handle)
+            return
+
+        # delete everything under that prefix
+        bucket.objects.filter(Prefix=prefix).delete()
+        logger.info("✅ Deleted S3 prefix (%s): %s", label, prefix)
+
+    except Exception:
+        logger.exception("❌ Failed deleting S3 prefix (%s): %s", label, prefix)
 
 
+# ---------------------------------------------------------
+# Helper: delete a key from its storage (S3/local).
+# ---------------------------------------------------------
+def _safe_delete_storage_key(key: str, label: str):
+    try:
+        if not key:
+            return
+        key = str(key).lstrip("/")
+        if default_storage.exists(key):
+            default_storage.delete(key)
+            logger.info("✅ Deleted storage key (%s): %s", label, key)
+    except Exception:
+        logger.exception("❌ Failed deleting storage key (%s): %s", label, key)
+
+
+# ---------------------------------------------------------
+# Signal handlers
+# ---------------------------------------------------------
 @receiver(pre_save, sender=Testimony, dispatch_uid="testimony.cleanup.media.replace.v1")
 def testimony_cleanup_media_on_replace(sender, instance: Testimony, **kwargs):
     """
@@ -76,12 +134,43 @@ def testimony_cleanup_media_on_replace(sender, instance: Testimony, **kwargs):
         logger.exception("🔥 Testimony pre_save cleanup failed")
 
 
+# ---------------------------------------------------------
+# Signal handlers (DELETE)
+# ---------------------------------------------------------
 @receiver(post_delete, sender=Testimony, dispatch_uid="testimony.cleanup.media.delete.v1")
 def testimony_cleanup_media_on_delete(sender, instance: Testimony, **kwargs):
-    """
-    When a Testimony row is deleted, also delete its media files from storage (S3).
-    """
+
     def _cleanup():
+        # ✅ 0) delete RAW/output paths recorded in MediaConversionJob (if any)
+        try:
+            ct = ContentType.objects.get_for_model(Testimony)
+            jobs_qs = MediaConversionJob.objects.filter(content_type=ct, object_id=instance.pk)
+            jobs = list(jobs_qs)  # freeze before delete
+
+            for job in jobs: 
+                # raw source
+                if job.source_path:
+                    _safe_delete_storage_key(job.source_path, label="job.source")
+
+                # output directory (HLS folder etc.)
+                if job.output_path:
+                    out = (job.output_path or "").lstrip("/")
+                    if out:
+                        if os.path.splitext(out)[1]:
+                            prefix = os.path.dirname(out)
+                        else:
+                            prefix = out.rstrip("/")
+                        if prefix:
+                            _safe_delete_prefix(default_storage, prefix, "job.output-prefix")
+
+            # ✅ finally: cleanup DB rows
+            jobs_qs.delete()
+            logger.info("✅ Deleted MediaConversionJob rows for testimony %s", instance.pk)
+
+        except Exception:
+            logger.exception("❌ Failed deleting MediaConversionJob paths for testimony %s", instance.pk)
+
+        # ✅ 1) delete model-linked fields
         _safe_delete_fieldfile(getattr(instance, "audio", None), "audio")
         _safe_delete_fieldfile(getattr(instance, "video", None), "video")
         _safe_delete_fieldfile(getattr(instance, "thumbnail", None), "thumbnail")

@@ -97,7 +97,28 @@ class MediaAutoConvertMixin:
                 return True
         return False
 
-    # ---------- main save ----------
+    
+    # -----------------------------------------------
+    # Optional hooks
+    # -----------------------------------------------
+    def media_autoconvert_enabled(self) -> bool:
+        """
+        Models can override per-instance.
+        Default: enabled.
+        """
+        return True
+
+    def after_autoconvert_save(self, *, is_new: bool, raw_changed: bool) -> None:
+        """
+        Optional post-save hook (runs after DB save, before on_commit enqueue).
+        Default: no-op.
+        """
+        return
+
+
+    # -----------------------------------------------
+    # MRO
+    # -----------------------------------------------
     def save(self, *args, **kwargs):
         is_new = getattr(self, "_state", None) and self._state.adding or kwargs.get("force_insert", False)
 
@@ -107,6 +128,16 @@ class MediaAutoConvertMixin:
                 hook()
             except Exception:
                 pass
+
+        # ✅ If autoconvert disabled for this instance, do normal save and exit
+        if not self.media_autoconvert_enabled():
+            super().save(*args, **kwargs)
+            self._media_orig_names = self._collect_current_media_names()
+            try:
+                self.after_autoconvert_save(is_new=is_new, raw_changed=False)
+            except Exception:
+                pass
+            return
     
         # mark not-converted only for create OR RAW change
         raw_changed = self._raw_media_changed()

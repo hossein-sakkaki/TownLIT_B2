@@ -456,6 +456,7 @@ class MomentAdmin(admin.ModelAdmin):
         "owner_display",
         "media_type",
         "visibility",
+        'is_converted',
         "is_active",
         "is_hidden",
         "is_suspended",
@@ -524,6 +525,7 @@ class MomentAdmin(admin.ModelAdmin):
                 "fields": (
                     "visibility",
                     "is_hidden",
+                    "is_converted",
                 )
             },
         ),

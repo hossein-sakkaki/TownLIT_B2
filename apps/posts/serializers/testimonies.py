@@ -6,6 +6,7 @@ import logging
 
 from apps.posts.models.testimony import Testimony
 from apps.core.visibility.constants import VISIBILITY_DEFAULT
+from apps.media_conversion.services.serializer_gate import gate_media_payload
 
 from common.file_handlers.media_mixins import (
     AudioFileMixin,
@@ -19,7 +20,7 @@ from .serializers_owner_min import build_owner_dto_from_content_object
 logger = logging.getLogger(__name__)
 
 
-class TestimonySerializer(
+class TestimonySerializer( 
     InstanceTargetMixin,
     AudioFileMixin,
     VideoFileMixin,
@@ -270,3 +271,39 @@ class TestimonySerializer(
 
         attrs["type"] = ttype
         return attrs
+
+    # -------------------------------------------------
+    # MEDIA READINESS GATE (serializer-level)
+    # -------------------------------------------------
+    def to_representation(self, obj):
+        request = self.context.get("request")
+        viewer = request.user if request and request.user.is_authenticated else None
+
+        # 🔐 HARD VISIBILITY GATE
+        if obj.type in (Testimony.TYPE_VIDEO, Testimony.TYPE_AUDIO):
+            # If NOT converted → object must be invisible to non-owner
+            if not obj.is_converted:
+                # Allow ONLY owner to see conversion state
+                owner = resolve_owner_from_request(request) if request else None
+
+                if not owner or (
+                    obj.content_type_id != ContentType.objects.get_for_model(owner.__class__).id
+                    or obj.object_id != owner.id
+                ):
+                    # 🚫 viewer should NOT see this testimony at all
+                    return None
+
+        data = super().to_representation(obj)
+
+        # OWNER ONLY: show conversion panel data
+        if obj.type in (Testimony.TYPE_VIDEO, Testimony.TYPE_AUDIO):
+            data = gate_media_payload(
+                obj=obj,
+                data=data,
+                viewer=viewer,
+                field_name="video" if obj.type == Testimony.TYPE_VIDEO else "audio",
+                require_job=True,
+                include_job_target=True,
+            )
+
+        return data

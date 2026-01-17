@@ -236,78 +236,51 @@ def _build_notification_message(author: CustomUser, kind: str) -> str:
 
 
 # ---------------------------------------------------------
-# Signal: on new testimony created
+# Domain hook: testimony is ready
 # ---------------------------------------------------------
-@receiver(post_save, sender=Testimony, dispatch_uid="notif.testimony_new_v2")
-def on_testimony_created(sender, instance: Testimony, created, **kwargs):
+def notify_testimony_ready(testimony: Testimony):
     """
-    When a new testimony is created and active, notify all accepted friends
-    of the owner user via:
-      - DB Notification
-      - WebSocket (Notification center)
-      - Push (FCM)
-      - Email
+    Send notifications when a testimony becomes fully available.
     """
 
-    if not created:
+    # ---- Domain guard ----
+    if not testimony.is_available():
         return
 
-    # Only notify for active & visible testimonies
-    if not instance.is_active or instance.is_hidden or instance.is_suspended:
-        logger.debug(
-            "[Notif][Testimony] Testimony %s is not public (active/hidden/suspended) → skip.",
-            instance.id,
-        )
+    if (
+        not testimony.is_active
+        or testimony.is_hidden
+        or testimony.is_suspended
+    ):
         return
 
-    # Resolve owner CustomUser
-    owner_user = _get_owner_user(instance)
+    owner_user = _get_owner_user(testimony)
     if not owner_user:
-        logger.debug(
-            "[Notif][Testimony] Could not resolve owner user for testimony %s → skip.",
-            instance.id,
-        )
         return
 
-    # Friends to notify
     recipients_qs = _get_accepted_friends(owner_user)
     if not recipients_qs.exists():
-        logger.debug(
-            "[Notif][Testimony] No accepted friends to notify for testimony %s.",
-            instance.id,
-        )
         return
 
-    kind = _classify_testimony_kind(instance)
+    kind = _classify_testimony_kind(testimony)
     notif_type = _pick_notif_type_for_kind(kind)
-    link = _build_testimony_link(instance)
+    link = _build_testimony_link(testimony)
+    message = _build_notification_message(owner_user, kind)
 
     for recipient in recipients_qs:
-        # Safety guard (should never be true, but just in case)
         if recipient.id == owner_user.id:
             continue
-
-        msg_text = _build_notification_message(owner_user, kind)
 
         create_and_dispatch_notification(
             recipient=recipient,
             actor=owner_user,
             notif_type=notif_type,
-            message=msg_text,
-            target_obj=instance,
+            message=message,
+            target_obj=testimony,
             action_obj=None,
             link=link,
             extra_payload={
-                "testimony_id": instance.id,
+                "testimony_id": testimony.id,
                 "kind": kind,
             },
-        )
-
-        logger.debug(
-            "[Notif][Testimony] %s (%s) → %s (testimony=%s, link=%s)",
-            notif_type,
-            kind,
-            recipient.username,
-            instance.id,
-            link,
         )

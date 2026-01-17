@@ -148,6 +148,8 @@ INSTALLED_APPS = [
     
     # pip install django-cors-headers
     'corsheaders',
+    "apps.media_conversion.apps.MediaConversionConfig",
+
 ]
 
 MIDDLEWARE = [

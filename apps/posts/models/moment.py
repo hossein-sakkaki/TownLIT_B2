@@ -14,13 +14,15 @@ from apps.core.visibility.mixins import VisibilityModelMixin
 from apps.core.moderation.mixins import ModerationTargetMixin
 from apps.core.interactions.mixins import InteractionCounterMixin
 from apps.core.interactions.models import ReactionBreakdownMixin
+from apps.core.availability.interfaces import AvailabilityAware
 
 from utils.common.utils import FileUpload
 
 from validators.mediaValidators.image_validators import validate_image_file, validate_image_size
 from validators.mediaValidators.video_validators import validate_moment_video_file
 from validators.security_validators import validate_no_executable_file
-
+import logging
+logger = logging.getLogger(__name__)
 
 class Moment(
     ModerationTargetMixin,        # 🔐 Sanctuary / moderation contract
@@ -30,6 +32,7 @@ class Moment(
     MediaAutoConvertMixin,        # 🎞️ RAW → converted detection
     MediaConversionMixin,         # 🔄 async conversion
     SlugMixin,
+    AvailabilityAware, 
     models.Model
 ):
     # -------------------------------------------------
@@ -133,6 +136,34 @@ class Moment(
             raise ValidationError(
                 "Moment requires an image or a video."
             )
+
+    # -------------------------------------------------
+    # Availability (Domain-level)
+    # -------------------------------------------------
+    def is_available(self) -> bool:
+        """
+        Moment is available when:
+        - Image exists (immediate)
+        - OR video exists AND conversion is finished
+        """
+        if self.image:
+            return True
+
+        if self.video and self.is_converted:
+            return True
+
+        return False
+
+    def on_available(self):
+        """
+        Called when the moment becomes fully available.
+        Responsible for triggering notifications.
+        """
+        from apps.notifications.signals.moment_signals import notify_moment_ready
+
+        notify_moment_ready(self)
+
+
 
     def get_slug_source(self):
         return f"moment-{self.published_at.strftime('%Y%m%d%H%M%S')}"

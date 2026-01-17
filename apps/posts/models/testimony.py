@@ -5,6 +5,7 @@ from django.utils import timezone
 from django.core.exceptions import ValidationError
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
+from django.db import transaction
 
 from utils.common.utils import FileUpload
 from utils.mixins.media_conversion import MediaConversionMixin
@@ -17,6 +18,8 @@ from apps.core.moderation.mixins import ModerationTargetMixin
 # 🔥 NEW: Interactions
 from apps.core.interactions.mixins import InteractionCounterMixin
 from apps.core.interactions.models import ReactionBreakdownMixin
+
+from apps.core.availability.interfaces import AvailabilityAware
 
 from validators.mediaValidators.audio_validators import validate_audio_file
 from validators.mediaValidators.video_validators import validate_testimony_video_file
@@ -38,6 +41,7 @@ class Testimony(
     MediaAutoConvertMixin,
     MediaConversionMixin,
     SlugMixin,
+    AvailabilityAware,
     models.Model,
 ):
   
@@ -219,6 +223,62 @@ class Testimony(
             raise ValidationError("Invalid testimony type.")
 
     # -------------------------------------------------
+    # Availability (Domain-level)
+    # -------------------------------------------------
+    def is_available(self) -> bool:
+        """
+        Testimony is available when:
+        - Written → always available
+        - Audio → audio exists AND converted
+        - Video → video exists AND converted
+        """
+        if self.type == self.TYPE_WRITTEN:
+            return True
+
+        if self.type == self.TYPE_AUDIO and self.audio and self.is_converted:
+            return True
+
+        if self.type == self.TYPE_VIDEO and self.video and self.is_converted:
+            return True
+
+        return False
+
+    def on_available(self):
+        """
+        Called once when testimony becomes available.
+        Responsible for triggering notifications.
+        """
+
+        # ✅ HARD idempotency at domain level
+        if getattr(self, "_availability_fired", False):
+            return
+
+        from apps.notifications.signals.testimony_signals import notify_testimony_ready
+        notify_testimony_ready(self)
+
+        # in-memory guard (same transaction / process)
+        self._availability_fired = True
+
+    # -------------------------------------------------
+    # Autoconvert
+    # -------------------------------------------------
+    def media_autoconvert_enabled(self) -> bool:
+        return self.type != self.TYPE_WRITTEN
+
+    def before_autoconvert_save(self):
+        self._ensure_default_title()
+        if self.type == self.TYPE_WRITTEN:
+            self.is_converted = True
+
+    def after_autoconvert_save(self, *, is_new: bool, raw_changed: bool) -> None:
+        if self.type != self.TYPE_WRITTEN:
+            return
+        if not is_new:
+            return
+
+        transaction.on_commit(lambda: self.on_available())
+
+    # -------------------------------------------------
     # Slug + defaults
     # -------------------------------------------------
     def _ensure_default_title(self):
@@ -232,6 +292,10 @@ class Testimony(
 
     def before_autoconvert_save(self):
         self._ensure_default_title()
+
+        # ✍️ Written testimony has NO conversion
+        if self.type == self.TYPE_WRITTEN:
+            self.is_converted = True
 
     def get_slug_source(self):
         if self.title and self.title.strip():

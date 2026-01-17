@@ -1,6 +1,6 @@
+# apps/media_conversion/services/ugc_policies.py
 from dataclasses import dataclass
 from typing import List, Optional
-from math import ceil
 
 
 @dataclass(frozen=True)
@@ -17,13 +17,18 @@ class VideoTier:
 
 @dataclass(frozen=True)
 class VideoPolicy:
+    # Duration rules
     min_duration_sec: int
     max_duration_sec: int
 
-    # If tiers provided, they override cap_mb/mb_per_minute
-    tiers: Optional[List[VideoTier]] = None
+    # FPS rules (NEW – backward compatible)
+    min_fps: Optional[int] = None
+    max_fps: Optional[int] = None
 
-    # Default non-tier policy (used when tiers is None)
+    # Tiered size rules
+    tiers: Optional[List["VideoTier"]] = None
+
+    # Default size rules (when tiers is None)
     cap_mb: Optional[int] = None
     mb_per_minute: Optional[int] = None
 
@@ -65,11 +70,19 @@ def compute_max_allowed_mb(duration_sec: float, policy: VideoPolicy) -> float:
 # Max size: min(210MB, 70MB * duration_minutes)
 # -------------------------------------------------
 MOMENT_VIDEO_POLICY = VideoPolicy(
-    min_duration_sec=60,
+    # Duration: short-form content
+    min_duration_sec=5,
     max_duration_sec=180,
-    cap_mb=210,
-    mb_per_minute=70,
+
+    # FPS: mobile-friendly, CPU-safe
+    min_fps=24,
+    max_fps=120,
+
+    # Size: dynamic cap
+    cap_mb=200,
+    mb_per_minute=60,
 )
+
 
 
 # -------------------------------------------------

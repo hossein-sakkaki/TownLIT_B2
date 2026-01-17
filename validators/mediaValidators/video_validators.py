@@ -16,8 +16,6 @@ from validators.mediaValidators.ugc_policies import (
     compute_max_allowed_mb,
 )
 
-MIN_FRAME_RATE = 24
-MAX_FRAME_RATE = 60
 
 
 def _format_mb(bytes_size: int) -> float:
@@ -98,9 +96,20 @@ def validate_video_file(value, policy: VideoPolicy = MOMENT_VIDEO_POLICY):
         r_frame_rate = stream.get("r_frame_rate") or ""
         frame_rate = _parse_frame_rate(r_frame_rate)
 
-        if frame_rate < MIN_FRAME_RATE or frame_rate > MAX_FRAME_RATE:
+        # -------------------------------------------------
+        # Frame rate policy (FPS) – POLICY DRIVEN
+        # -------------------------------------------------
+        min_fps = getattr(policy, "min_fps", None)
+        max_fps = getattr(policy, "max_fps", None)
+
+        if min_fps is not None and frame_rate < min_fps:
             raise ValidationError(
-                f"Frame rate {frame_rate:.2f} is not supported (must be between {MIN_FRAME_RATE} and {MAX_FRAME_RATE})."
+                f"Frame rate {frame_rate:.2f} is too low (minimum is {min_fps} fps)."
+            )
+
+        if max_fps is not None and frame_rate > max_fps:
+            raise ValidationError(
+                f"Frame rate {frame_rate:.2f} is not supported (maximum is {max_fps} fps)."
             )
 
         # duration

@@ -20,6 +20,7 @@ urlpatterns = [
 
     # 🔥 NEW: Interactions (reactions, comments, counters)
     path('interactions/', include('apps.core.interactions.urls')),
+    path("media-conversion/", include("apps.media_conversion.urls")),
     
     path('', include('apps.notifications.urls')),
 ]

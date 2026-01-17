@@ -814,17 +814,12 @@ class PublicMemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
         )
         return FellowshipSerializer(safe_qs, many=True, context=self.context).data
 
+
     # --- testimonies ---
     def get_testimonies(self, obj):
         try:
             request = self.context.get("request")
-
-            # ✅ viewer must be CustomUser, not Member
-            viewer = (
-                request.user
-                if request and request.user.is_authenticated
-                else None
-            )
+            viewer = request.user if request and request.user.is_authenticated else None
 
             qs = get_visible_posts(
                 model=Testimony,
@@ -837,22 +832,22 @@ class PublicMemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
 
             ctx = {"request": request} if request else {}
 
+            def serialize_or_none(instance: Testimony | None):
+                if not instance:
+                    return None
+
+                # ✅ Public rule:
+                # If media is not converted yet, DO NOT expose it at all.
+                # This prevents clickable empty poster + premature notifications/visibility.
+                if instance.type in [Testimony.TYPE_VIDEO, Testimony.TYPE_AUDIO] and not getattr(instance, "is_converted", False):
+                    return None
+
+                return TestimonySerializer(instance, context=ctx).data
+
             return {
-                "audio": (
-                    TestimonySerializer(pick(Testimony.TYPE_AUDIO), context=ctx).data
-                    if pick(Testimony.TYPE_AUDIO)
-                    else None
-                ),
-                "video": (
-                    TestimonySerializer(pick(Testimony.TYPE_VIDEO), context=ctx).data
-                    if pick(Testimony.TYPE_VIDEO)
-                    else None
-                ),
-                "written": (
-                    TestimonySerializer(pick(Testimony.TYPE_WRITTEN), context=ctx).data
-                    if pick(Testimony.TYPE_WRITTEN)
-                    else None
-                ),
+                "audio": serialize_or_none(pick(Testimony.TYPE_AUDIO)),
+                "video": serialize_or_none(pick(Testimony.TYPE_VIDEO)),
+                "written": serialize_or_none(pick(Testimony.TYPE_WRITTEN)),
             }
 
         except Exception as e:

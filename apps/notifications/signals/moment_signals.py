@@ -155,49 +155,47 @@ def _build_moment_link(moment: Moment) -> str:
 # ---------------------------------------------------------
 # Signal: on new moment
 # ---------------------------------------------------------
-@receiver(post_save, sender=Moment, dispatch_uid="notif.moment.created.v1")
-def on_moment_created(sender, instance: Moment, created, **kwargs):
-
-    if not created:
+def notify_moment_ready(moment: Moment):
+    """
+    Send notifications for a moment that is fully available.
+    """
+    # ---- Domain guard ----
+    if not moment.is_available():
         return
 
     # Visibility & moderation guards
     if (
-        not instance.is_active
-        or instance.is_hidden
-        or instance.is_suspended
+        not moment.is_active
+        or moment.is_hidden
+        or moment.is_suspended
     ):
-        logger.debug(
-            "[Notif][Moment] Moment %s is not visible → skip",
-            instance.id,
-        )
         return
 
     # PRIVATE moments never notify
-    if instance.visibility == VISIBILITY_PRIVATE:
+    if moment.visibility == VISIBILITY_PRIVATE:
         return
 
-    owner_user = _get_owner_user(instance)
+    owner_user = _get_owner_user(moment)
     if not owner_user:
         return
 
     # Determine recipients
     recipients_qs = User.objects.none()
 
-    if instance.visibility in (VISIBILITY_FRIENDS, VISIBILITY_COVENANT):
+    if moment.visibility in (VISIBILITY_FRIENDS, VISIBILITY_COVENANT):
         recipients_qs = _get_accepted_friends(owner_user)
-
     else:
-        # GLOBAL / DEFAULT → friends only (safe default)
         recipients_qs = _get_accepted_friends(owner_user)
 
     if not recipients_qs.exists():
         return
 
-    kind = _classify_moment_kind(instance)
+    kind = _classify_moment_kind(moment)
     notif_type = _pick_notif_type(kind)
-    link = _build_moment_link(instance)
+    link = _build_moment_link(moment)
     message = _build_message(owner_user, kind)
+
+    print("[Notif][Moment] recipients=%s kind=%s", recipients_qs.count(), kind)
 
     for recipient in recipients_qs:
         if recipient.id == owner_user.id:
@@ -208,18 +206,11 @@ def on_moment_created(sender, instance: Moment, created, **kwargs):
             actor=owner_user,
             notif_type=notif_type,
             message=message,
-            target_obj=instance,
+            target_obj=moment,
             action_obj=None,
             link=link,
             extra_payload={
-                "moment_id": instance.id,
+                "moment_id": moment.id,
                 "kind": kind,
             },
-        )
-
-        logger.debug(
-            "[Notif][Moment] %s → %s (moment=%s)",
-            notif_type,
-            recipient.username,
-            instance.id,
         )

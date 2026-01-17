@@ -4,11 +4,12 @@ import mimetypes
 import logging
 from django.db import transaction
 
-from apps.media_conversion.tasks import ( 
-    convert_image_to_jpg_task,
-    convert_video_to_multi_hls_task,
-    convert_audio_to_mp3_task,
-)
+from apps.media_conversion.services.jobs import upsert_job, attach_task
+from apps.media_conversion.models import MediaJobStatus
+
+from apps.media_conversion.tasks.video import convert_video_to_multi_hls_task
+from apps.media_conversion.tasks.audio import convert_audio_to_mp3_task
+from apps.media_conversion.tasks.image import convert_image_to_jpg_task
 
 logger = logging.getLogger(__name__)
 
@@ -94,18 +95,31 @@ class MediaConversionMixin:
                     )
                     continue
 
-                logger.info(
-                    "🔎 dispatch after-commit: model=%s id=%s field=%s kind=%s path=%s",
-                    self.__class__.__name__, self.pk, field_name, kind, source_path
-                )
-
                 if kind == KIND_IMAGE:
-                    # ✅ already final formats → skip
                     if ext in (".jpg", ".jpeg", ".png"):
-                        logger.info("⏭️ skip image: already final (%s) – %s.%s", ext, self.__class__.__name__, field_name)
+                        logger.info(
+                            "⏭️ skip image: already final (%s) – %s.%s",
+                            ext, self.__class__.__name__, field_name
+                        )
+
+                        # ✅ CRITICAL FIX:
+                        # Image is final → mark converted immediately
+                        if hasattr(self, "is_converted") and not self.is_converted:
+                            self.is_converted = True
+                            self.save(update_fields=["is_converted"])
+
                         continue
 
-                    convert_image_to_jpg_task.delay(
+                    job = upsert_job(
+                        instance=self,
+                        field_name=field_name,
+                        kind="image",
+                        status=MediaJobStatus.QUEUED,
+                        source_path=source_path,
+                        message="Queued for image processing",
+                    )
+
+                    async_result = convert_image_to_jpg_task.delay(
                         model_name=self.__class__.__name__,
                         app_label=self._meta.app_label,
                         instance_id=self.pk,
@@ -113,15 +127,32 @@ class MediaConversionMixin:
                         source_path=source_path,
                         fileupload=upload.to_dict(),
                     )
+
+                    attach_task(job, async_result.id, queue="video")
                     scheduled_any = True
+
+
 
                 elif kind == KIND_AUDIO:
                     # ✅ already final format → skip
                     if ext == ".mp3":
+                        if hasattr(self, "is_converted") and not self.is_converted:
+                            self.is_converted = True
+                            self.save(update_fields=["is_converted"])
+
                         logger.info("⏭️ skip audio: already final (.mp3) – %s.%s", self.__class__.__name__, field_name)
                         continue
 
-                    convert_audio_to_mp3_task.delay(
+                    job = upsert_job(
+                        instance=self,
+                        field_name=field_name,
+                        kind="audio",
+                        status=MediaJobStatus.QUEUED,
+                        source_path=source_path,
+                        message="Queued for audio processing",
+                    )
+
+                    async_result = convert_audio_to_mp3_task.delay(
                         model_name=self.__class__.__name__,
                         app_label=self._meta.app_label,
                         instance_id=self.pk,
@@ -129,6 +160,8 @@ class MediaConversionMixin:
                         source_path=source_path,
                         fileupload=upload.to_dict(),
                     )
+
+                    attach_task(job, async_result.id, queue="video")
                     scheduled_any = True
 
                 elif kind == KIND_VIDEO:
@@ -142,7 +175,16 @@ class MediaConversionMixin:
                         logger.info("⏭️ skip video: HLS artifact detected (path=%s)", source_path)
                         continue
 
-                    convert_video_to_multi_hls_task.delay(
+                    job = upsert_job(
+                        instance=self,
+                        field_name=field_name,
+                        kind="video",
+                        status=MediaJobStatus.QUEUED,
+                        source_path=source_path,
+                        message="Queued for video processing",
+                    )
+
+                    async_result = convert_video_to_multi_hls_task.delay(
                         model_name=self.__class__.__name__,
                         app_label=self._meta.app_label,
                         instance_id=self.pk,
@@ -150,6 +192,8 @@ class MediaConversionMixin:
                         source_path=source_path,
                         fileupload=upload.to_dict(),
                     )
+
+                    attach_task(job, async_result.id, queue="video")
                     scheduled_any = True
 
             except Exception as e:
@@ -158,24 +202,14 @@ class MediaConversionMixin:
                     self.__class__.__name__, field_name, e
                 )
 
-        # If nothing scheduled, mark converted to unblock UI
-        if not scheduled_any and hasattr(self, "is_converted") and not self.is_converted:
-            try:
-                self.is_converted = True
-                self.save(update_fields=["is_converted"])
-                logger.info("✅ Marked as converted (no-op scheduling) for %s[%s]", self.__class__.__name__, self.pk)
-            except Exception as e:
-                logger.warning("⚠️ Failed to mark as converted (no-op case): %s", e)
 
     def convert_uploaded_media_async(self):
         """Public API — always defer to AFTER COMMIT."""
-        # ⛔ If already converted, don't even register on_commit
+        # If already converted, don't even register on_commit
         if getattr(self, "is_converted", False):
-            logger.info("⏭️ skip on_commit: %s[%s] already converted", self.__class__.__name__, getattr(self, "pk", None))
             return
 
         def _after_commit():
-            logger.info("🔔 on_commit (mixin) -> enqueue for %s id=%s", self.__class__.__name__, self.pk)
             self._enqueue_conversion_tasks()
 
         # Even if called outside atomic, on_commit still calls immediately.

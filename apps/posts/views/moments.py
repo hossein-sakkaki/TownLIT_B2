@@ -2,7 +2,7 @@
 
 from django.contrib.contenttypes.models import ContentType
 from django.utils import timezone
-from django.db.models import F
+from django.db.models import F, Q
 
 from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -22,6 +22,7 @@ from apps.core.feed.hybrid import HybridFeedEngine
 from apps.core.feed.personalized_trending import PersonalizedTrendingEngine
 from apps.core.ownership.owner_gate_mixins import OwnerGateMixin
 from apps.core.visibility.constants import VISIBILITY_GLOBAL
+
 
 import logging
 logger = logging.getLogger(__name__)
@@ -64,17 +65,27 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
         base = (
             Moment.objects
             .select_related("content_type")
-            .order_by("-published_at")
+            .order_by("-published_at", "-id")
         )
 
-        # IMPORTANT: retrieve must not be pre-filtered by Query
         if self.action == "retrieve":
             return base
 
-        return VisibilityQuery.for_viewer(
-            viewer=self.request.user,
-            base_queryset=base,
-        )
+        if not self.request.user or not self.request.user.is_authenticated:
+            qs = base.filter(visibility=VISIBILITY_GLOBAL)
+        else:
+            qs = VisibilityQuery.for_viewer(
+                viewer=self.request.user,
+                base_queryset=base,
+            )
+
+        if not self.request.user.is_authenticated:
+            qs = qs.exclude(
+                Q(video__isnull=False) & ~Q(is_converted=True)
+            )
+
+        return qs
+
 
     # -------------------------------------------------
     # Owner resolution (DRY)
@@ -199,35 +210,23 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
     # -------------------------------------------------
     @action(detail=False, methods=["get"])
     def me(self, request):
-        try:
-            owner = self._get_request_owner()
-            if not owner:
-                raise PermissionDenied("Invalid owner type.")
+        owner = self._get_request_owner()
+        if not owner:
+            raise PermissionDenied("Invalid owner type.")
 
-            owner_ct = ContentType.objects.get_for_model(owner.__class__)
+        owner_ct = ContentType.objects.get_for_model(owner.__class__)
 
-            qs = (
-                self.get_queryset()
-                .filter(
-                    content_type_id=owner_ct.id,
-                    object_id=owner.id,
-                )
+        qs = (
+            self.get_queryset()   # 🔥 مهم
+            .filter(
+                content_type_id=owner_ct.id,
+                object_id=owner.id,
             )
+        )
 
-            logger.info("Moment.me queryset count=%s", qs.count())
-
-            page = self.paginate_queryset(qs)
-            logger.info("Moment.me page size=%s", len(page) if page else 0)
-
-            serializer = self.get_serializer(page, many=True)
-            data = serializer.data   # ⬅️ این خط معمولاً منفجر می‌شود
-
-            logger.info("Moment.me serialization OK")
-            return self.get_paginated_response(data)
-
-        except Exception as e:
-            logger.exception("🔥 Moment.me failed")
-            raise
+        page = self.paginate_queryset(qs)
+        serializer = self.get_serializer(page, many=True)
+        return self.get_paginated_response(serializer.data)
 
 
     # -------------------------------------------------
@@ -255,8 +254,26 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
     def retrieve(self, request, *args, **kwargs):
         obj = self.get_object()
 
-        # 0) HARD owner-level gate
+        # 0) HARD owner-level gate (your existing rule)
         self.apply_hard_owner_gate(request, obj)
+
+        # -------------------------------------------------
+        # 🔐 HARD DOMAIN RULE (retrieve)
+        # If video is not converted, ONLY owner can access it.
+        # Others get 404 (do not leak existence).
+        # -------------------------------------------------
+        if obj.video and obj.is_converted is not True:
+            owner = self._get_request_owner() if request.user.is_authenticated else None
+            if not owner:
+                raise NotFound("Moment not found.")
+
+            owner_ct = ContentType.objects.get_for_model(owner.__class__)
+            is_owner = (
+                obj.content_type_id == owner_ct.id
+                and obj.object_id == owner.id
+            )
+            if not is_owner:
+                raise NotFound("Moment not found.")
 
         # 1) Visibility gate (existing behavior)
         reason = VisibilityPolicy.gate_reason(viewer=request.user, obj=obj)
@@ -271,7 +288,7 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # 2) Analytics
+        # 2) Analytics (safe)
         try:
             Moment.objects.filter(pk=obj.pk).update(
                 view_count_internal=F("view_count_internal") + 1,

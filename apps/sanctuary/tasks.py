@@ -24,16 +24,6 @@ def _has_review_active_field() -> bool:
 # Replace inactive council members ---------------------------------------------------------------
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
 def check_for_inactive_reviewers(self):
-    """
-    Canonical 48h replacement.
-    Runs frequently (e.g. every 2 hours) but replaces only slots older than 48h.
-
-    Rule:
-      - Only NO_OPINION slots are replaceable
-      - Only if request is open + in council mode
-      - If model has is_active, only active slots are replaceable
-      - Replacement calls canonical: _replace_reviewer_slot(req, leaving_user_id)
-    """
     try:
         cutoff = timezone.now() - timedelta(hours=48)
         has_active = _has_review_active_field()
@@ -53,28 +43,29 @@ def check_for_inactive_reviewers(self):
         if has_active:
             qs = qs.filter(is_active=True)
 
-        # Safety batch
+        # ✅ FIX: evaluate queryset INSIDE atomic
         with transaction.atomic():
-            locked = (
-                qs.select_for_update(skip_locked=True)
+            slot_ids = list(
+                qs
+                .select_for_update(skip_locked=True)
                 .values_list("id", flat=True)[:300]
             )
-        slot_ids = list(locked)
 
-        batch = list(SanctuaryReview.objects.select_related("sanctuary_request").filter(id__in=slot_ids))
-
-        if not batch:
+        if not slot_ids:
             return {"checked": 0, "replaced_calls": 0}
 
-        # Local import to avoid circular import at module load time
+        batch = list(
+            SanctuaryReview.objects
+            .select_related("sanctuary_request")
+            .filter(id__in=slot_ids)
+        )
+
         from apps.sanctuary.signals.signals import _replace_reviewer_slot
 
         replaced_calls = 0
 
         for slot in batch:
             req = slot.sanctuary_request
-
-            # Safety checks (defensive)
             if not req:
                 continue
             if req.status not in (PENDING, UNDER_REVIEW):
@@ -82,7 +73,6 @@ def check_for_inactive_reviewers(self):
             if req.resolution_mode != "council":
                 continue
 
-            # Re-check slot is still replaceable (avoid double-replace across workers)
             slot_status_now = (
                 SanctuaryReview.objects
                 .filter(pk=slot.pk)
@@ -117,8 +107,110 @@ def check_for_inactive_reviewers(self):
         return {"checked": len(batch), "replaced_calls": replaced_calls}
 
     except Exception as e:
-        logger.error("[Sanctuary][Task] check_for_inactive_reviewers crashed: %s", e, exc_info=True)
+        logger.error(
+            "[Sanctuary][Task] check_for_inactive_reviewers crashed: %s",
+            e,
+            exc_info=True,
+        )
         raise self.retry(exc=e)
+
+# @shared_task(bind=True, max_retries=3, default_retry_delay=60)
+# def check_for_inactive_reviewers(self):
+#     """
+#     Canonical 48h replacement.
+#     Runs frequently (e.g. every 2 hours) but replaces only slots older than 48h.
+
+#     Rule:
+#       - Only NO_OPINION slots are replaceable
+#       - Only if request is open + in council mode
+#       - If model has is_active, only active slots are replaceable
+#       - Replacement calls canonical: _replace_reviewer_slot(req, leaving_user_id)
+#     """
+#     try:
+#         cutoff = timezone.now() - timedelta(hours=48)
+#         has_active = _has_review_active_field()
+
+#         qs = (
+#             SanctuaryReview.objects
+#             .select_related("sanctuary_request")
+#             .filter(
+#                 review_status=NO_OPINION,
+#                 assigned_at__lte=cutoff,
+#                 sanctuary_request__resolution_mode="council",
+#                 sanctuary_request__status__in=[PENDING, UNDER_REVIEW],
+#             )
+#             .order_by("assigned_at")
+#         )
+
+#         if has_active:
+#             qs = qs.filter(is_active=True)
+
+#         # Safety batch
+#         with transaction.atomic():
+#             locked = (
+#                 qs.select_for_update(skip_locked=True)
+#                 .values_list("id", flat=True)[:300]
+#             )
+#         slot_ids = list(locked)
+
+#         batch = list(SanctuaryReview.objects.select_related("sanctuary_request").filter(id__in=slot_ids))
+
+#         if not batch:
+#             return {"checked": 0, "replaced_calls": 0}
+
+#         # Local import to avoid circular import at module load time
+#         from apps.sanctuary.signals.signals import _replace_reviewer_slot
+
+#         replaced_calls = 0
+
+#         for slot in batch:
+#             req = slot.sanctuary_request
+
+#             # Safety checks (defensive)
+#             if not req:
+#                 continue
+#             if req.status not in (PENDING, UNDER_REVIEW):
+#                 continue
+#             if req.resolution_mode != "council":
+#                 continue
+
+#             # Re-check slot is still replaceable (avoid double-replace across workers)
+#             slot_status_now = (
+#                 SanctuaryReview.objects
+#                 .filter(pk=slot.pk)
+#                 .values_list("review_status", flat=True)
+#                 .first()
+#             )
+#             if slot_status_now != NO_OPINION:
+#                 continue
+
+#             if has_active:
+#                 slot_active_now = (
+#                     SanctuaryReview.objects
+#                     .filter(pk=slot.pk)
+#                     .values_list("is_active", flat=True)
+#                     .first()
+#                 )
+#                 if not slot_active_now:
+#                     continue
+
+#             try:
+#                 _replace_reviewer_slot(req, slot.reviewer_id)
+#                 replaced_calls += 1
+#             except Exception as e:
+#                 logger.warning(
+#                     "[Sanctuary][Task] replace failed req=%s reviewer=%s err=%s",
+#                     getattr(req, "id", None),
+#                     getattr(slot, "reviewer_id", None),
+#                     e,
+#                     exc_info=True,
+#                 )
+
+#         return {"checked": len(batch), "replaced_calls": replaced_calls}
+
+#     except Exception as e:
+#         logger.error("[Sanctuary][Task] check_for_inactive_reviewers crashed: %s", e, exc_info=True)
+#         raise self.retry(exc=e)
 
 
 # Reassign inactive admin requests ---------------------------------------------------------------

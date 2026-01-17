@@ -1,3 +1,4 @@
+# apps/common/views/media_proxy.py
 from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseRedirect
 from rest_framework.decorators import permission_classes
 from django.views.decorators.http import require_http_methods
@@ -70,10 +71,7 @@ def serve_s3_media_file(request):
 
                 base_path = "/".join(key.split("/")[:-1])
 
-                # ✅ داینامیک: /api/v1/media-proxy/ (با توجه به include)
                 proxy_base_path = reverse("main:serve-s3-media")  # -> "/api/v1/media-proxy/"
-                # اگر URL کامل لازم داری:
-                # proxy_base = request.build_absolute_uri(proxy_base_path)
                 proxy_base = proxy_base_path
 
                 def fix_line(line):

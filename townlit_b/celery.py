@@ -116,6 +116,13 @@ app.conf.beat_schedule = {
         'task': 'apps.sanctuary.tasks.check_appeal_deadlines',
         'schedule': crontab(hour=0, minute=0),
     },
+
+    # 🧠 Auto-fail stale media conversion jobs (every 1 minute)
+    'auto-fail-stale-media-jobs-every-minute': {
+        'task': 'apps.media_conversion.tasks.health.auto_fail_stale_media_jobs',
+        'schedule': crontab(minute='*/1'),
+    },
+
 }
 
 

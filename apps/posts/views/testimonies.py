@@ -3,7 +3,7 @@
 from django.contrib.contenttypes.models import ContentType
 from django.db import transaction
 from django.utils import timezone
-from django.db.models import F
+from django.db.models import F, Q
 
 from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated, AllowAny    
@@ -20,6 +20,8 @@ from apps.core.pagination import ConfigurablePagination, FeedCursorPagination
 from apps.core.visibility.policy import VisibilityPolicy
 from apps.core.ownership.utils import resolve_owner_from_request
 from apps.core.ownership.owner_gate_mixins import OwnerGateMixin
+
+from apps.media_conversion.services.query import exclude_unready_media
 
 import logging
 logger = logging.getLogger(__name__)
@@ -67,20 +69,23 @@ class TestimonyViewSet(OwnerGateMixin ,viewsets.ModelViewSet):
             .order_by("-published_at", "-id")
         )
 
-        # IMPORTANT: retrieve must not be pre-filtered by Query
+        # ✅ retrieve: allow authenticated users to reach the object
+        # (owner conversion UX is handled later by serializer gate)
         if self.action == "retrieve":
-            return base
+            if self.request.user and self.request.user.is_authenticated:
+                return base  # allow owner to see converting
+            return exclude_unready_media(base)  # visitors never see unconverted
 
-        # public explore (visitor-safe)
+        # ✅ explore for anonymous: global only, and hide unconverted
         if self.action == "explore" and not self.request.user.is_authenticated:
-            return base.filter(visibility="global")  # keep existing behavior
+            return exclude_unready_media(base.filter(visibility="global"))
 
-        # IMPORTANT: Query should use request.user for consistency
-        return VisibilityQuery.for_viewer(
+        # ✅ default list/feed: visibility-aware, and hide unconverted
+        qs = VisibilityQuery.for_viewer(
             viewer=self.request.user,
             base_queryset=base,
         )
-
+        return exclude_unready_media(qs)
 
 
     # -------------------------------------------------
@@ -172,14 +177,20 @@ class TestimonyViewSet(OwnerGateMixin ,viewsets.ModelViewSet):
 
         owner_ct = ContentType.objects.get_for_model(owner.__class__)
 
-        qs = self.get_queryset().filter(
-            content_type_id=owner_ct.id,
-            object_id=owner.id,
+        qs = (
+            Testimony.objects
+            .select_related("content_type")
+            .filter(
+                content_type_id=owner_ct.id,
+                object_id=owner.id,
+            )
+            .order_by("-published_at", "-id")
         )
 
         page = self.paginate_queryset(qs)
         serializer = self.get_serializer(page, many=True)
         return self.get_paginated_response(serializer.data)
+
 
     # -------------------------------------------------
     # Explore (public discover)
