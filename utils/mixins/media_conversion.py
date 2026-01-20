@@ -132,15 +132,26 @@ class MediaConversionMixin:
                     scheduled_any = True
 
 
-
                 elif kind == KIND_AUDIO:
-                    # ✅ already final format → skip
                     if ext == ".mp3":
+                        job = upsert_job(
+                            instance=self,
+                            field_name=field_name,
+                            kind="audio",
+                            status=MediaJobStatus.DONE,
+                            source_path=source_path,
+                            message="Audio already in final format",
+                        )
+
                         if hasattr(self, "is_converted") and not self.is_converted:
                             self.is_converted = True
                             self.save(update_fields=["is_converted"])
 
-                        logger.info("⏭️ skip audio: already final (.mp3) – %s.%s", self.__class__.__name__, field_name)
+                        scheduled_any = True
+                        logger.info(
+                            "✅ audio final format (.mp3) – job created as DONE – %s.%s",
+                            self.__class__.__name__, field_name
+                        )
                         continue
 
                     job = upsert_job(
