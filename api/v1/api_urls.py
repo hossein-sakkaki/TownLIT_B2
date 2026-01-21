@@ -18,9 +18,11 @@ urlpatterns = [
     path('warehouse/', include('apps.warehouse.urls')),
     path('security/', include('apps.core.security.urls')),
 
-    # 🔥 NEW: Interactions (reactions, comments, counters)
+    # Interactions (reactions, comments, counters)
     path('interactions/', include('apps.core.interactions.urls')),
     path("media-conversion/", include("apps.media_conversion.urls")),
+    path('translations/', include('apps.translations.urls')),
+
     
     path('', include('apps.notifications.urls')),
 ]

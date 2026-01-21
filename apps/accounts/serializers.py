@@ -257,6 +257,100 @@ class SocialMediaLinkReadOnlySerializer(serializers.ModelSerializer):
 
 
 # -------------------------------------------------------------------
+# CustomUserAuthSerializer — Source of Truth for Auth
+# -------------------------------------------------------------------
+class CustomUserAuthSerializer(AvatarURLMixin, serializers.ModelSerializer):
+    # --- Label + color ---
+    label = CustomLabelSerializer(read_only=True)
+    label_color = serializers.SerializerMethodField()
+
+    # --- Identity flags ---
+    is_verified_identity = serializers.BooleanField(read_only=True)
+    is_townlit_verified = serializers.SerializerMethodField()
+    has_litshield_access = serializers.SerializerMethodField()
+
+    # --- Display helpers ---
+    primary_language_display = serializers.CharField(
+        source="get_primary_language_display",
+        read_only=True
+    )
+    secondary_language_display = serializers.CharField(
+        source="get_secondary_language_display",
+        read_only=True
+    )
+    country_display = serializers.CharField(
+        source="get_country_display",
+        read_only=True
+    )
+
+    # --- Avatar ---
+    avatar_url = serializers.SerializerMethodField()
+    avatar_version = serializers.IntegerField(read_only=True)
+
+    # --- Navigation ---
+    profile_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CustomUser
+        fields = [
+            "id",
+            "username",
+            "email",
+            "name",
+            "family",
+
+            "label",
+            "label_color",
+
+            "is_member",
+            "is_verified_identity",
+            "is_townlit_verified",
+            "has_litshield_access",
+
+            "two_factor_enabled",
+            "pin_security_enabled",
+            "is_account_paused",
+            "is_suspended",
+
+            "primary_language",
+            "primary_language_display",
+            "secondary_language",
+            "secondary_language_display",
+            "country_display",
+
+            "avatar_url",
+            "avatar_version",
+
+            "profile_url",
+            "groups",
+        ]
+
+        read_only_fields = fields  # 🔐 HARD READ-ONLY
+
+    # --------------------------------------------------
+    def get_profile_url(self, obj):
+        return obj.get_absolute_url()
+
+    def get_avatar_url(self, obj):
+        return self.build_avatar_url(obj)
+
+    def get_is_townlit_verified(self, obj):
+        mp = getattr(obj, "member_profile", None)
+        return bool(mp and mp.is_townlit_verified)
+
+    def get_has_litshield_access(self, obj):
+        return LITShieldGrant.objects.filter(
+            user=obj,
+            is_active=True
+        ).exists()
+
+    def get_label_color(self, obj):
+        if obj.label:
+            return obj.label.color
+        return None
+
+
+# -------------------------------------------------------------------
 # CustomUserSerializer — Full editable profile (for owner only)
 # -------------------------------------------------------------------
 class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):

@@ -40,7 +40,7 @@ from apps.accounts.services.veriff import create_veriff_session, parse_veriff_we
 from apps.main.services.policy_acceptance import accept_required_policies
 from utils.security.security_manager import SecurityStateManager
 from .serializers import (
-    CustomUserSerializer,
+    CustomUserAuthSerializer, CustomUserSerializer,
     RegisterUserSerializer, LoginSerializer,
     VerifyNewBornSerializer, ForgetPasswordSerializer, ResetPasswordSerializer,
     SocialMediaLinkSerializer, SocialMediaLinkReadOnlySerializer, SocialMediaTypeSerializer,
@@ -134,7 +134,28 @@ class AuthViewSet(viewsets.ViewSet):
         self.throttle_scope = "crypto_heavy" if getattr(self, "action", None) in heavy_actions else "crypto"
         return super().get_throttles()
     
+    # Source of Truth -------------------------
+    @action(
+        detail=False,
+        methods=["get"],
+        permission_classes=[IsAuthenticated],
+        url_path="me"
+    )
+    def me(self, request):
+        """
+        🔐 Source of Truth for authenticated user
+        Read-only endpoint
+        """
+        user = request.user
+
+        serializer = CustomUserAuthSerializer(
+            user,
+            context={"request": request}
+        )
+
+        return Response(serializer.data, status=200)
     
+    # Register -------------------------------
     @action(detail=False, methods=['post'], permission_classes=[AllowAny])
     def register(self, request):  # Register
         try:

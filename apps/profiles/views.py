@@ -50,7 +50,7 @@ from .serializers import (
                     SpiritualGiftSurveyResponseSerializer, SpiritualGiftSurveyQuestionSerializer, MemberSpiritualGiftsSerializer, SpiritualGift,
                     MemberServiceTypeSerializer, SpiritualServiceSerializer, MemberServiceType
                 )
-from apps.accounts.serializers import SimpleCustomUserSerializer
+from apps.accounts.serializers import SimpleCustomUserSerializer, CustomUserSerializer
 from apps.profiles.services.listing import build_friends_list
 from apps.media_conversion.services.readiness import get_media_ready_state  
 
@@ -212,12 +212,27 @@ class MemberViewSet(viewsets.ModelViewSet):
                              "details": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
 
         updated_member = serializer.save()
-        payload = MemberSerializer(updated_member, context={'request': request}).data
+        user_data = CustomUserSerializer(
+            updated_member.user,
+            context={'request': request}
+        ).data
+
+        member_data = MemberSerializer(
+            updated_member,
+            context={'request': request}
+        ).data
         return Response({
             "message": "Profile updated successfully.",
-            "member": payload,
-            "user": payload,  # (تدریجاً deprecate)
+            "member": member_data,
+            "user": user_data,
+            # "user": member_data.get("user"),
         }, status=status.HTTP_200_OK)
+    
+
+
+
+
+    
 
     # Update profile image ------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='update-profile-image', permission_classes=[IsAuthenticated])
@@ -2366,10 +2381,18 @@ class SpiritualGiftSurveyViewSet(viewsets.ModelViewSet):
 
             return Response({
                 'current_question': progress.current_question,
-                'answered_questions': progress.answered_questions
+                'answered_questions': progress.answered_questions,
+                'completed': False,
+                'created_at': progress.created_at
             })
         else:
-            return Response({'error': 'No survey progress found.'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({
+                'current_question': 0,
+                'answered_questions': [],
+                'completed': False,
+                'created_at': None
+            }, status=status.HTTP_200_OK)
+
         
     @action(detail=False, methods=['delete'], url_path='cancel-survey', permission_classes=[IsAuthenticated])
     def cancel_survey(self, request):
@@ -2377,7 +2400,6 @@ class SpiritualGiftSurveyViewSet(viewsets.ModelViewSet):
         SpiritualGiftSurveyResponse.objects.filter(member=member).delete()        
         MemberSurveyProgress.objects.filter(member=member).delete()
         return Response(
-            {'message': 'Survey responses and progress have been reset successfully.'}, 
+            {'message': 'Survey responses and progress have been reset successfully.'},
             status=status.HTTP_200_OK
         )
-

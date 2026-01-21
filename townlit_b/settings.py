@@ -24,6 +24,16 @@ ENV_FILE = os.getenv('ENV_FILE', '.env')
 load_dotenv(BASE_DIR / ENV_FILE, override=True)
 
 
+def env_bool(name: str, default: bool = False) -> bool:
+    """
+    Read boolean env var safely.
+    Accepts: 1, true, yes, on (case-insensitive)
+    """
+    val = os.getenv(name)
+    if val is None:
+        return default
+    return val.strip().lower() in ("1", "true", "yes", "on")
+
 
 # ---------------------------------------------------------------------------------------
 CORS_ALLOW_ALL_ORIGINS = os.getenv('CORS_ALLOW_ALL_ORIGINS', 'False').lower() in ('true', '1', 't')
@@ -91,9 +101,11 @@ DEFAULT_GROUP_AVATAR_URL = os.getenv("DEFAULT_GROUP_AVATAR_URL", "/static/defaul
 
 
 
-# ✅ Media files
+# Media files
 # DEFAULT_PROFILE_IMAGE = "defaults/default-avatar.png"
 
+# Default language for guests -------------------------------------------------
+DEFAULT_GUEST_LANGUAGE = "en"
 
 
 DJANGO_CRYPTO_KEY = os.getenv("DJANGO_CRYPTO_KEY") 
@@ -140,11 +152,11 @@ INSTALLED_APPS = [
     'apps.moderation.apps.ModerationConfig',
     'apps.store.apps.StoreConfig',
     'apps.products.apps.ProductsConfig',
+    'apps.translations.apps.TranslationsConfig',
     'apps.orders.apps.OrdersConfig',
     'apps.payment.apps.PaymentConfig',
     'apps.warehouse.apps.WarehouseConfig',
     "apps.core.interactions",
-
     
     # pip install django-cors-headers
     'corsheaders',
@@ -396,6 +408,17 @@ AWS_SES_AUTO_THROTTLE = 0.5  # Throttle for bulk emails
 AWS_SNS_ACCESS_KEY_ID = os.getenv('AWS_SNS_ACCESS_KEY_ID')
 AWS_SNS_SECRET_ACCESS_KEY = os.getenv('AWS_SNS_SECRET_ACCESS_KEY')
 AWS_SNS_REGION = os.getenv('AWS_SNS_REGION')
+
+# AWS S3 Settings for Translater --------------------------------------------------------
+AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
+
+
+# OpenAI --------------------------------------------------------------------------------
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_TRANSLATION_MODEL = os.getenv("OPENAI_TRANSLATION_MODEL", "gpt-4.1")
+TRANSLATIONS_HUMANIZE_ENABLED = env_bool("TRANSLATIONS_HUMANIZE_ENABLED", default=False)
+TRANSLATIONS_HUMANIZE_ALL = env_bool("TRANSLATIONS_HUMANIZE_ALL", default=False)
+TRANSLATIONS_HUMANIZE_PROMPT_VERSION = os.getenv("TRANSLATIONS_HUMANIZE_PROMPT_VERSION", "v1.1")
 
 
 # CKEditor ------------------------------------------------------------------------------
