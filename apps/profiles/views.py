@@ -2370,28 +2370,45 @@ class SpiritualGiftSurveyViewSet(viewsets.ModelViewSet):
         
     @action(detail=False, methods=['get'], url_path='get-progress', permission_classes=[IsAuthenticated])
     def get_survey_progress(self, request):
-        user = request.user.member_profile
-        progress = MemberSurveyProgress.objects.filter(member=user).first()
-        total_questions = SpiritualGiftSurveyQuestion.objects.values('question_number').distinct().count()
-        
+        member = request.user.member_profile
+
+        progress = MemberSurveyProgress.objects.filter(member=member).first()
+        total_questions = (
+            SpiritualGiftSurveyQuestion.objects
+            .values('question_number')
+            .distinct()
+            .count()
+        )
+
+        # --------------------------------------------------
+        # Case 1: Survey already started (incomplete)
+        # --------------------------------------------------
         if progress:
+            # Safety clamp (prevents invalid state)
             if progress.current_question > total_questions:
                 progress.current_question = total_questions
-                progress.save()
+                progress.save(update_fields=["current_question"])
 
-            return Response({
-                'current_question': progress.current_question,
-                'answered_questions': progress.answered_questions,
-                'completed': False,
-                'created_at': progress.created_at
-            })
-        else:
-            return Response({
-                'current_question': 0,
-                'answered_questions': [],
-                'completed': False,
-                'created_at': None
-            }, status=status.HTTP_200_OK)
+            return Response(
+                {
+                    "current_question": progress.current_question,
+                    "answered_questions": progress.answered_questions or [],
+                    "completed": False,
+                },
+                status=status.HTTP_200_OK
+            )
+
+        # --------------------------------------------------
+        # Case 2: Survey not started yet
+        # --------------------------------------------------
+        return Response(
+            {
+                "current_question": 0,
+                "answered_questions": [],
+                "completed": False,
+            },
+            status=status.HTTP_200_OK
+        )
 
         
     @action(detail=False, methods=['delete'], url_path='cancel-survey', permission_classes=[IsAuthenticated])

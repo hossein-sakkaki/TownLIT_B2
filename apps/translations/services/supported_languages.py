@@ -1,105 +1,109 @@
-# apps/translations/services/supported_languages.py
 from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import List, Dict
 
-# Keep this as a single source of truth (server-side)
-# AWS Translate language list can change; we expose it via API.
-# For now, implement a curated list OR wire to boto3 "list_languages" if you prefer.
 
 @dataclass(frozen=True)
 class LanguageOption:
     code: str
-    label: str
+    native: str        # Language name in its own language
+    english: str       # English name (fallback / secondary)
 
 
 @lru_cache(maxsize=1)
 def get_supported_languages() -> List[Dict[str, str]]:
     """
-    Returns list of languages supported by our translation provider.
-    Cached in-process to avoid repeated work.
+    Returns a curated list of supported languages.
+    Each language includes native + English labels for UI flexibility.
     """
-    # ✅ Option 1 (recommended now): server-managed list (stable + explicit)
-    # Later you can swap to boto3 list_languages() if you want.
+
     langs = [
-        LanguageOption("af", "Afrikaans"),
-        LanguageOption("sq", "Albanian"),
-        LanguageOption("am", "Amharic"),
-        LanguageOption("ar", "Arabic"),
-        LanguageOption("hy", "Armenian"),
-        LanguageOption("az", "Azerbaijani"),
-        LanguageOption("bn", "Bengali"),
-        LanguageOption("bs", "Bosnian"),
-        LanguageOption("bg", "Bulgarian"),
-        LanguageOption("ca", "Catalan"),
-        LanguageOption("zh", "Chinese (Simplified)"),
-        LanguageOption("zh-TW", "Chinese (Traditional)"),
-        LanguageOption("hr", "Croatian"),
-        LanguageOption("cs", "Czech"),
-        LanguageOption("da", "Danish"),
-        LanguageOption("fa-AF", "Dari"),
-        LanguageOption("nl", "Dutch"),
-        LanguageOption("en", "English"),
-        LanguageOption("et", "Estonian"),
-        LanguageOption("fa", "Farsi (Persian)"),
-        LanguageOption("tl", "Filipino, Tagalog"),
-        LanguageOption("fi", "Finnish"),
-        LanguageOption("fr", "French"),
-        LanguageOption("fr-CA", "French (Canada)"),
-        LanguageOption("ka", "Georgian"),
-        LanguageOption("de", "German"),
-        LanguageOption("el", "Greek"),
-        LanguageOption("gu", "Gujarati"),
-        LanguageOption("ht", "Haitian Creole"),
-        LanguageOption("ha", "Hausa"),
-        LanguageOption("he", "Hebrew"),
-        LanguageOption("hi", "Hindi"),
-        LanguageOption("hu", "Hungarian"),
-        LanguageOption("is", "Icelandic"),
-        LanguageOption("id", "Indonesian"),
-        LanguageOption("ga", "Irish"),
-        LanguageOption("it", "Italian"),
-        LanguageOption("ja", "Japanese"),
-        LanguageOption("kn", "Kannada"),
-        LanguageOption("kk", "Kazakh"),
-        LanguageOption("ko", "Korean"),
-        LanguageOption("lv", "Latvian"),
-        LanguageOption("lt", "Lithuanian"),
-        LanguageOption("mk", "Macedonian"),
-        LanguageOption("ms", "Malay"),
-        LanguageOption("ml", "Malayalam"),
-        LanguageOption("mt", "Maltese"),
-        LanguageOption("mr", "Marathi"),
-        LanguageOption("mn", "Mongolian"),
-        LanguageOption("no", "Norwegian (Bokmål)"),
-        LanguageOption("ps", "Pashto"),
-        LanguageOption("pl", "Polish"),
-        LanguageOption("pt", "Portuguese (Brazil)"),
-        LanguageOption("pt-PT", "Portuguese (Portugal)"),
-        LanguageOption("pa", "Punjabi"),
-        LanguageOption("ro", "Romanian"),
-        LanguageOption("ru", "Russian"),
-        LanguageOption("sr", "Serbian"),
-        LanguageOption("si", "Sinhala"),
-        LanguageOption("sk", "Slovak"),
-        LanguageOption("sl", "Slovenian"),
-        LanguageOption("so", "Somali"),
-        LanguageOption("es", "Spanish"),
-        LanguageOption("es-MX", "Spanish (Mexico)"),
-        LanguageOption("sw", "Swahili"),
-        LanguageOption("sv", "Swedish"),
-        LanguageOption("ta", "Tamil"),
-        LanguageOption("te", "Telugu"),
-        LanguageOption("th", "Thai"),
-        LanguageOption("tr", "Turkish"),
-        LanguageOption("uk", "Ukrainian"),
-        LanguageOption("ur", "Urdu"),
-        LanguageOption("uz", "Uzbek"),
-        LanguageOption("vi", "Vietnamese"),
-        LanguageOption("cy", "Welsh"),
+        LanguageOption("af", "Afrikaans", "Afrikaans"),
+        LanguageOption("sq", "Shqip", "Albanian"),
+        LanguageOption("am", "አማርኛ", "Amharic"),
+        LanguageOption("ar", "العربية", "Arabic"),
+        LanguageOption("hy", "Հայերեն", "Armenian"),
+        LanguageOption("az", "Azərbaycan dili", "Azerbaijani"),
+        LanguageOption("bn", "বাংলা", "Bengali"),
+        LanguageOption("bs", "Bosanski", "Bosnian"),
+        LanguageOption("bg", "Български", "Bulgarian"),
+        LanguageOption("ca", "Català", "Catalan"),
+        LanguageOption("zh", "中文（简体）", "Chinese (Simplified)"),
+        LanguageOption("zh-TW", "中文（繁體）", "Chinese (Traditional)"),
+        LanguageOption("hr", "Hrvatski", "Croatian"),
+        LanguageOption("cs", "Čeština", "Czech"),
+        LanguageOption("da", "Dansk", "Danish"),
+        LanguageOption("fa-AF", "دری", "Dari"),
+        LanguageOption("nl", "Nederlands", "Dutch"),
+        LanguageOption("en", "English", "English"),
+        LanguageOption("et", "Eesti", "Estonian"),
+        LanguageOption("fa", "فارسی", "Persian"),
+        LanguageOption("tl", "Filipino", "Filipino / Tagalog"),
+        LanguageOption("fi", "Suomi", "Finnish"),
+        LanguageOption("fr", "Français", "French"),
+        LanguageOption("fr-CA", "Français (Canada)", "French (Canada)"),
+        LanguageOption("ka", "ქართული", "Georgian"),
+        LanguageOption("de", "Deutsch", "German"),
+        LanguageOption("el", "Ελληνικά", "Greek"),
+        LanguageOption("gu", "ગુજરાતી", "Gujarati"),
+        LanguageOption("ht", "Kreyòl Ayisyen", "Haitian Creole"),
+        LanguageOption("ha", "Hausa", "Hausa"),
+        LanguageOption("he", "עברית", "Hebrew"),
+        LanguageOption("hi", "हिन्दी", "Hindi"),
+        LanguageOption("hu", "Magyar", "Hungarian"),
+        LanguageOption("is", "Íslenska", "Icelandic"),
+        LanguageOption("id", "Bahasa Indonesia", "Indonesian"),
+        LanguageOption("ga", "Gaeilge", "Irish"),
+        LanguageOption("it", "Italiano", "Italian"),
+        LanguageOption("ja", "日本語", "Japanese"),
+        LanguageOption("kn", "ಕನ್ನಡ", "Kannada"),
+        LanguageOption("kk", "Қазақ тілі", "Kazakh"),
+        LanguageOption("ko", "한국어", "Korean"),
+        LanguageOption("lv", "Latviešu", "Latvian"),
+        LanguageOption("lt", "Lietuvių", "Lithuanian"),
+        LanguageOption("mk", "Македонски", "Macedonian"),
+        LanguageOption("ms", "Bahasa Melayu", "Malay"),
+        LanguageOption("ml", "മലയാളം", "Malayalam"),
+        LanguageOption("mt", "Malti", "Maltese"),
+        LanguageOption("mr", "मराठी", "Marathi"),
+        LanguageOption("mn", "Монгол", "Mongolian"),
+        LanguageOption("no", "Norsk (Bokmål)", "Norwegian (Bokmål)"),
+        LanguageOption("ps", "پښتو", "Pashto"),
+        LanguageOption("pl", "Polski", "Polish"),
+        LanguageOption("pt", "Português (Brasil)", "Portuguese (Brazil)"),
+        LanguageOption("pt-PT", "Português (Portugal)", "Portuguese (Portugal)"),
+        LanguageOption("pa", "ਪੰਜਾਬੀ", "Punjabi"),
+        LanguageOption("ro", "Română", "Romanian"),
+        LanguageOption("ru", "Русский", "Russian"),
+        LanguageOption("sr", "Српски", "Serbian"),
+        LanguageOption("si", "සිංහල", "Sinhala"),
+        LanguageOption("sk", "Slovenčina", "Slovak"),
+        LanguageOption("sl", "Slovenščina", "Slovenian"),
+        LanguageOption("so", "Soomaaliga", "Somali"),
+        LanguageOption("es", "Español", "Spanish"),
+        LanguageOption("es-MX", "Español (México)", "Spanish (Mexico)"),
+        LanguageOption("sw", "Kiswahili", "Swahili"),
+        LanguageOption("sv", "Svenska", "Swedish"),
+        LanguageOption("ta", "தமிழ்", "Tamil"),
+        LanguageOption("te", "తెలుగు", "Telugu"),
+        LanguageOption("th", "ไทย", "Thai"),
+        LanguageOption("tr", "Türkçe", "Turkish"),
+        LanguageOption("uk", "Українська", "Ukrainian"),
+        LanguageOption("ur", "اردو", "Urdu"),
+        LanguageOption("uz", "O‘zbek", "Uzbek"),
+        LanguageOption("vi", "Tiếng Việt", "Vietnamese"),
+        LanguageOption("cy", "Cymraeg", "Welsh"),
     ]
 
-
-    return [{"code": l.code, "label": l.label} for l in langs]
+    return [
+        {
+            "code": l.code,
+            "native": l.native,
+            "english": l.english,
+            # Recommended default UI label
+            "label": f"{l.english} ({l.native})",
+        }
+        for l in langs
+    ]
