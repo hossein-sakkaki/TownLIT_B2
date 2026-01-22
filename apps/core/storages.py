@@ -1,14 +1,18 @@
 # apps/core/storages.py
+
 from storages.backends.s3boto3 import S3Boto3Storage
 
-# Default private storage (everything except email)
+# Default private storage (everything except email) ---------------------
 class PrivateMediaStorage(S3Boto3Storage):
-    location = "private"
+    """
+    Default private storage for ALL app media.
+    Keeps legacy paths intact (posts/, profiles/, ...)
+    """
     default_acl = "private"
     querystring_auth = True
 
 
-# Public storage ONLY for email images
+# Public storage ONLY for email images ----------------------------------
 class PublicEmailStorage(S3Boto3Storage):
     location = "public/emails"
     default_acl = "public-read"
