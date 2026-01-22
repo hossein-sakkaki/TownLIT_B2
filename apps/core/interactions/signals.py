@@ -2,7 +2,7 @@
 
 import logging
 from django.db import transaction
-from django.db.models import F
+from django.db.models import Case, When, Value, IntegerField, F
 from django.db.models.signals import post_save, post_delete, pre_save
 from django.dispatch import receiver
 
@@ -40,15 +40,22 @@ def _safe_inc(model_cls, pk, field: str, by: int = 1):
     model_cls.objects.filter(pk=pk).update(**{field: F(field) + int(by)})
 
 
+
 def _safe_dec_non_negative(model_cls, pk, field: str, by: int = 1):
     """
-    Best-effort clamp:
-    - In MySQL, negative is unlikely but possible if data corrupted or double events happen.
-    - We do atomic decrement first, then clamp in a second query.
+    MySQL-safe decrement:
+    - Never lets UNSIGNED fields go below zero
     """
-    model_cls.objects.filter(pk=pk).update(**{field: F(field) - int(by)})
-    # clamp (portable)
-    model_cls.objects.filter(pk=pk, **{f"{field}__lt": 0}).update(**{field: 0})
+    model_cls.objects.filter(pk=pk).update(
+        **{
+            field: Case(
+                When(**{f"{field}__gte": by}, then=F(field) - by),
+                default=Value(0),
+                output_field=IntegerField(),
+            )
+        }
+    )
+
 
 
 def _update_reaction_breakdown_locked(target_model, target_pk, reaction_type: str, delta: int):

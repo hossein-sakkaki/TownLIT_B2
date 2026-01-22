@@ -423,64 +423,62 @@ TRANSLATIONS_HUMANIZE_PROMPT_VERSION = os.getenv("TRANSLATIONS_HUMANIZE_PROMPT_V
 
 # CKEditor ------------------------------------------------------------------------------
 CKEDITOR_BASEPATH = "/static/ckeditor/ckeditor/"
-CKEDITOR_UPLOAD_PATH = "photo/images/ckeditor/upload_files/"                
-CKEDITOR_STORAGE_BACKEND = 'django.core.files.storage.FileSystemStorage' 
+
+# Upload location (keep it simple)
+CKEDITOR_UPLOAD_PATH = "ckeditor/"
+
+# Local filesystem storage
+CKEDITOR_STORAGE_BACKEND = "apps.core.storages.PublicEmailStorage"
+
+# Allow CKEditor upload iframe in admin
+X_FRAME_OPTIONS = "SAMEORIGIN"
 
 CKEDITOR_CONFIGS = {
-    'default': {
-        'skin': 'moono',
-        'toolbar_Basic': [
-            ['Source', '-', 'Bold', 'Italic']
-        ],
-        'toolbar_YourCustomToolbarConfig': [
-            {'name': 'document', 'items': ['Source', '-', 'Save', 'NewPage', 'Preview', 'Print', '-', 'Templates']},
-            {'name': 'clipboard', 'items': ['Cut', 'Copy', 'Paste', 'PasteText', 'PasteFromWord', '-', 'Undo', 'Redo']},
-            {'name': 'editing', 'items': ['Find', 'Replace', '-', 'SelectAll']},
-            {'name': 'forms',
-             'items': ['Form', 'Checkbox', 'Radio', 'TextField', 'Textarea', 'Select', 'Button', 'ImageButton',
-                       'HiddenField']},
-            '/',
-            {'name': 'basicstyles',
-             'items': ['Bold', 'Italic', 'Underline', 'Strike', 'Subscript', 'Superscript', '-', 'RemoveFormat']},
-            {'name': 'paragraph',
-             'items': ['NumberedList', 'BulletedList', '-', 'Outdent', 'Indent', '-', 'Blockquote', 'CreateDiv', '-',
-                       'JustifyLeft', 'JustifyCenter', 'JustifyRight', 'JustifyBlock', '-', 'BidiLtr', 'BidiRtl',
-                       'Language']},
-            {'name': 'links', 'items': ['Link', 'Unlink', 'Anchor']},
-            {'name': 'insert',
-             'items': ['Image', 'Flash', 'Table', 'HorizontalRule', 'Smiley', 'SpecialChar', 'PageBreak', 'Iframe']},
-            '/',
-            {'name': 'styles', 'items': ['Styles', 'Format', 'Font', 'FontSize']},
-            {'name': 'colors', 'items': ['TextColor', 'BGColor']},
-            {'name': 'tools', 'items': ['Maximize', 'ShowBlocks']},
-            {'name': 'about', 'items': ['About']},
-            '/',  # put this to force next toolbar on new line
-            {'name': 'yourcustomtools', 'items': [
-                # put the name of your editor.ui.addButton here
-                'Preview',
-                'Maximize',
+    "default": {
+        "skin": "moono",
+
+        # Custom toolbar
+        "toolbar": "YourCustomToolbarConfig",
+
+        "toolbar_YourCustomToolbarConfig": [
+            {"name": "document", "items": ["Source", "-", "Preview", "Print"]},
+            {"name": "clipboard", "items": ["Cut", "Copy", "Paste", "PasteText", "PasteFromWord", "-", "Undo", "Redo"]},
+            {"name": "editing", "items": ["Find", "Replace", "-", "SelectAll"]},
+            "/",
+            {"name": "basicstyles", "items": ["Bold", "Italic", "Underline", "Strike", "-", "RemoveFormat"]},
+            {"name": "paragraph", "items": [
+                "NumberedList", "BulletedList", "-", "Outdent", "Indent", "-",
+                "Blockquote", "-", "JustifyLeft", "JustifyCenter", "JustifyRight"
             ]},
+            {"name": "links", "items": ["Link", "Unlink"]},
+            {"name": "insert", "items": ["Image", "Table", "HorizontalRule", "SpecialChar", "Iframe"]},
+            "/",
+            {"name": "styles", "items": ["Styles", "Format", "Font", "FontSize"]},
+            {"name": "colors", "items": ["TextColor", "BGColor"]},
+            {"name": "tools", "items": ["Maximize", "ShowBlocks"]},
         ],
-        'toolbar': 'YourCustomToolbarConfig',  # put selected toolbar config here
-        'tabSpaces': 4,
-        'extraPlugins': ','.join([
-            'uploadimage', # the upload image feature
-            # your extra plugins here
-            'div',
-            'autolink',
-            'autoembed',
-            'embedsemantic',
-            'autogrow',
-            # 'devtools',
-            'widget',
-            'lineutils',
-            'clipboard',
-            'dialog',
-            'dialogui',
-            'elementspath'
+
+        # Image upload endpoint
+        "image_upload_url": "/ckeditor/upload/",
+
+        # Enable modern image upload
+        "extraPlugins": ",".join([
+            "uploadimage",   # upload support
+            "image2",        # modern image plugin
+            "autogrow",
+            "widget",
+            "lineutils",
         ]),
+
+        # Disable legacy image plugin
+        "removePlugins": "image",
+
+        "tabSpaces": 4,
+        "height": 400,
+        "width": "auto",
     }
 }
+
 
 # Redis Celery ------------------------------------------------------------------------
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
@@ -611,7 +609,7 @@ SERVE_FILES_PUBLICLY = os.getenv('SERVE_FILES_PUBLICLY', 'False').lower() in ('t
 USE_S3 = os.getenv('USE_S3', 'False').lower() in ('true', '1', 't')
 
 if USE_S3:
-    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+    DEFAULT_FILE_STORAGE = "apps.core.storages.PrivateMediaStorage"
 
     AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
     AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')

@@ -46,13 +46,13 @@ def get_converted_path(instance, original_path: str, fileupload, extension: str)
     unique_filename = f'{uuid4()}{extension}'
     relative_path = f'{fileupload.app_name}/{fileupload.direction}/{fileupload.folder}/{today}/{unique_filename}'
 
-    # اگر storage روی S3 بود، فایل را در مسیر موقتی بسازیم
     if isinstance(default_storage, S3Boto3Storage):
         absolute_path = os.path.join(tempfile.gettempdir(), unique_filename)
     else:
         absolute_path = os.path.join(settings.MEDIA_ROOT, relative_path)
 
     return absolute_path, relative_path
+
 
 # HLS OUTPUT DIRECTION Handler For Converted Files --------------------
 def get_hls_output_dir(instance, fileupload: FileUpload) -> tuple[str, str]:
