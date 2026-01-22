@@ -129,6 +129,7 @@ INSTALLED_APPS = [
     
     'colorfield',
     'django_admin_listfilter_dropdown',
+    'storages',
     'ckeditor',
     'ckeditor_uploader',
     'django_celery_beat',   # Celery
