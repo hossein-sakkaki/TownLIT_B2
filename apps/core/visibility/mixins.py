@@ -1,6 +1,6 @@
 # apps/core/visibility/mixins.py
 from django.db import models
-from .constants import VISIBILITY_CHOICES, VISIBILITY_DEFAULT
+from .constants import VISIBILITY_CHOICES, VISIBILITY_GLOBAL
 
 
 class VisibilityModelMixin(models.Model):
@@ -12,7 +12,7 @@ class VisibilityModelMixin(models.Model):
     visibility = models.CharField(
         max_length=20,
         choices=VISIBILITY_CHOICES,
-        default=VISIBILITY_DEFAULT,
+        default=VISIBILITY_GLOBAL,
         db_index=True,
         verbose_name="Visibility",
     )

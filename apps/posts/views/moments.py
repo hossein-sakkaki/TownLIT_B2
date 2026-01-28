@@ -216,18 +216,25 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
 
         owner_ct = ContentType.objects.get_for_model(owner.__class__)
 
-        qs = (
-            self.get_queryset()   # 🔥 مهم
-            .filter(
-                content_type_id=owner_ct.id,
-                object_id=owner.id,
-            )
+        qs = self.get_queryset().filter(
+            content_type_id=owner_ct.id,
+            object_id=owner.id,
         )
 
-        page = self.paginate_queryset(qs)
+        try:
+            page = self.paginate_queryset(qs)
+        except NotFound:
+            return Response(
+                {
+                    "count": qs.count(),
+                    "next": None,
+                    "previous": None,
+                    "results": [],
+                }
+            )
+
         serializer = self.get_serializer(page, many=True)
         return self.get_paginated_response(serializer.data)
-
 
     # -------------------------------------------------
     # Explore (public discover)

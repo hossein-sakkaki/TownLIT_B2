@@ -3,7 +3,7 @@ from rest_framework import serializers
 from django.contrib.contenttypes.models import ContentType
 
 from apps.posts.models.moment import Moment
-from apps.core.visibility.constants import VISIBILITY_DEFAULT
+from apps.core.visibility.constants import VISIBILITY_GLOBAL
 from common.serializers.targets import InstanceTargetMixin
 from common.file_handlers.media_mixins import (
     ImageFileMixin,
@@ -180,7 +180,7 @@ class MomentSerializer(
         """
         validated_data.setdefault(
             "visibility",
-            VISIBILITY_DEFAULT,
+            VISIBILITY_GLOBAL,
         )
 
         return super().create(validated_data)

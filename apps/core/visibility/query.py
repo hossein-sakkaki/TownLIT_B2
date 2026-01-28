@@ -4,7 +4,6 @@ from django.db.models import Q, Exists, OuterRef
 from django.contrib.contenttypes.models import ContentType
 
 from apps.core.visibility.constants import (
-    VISIBILITY_DEFAULT,
     VISIBILITY_GLOBAL,
     VISIBILITY_FRIENDS,
     VISIBILITY_COVENANT,
@@ -21,7 +20,7 @@ class VisibilityQuery:
 
     @staticmethod
     def _normalize_viewer(viewer):
-        """Anonymous -> None (keep authenticated user)."""
+        """Anonymous -> None (authenticated user stays)."""
         if not viewer:
             return None
         if getattr(viewer, "is_authenticated", False):
@@ -32,37 +31,42 @@ class VisibilityQuery:
     def for_viewer(*, viewer, base_queryset):
         viewer = VisibilityQuery._normalize_viewer(viewer)
 
-        # 1) Base moderation filters
+        # -------------------------------------------------
+        # 1) Base moderation filters (always applied)
+        # -------------------------------------------------
         qs = base_queryset.filter(
             is_active=True,
             is_hidden=False,
         )
 
-        # 2) Visitor: only GLOBAL + DEFAULT (DEFAULT validated later in Policy)
+        # -------------------------------------------------
+        # 2) Visitor (unauthenticated):
+        #    ONLY public content is visible
+        # -------------------------------------------------
         if viewer is None:
-            return qs.filter(
-                visibility__in=[VISIBILITY_GLOBAL, VISIBILITY_DEFAULT]
-            )
+            return qs.filter(visibility=VISIBILITY_GLOBAL)
 
         user = viewer
 
+        # -------------------------------------------------
         # 3) Resolve owner identities (polymorphic-safe)
+        # -------------------------------------------------
         owner_q = Q()
 
         member = getattr(user, "member_profile", None)
         guest = getattr(user, "guest_profile", None)
 
-        # Member owner
+        # Member-owned content
         if member:
             ct = ContentType.objects.get_for_model(member.__class__)
             owner_q |= Q(content_type_id=ct.id, object_id=member.id)
 
-        # Guest owner
+        # Guest-owned content
         if guest:
             ct = ContentType.objects.get_for_model(guest.__class__)
             owner_q |= Q(content_type_id=ct.id, object_id=guest.id)
 
-        # Organization owner (membership-based)
+        # Organization-owned content (via membership)
         if member:
             from apps.profilesOrg.models import Organization
 
@@ -77,17 +81,27 @@ class VisibilityQuery:
                     object_id__in=org_ids,
                 )
 
-        # 4) Friends visibility (Member only)
+        # -------------------------------------------------
+        # 4) Public visibility (GLOBAL)
+        # -------------------------------------------------
+        public_q = Q(
+            visibility__in=[VISIBILITY_GLOBAL]
+        )
+
+        # -------------------------------------------------
+        # 5) Friends visibility (Member only)
+        # -------------------------------------------------
         friends_q = Q()
         if member:
             from apps.profiles.models import Friendship
 
             friends_q = (
                 Q(visibility=VISIBILITY_FRIENDS)
-                & Exists(
+                &
+                Exists(
                     Friendship.objects.filter(
-                        is_active=True,
                         status="accepted",
+                        is_active=True,
                     ).filter(
                         Q(from_user=member.user, to_user_id=OuterRef("object_id")) |
                         Q(to_user=member.user, from_user_id=OuterRef("object_id"))
@@ -95,14 +109,21 @@ class VisibilityQuery:
                 )
             )
 
-        # 5) Covenant visibility (Member only)
+        # -------------------------------------------------
+        # 6) Covenant visibility (Member only, STRICT)
+        # -------------------------------------------------
         covenant_q = Q()
         if member:
-            from apps.profiles.models import Fellowship
+            from apps.profiles.models import Fellowship, Member
+
+            member_ct = ContentType.objects.get_for_model(Member)
 
             covenant_q = (
                 Q(visibility=VISIBILITY_COVENANT)
-                & Exists(
+                &
+                Q(content_type_id=member_ct.id)
+                &
+                Exists(
                     Fellowship.objects.filter(
                         status="Accepted",
                     ).filter(
@@ -112,19 +133,19 @@ class VisibilityQuery:
                 )
             )
 
-        # 6) Public (GLOBAL + DEFAULT)
-        public_q = Q(
-            visibility__in=[VISIBILITY_GLOBAL, VISIBILITY_DEFAULT]
-        )
-
-        # 7) Private (owner-only)
+        # -------------------------------------------------
+        # 7) Private visibility (owner only)
+        # -------------------------------------------------
         private_q = Q(visibility=VISIBILITY_PRIVATE) & owner_q
 
+        # -------------------------------------------------
         # 8) Final composition
+        #    (EXCLUSIVE visibility paths)
+        # -------------------------------------------------
         return qs.filter(
-            owner_q |
-            private_q |
-            public_q |
-            friends_q |
-            covenant_q
+            public_q
+            | owner_q
+            | friends_q
+            | covenant_q
+            | private_q
         )

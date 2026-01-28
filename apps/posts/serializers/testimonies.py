@@ -5,7 +5,7 @@ from django.contrib.contenttypes.models import ContentType
 import logging
 
 from apps.posts.models.testimony import Testimony
-from apps.core.visibility.constants import VISIBILITY_DEFAULT
+from apps.core.visibility.constants import VISIBILITY_GLOBAL
 from apps.media_conversion.services.serializer_gate import gate_media_payload
 
 from common.file_handlers.media_mixins import (
@@ -172,7 +172,7 @@ class TestimonySerializer(
         - owner is injected by ViewSet
         """
         if "visibility" not in validated_data:
-            validated_data["visibility"] = VISIBILITY_DEFAULT
+            validated_data["visibility"] = VISIBILITY_GLOBAL
 
         # safety
         validated_data.pop("is_active", None)

@@ -23,6 +23,8 @@ urlpatterns = [
     path("media-conversion/", include("apps.media_conversion.urls")),
     path('translations/', include('apps.translations.urls')),
 
+    # Square (central explore feed)
+    path("square/", include("apps.core.square.urls")),
     
     path('', include('apps.notifications.urls')),
 ]

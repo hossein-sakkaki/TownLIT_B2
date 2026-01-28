@@ -17,7 +17,7 @@ from apps.core.feed.constants import (
     HYBRID_TREND_WEIGHT,
     HYBRID_FRIEND_BOOST,
     HYBRID_COVENANT_BOOST,
-    HYBRID_MIN_SCORE,
+    HYBRID_ENABLE_MIN_ENGAGEMENT,
 )
 from apps.core.visibility.constants import (
     VISIBILITY_FRIENDS,
@@ -27,83 +27,65 @@ from apps.core.visibility.constants import (
 
 class HybridFeedEngine:
     """
-    Hybrid ranking engine:
-    Personalized Feed × Global Trending
-
-    - SQL-only
-    - Cursor-safe
-    - Content-agnostic
+    Hybrid: Feed rank + Trending heat (when engagement exists).
+    - Annotate only (no ordering, no dropping content)
     """
 
     @staticmethod
     def apply(queryset):
-        """
-        Apply hybrid feed ranking.
-        Assumes:
-        - Visibility already filtered
-        """
-
-        # -------------------------------------------------
-        # 1) Base personalized feed score
-        # -------------------------------------------------
+        # 1) Base feed score
         qs = FeedRankingEngine.apply(queryset)
 
-        # feed_score annotated by FeedRankingEngine
-        # -------------------------------------------------
-        # 2) Trending score
-        # -------------------------------------------------
-        qs = TrendingEngine.apply(qs)
+        # 2) Trending score (annotate-only; do NOT filter by window)
+        qs = TrendingEngine.apply(qs, filter_window=False)
 
-        # trending_score annotated
-        # -------------------------------------------------
-        # 3) Relationship-based boost
-        # -------------------------------------------------
+        # 3) Relationship boost
         relationship_boost = ExpressionWrapper(
             Value(1.0)
             + Case(
                 When(
                     visibility=VISIBILITY_COVENANT,
-                    then=Value(HYBRID_COVENANT_BOOST - 1),
+                    then=Value(float(HYBRID_COVENANT_BOOST - 1)),
                 ),
                 When(
                     visibility=VISIBILITY_FRIENDS,
-                    then=Value(HYBRID_FRIEND_BOOST - 1),
+                    then=Value(float(HYBRID_FRIEND_BOOST - 1)),
                 ),
-                default=Value(0),
+                default=Value(0.0),
             ),
             output_field=FloatField(),
         )
 
-        # -------------------------------------------------
-        # 4) Hybrid score (feed × trend × relationship)
-        # -------------------------------------------------
-        hybrid_score = ExpressionWrapper(
-            (
-                Coalesce(F("rank_score"), Value(0))
-                * Value(HYBRID_FEED_WEIGHT)
-            )
-            + (
-                Coalesce(F("trending_score"), Value(0))
-                * Value(HYBRID_TREND_WEIGHT)
+        # 4) Engagement total (annotate FIRST so we can reference it in When lookups)
+        engagement_total_expr = ExpressionWrapper(
+            Coalesce(F("reactions_count"), Value(0))
+            + Coalesce(F("comments_count"), Value(0))
+            + Coalesce(F("recomments_count"), Value(0)),
+            output_field=FloatField(),
+        )
+
+        qs = qs.annotate(engagement_total=engagement_total_expr)
+
+        # 5) Weighted hybrid
+        weighted_hybrid = ExpressionWrapper(
+            (Coalesce(F("rank_score"), Value(0.0)) * Value(HYBRID_FEED_WEIGHT))
+            + (Coalesce(F("trending_score"), Value(0.0)) * Value(HYBRID_TREND_WEIGHT)),
+            output_field=FloatField(),
+        )
+
+        # 6) Early-phase fallback (no trend blending if engagement is too low)
+        safe_hybrid = Case(
+            When(
+                engagement_total__lt=Value(float(HYBRID_ENABLE_MIN_ENGAGEMENT)),
+                then=Coalesce(F("rank_score"), Value(0.0)),
             ),
+            default=weighted_hybrid,
             output_field=FloatField(),
         )
 
         final_score = ExpressionWrapper(
-            hybrid_score * relationship_boost,
+            safe_hybrid * relationship_boost,
             output_field=FloatField(),
         )
 
-        # -------------------------------------------------
-        # 5) Final ordering (cursor-safe)
-        # -------------------------------------------------
-        return (
-            qs
-            .annotate(hybrid_score=final_score)
-            .filter(hybrid_score__gt=HYBRID_MIN_SCORE)
-            .order_by(
-                F("hybrid_score").desc(nulls_last=True),
-                F("published_at").desc(),
-                F("id").desc(),
-            )
-        )
+        return qs.annotate(hybrid_score=final_score)

@@ -1,18 +1,23 @@
 # apps/core/feed/trending.py
 
+from datetime import timedelta
 from django.db.models import (
     F,
     FloatField,
     ExpressionWrapper,
     Value,
+    DateTimeField,
+    Case,
+    When,
 )
 from django.db.models.functions import (
     Coalesce,
     Now,
     Least,
 )
+
 from apps.core.feed.constants import (
-    TRENDING_WINDOW_24H,
+    TRENDING_WINDOW_DEFAULT,
     TREND_REACTIONS_WEIGHT,
     TREND_COMMENTS_WEIGHT,
     TREND_RECOMMENTS_WEIGHT,
@@ -24,55 +29,60 @@ from apps.core.feed.constants import (
 
 class TrendingEngine:
     """
-    Trending ranking engine.
-    - Window-based (24h / 7d)
-    - Burst & velocity focused
+    Trending scoring engine.
     - SQL-only
-    - Content-agnostic (Moment / Testimony / ...)
+    - Can either filter by window or only annotate.
     """
 
     @staticmethod
-    def apply(queryset, *, window_seconds=TRENDING_WINDOW_24H):
-        """
-        Apply trending ranking to queryset.
-        """
-
+    def apply(queryset, *, window_seconds=TRENDING_WINDOW_DEFAULT, filter_window: bool = True):
         # -------------------------------------------------
-        # 1) Limit to trending window
+        # 1) Window start expression
         # -------------------------------------------------
-        qs = queryset.filter(
-            published_at__gte=ExpressionWrapper(
-                Now() - Value(window_seconds),
-                output_field=FloatField(),
-            )
+        window_start = ExpressionWrapper(
+            Now() - Value(timedelta(seconds=window_seconds)),
+            output_field=DateTimeField(),
         )
+
+        qs = queryset
+        if filter_window:
+            qs = qs.filter(published_at__gte=window_start)
 
         # -------------------------------------------------
         # 2) Clamp counters
         # -------------------------------------------------
         reactions = Least(
-            Coalesce(F("reactions_count"), 0),
+            Coalesce(F("reactions_count"), Value(0)),
             Value(TREND_MAX_REACTIONS),
         )
-
         comments = Least(
-            Coalesce(F("comments_count"), 0),
+            Coalesce(F("comments_count"), Value(0)),
             Value(TREND_MAX_COMMENTS),
         )
-
-        recomments = Coalesce(F("recomments_count"), 0)
+        recomments = Coalesce(F("recomments_count"), Value(0))
 
         # -------------------------------------------------
-        # 3) Raw engagement score
+        # 3) Base engagement score
         # -------------------------------------------------
-        engagement_score = (
+        base_engagement = (
             reactions * Value(TREND_REACTIONS_WEIGHT)
             + comments * Value(TREND_COMMENTS_WEIGHT)
             + recomments * Value(TREND_RECOMMENTS_WEIGHT)
         )
 
         # -------------------------------------------------
-        # 4) Age (seconds → hours)
+        # 4) Only score inside window (when not filtering)
+        # -------------------------------------------------
+        engagement_score = base_engagement
+        if not filter_window:
+            engagement_score = Case(
+                When(published_at__gte=window_start, then=base_engagement),
+                default=Value(0.0),
+                output_field=FloatField(),
+            )
+
+        # -------------------------------------------------
+        # 5) Age + velocity
         # -------------------------------------------------
         age_seconds = ExpressionWrapper(
             Now() - F("published_at"),
@@ -85,28 +95,16 @@ class TrendingEngine:
         )
 
         velocity = ExpressionWrapper(
-            engagement_score / (hours_alive + Value(1)),
+            engagement_score / (hours_alive + Value(1.0)),
             output_field=FloatField(),
         )
 
         # -------------------------------------------------
-        # 5) Final trending score
+        # 6) Final trending score
         # -------------------------------------------------
         trending_score = ExpressionWrapper(
-            engagement_score
-            + (velocity * Value(TREND_VELOCITY_MULTIPLIER)),
+            engagement_score + (velocity * Value(TREND_VELOCITY_MULTIPLIER)),
             output_field=FloatField(),
         )
 
-        # -------------------------------------------------
-        # 6) Ordering (stable + cursor safe)
-        # -------------------------------------------------
-        return (
-            qs
-            .annotate(trending_score=trending_score)
-            .order_by(
-                F("trending_score").desc(nulls_last=True),
-                F("published_at").desc(),
-                F("id").desc(),
-            )
-        )
+        return qs.annotate(trending_score=trending_score)

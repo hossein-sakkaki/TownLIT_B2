@@ -1,3 +1,5 @@
+# apps/profiles/services/symmetric_friendship.py
+
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 

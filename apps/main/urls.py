@@ -1,7 +1,10 @@
 # apps/main/urls.py
 from django.urls import path
 from rest_framework.routers import DefaultRouter
+
 from common.views.media_proxy import serve_s3_media_file
+from common.views.media_refresh import refresh_media_url
+
 from .views import (
     TermsAndPolicyViewSet,
     UserAgreementViewSet,
@@ -46,6 +49,7 @@ router.register(r"media/group-avatar", GroupAvatarViewSet, basename="main-group-
 urlpatterns = router.urls + [
     # S3 media proxy endpoint (keep stable)
     path("media-proxy/", serve_s3_media_file, name="serve-s3-media"),
+    path("media/refresh-url/", refresh_media_url, name="refresh-media-url"),
     
     # path('', coming_soon_view, name='coming-soon'),  # keep disabled if unused
 ]

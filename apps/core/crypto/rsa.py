@@ -17,7 +17,7 @@ def randbytes(n: int = 32) -> bytes:
     return os.urandom(n)
 
 
-# ---- Base64 helpers (استاندارد؛ در صورت نیاز urlsafe هم اضافه کن) ----
+# Base64 helpers ----------------------------------------------------------------
 def b64e(b: bytes) -> str:
     return base64.b64encode(b).decode("ascii")
 
@@ -33,7 +33,7 @@ def b64d_urlsafe(s: str) -> bytes:
     return base64.urlsafe_b64decode((s + pad).encode("ascii"))
 
 
-# ---- OAEP params (یک‌بار تعریف؛ همه‌جا همین را استفاده کن) ----
+# OAEP helpers ----------------------------------------------------------------
 OAEP_SHA256 = padding.OAEP(
     mgf=padding.MGF1(algorithm=hashes.SHA256()),
     algorithm=hashes.SHA256(),
@@ -41,17 +41,16 @@ OAEP_SHA256 = padding.OAEP(
 )
 
 
-# ---- Key loaders ----
+# PEM helpers ----------------------------------------------------------------
 @lru_cache(maxsize=256)
 def load_public_key_from_pem(pem_str: str) -> RSAPublicKey:
-    # cryptography نسخه‌های جدید دیگه backend نمی‌خواد
     return serialization.load_pem_public_key(pem_str.encode("utf-8"))
 
 def load_private_key_from_pem(pem_str: str, password: Optional[bytes] = None) -> RSAPrivateKey:
     return serialization.load_pem_private_key(pem_str.encode("utf-8"), password=password)
 
 
-# ---- Encrypt/Decrypt helpers ----
+# RSA helpers ----------------------------------------------------------------
 def encrypt_with_public(
     public_key: Union[RSAPublicKey, str], plaintext: bytes
 ) -> bytes:
@@ -71,7 +70,7 @@ def decrypt_with_private(
     return priv.decrypt(ciphertext, OAEP_SHA256)
 
 
-# ---- API های صریح با نام‌های روشن (اگر ترجیح می‌دی) ----
+# Public API ----------------------------------------------------------------
 def rsa_oaep_encrypt_with_public_pem(public_pem: str, plaintext: bytes) -> bytes:
     return encrypt_with_public(public_pem, plaintext)
 

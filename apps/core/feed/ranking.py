@@ -11,6 +11,7 @@ from django.db.models.functions import (
     Now,
     Least,
 )
+
 from apps.core.feed.constants import (
     REACTIONS_WEIGHT,
     COMMENTS_WEIGHT,
@@ -23,33 +24,27 @@ from apps.core.feed.constants import (
 
 class FeedRankingEngine:
     """
-    Central feed ranking engine.
-    - SQL-only (no Python loops)
-    - MySQL safe
-    - Works for any content with InteractionCounterMixin
+    Feed ranking engine (time-decayed engagement).
+    - SQL-only
+    - Annotates rank_score only (no ordering)
     """
 
     @staticmethod
     def apply(queryset):
-        """
-        Annotates queryset with rank_score
-        and applies ordering.
-        """
-
         # ------------------------------
-        # Clamp counters (anti-gaming)
+        # Clamp counters
         # ------------------------------
         reactions = Least(
-            Coalesce(F("reactions_count"), 0),
+            Coalesce(F("reactions_count"), Value(0)),
             Value(MAX_REACTIONS_EFFECT),
         )
 
         comments = Least(
-            Coalesce(F("comments_count"), 0),
+            Coalesce(F("comments_count"), Value(0)),
             Value(MAX_COMMENTS_EFFECT),
         )
 
-        recomments = Coalesce(F("recomments_count"), 0)
+        recomments = Coalesce(F("recomments_count"), Value(0))
 
         # ------------------------------
         # Engagement score
@@ -61,21 +56,16 @@ class FeedRankingEngine:
         )
 
         # ------------------------------
-        # Age (seconds)
+        # Age + decay
         # ------------------------------
         age_seconds = ExpressionWrapper(
             Now() - F("published_at"),
             output_field=FloatField(),
         )
 
-        # ------------------------------
-        # Time decay (smooth, stable)
-        # ------------------------------
         decay_factor = ExpressionWrapper(
-            1 / (
-                1
-                + (age_seconds / Value(TIME_DECAY_HOURS * 3600))
-            ),
+            Value(1.0)
+            / (Value(1.0) + (age_seconds / Value(float(TIME_DECAY_HOURS * 3600)))),
             output_field=FloatField(),
         )
 
@@ -87,15 +77,4 @@ class FeedRankingEngine:
             output_field=FloatField(),
         )
 
-        # ------------------------------
-        # Apply annotation + ordering
-        # ------------------------------
-        return (
-            queryset
-            .annotate(rank_score=rank_score)
-            .order_by(
-                F("rank_score").desc(nulls_last=True),
-                F("published_at").desc(),
-                F("id").desc(),   # tie-break (cursor safe)
-            )
-        )
+        return queryset.annotate(rank_score=rank_score)

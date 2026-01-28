@@ -1,4 +1,5 @@
 # apps/common/views/media_proxy.py
+
 from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseRedirect
 from rest_framework.decorators import permission_classes
 from django.views.decorators.http import require_http_methods
