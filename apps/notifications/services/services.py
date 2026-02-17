@@ -352,13 +352,6 @@ def _deliver_notification(
     # ------------------------------------------------------------------
     try:
 
-        logger.error(
-            "🧪 PUSH CHECK → user=%s type=%s mask=%s",
-            notif.user_id,
-            notif.notification_type,
-            channels_mask,
-        )
-
         if channels_mask & CHANNEL_PUSH:
 
             base_data = {

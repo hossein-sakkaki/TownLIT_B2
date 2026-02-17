@@ -9,6 +9,11 @@ from django.db import close_old_connections
 from apps.media_conversion.models import MediaJobStatus
 from apps.media_conversion.services.progress import touch_job
 
+from django.contrib.contenttypes.models import ContentType
+from apps.subtitles.services.transcript_builder import get_or_create_transcript_for_object
+from apps.subtitles.services.audio_asset import build_stt_audio_from_source_video
+
+from apps.subtitles.tasks import build_transcript_for_video
 from utils.common.utils import FileUpload
 from utils.common.video_utils import convert_video_to_multi_hls
 
@@ -145,6 +150,59 @@ def convert_video_to_multi_hls_task(
         logger.info("✅ Video conversion completed: %s", relative_output_path)
 
         # -------------------------------------------------
+        # Build & persist STT audio BEFORE cleanup
+        # -------------------------------------------------
+        try:
+            logger.info(
+                "STT CHECK: model_name=%s field_name=%s instance_id=%s source_path=%s output_path=%s",
+                model_name, field_name, instance_id, source_path, relative_output_path
+            )
+
+            # Short English comment: keep STT audio for subtitles / dubbing
+            if model_name == "Testimony" and field_name == "video":
+                from django.db import transaction
+
+                # Refresh instance to ensure fields are updated
+                instance = get_instance(app_label, model_name, instance_id)
+                transcript = get_or_create_transcript_for_object(instance)
+
+                # ✅ IMPORTANT: prefer HLS output (stable) instead of original upload
+                stt_source_path = relative_output_path or source_path
+
+                logger.info(
+                    "STT SOURCE EXISTS? %s -> %s",
+                    stt_source_path,
+                    default_storage.exists(stt_source_path),
+                )
+
+                if not stt_source_path or not default_storage.exists(stt_source_path):
+                    raise FileNotFoundError(f"STT source missing: {stt_source_path}")
+
+                # Stable storage path for STT audio (file is stored HERE)
+                out_audio_rel = f"posts/audios/testimony/stt/{instance_id}/audio.wav"
+
+                audio_rel = build_stt_audio_from_source_video(
+                    source_path=stt_source_path,
+                    out_rel_path=out_audio_rel,
+                )
+
+                # ✅ Do NOT re-save the file again.
+                # Just point FileField to the already-saved storage path.
+                transcript.stt_audio.name = audio_rel
+                transcript.stt_audio_format = "wav"
+                transcript.save(update_fields=["stt_audio", "stt_audio_format", "updated_at"])
+
+                logger.info("🎧 STT audio persisted: transcript=%s path=%s", transcript.id, transcript.stt_audio.name)
+
+                # ✅ enqueue STT ONLY after DB commit
+                transaction.on_commit(lambda: build_transcript_for_video.delay(transcript.id))
+
+        except Exception as e:
+            logger.warning("STT audio build skipped: %s", e, exc_info=True)
+
+
+
+        # -------------------------------------------------
         # Cleanup original upload (best-effort)
         # -------------------------------------------------
         try:
@@ -153,6 +211,7 @@ def convert_video_to_multi_hls_task(
                 logger.info("🗑️ Deleted original uploaded video: %s", source_path)
         except Exception:
             logger.warning("Could not delete original uploaded video: %s", source_path)
+
 
     except Exception as e:
         job_update(

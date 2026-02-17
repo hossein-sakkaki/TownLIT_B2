@@ -256,6 +256,9 @@ class Testimony(
         from apps.notifications.signals.testimony_signals import notify_testimony_ready
         notify_testimony_ready(self)
 
+        from apps.subtitles.hooks import maybe_start_transcript_for_testimony
+        maybe_start_transcript_for_testimony(self)
+
         # in-memory guard (same transaction / process)
         self._availability_fired = True
 
@@ -266,7 +269,10 @@ class Testimony(
         return self.type != self.TYPE_WRITTEN
 
     def before_autoconvert_save(self):
+        # Ensure title for media testimonies
         self._ensure_default_title()
+
+        # Written testimony has no conversion
         if self.type == self.TYPE_WRITTEN:
             self.is_converted = True
 
@@ -290,12 +296,6 @@ class Testimony(
         label = dict(self.FILE_TYPE_CHOICES).get(self.type, self.type).title()
         self.title = f"{label} testimony {timezone.now().strftime('%Y%m%d-%H%M%S')}"
 
-    def before_autoconvert_save(self):
-        self._ensure_default_title()
-
-        # ✍️ Written testimony has NO conversion
-        if self.type == self.TYPE_WRITTEN:
-            self.is_converted = True
 
     def get_slug_source(self):
         if self.title and self.title.strip():

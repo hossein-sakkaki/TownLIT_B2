@@ -34,13 +34,17 @@ def _probe_json(path: str) -> dict:
         "ffprobe", "-v", "error",
         "-select_streams", "v:0",
         "-show_entries",
-        "stream=width,height,pix_fmt,sample_aspect_ratio,display_aspect_ratio:"
+        "stream=width,height,pix_fmt,"
+        "color_range,color_space,color_transfer,color_primaries,"
+        "sample_aspect_ratio,display_aspect_ratio:"
         "stream_tags=rotate:"
         "stream_side_data_list",
         "-of", "json",
         path,
     ]
     return json.loads(_run(cmd).stdout.decode("utf-8", "ignore"))
+
+
 
 
 
@@ -147,8 +151,6 @@ def _probe_video_size(path: str) -> tuple[int, int]:
         ]
     ).decode().strip()
 
-    logger.debug("ffprobe raw output for %s: %r", path, out)
-
     # ffprobe may return multiple lines → take the first valid one
     for line in out.splitlines():
         if "x" in line:
@@ -251,11 +253,23 @@ def convert_video_to_multi_hls(
         s0 = (meta.get("streams") or [{}])[0]
         s = s0
 
+
+        # -------------------------------------------------
+        # Color metadata (for HDR detection / range handling)
+        # -------------------------------------------------
+        cp = (s.get("color_primaries") or "").lower()
+        ct = (s.get("color_transfer") or "").lower()
+        cs = (s.get("color_space") or "").lower()
+        cr = (s.get("color_range") or "").lower()
+
+        # HDR detection (common for iPhone HDR)
+        is_hdr = (cp == "bt2020") or (ct in ("smpte2084", "arib-std-b67"))
+
+
         coded_w = _even(int(s.get("width") or 0))
         coded_h = _even(int(s.get("height") or 0))
 
         try:
-            print('----------------------------------------------------------- start logger')
             ssd = s0.get("side_data_list") or []
             tags_rotate = (s0.get("tags") or {}).get("rotate")
 
@@ -264,20 +278,7 @@ def convert_video_to_multi_hls(
                 if isinstance(item, dict) and "rotation" in item:
                     side_rotations.append(item.get("rotation"))
 
-            rot_meta, rot_src = _extract_rotation_with_source(meta)
-
-            logger.warning("ROT DEBUG | coded=%sx%s", coded_w, coded_h)
-            logger.warning("ROT DEBUG | tags.rotate=%s", tags_rotate)
-            logger.warning("ROT DEBUG | side_data_list.len=%s rotations=%s", len(ssd), side_rotations)
-            logger.warning("ROT DEBUG | rot_meta=%s rot_src=%s", rot_meta, rot_src)
-
             disp_w, disp_h = _decide_display_size(meta, coded_w, coded_h)
-            logger.warning(
-                "ROT DEBUG | DECISION display=%sx%s",
-                disp_w,
-                disp_h,
-            )
-            print('----------------------------------------------------------- end logger')
 
         except Exception:
             logger.exception("ROT DEBUG BLOCK FAILED")
@@ -372,6 +373,14 @@ def convert_video_to_multi_hls(
         # -------------------------------------------------
         for idx, r in enumerate(renditions):
             key = r["key"]
+
+            if key in ("source", "1080p"):
+                crf = "18"
+            elif key == "720p":
+                crf = "19"
+            else:
+                crf = "20"
+
             weight = STAGE_WEIGHTS[key]
 
             if job:
@@ -391,26 +400,66 @@ def convert_video_to_multi_hls(
 
             playlist = os.path.join(subdir, "playlist.m3u8")
 
-            # Build a safe vf chain:
-            # - apply rotation (if needed)
-            # - scale to target W/H
-            # - square pixels + yuv420p for broad device support
+            # -------------------------------------------------
+            # Detect REAL HDR mastering metadata
+            # -------------------------------------------------
+            has_mastering = any(
+                isinstance(sd, dict) and "mastering_display_metadata" in sd
+                for sd in (s0.get("side_data_list") or [])
+            )
 
-            vf = ",".join([
-                f"scale={r['width']}:{r['height']}",
-                "setsar=1",
-                "format=yuv420p",
-            ])
+            # -------------------------------------------------
+            # Build vf chain
+            # -------------------------------------------------
+
+            if is_hdr and has_mastering:
+                # 🎥 REAL HDR (cinema / mastered HDR) → tonemap required
+                vf = ",".join([
+                    # Decode PQ HDR into linear light (scene-referred)
+                    "zscale=transfer=smpte2084:primaries=bt2020:matrix=bt2020nc:range=tv",
+
+                    "zscale=transfer=linear",
+
+                    # Highlight-only compression (controlled, YouTube-style)
+                    "tonemap=tonemap=mobius:peak=300:desat=0.15",
+
+                    # Back to SDR (single conversion!)
+                    "zscale=transfer=bt709:primaries=bt709:matrix=bt709:range=tv",
+
+                    # Spatial resize
+                    f"scale={r['width']}:{r['height']}:flags=lanczos",
+
+                    # Output hygiene
+                    "setsar=1",
+                    "format=yuv420p",
+                ])
+
+            else:
+                # 📱 SDR or MOBILE HDR (iPhone / display-referred HDR)
+                # → NO tonemap at all (critical!)
+                vf = ",".join([
+                    f"scale={r['width']}:{r['height']}:flags=lanczos",
+                    "setsar=1",
+                    "format=yuv420p",
+                ])
 
             cmd = [
                 "ffmpeg", "-y",
                 "-hide_banner",
                 "-i", temp_input,
+
                 "-vf", vf,
                 "-metadata:s:v:0", "rotate=0",
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+
+                "-c:v", "libx264",
+                "-preset", "fast",
+                "-crf", crf,
+                "-profile:v", "high",
+                "-level", "4.1",
                 "-pix_fmt", "yuv420p",
+
                 "-c:a", "aac", "-b:a", "128k", "-ac", "2",
+
                 "-f", "hls",
                 "-hls_time", "4",
                 "-hls_flags", "independent_segments",

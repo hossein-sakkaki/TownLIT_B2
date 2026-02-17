@@ -35,18 +35,36 @@ def env_bool(name: str, default: bool = False) -> bool:
     return val.strip().lower() in ("1", "true", "yes", "on")
 
 
-# ---------------------------------------------------------------------------------------
-CORS_ALLOW_ALL_ORIGINS = os.getenv('CORS_ALLOW_ALL_ORIGINS', 'False').lower() in ('true', '1', 't')
+# ---------------------------------------------------------------------
+# CORS CONFIGURATION (ENV-DRIVEN, SAFE FOR DEV & PROD)
+# ---------------------------------------------------------------------
+CORS_ALLOW_ALL_ORIGINS = os.getenv(
+    "CORS_ALLOW_ALL_ORIGINS", "False"
+).lower() in ("true", "1", "t")
 
 if not CORS_ALLOW_ALL_ORIGINS:
-    allowed_origins = os.getenv("CORS_ALLOWED_ORIGINS", "")
-    CORS_ALLOWED_ORIGINS = [origin.strip() for origin in allowed_origins.split(",") if origin.strip()]
+    allowed_origins_env = os.getenv("CORS_ALLOWED_ORIGINS", "")
+    CORS_ALLOWED_ORIGINS = [
+        origin.strip()
+        for origin in allowed_origins_env.split(",")
+        if origin.strip()
+    ]
 else:
     CORS_ALLOWED_ORIGINS = []
 
+# Must be True for CloudFront signed cookies
+CORS_ALLOW_CREDENTIALS = os.getenv(
+    "CORS_ALLOW_CREDENTIALS", "True"
+).lower() in ("true", "1", "t")
 
-FRONTEND_BASE_URL = CORS_ALLOWED_ORIGINS[0] if CORS_ALLOWED_ORIGINS else "http://localhost:3000"
-CORS_ALLOW_CREDENTIALS = os.getenv('CORS_ALLOW_CREDENTIALS', 'True').lower() in ('true', '1', 't')
+# ---------------------------------------------------------------------
+# FRONTEND BASE (for internal use only)
+# ---------------------------------------------------------------------
+FRONTEND_BASE_URL = (
+    CORS_ALLOWED_ORIGINS[0]
+    if CORS_ALLOWED_ORIGINS
+    else os.getenv("DEFAULT_FRONTEND_URL", "http://localhost:3000")
+)
 
 # ---------------------------------------------------------------------------------------
 ADMIN_E2E_DEBUG_PASSWORD = "testpassword"
@@ -56,6 +74,12 @@ SECRET_KEY = os.getenv('SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'False').lower() in ('true', '1', 't')
+
+# ------------------------------------------------------
+# HTTPS reverse proxy support (Dev nginx)
+# ------------------------------------------------------
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+USE_X_FORWARDED_HOST = True
 
 # ----------------------------------------------------------------------------------------------------------------------------
 ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "").split(",")
@@ -157,7 +181,10 @@ INSTALLED_APPS = [
     'apps.orders.apps.OrdersConfig',
     'apps.payment.apps.PaymentConfig',
     'apps.warehouse.apps.WarehouseConfig',
+
     "apps.core.interactions",
+    'apps.asset_delivery.apps.AssetDeliveryConfig',
+    "apps.subtitles.apps.SubtitlesConfig",
     
     # pip install django-cors-headers
     'corsheaders',
@@ -421,6 +448,14 @@ TRANSLATIONS_HUMANIZE_ENABLED = env_bool("TRANSLATIONS_HUMANIZE_ENABLED", defaul
 TRANSLATIONS_HUMANIZE_ALL = env_bool("TRANSLATIONS_HUMANIZE_ALL", default=False)
 TRANSLATIONS_HUMANIZE_PROMPT_VERSION = os.getenv("TRANSLATIONS_HUMANIZE_PROMPT_VERSION", "v1.1")
 
+OPENAI_TTS_MODEL = os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
+VOICE_HUMANIZE_ENABLED = env_bool("VOICE_HUMANIZE_ENABLED", default=True)
+VOICE_HUMANIZE_PROMPT_VERSION = os.getenv("VOICE_HUMANIZE_PROMPT_VERSION", "v1")
+
+# Subtitles -----------------------------------------------------------------------------
+SUBTITLES_DEFAULT_LANGUAGES = []
+SUBTITLES_DEFAULT_FORMATS = ["vtt"]
+
 
 # CKEditor ------------------------------------------------------------------------------
 CKEDITOR_BASEPATH = "/static/ckeditor/ckeditor/"
@@ -669,21 +704,15 @@ LOGGING = {
 
 
 
+# Asset CDN config ----------------------------------------------------------------------
+ASSET_DELIVERY_PROVIDER = os.getenv("ASSET_DELIVERY_PROVIDER", "cloudfront")
+ASSET_CDN_BASE_URL = os.getenv("ASSET_CDN_BASE_URL", "")
+ASSET_CDN_DEFAULT_TTL_SECONDS = int(os.getenv("ASSET_CDN_DEFAULT_TTL_SECONDS", "900"))
+ASSET_CDN_COOKIE_DOMAIN = os.getenv("ASSET_CDN_COOKIE_DOMAIN", "")
+ASSET_CDN_COOKIE_SECURE = os.getenv("ASSET_CDN_COOKIE_SECURE", "true").lower() == "true"
 
 
-# # Custom IP Whitelisting Configuration --------------------------------------------
-# <RequireAll>
-#     # My IP
-#     Require ip 172.218.33.146
-    
-#     # Daivid IP
-#     Require ip 88.242.139.164
-    
-# </RequireAll>
-
-# public_html/api-v1-private.townlit.com
-
-# https://github.com/settings/keys
-# 
-
-
+# CloudFront signed URL config
+CLOUDFRONT_KEY_PAIR_ID = os.getenv("CLOUDFRONT_KEY_PAIR_ID", "")
+CLOUDFRONT_PRIVATE_KEY_PATH = os.getenv("CLOUDFRONT_PRIVATE_KEY_PATH", "")
+ASSET_SIGN_LOCK_IP = env_bool("ASSET_SIGN_LOCK_IP", default=False)

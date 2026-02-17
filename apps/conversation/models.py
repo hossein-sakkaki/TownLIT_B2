@@ -52,26 +52,20 @@ class Dialogue(models.Model):
         return settings.DEFAULT_GROUP_AVATAR_URL
 
 
-    # ✅ بررسی اینکه آیا کاربر نقش خاصی دارد
     def has_role(self, user, role: str) -> bool:
         return self.participants_roles.filter(user=user, role=role).exists()
 
-    # ✅ بررسی اینکه آیا کاربر founder است
     def is_founder(self, user) -> bool:
         return self.has_role(user, 'founder')
 
-    # ✅ بررسی اینکه آیا کاربر elder است
     def is_elder(self, user) -> bool:
         return self.has_role(user, 'elder')
 
-    # ✅ بررسی اینکه آیا گروه حداقل دو elder دارد (برای انتقال اختیارات در آینده)
     def has_multiple_elders(self):
         return self.participants_roles.filter(role='elder').count() > 1
 
-    # ✅ بررسی اینکه آیا کاربر عضو تیم مدیریت است (founder یا elder)
     def is_group_manager(self, user) -> bool:
         return self.participants_roles.filter(user=user, role__in=['founder', 'elder']).exists()
-
 
     # Soft delete the dialogue and Messages from the user's profile
     def mark_as_deleted_by_user(self, user):
@@ -89,11 +83,9 @@ class Dialogue(models.Model):
 
         
     def restore_dialogue(self, user):
-        """ 🔹 اگر کاربر چت را حذف کرده بود، مجدداً به لیستش اضافه شود """
         self.deleted_by_users.remove(user)
 
     def get_last_message(self):
-        """ 🔹 آخرین پیام قابل مشاهده را بازمی‌گرداند (با در نظر گرفتن حذف نرم) """
         return self.messages.exclude(id__in=self.deleted_by_users.values_list("id", flat=True)).last()
 
     def __str__(self):

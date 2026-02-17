@@ -1,3 +1,5 @@
+# apps/posts/signals/testimony_media_cleanup.py
+
 import logging
 import os
 
@@ -8,6 +10,7 @@ from django.contrib.contenttypes.models import ContentType
 from apps.media_conversion.models import MediaConversionJob
 from django.core.files.storage import default_storage
 from apps.posts.models.testimony import Testimony
+from apps.subtitles.models import VideoTranscript
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +85,50 @@ def _safe_delete_storage_key(key: str, label: str):
             logger.info("✅ Deleted storage key (%s): %s", label, key)
     except Exception:
         logger.exception("❌ Failed deleting storage key (%s): %s", label, key)
+
+
+def _cleanup_subtitles_for_testimony(testimony):
+    try:
+        ct = ContentType.objects.get_for_model(Testimony)
+
+        transcript = VideoTranscript.objects.filter(
+            content_type=ct,
+            object_id=testimony.pk,
+        ).first()
+
+        if not transcript:
+            return
+
+        # -------------------------------------------------
+        # 1) Delete VoiceTrack audio files (TTS)
+        # -------------------------------------------------
+        for voice in transcript.voice_tracks.all():
+            if voice.audio:
+                _safe_delete_fieldfile(voice.audio, "voice-track-audio")
+
+        # -------------------------------------------------
+        # 2) (Future-proof) subtitle files if stored as FileField
+        # -------------------------------------------------
+        for track in transcript.subtitle_tracks.all():
+            if hasattr(track, "file") and track.file:
+                _safe_delete_fieldfile(track.file, "subtitle-track")
+
+        # -------------------------------------------------
+        # 3) STT source audio
+        # -------------------------------------------------
+        if transcript.stt_audio:
+            _safe_delete_fieldfile(transcript.stt_audio, "stt-audio")
+
+        # -------------------------------------------------
+        # 4) Delete transcript (segments + tracks cascade)
+        # -------------------------------------------------
+        transcript.delete()
+
+        logger.info("✅ Deleted transcript + subtitles + voices for testimony %s", testimony.pk)
+
+    except Exception:
+        logger.exception("❌ Failed cleaning subtitles/voices for testimony %s", testimony.pk)
+
 
 
 # ---------------------------------------------------------
@@ -175,4 +222,7 @@ def testimony_cleanup_media_on_delete(sender, instance: Testimony, **kwargs):
         _safe_delete_fieldfile(getattr(instance, "video", None), "video")
         _safe_delete_fieldfile(getattr(instance, "thumbnail", None), "thumbnail")
 
+        # ✅ 2) cleanup subtitles + transcript
+        _cleanup_subtitles_for_testimony(instance)
+        
     transaction.on_commit(_cleanup)

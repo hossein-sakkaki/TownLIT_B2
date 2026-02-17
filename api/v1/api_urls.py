@@ -1,8 +1,10 @@
 # api/v1/api_urls.py
+
 from django.urls import include, path
 
 urlpatterns = [
     path('', include('apps.main.urls')),
+
     path('accounts/', include('apps.accounts.urls')),
     path('profiles/', include('apps.profiles.urls')),
     path('profiles_org/', include('apps.profilesOrg.urls')),
@@ -20,11 +22,22 @@ urlpatterns = [
 
     # Interactions (reactions, comments, counters)
     path('interactions/', include('apps.core.interactions.urls')),
+
+    # Media processing (async jobs)
     path("media-conversion/", include("apps.media_conversion.urls")),
+
+    # Asset delivery gateway
+    path("assets/", include("apps.asset_delivery.urls")),
+
+    # Translations
     path('translations/', include('apps.translations.urls')),
+
+    # Subtitles (STT, translation, on-demand tracks)
+    path('subtitles/', include('apps.subtitles.urls')),
 
     # Square (central explore feed)
     path("square/", include("apps.core.square.urls")),
-    
+
+    # Notifications
     path('', include('apps.notifications.urls')),
 ]

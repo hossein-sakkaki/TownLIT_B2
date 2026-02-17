@@ -5,6 +5,7 @@ from django.contrib.contenttypes.models import ContentType
 import logging
 
 from apps.posts.models.testimony import Testimony
+from apps.subtitles.models import VideoTranscript, TranscriptJobStatus
 from apps.core.visibility.constants import VISIBILITY_GLOBAL
 from apps.media_conversion.services.serializer_gate import gate_media_payload
 
@@ -47,6 +48,10 @@ class TestimonySerializer(
     is_suspended = serializers.BooleanField(read_only=True)
     reports_count = serializers.IntegerField(read_only=True)
 
+    transcript_id = serializers.SerializerMethodField(read_only=True)
+    transcript_language = serializers.SerializerMethodField(read_only=True)
+    has_transcript = serializers.SerializerMethodField(read_only=True)
+
     class Meta:
         model = Testimony
         fields = [
@@ -81,6 +86,11 @@ class TestimonySerializer(
 
             # media
             "is_converted",
+
+            # transcript
+            "has_transcript",
+            "transcript_id",
+            "transcript_language",
 
             # targets
             "comment_target",
@@ -307,3 +317,34 @@ class TestimonySerializer(
             )
 
         return data
+
+    # -------------------------------------------------
+    # Transcript / subtitles helpers
+    # -------------------------------------------------
+    def _get_transcript(self, obj):
+        """
+        Return VideoTranscript if exists and DONE.
+        Cached per serializer instance to avoid N+1.
+        """
+        if not hasattr(self, "_transcript_cache"):
+            ct = ContentType.objects.get_for_model(obj.__class__)
+            self._transcript_cache = VideoTranscript.objects.filter(
+                content_type=ct,
+                object_id=obj.id,
+                status=TranscriptJobStatus.DONE,
+            ).first()
+        return self._transcript_cache
+
+
+    def get_has_transcript(self, obj):
+        return self._get_transcript(obj) is not None
+
+
+    def get_transcript_id(self, obj):
+        tr = self._get_transcript(obj)
+        return tr.id if tr else None
+
+
+    def get_transcript_language(self, obj):
+        tr = self._get_transcript(obj)
+        return tr.source_language if tr else None

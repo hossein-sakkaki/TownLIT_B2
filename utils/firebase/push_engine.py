@@ -71,11 +71,6 @@ class FirebasePushEngine:
 
         access_token = get_google_access_token()
 
-        logger.error(
-            "🔐 GOOGLE ACCESS TOKEN → %s",
-            access_token[:30] if access_token else "NONE",
-        )
-
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json; charset=utf-8",
@@ -97,27 +92,12 @@ class FirebasePushEngine:
         }
 
         try:
-
-            logger.error(
-                "🚀 FCM OUT → project=%s token=%s data=%s",
-                self.project_id,
-                token[:20],
-                safe_data,
-            )
-
             resp = requests.post(
                 self.base_url,
                 json=payload,
                 headers=headers,
                 timeout=10,
             )
-
-            logger.error(
-                "📡 FCM RESP → status=%s body=%s",
-                resp.status_code,
-                resp.text,
-            )
-
 
             if 200 <= resp.status_code < 300:
                 return resp.json()
