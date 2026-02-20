@@ -285,6 +285,7 @@ class CustomUserAuthSerializer(AvatarURLMixin, serializers.ModelSerializer):
 
     # --- Avatar ---
     avatar_url = serializers.SerializerMethodField()
+    avatar_cdn_url = serializers.SerializerMethodField()
     avatar_version = serializers.IntegerField(read_only=True)
 
     # --- Navigation ---
@@ -319,6 +320,7 @@ class CustomUserAuthSerializer(AvatarURLMixin, serializers.ModelSerializer):
             "country_display",
 
             "avatar_url",
+            "avatar_cdn_url",
             "avatar_version",
 
             "profile_url",
@@ -333,6 +335,9 @@ class CustomUserAuthSerializer(AvatarURLMixin, serializers.ModelSerializer):
 
     def get_avatar_url(self, obj):
         return self.build_avatar_url(obj)
+
+    def get_avatar_cdn_url(self, obj):
+        return self.build_avatar_cdn_url(obj)
 
     def get_is_townlit_verified(self, obj):
         mp = getattr(obj, "member_profile", None)
@@ -375,6 +380,7 @@ class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
 
     # --- Avatar proxy (FAST, no S3 signing on frontend) ---
     avatar_url = serializers.SerializerMethodField()
+    avatar_cdn_url = serializers.SerializerMethodField()
     avatar_version = serializers.IntegerField(read_only=True)
 
     # country = write_only field
@@ -474,6 +480,9 @@ class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
     def get_avatar_url(self, obj):
         return self.build_avatar_url(obj)
 
+    def get_avatar_cdn_url(self, obj):
+        return self.build_avatar_cdn_url(obj)
+
     # --------------------------------------------------------------------
     # Is TownLIT verified?
     # --------------------------------------------------------------------
@@ -519,6 +528,7 @@ class PublicCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
 
     # NEW: fast avatar proxy URL
     avatar_url = serializers.SerializerMethodField()
+    avatar_cdn_url = serializers.SerializerMethodField()
     avatar_version = serializers.IntegerField(read_only=True)
 
     class Meta:
@@ -554,6 +564,7 @@ class PublicCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
             # UI routing
             "profile_url",
             "avatar_url",
+            "avatar_cdn_url",
             "avatar_version",
         ]
         read_only_fields = fields  # Pure output serializer
@@ -590,6 +601,9 @@ class PublicCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
     def get_avatar_url(self, obj):
         return self.build_avatar_url(obj)
 
+    def get_avatar_cdn_url(self, obj):
+        return self.build_avatar_cdn_url(obj)
+    
     def get_is_townlit_verified(self, obj):
         """
         Derived flag:
@@ -615,6 +629,7 @@ class LimitedCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
 
     # NEW: avatar proxy URL
     avatar_url = serializers.SerializerMethodField()
+    avatar_cdn_url = serializers.SerializerMethodField()
     avatar_version = serializers.IntegerField(read_only=True)
 
     class Meta:
@@ -639,6 +654,7 @@ class LimitedCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
             # NEW:
             "profile_url",
             "avatar_url",
+            "avatar_cdn_url",
             "avatar_version",
         ]
         read_only_fields = fields
@@ -652,6 +668,9 @@ class LimitedCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
 
     def get_avatar_url(self, obj):
         return self.build_avatar_url(obj)
+    
+    def get_avatar_cdn_url(self, obj):
+        return self.build_avatar_cdn_url(obj)
 
     def get_is_townlit_verified(self, obj):
         """
@@ -684,6 +703,7 @@ class SimpleCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
 
     # --- NEW: avatar proxy URL (no S3 signing on frontend) ---
     avatar_url = serializers.SerializerMethodField()
+    avatar_cdn_url = serializers.SerializerMethodField()
     avatar_version = serializers.IntegerField(read_only=True)
 
     class Meta:
@@ -714,6 +734,7 @@ class SimpleCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
 
             # avatar proxy (fast)
             "avatar_url",
+            "avatar_cdn_url",
             "avatar_version",
         ]
         read_only_fields = ["id"]
@@ -797,6 +818,9 @@ class SimpleCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
     # ---------------------------------------------------------------
     def get_avatar_url(self, obj):
         return self.build_avatar_url(obj)
+    
+    def get_avatar_cdn_url(self, obj):
+        return self.build_avatar_cdn_url(obj)
 
     # ---------------------------------------------------------------
     # TownLIT verification
@@ -820,6 +844,7 @@ class UserMiniSerializer(AvatarURLMixin, serializers.ModelSerializer):
     label_color = serializers.CharField(source='label.color', read_only=True)
 
     avatar_url = serializers.SerializerMethodField()
+    avatar_cdn_url = serializers.SerializerMethodField()
     avatar_version = serializers.IntegerField(read_only=True)
 
     class Meta:
@@ -832,12 +857,15 @@ class UserMiniSerializer(AvatarURLMixin, serializers.ModelSerializer):
             "is_verified_identity",
             "is_townlit_verified",
             "label_color",
-            "avatar_url", "avatar_version",
+            "avatar_url", "avatar_cdn_url", "avatar_version",
         ]
 
 
     def get_avatar_url(self, obj):
         return self.build_avatar_url(obj)
+    
+    def get_avatar_cdn_url(self, obj):
+        return self.build_avatar_cdn_url(obj)
 
     def get_is_townlit_verified(self, obj):
         """

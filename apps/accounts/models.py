@@ -252,7 +252,7 @@ class SocialMediaLink(models.Model):
     def __str__(self):
         return self.link
 
-    
+
 # CUSTOMUSER Model ----------------------------------------------
 class CustomUser(AbstractBaseUser, PermissionsMixin):
     IMAGE = FileUpload('accounts', 'photos', 'custom_user')

@@ -46,6 +46,7 @@ class DialogueSerializer(GroupAvatarURLMixin, serializers.ModelSerializer):
 
     # NEW: group avatar proxy URL (for group chats)
     group_avatar_url = serializers.SerializerMethodField()
+    group_avatar_cdn_url = serializers.SerializerMethodField()
     group_avatar_version = serializers.IntegerField(read_only=True)
 
     class Meta:
@@ -66,7 +67,7 @@ class DialogueSerializer(GroupAvatarURLMixin, serializers.ModelSerializer):
             "is_sensitive",
             "marker_id",
             # NEW
-            "group_avatar_url", "group_avatar_version",
+            "group_avatar_url", "group_avatar_cdn_url", "group_avatar_version",
         ]
 
     # -------------------------------------------------------------------
@@ -186,6 +187,13 @@ class DialogueSerializer(GroupAvatarURLMixin, serializers.ModelSerializer):
             return None
         marker = obj.marked_users.filter(user=request.user).first()
         return marker.id if marker else None
+
+    # -------------------------------------------------------------------
+    # Group Avatar
+    # -------------------------------------------------------------------
+    def get_group_avatar_cdn_url(self, obj):
+        return GroupAvatarURLMixin.get_group_avatar_cdn_url(self, obj)
+
 
 
 

@@ -181,6 +181,7 @@ INSTALLED_APPS = [
     'apps.orders.apps.OrdersConfig',
     'apps.payment.apps.PaymentConfig',
     'apps.warehouse.apps.WarehouseConfig',
+    # "apps.core.square.apps.SquareConfig",
 
     "apps.core.interactions",
     'apps.asset_delivery.apps.AssetDeliveryConfig',

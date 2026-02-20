@@ -1,3 +1,5 @@
+# apps/core/square/query.py
+
 from __future__ import annotations
 
 import logging
@@ -16,6 +18,7 @@ from apps.core.ownership.ownership_filters import exclude_owned_by_viewer
 from apps.core.ownership.ownership_predicates import owner_q_for_user_ids
 from apps.core.square.registry import get_square_sources
 from apps.core.visibility.query import VisibilityQuery
+from apps.core.owner_visibility.query import OwnerVisibilityQuery
 from apps.profiles.selectors.friends import get_friend_user_ids
 
 logger = logging.getLogger(__name__)
@@ -80,6 +83,13 @@ class SquareQuery:
             # 4) Visibility filtering (permission-level)
             # ---------------------------------------------
             qs = VisibilityQuery.for_viewer(viewer=viewer, base_queryset=qs)
+
+            # OWNER VISIBILITY FILTER (BEFORE EXCLUDE OWNED)
+            qs = OwnerVisibilityQuery.filter_queryset_for_square(
+                qs,
+                viewer=viewer,
+                kind=kind,
+            )
 
             # ---------------------------------------------
             # 5) Exclude own content (Square UI policy)

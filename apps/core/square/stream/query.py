@@ -3,6 +3,7 @@
 from django.db.models import QuerySet
 
 from apps.core.visibility.query import VisibilityQuery
+from apps.core.owner_visibility.query import OwnerVisibilityQuery
 from apps.core.ownership.ownership_filters import exclude_owned_by_viewer
 
 
@@ -11,6 +12,7 @@ class SquareStreamQuery:
     Base queryset builder for Square stream.
 
     Applies ONLY domain-level filters:
+    - owner eligibility
     - visibility
     - availability
     - subtype
@@ -31,38 +33,42 @@ class SquareStreamQuery:
         qs = model.objects.all()
 
         # -------------------------------------------------
-        # Visibility (friends / public / etc.)
+        # 🔥 1) OWNER ELIGIBILITY (account state)
         # -------------------------------------------------
-        qs = VisibilityQuery.for_viewer(
+        qs = OwnerVisibilityQuery.filter_queryset_for_square(
+            qs,
             viewer=viewer,
-            base_queryset=qs,
+            kind="stream",  # behaves like ALL but without privacy promotion
         )
 
         # -------------------------------------------------
-        # Availability (converted / written)
+        # 2) Visibility (friends / public / etc.)
+        # -------------------------------------------------
+        qs = VisibilityQuery.for_viewer(viewer=viewer, base_queryset=qs)
+
+        # -------------------------------------------------
+        # 3) Availability (converted / written)
         # -------------------------------------------------
         qs = qs.filter(is_converted=True)
 
         # -------------------------------------------------
-        # Subtype filtering (model-specific)
+        # 4) Subtype filtering (model-specific)
         # -------------------------------------------------
         if hasattr(model, "type"):
-            # Testimony
             qs = qs.filter(type=subtype)
         else:
-            # Moment
             if subtype == "video":
                 qs = qs.filter(video__isnull=False)
             elif subtype == "image":
                 qs = qs.filter(image__isnull=False)
 
         # -------------------------------------------------
-        # Exclude seed itself
+        # 5) Exclude seed itself
         # -------------------------------------------------
         qs = qs.exclude(id=seed.id)
 
         # -------------------------------------------------
-        # 🔥 Exclude viewer's own content (Square UX rule)
+        # 6) Exclude viewer's own content
         # -------------------------------------------------
         qs = exclude_owned_by_viewer(qs, viewer)
 

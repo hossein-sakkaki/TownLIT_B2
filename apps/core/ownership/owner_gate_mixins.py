@@ -1,3 +1,5 @@
+# apps/core/ownership/owner_gate_mixins.py
+
 import logging
 from rest_framework.exceptions import NotFound
 from rest_framework.response import Response

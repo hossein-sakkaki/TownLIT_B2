@@ -214,7 +214,19 @@ class SquareViewSet(viewsets.ViewSet):
                     merged_objs.extend(list(qs[:per_source_limit]))
 
                 # global merge ordering (simple + stable)
-                merged_objs.sort(key=lambda o: (o.published_at, o.id), reverse=True)
+                def _score_of(o):
+                    return (
+                        getattr(o, "personalized_trending_score", None)
+                        or getattr(o, "trending_score", None)
+                        or getattr(o, "rank_score", None)
+                        or getattr(o, "hybrid_score", None)
+                        or 0
+                    )
+
+                merged_objs.sort(
+                    key=lambda o: (_score_of(o), o.published_at, o.id),
+                    reverse=True,
+                )
 
                 logger.info(
                     "[Square] MERGE kind=%s merged=%s mode=%s viewer=%s",

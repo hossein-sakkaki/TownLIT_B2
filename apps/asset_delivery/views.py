@@ -52,6 +52,25 @@ def _hls_dir_path_from_key(key: str) -> str:
     return "/" + d.lstrip("/")
 
 
+def _hls_cookie_scope_from_key(key: str) -> str:
+    """
+    HLS requests span multiple nested playlists and segment files.
+    Cookie path must cover the whole video prefix, not just the UUID folder.
+    Example:
+        posts/videos/moment/2026/.../uuid/master.m3u8
+    -> cookie path should be:
+        /posts/videos/
+    """
+
+    parts = key.strip("/").split("/")
+
+    # Expect: posts/videos/<type>/...
+    if len(parts) >= 2 and parts[0] == "posts" and parts[1] == "videos":
+        return "/posts/videos/"
+
+    # fallback (safe)
+    return "/"
+
 
 class AssetPlaybackViewSet(viewsets.ViewSet):
     """
@@ -193,9 +212,18 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
             key = payload.get("_source_key") or ""
             raw_signed_url = payload.get("_signed_url_raw") or ""
 
-            # HLS: set signed cookies ONLY when real playback starts
-            if key and _is_hls_path(key) and raw_signed_url:
-                cookie_path = _hls_dir_path_from_key(key)
+            # Set signed cookies when needed.
+            # - For HLS: ALWAYS needed (segments/variants)
+            # - For private images/thumbnails: needed for <img src="cdn/..."> loads too
+            should_set_cookies = bool(raw_signed_url) and (
+                _is_hls_path(key) or intent in ("preload", "view", "render")
+            )
+
+            if key and should_set_cookies:
+                # cookie_path = _hls_dir_path_from_key(key) if _is_hls_path(key) else "/"  # images: site-wide ok
+
+                cookie_path = _hls_cookie_scope_from_key(key) if _is_hls_path(key) else "/"
+
                 ttl = int(payload["expires_in"])
                 self._set_cloudfront_signed_cookies(
                     resp,
@@ -203,6 +231,7 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
                     ttl=ttl,
                     cookie_path=cookie_path,
                 )
+
 
             return resp
 
