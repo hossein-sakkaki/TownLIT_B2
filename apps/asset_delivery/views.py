@@ -65,6 +65,24 @@ def _hls_cookie_scope_from_key(key: str) -> str:
     return "/"
 
 
+def _cookie_scope_from_key(key: str) -> str:
+    """
+    Scope cookie to the file's parent directory.
+    Prevents CloudFront cookie overwrite across unrelated assets.
+    Example:
+        posts/images/moment/.../abc.jpg
+    -> /posts/images/moment/.../
+    """
+    k = (key or "").strip("/")
+    if not k:
+        return "/"
+
+    parent = os.path.dirname(k).strip("/")
+    if not parent:
+        return "/"
+
+    return f"/{parent}/"
+
 class AssetPlaybackViewSet(viewsets.ViewSet):
     """
     Playback gateway (video/audio/image/thumbnail).
@@ -213,7 +231,9 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
             )
 
             if key and should_set_cookies:
-                cookie_path = _hls_cookie_scope_from_key(key) if _is_hls_path(key) else "/"
+                # HLS needs broad scope (/posts/videos/) for manifest + variants + segments
+                # Non-HLS should be scoped to parent folder to avoid cookie collisions
+                cookie_path = _hls_cookie_scope_from_key(key) if _is_hls_path(key) else _cookie_scope_from_key(key)
 
                 ttl = int(payload["expires_in"])
                 self._set_cloudfront_signed_cookies(
@@ -279,8 +299,11 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
             resp = Response(resp_payload, status=status.HTTP_200_OK)
 
             raw_signed_url = payload.get("_signed_url_raw") or ""
-            if _is_hls_path(key) and raw_signed_url:
-                cookie_path = _hls_cookie_scope_from_key(key)
+            source_key = payload.get("_source_key") or key
+
+            # Set cookies for HLS (required). You can extend this later for image/file refresh too.
+            if raw_signed_url and _is_hls_path(source_key):
+                cookie_path = _hls_cookie_scope_from_key(source_key)
                 ttl = int(payload["expires_in"])
                 self._set_cloudfront_signed_cookies(
                     resp,
