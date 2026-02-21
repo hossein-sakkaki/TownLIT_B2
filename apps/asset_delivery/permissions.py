@@ -55,7 +55,7 @@ def safe_can_view_target(request, target_obj) -> bool:
     # Apply VisibilityPolicy only to content objects
     # ------------------------------------------------------------
     try:
-        if hasattr(target_obj, "visibility") and hasattr(target_obj, "content_object"):
+        if hasattr(target_obj, "visibility"):
             from apps.core.visibility.policy import VisibilityPolicy
             reason = VisibilityPolicy.gate_reason(viewer=viewer, obj=target_obj)
             return reason is None

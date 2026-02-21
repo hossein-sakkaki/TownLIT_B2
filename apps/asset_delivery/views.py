@@ -45,13 +45,6 @@ def _is_hls_path(key: str) -> bool:
     return key.endswith(".m3u8")
 
 
-def _hls_dir_path_from_key(key: str) -> str:
-    # Cookie Path should be the HLS directory (ends with '/')
-    # Example: posts/videos/testimony/.../ -> includes master.m3u8 + variants + segments
-    d = os.path.dirname(key).rstrip("/") + "/"
-    return "/" + d.lstrip("/")
-
-
 def _hls_cookie_scope_from_key(key: str) -> str:
     """
     HLS requests span multiple nested playlists and segment files.
@@ -125,7 +118,7 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
             max_age=int(ttl),
             secure=True,
             httponly=True,
-            samesite="Lax",        # Same-site subdomains (townlit.com <-> media.townlit.com)
+            samesite="Lax",        # Same-site subdomains (townlit.com <-> media.townlit.com) 
             domain=cookie_domain,
             path=cookie_path,      # Critical: limit to that HLS folder
         )
@@ -220,8 +213,6 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
             )
 
             if key and should_set_cookies:
-                # cookie_path = _hls_dir_path_from_key(key) if _is_hls_path(key) else "/"  # images: site-wide ok
-
                 cookie_path = _hls_cookie_scope_from_key(key) if _is_hls_path(key) else "/"
 
                 ttl = int(payload["expires_in"])
@@ -289,7 +280,7 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
 
             raw_signed_url = payload.get("_signed_url_raw") or ""
             if _is_hls_path(key) and raw_signed_url:
-                cookie_path = _hls_dir_path_from_key(key)
+                cookie_path = _hls_cookie_scope_from_key(key)
                 ttl = int(payload["expires_in"])
                 self._set_cloudfront_signed_cookies(
                     resp,
