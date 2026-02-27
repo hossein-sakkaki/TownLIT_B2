@@ -191,6 +191,7 @@ INSTALLED_APPS = [
     'corsheaders',
     "apps.media_conversion.apps.MediaConversionConfig",
 
+    "apps.advancement.apps.AdvancementConfig",
 ]
 
 MIDDLEWARE = [
