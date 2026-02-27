@@ -110,3 +110,4 @@ django-extensions==3.2.3
 django-cryptography>=1.1
 openai>=1.12.0
 httpx==0.27.2
+reportlab==4.2.2
