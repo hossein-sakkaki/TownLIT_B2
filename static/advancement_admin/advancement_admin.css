@@ -1,0 +1,366 @@
+/* static/advancement_admin/advancement_admin.css */
+
+/* -----------------------------
+   Root dashboard layout
+------------------------------ */
+.adv-dashboard {
+  padding: 8px 0 12px;
+  color: #0f172a;
+}
+
+.adv-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.adv-header-row h1 {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.2;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+/* -----------------------------
+   Badge
+------------------------------ */
+.adv-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.adv-badge-readonly {
+  background: #fff7ed;
+  color: #9a3412;
+  border: 1px solid #fdba74;
+}
+
+/* -----------------------------
+   Quick links
+------------------------------ */
+.adv-quick-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 16px;
+}
+
+.adv-quick-links a {
+  text-decoration: none;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #0f172a;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.adv-quick-links a:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+.adv-quick-links a:focus {
+  outline: none;
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+/* -----------------------------
+   KPI cards
+------------------------------ */
+.adv-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  gap: 12px;
+  margin: 12px 0 20px;
+}
+
+.adv-cards-mini {
+  margin-top: -8px;
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+}
+
+.adv-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 14px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.adv-card h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.3;
+  color: #475569;
+  font-weight: 600;
+}
+
+.adv-card p {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.1;
+  font-weight: 700;
+  color: #111827;
+  word-break: break-word;
+}
+
+.adv-card small {
+  display: inline-block;
+  margin-top: 6px;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.adv-card-warn {
+  border-color: #fdba74;
+  background: linear-gradient(180deg, #fffaf0 0%, #ffffff 100%);
+}
+
+.adv-card-info {
+  border-color: #93c5fd;
+  background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+}
+
+/* -----------------------------
+   Section containers
+------------------------------ */
+.adv-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.adv-section {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 14px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+  overflow: hidden; /* prevents table overflow clipping issues */
+}
+
+.adv-section h2 {
+  margin: 0 0 10px;
+  font-size: 16px;
+  line-height: 1.25;
+  color: #0f172a;
+  font-weight: 700;
+}
+
+.adv-empty {
+  color: #64748b;
+  margin: 8px 0 0;
+  font-size: 13px;
+}
+
+/* -----------------------------
+   Tables
+------------------------------ */
+.adv-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed; /* stable column widths */
+}
+
+.adv-table thead th {
+  position: sticky; /* harmless if container doesn't scroll */
+  top: 0;
+  background: #f8fafc;
+  z-index: 1;
+}
+
+.adv-table th,
+.adv-table td {
+  border-bottom: 1px solid #f1f5f9;
+  text-align: left;
+  padding: 8px;
+  vertical-align: top;
+  font-size: 12px;
+  line-height: 1.35;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+
+.adv-table th {
+  color: #334155;
+  font-weight: 700;
+}
+
+.adv-table tbody tr:hover {
+  background: #fafcff;
+}
+
+.adv-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* -----------------------------
+   CSS-only bar chart
+------------------------------ */
+.adv-bar-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.adv-bar-row {
+  display: grid;
+  grid-template-columns: 130px 1fr 36px;
+  align-items: center;
+  gap: 8px;
+}
+
+.adv-bar-label {
+  font-size: 12px;
+  color: #334155;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.adv-bar-track {
+  height: 10px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  overflow: hidden;
+}
+
+.adv-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #2563eb, #7c3aed);
+  width: var(--bar-width, 0%);
+  transition: width 220ms ease;
+}
+
+.adv-bar-value {
+  font-size: 12px;
+  font-weight: 700;
+  color: #0f172a;
+  text-align: right;
+}
+
+/* -----------------------------
+   Utility emphasis (optional classes)
+------------------------------ */
+.adv-muted {
+  color: #64748b;
+}
+
+.adv-text-right {
+  text-align: right;
+}
+
+.adv-nowrap {
+  white-space: nowrap;
+}
+
+/* -----------------------------
+   Responsive
+------------------------------ */
+@media (max-width: 1100px) {
+  .adv-cards {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
+
+  .adv-grid-2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 700px) {
+  .adv-header-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .adv-header-row h1 {
+    font-size: 20px;
+  }
+
+  .adv-cards,
+  .adv-cards-mini {
+    grid-template-columns: 1fr;
+  }
+
+  .adv-bar-row {
+    grid-template-columns: 100px 1fr 30px;
+  }
+
+  .adv-table th,
+  .adv-table td {
+    padding: 7px 6px;
+    font-size: 11px;
+  }
+
+  .adv-section {
+    padding: 12px;
+  }
+}
+
+/* -----------------------------
+   Print (board-friendly)
+------------------------------ */
+@media print {
+  .breadcrumbs,
+  #header,
+  #nav-sidebar,
+  .submit-row,
+  .object-tools,
+  .adv-quick-links {
+    display: none !important;
+  }
+
+  .adv-dashboard {
+    padding: 0;
+  }
+
+  .adv-section,
+  .adv-card {
+    box-shadow: none !important;
+    border-color: #d1d5db !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .adv-grid-2 {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .adv-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .adv-cards-mini {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .adv-table th,
+  .adv-table td {
+    font-size: 10px;
+    padding: 5px;
+  }
+
+  .adv-header-row h1 {
+    font-size: 18px;
+  }
+}
+
+

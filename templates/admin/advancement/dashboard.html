@@ -1,0 +1,246 @@
+{# templates/admin/advancement/dashboard.html #}
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block extrastyle %}
+  {{ block.super }}
+  <link rel="stylesheet" href="{% static 'advancement_admin/advancement_admin.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="adv-dashboard">
+  <div class="adv-header-row">
+    <h1>Advancement Dashboard</h1>
+    {% if board_readonly %}
+      <span class="adv-badge adv-badge-readonly">Board Viewer / Read-Only</span>
+    {% endif %}
+  </div>
+
+  <div class="adv-quick-links">
+    <a href="{{ quick_links.entities }}">Entities</a>
+    <a href="{{ quick_links.opportunities }}">Opportunities</a>
+    <a href="{{ quick_links.commitments }}">Commitments</a>
+    <a href="{{ quick_links.scores }}">Strategic Scores</a>
+    <a href="{{ quick_links.interactions }}">Interactions</a>
+    <a href="{{ quick_links.legal_entities }}">Legal Entities</a>
+    <a href="{{ quick_links.export_csv }}">Export Board Snapshot CSV</a>
+    <a href="{{ quick_links.export_pdf }}">Export Board Snapshot PDF</a>
+  </div>
+
+  <!-- Main KPI cards -->
+  <div class="adv-cards">
+    <div class="adv-card">
+      <h3>Total Pledged</h3>
+      <p>{{ pledged_total }}</p>
+    </div>
+    <div class="adv-card">
+      <h3>Total Confirmed</h3>
+      <p>{{ confirmed_total }}</p>
+    </div>
+    <div class="adv-card">
+      <h3>Pipeline Value</h3>
+      <p>{{ pipeline_value }}</p>
+      <small>Planning metric (may mix currencies)</small>
+    </div>
+    <div class="adv-card">
+      <h3>Approval Rate</h3>
+      <p>{{ approval_rate }}%</p>
+    </div>
+  </div>
+
+  <!-- Secondary KPI cards -->
+  <div class="adv-cards adv-cards-mini">
+    <div class="adv-card">
+      <h3>External Entities</h3>
+      <p>{{ entity_count }}</p>
+    </div>
+    <div class="adv-card">
+      <h3>Opportunities</h3>
+      <p>{{ opp_count }}</p>
+    </div>
+    <div class="adv-card">
+      <h3>Commitments</h3>
+      <p>{{ commitment_count }}</p>
+    </div>
+    <div class="adv-card">
+      <h3>Active Pipeline</h3>
+      <p>{{ active_pipeline_count }}</p>
+    </div>
+  </div>
+
+  <!-- Follow-up warning cards -->
+  <div class="adv-cards adv-cards-mini">
+    <div class="adv-card adv-card-warn">
+      <h3>Overdue Follow-ups</h3>
+      <p>{{ overdue_followups }}</p>
+    </div>
+    <div class="adv-card adv-card-info">
+      <h3>Follow-ups Due Today</h3>
+      <p>{{ due_today_followups }}</p>
+    </div>
+  </div>
+
+  <!-- Chart + Top entities -->
+  <div class="adv-grid-2">
+    <div class="adv-section">
+      <h2>Opportunity Stage Distribution</h2>
+      <div class="adv-bar-chart">
+        {% for row in stage_chart_rows %}
+          <div class="adv-bar-row">
+            <div class="adv-bar-label">{{ row.label }}</div>
+            <div class="adv-bar-track">
+              <div class="adv-bar-fill" style="--bar-width: {{ row.width_pct }}%;"></div>
+            </div>
+            <div class="adv-bar-value">{{ row.count }}</div>
+          </div>
+        {% empty %}
+          <p class="adv-empty">No opportunities yet.</p>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="adv-section">
+      <h2>Top Entities by Pledged</h2>
+      <table class="adv-table">
+        <thead>
+          <tr>
+            <th>Entity</th>
+            <th>Type</th>
+            <th>Pledged</th>
+            <th>Confirmed</th>
+            <th>Opps</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in top_entities %}
+          <tr>
+            <td>{{ e.name }}</td>
+            <td>{{ e.entity_type }}</td>
+            <td>{{ e.pledged_total|default:"0" }}</td>
+            <td>{{ e.confirmed_total|default:"0" }}</td>
+            <td>{{ e.opportunity_count|default:"0" }}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="5">No entity funding data yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Overdue + Upcoming panels -->
+  <div class="adv-grid-2">
+    <div class="adv-section">
+      <h2>Overdue Opportunities</h2>
+      <table class="adv-table">
+        <thead>
+          <tr>
+            <th>Deadline</th>
+            <th>Opportunity</th>
+            <th>Entity</th>
+            <th>Stage</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for o in overdue_opportunities %}
+          <tr>
+            <td>{{ o.deadline }}</td>
+            <td>{{ o.title }}</td>
+            <td>{{ o.external_entity }}</td>
+            <td>{{ o.stage }}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="4">No overdue opportunities 🎉</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="adv-section">
+      <h2>Upcoming Deadlines (30 Days)</h2>
+      <table class="adv-table">
+        <thead>
+          <tr>
+            <th>Deadline</th>
+            <th>Opportunity</th>
+            <th>Entity</th>
+            <th>Stage</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for o in upcoming_opportunities %}
+          <tr>
+            <td>{{ o.deadline }}</td>
+            <td>{{ o.title }}</td>
+            <td>{{ o.external_entity }}</td>
+            <td>{{ o.stage }}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="4">No upcoming deadlines in the next 30 days.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Legal entities summary -->
+  <div class="adv-section">
+    <h2>Totals by Legal Entity</h2>
+    <table class="adv-table">
+      <thead>
+        <tr>
+          <th>Legal Entity</th>
+          <th>Country</th>
+          <th>Base Currency</th>
+          <th>Total Pledged</th>
+          <th>Total Confirmed</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in legal_entity_totals %}
+        <tr>
+          <td>{{ row.name }}</td>
+          <td>{{ row.country|default:"-" }}</td>
+          <td>{{ row.base_currency|default:"-" }}</td>
+          <td>{{ row.total_pledged|default:"0" }}</td>
+          <td>{{ row.total_confirmed|default:"0" }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="5">No data yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Recent activity -->
+  <div class="adv-section">
+    <h2>Recent Interactions</h2>
+    <table class="adv-table">
+      <thead>
+        <tr>
+          <th>Created</th>
+          <th>Entity</th>
+          <th>Type</th>
+          <th>Status</th>
+          <th>Subject</th>
+          <th>Assigned To</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for i in recent_interactions %}
+        <tr>
+          <td>{{ i.created_at|date:"Y-m-d H:i" }}</td>
+          <td>{{ i.external_entity }}</td>
+          <td>{{ i.interaction_type }}</td>
+          <td>{{ i.status }}</td>
+          <td>{{ i.subject|default:"-" }}</td>
+          <td>{{ i.assigned_to|default:"-" }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6">No interactions logged yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
