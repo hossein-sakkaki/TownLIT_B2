@@ -7,6 +7,7 @@ from django.contrib.contenttypes.models import ContentType
 from apps.translations.models import TranslationCache
 from apps.posts.models.testimony import Testimony
 from apps.posts.models.moment import Moment
+from apps.posts.models.pray import Prayer
 
 
 def _delete_translations_for_instance(instance):
@@ -25,4 +26,9 @@ def delete_testimony_translations(sender, instance, **kwargs):
 
 @receiver(post_delete, sender=Moment)
 def delete_moment_translations(sender, instance, **kwargs):
+    _delete_translations_for_instance(instance)
+
+
+@receiver(post_delete, sender=Prayer)
+def delete_prayer_translations(sender, instance, **kwargs):
     _delete_translations_for_instance(instance)

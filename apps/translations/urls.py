@@ -4,6 +4,7 @@ from rest_framework.routers import SimpleRouter
 from apps.translations.views.testimony import TestimonyTranslationViewSet
 from apps.translations.views.moment import MomentTranslationViewSet
 from apps.translations.views.languages import TranslationMetaViewSet
+from apps.translations.views.prayer import PrayerTranslationViewSet
 
 router = SimpleRouter()
 router.register(
@@ -15,6 +16,11 @@ router.register(
     r"moments",
     MomentTranslationViewSet,
     basename="translation-moment",
+)
+router.register(
+    r"prayers",
+    PrayerTranslationViewSet,
+    basename="translation-prayer",
 )
 router.register(r"meta", TranslationMetaViewSet, basename="translation-meta")
 
