@@ -99,7 +99,7 @@ def convert_video_to_multi_hls_task(
                         instance_id=instance_id,
                         field_name="thumbnail",
                         relative_path=thumb_path,
-                        mark_converted=False,   # 🔐 CRITICAL
+                        mark_converted=False,
                     )
                     logger.info("🖼️ Thumbnail generated: %s", thumb_path)
         except Exception as e:

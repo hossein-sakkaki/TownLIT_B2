@@ -1,4 +1,5 @@
-# apps/townlit_b/urls.py
+# townlit_b/urls.py
+
 from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings

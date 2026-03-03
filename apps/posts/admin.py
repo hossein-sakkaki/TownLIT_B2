@@ -11,21 +11,10 @@ from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from django.db.models import Q
 
-from apps.posts.models.pray import Pray
+from apps.posts.models.pray import Prayer, PrayerResponse, PrayerStatus
 from apps.posts.models.moment import Moment
-from apps.posts.models.mission import Mission
 from apps.posts.models.testimony import Testimony
-from apps.posts.models.witness import Witness
-from apps.posts.models.announcement import Announcement
-from apps.posts.models.worship import Worship
-from apps.posts.models.preach import Preach
-from apps.posts.models.common import Resource
-from apps.posts.models.conference import Conference
-from apps.posts.models.future_conference import FutureConference
-from apps.posts.models.lesson import Lesson
-from apps.posts.models.library import Library
-from apps.posts.models.media_content import MediaContent
-from apps.posts.models.service_event import ServiceEvent
+
 from apps.posts.models.reaction import Reaction
 from apps.posts.models.comment import Comment
 
@@ -904,332 +893,180 @@ class TestimonyAdmin(admin.ModelAdmin):
 
 
 
-# Resource Admin -----------------------------------------------------------------------------------
-@admin.register(Resource)
-class ResourceAdmin(admin.ModelAdmin, MarkActiveMixin):
-    list_display = ['resource_name', 'resource_type', 'author', 'uploaded_at', 'is_active']
-    search_fields = ['resource_name', 'resource_type', 'author', 'license']
-    list_filter = ['resource_type', 'uploaded_at', 'is_active']
-    actions = ['make_inactive', 'make_active']
-    date_hierarchy = 'uploaded_at'
-    readonly_fields = ['uploaded_at']
+# ============================================================
+# PrayerResponse Inline
+# ============================================================
+class PrayerResponseInline(admin.StackedInline):
+    model = PrayerResponse
+    extra = 0
+    can_delete = True
 
-    # Optimized queryset for related fields
+    readonly_fields = (
+        "created_at",
+        "updated_at",
+        "is_converted",
+    )
+
+    fieldsets = (
+        ("Result", {
+            "fields": (
+                "result_status",
+                "response_text",
+            )
+        }),
+        ("Media", {
+            "fields": (
+                "image",
+                "video",
+                "thumbnail",
+            )
+        }),
+        ("System", {
+            "fields": (
+                "is_converted",
+                "created_at",
+                "updated_at",
+            )
+        }),
+    )
+
+
+# ============================================================
+# Prayer Admin
+# ============================================================
+@admin.register(Prayer)
+class PrayerAdmin(admin.ModelAdmin):
+
+    list_display = (
+        "id",
+        "slug",
+        "owner_display",
+        "status_badge",
+        "media_type",
+        "visibility",
+        "is_active",
+        "is_hidden",
+        "is_suspended",
+        "is_converted",
+        "published_at",
+    )
+
+    list_filter = (
+        "status",
+        "visibility",
+        "is_active",
+        "is_hidden",
+        "is_suspended",
+        "is_converted",
+        "published_at",
+    )
+
+    search_fields = (
+        "slug",
+        "caption",
+    )
+
+    readonly_fields = (
+        "slug",
+        "view_count_internal",
+        "last_viewed_at",
+        "published_at",
+        "updated_at",
+        "answered_at",
+        "is_converted",
+    )
+
+    raw_id_fields = (
+        "content_type",
+    )
+
+    inlines = [PrayerResponseInline]
+
+    ordering = ("-published_at",)
+
+    list_per_page = 50
+    list_editable = ("is_converted", "visibility")
+
+    # ------------------------------------------------------------
+    # Owner display
+    # ------------------------------------------------------------
+    def owner_display(self, obj):
+        try:
+            owner = obj.content_object
+            if not owner:
+                return "-"
+            if hasattr(owner, "user"):
+                return owner.user.username
+            return str(owner)
+        except Exception:
+            return "-"
+    owner_display.short_description = "Owner"
+
+    # ------------------------------------------------------------
+    # Status badge
+    # ------------------------------------------------------------
+    def status_badge(self, obj):
+        color_map = {
+            PrayerStatus.WAITING: "#999999",
+            PrayerStatus.ANSWERED: "#2ecc71",
+            PrayerStatus.NOT_ANSWERED: "#e67e22",
+        }
+
+        color = color_map.get(obj.status, "#000000")
+
+        return format_html(
+            '<span style="color:white;background:{};padding:3px 8px;border-radius:12px;">{}</span>',
+            color,
+            obj.status.upper(),
+        )
+
+    status_badge.short_description = "Status"
+
+    # ------------------------------------------------------------
+    # Media type
+    # ------------------------------------------------------------
+    def media_type(self, obj):
+        if obj.video:
+            return "Video"
+        if obj.image:
+            return "Image"
+        return "-"
+    media_type.short_description = "Media"
+
+    # ------------------------------------------------------------
+    # Query optimization
+    # ------------------------------------------------------------
     def get_queryset(self, request):
-        """Optimize the queryset for the Resource model."""
-        queryset = super().get_queryset(request)
-        return queryset
-    
-    
-# Service Event Admin ------------------------------------------------------------------------------
-@admin.register(ServiceEvent)
-class ServiceEventAdmin(admin.ModelAdmin, MarkActiveMixin):
-    list_display = ['custom_event_type', 'organization_type', 'event_type_display', 'event_date', 'start_time', 'is_active']
-    list_filter = ['organization_type', 'event_method', 'recurring', 'is_active', 'is_hidden', 'is_restricted', 'event_date']
-    search_fields = ['custom_event_type', 'organization_type', 'event_type', 'description']
-    autocomplete_fields = ['location']
-    actions = ['make_inactive', 'make_active']
-    date_hierarchy = 'event_date'
-    fieldsets = (
-        ('Basic Info', {
-            'fields': ('organization_type', 'event_type', 'custom_event_type', 'event_banner', 'description', 'contact_information')
-        }),
-        ('Event Details', {
-            'fields': ('event_date', 'day_of_week', 'start_time', 'duration', 'additional_notes', 'recurring', 'frequency')
-        }),
-        ('Location and Method', {
-            'fields': ('event_method', 'location', 'event_link')
-        }),
-        ('Registration', {
-            'fields': ('registration_required', 'registration_link')
-        }),
-        ('Status', {
-            'fields': ('is_active', 'is_hidden', 'is_restricted')
-        })
-    )
+        qs = super().get_queryset(request)
+        return qs.select_related("content_type")
 
-    # Display custom event type or fallback to standard event type
-    def event_type_display(self, obj):
-        """Show the event type or custom event type if available."""
-        return obj.custom_event_type if obj.custom_event_type else obj.event_type
-    event_type_display.short_description = 'Event Type'
+    # ------------------------------------------------------------
+    # Bulk actions
+    # ------------------------------------------------------------
+    actions = [
+        "mark_waiting",
+        "mark_answered",
+        "mark_not_answered",
+        "activate_selected",
+        "deactivate_selected",
+    ]
 
-    # Optimized queryset for related fields
-    def get_queryset(self, request):
-        """Optimize the queryset to reduce database queries."""
-        queryset = super().get_queryset(request)
-        return queryset.select_related('location')
+    def mark_waiting(self, request, queryset):
+        queryset.update(status=PrayerStatus.WAITING)
+    mark_waiting.short_description = "Mark selected as WAITING"
 
+    def mark_answered(self, request, queryset):
+        queryset.update(status=PrayerStatus.ANSWERED)
+    mark_answered.short_description = "Mark selected as ANSWERED"
 
-# Inline Witness --------------------------------------------------------------------------------------
-# class WitnessInline(admin.TabularInline):
-#     model = Witness
-#     extra = 2
-#     autocomplete_fields = ['testimony']
-    
+    def mark_not_answered(self, request, queryset):
+        queryset.update(status=PrayerStatus.NOT_ANSWERED)
+    mark_not_answered.short_description = "Mark selected as NOT ANSWERED"
 
+    def activate_selected(self, request, queryset):
+        queryset.update(is_active=True, is_hidden=False)
+    activate_selected.short_description = "Activate selected"
 
-
-# Witness Admin ---------------------------------------------------------------------------------------------------
-@admin.register(Witness)
-class WitnessAdmin(admin.ModelAdmin, MarkActiveMixin):
-    list_display = ['title', 're_published_at', 'is_active', 'is_hidden', 'is_restricted']
-    list_filter = ['is_active', 'is_hidden', 'is_restricted', 're_published_at']
-    search_fields = ['title', 'testimony__title']
-    fieldsets = (
-        ('Witness Details', {
-            'fields': ('title', 'testimony', 're_published_at')
-        }),
-        ('Permissions & Status', {
-            'fields': ('is_active', 'is_hidden', 'is_restricted')
-        })
-    )
-    filter_horizontal = ['testimony']
-    actions = ['make_active', 'make_inactive']
-
-    # Optimize the queryset
-    def get_queryset(self, request):
-        """Optimize the queryset for better performance."""
-        queryset = super().get_queryset(request)
-        return queryset.select_related('testimony')
-    
-    # Display a shortened version of the title if it's too long
-    def title_summary(self, obj):
-        """Displays a shortened version of the title."""
-        return obj.title[:50] + "..." if len(obj.title) > 50 else obj.title
-    title_summary.short_description = 'Title'
-
-
-
-# Pray Admin --------------------------------------------------------------------------------------------------------------@admin.register(Pray)
-class PrayAdmin(admin.ModelAdmin, MarkActiveMixin):
-    list_display = ['title', 'published_at', 'is_accepted', 'is_active', 'is_hidden', 'is_restricted']
-    list_filter = ['is_active', 'is_hidden', 'is_restricted', 'published_at', 'is_accepted']
-    search_fields = ['title', 'content']
-    fieldsets = (
-        ('Pray Details', {
-            'fields': ('title', 'content', 'image', 'parent')
-        }),
-        ('Status & Dates', {
-            'fields': ('published_at', 'updated_at', 'is_accepted', 'is_rejected', 'is_active', 'is_hidden', 'is_restricted')
-        })
-    )
-
-
-# Announcement Admin ------------------------------------------------------------------------------------------------------
-@admin.register(Announcement)
-class AnnouncementAdmin(admin.ModelAdmin, MarkActiveMixin):
-    list_display = ['title', 'created_at', 'to_date', 'is_active', 'is_hidden', 'is_restricted']
-    list_filter = ['is_active', 'is_hidden', 'is_restricted', 'created_at', 'to_date']
-    search_fields = ['title', 'description']
-    fieldsets = (
-        ('Announcement Details', {
-            'fields': ('title', 'description', 'image', 'meeting_type', 'url_link', 'link_sticker_text', 'location')
-        }),
-        ('Dates', {
-            'fields': ('created_at', 'to_date')
-        }),
-        ('Status', {
-            'fields': ('is_active', 'is_hidden', 'is_restricted')
-        })
-    )
-
-
-# Lesson Admin ------------------------------------------------------------------------------------------------------------
-@admin.register(Lesson)
-class LessonAdmin(admin.ModelAdmin, MarkActiveMixin):
-    list_display = ['title', 'published_at', 'view', 'is_active', 'is_hidden', 'is_restricted']
-    list_filter = ['is_active', 'is_hidden', 'is_restricted', 'published_at']
-    search_fields = ['title', 'description']
-    filter_horizontal = ['in_town_teachers']
-    fieldsets = (
-        ('Lesson Details', {
-            'fields': ('title', 'season', 'episode', 'description', 'image', 'audio', 'video', 'parent')
-        }),
-        ('Teachers', {
-            'fields': ('in_town_teachers', 'out_town_teachers')
-        }),
-        ('Status & Dates', {
-            'fields': ('published_at', 'record_date', 'view', 'is_active', 'is_hidden', 'is_restricted')
-        })
-    )
-
-
-# Preach Admin ------------------------------------------------------------------------------------------------------------
-@admin.register(Preach)
-class PreachAdmin(admin.ModelAdmin, MarkActiveMixin):
-    list_display = ['title', 'published_at', 'view', 'is_active', 'is_hidden', 'is_restricted']
-    list_filter = ['is_active', 'is_hidden', 'is_restricted', 'published_at']
-    search_fields = ['title', 'out_town_preacher']
-    fieldsets = (
-        ('Preach Details', {
-            'fields': ('title', 'in_town_preacher', 'out_town_preacher', 'image', 'video')
-        }),
-        ('Status & Dates', {
-            'fields': ('published_at', 'view', 'is_active', 'is_hidden', 'is_restricted')
-        })
-    )
-    
-
-# Worship Admin -----------------------------------------------------------------------------------------------------------
-@admin.register(Worship)
-class WorshipAdmin(admin.ModelAdmin, MarkActiveMixin):
-    list_display = ['title', 'published_at', 'view', 'is_active', 'is_hidden', 'is_restricted']
-    list_filter = ['is_active', 'is_hidden', 'is_restricted', 'published_at']
-    search_fields = ['title', 'sermon', 'hymn_lyrics']
-    filter_horizontal = ['in_town_leaders', 'worship_resources']
-    fieldsets = (
-        ('Worship Details', {
-            'fields': ('title', 'season', 'episode', 'sermon', 'hymn_lyrics', 'image', 'audio', 'video', 'parent')
-        }),
-        ('Leaders', {
-            'fields': ('in_town_leaders', 'out_town_leaders')
-        }),
-        ('Resources', {
-            'fields': ('worship_resources',)
-        }),
-        ('Status & Dates', {
-            'fields': ('published_at', 'view', 'is_active', 'is_hidden', 'is_restricted')
-        })
-    )
-
-
-# Media Content Admin -----------------------------------------------------------------------------------------------------
-@admin.register(MediaContent)
-class MediaContentAdmin(admin.ModelAdmin, MarkActiveMixin):
-    list_display = ['title', 'content_type', 'published_at', 'is_active', 'is_hidden', 'is_restricted']
-    list_filter = ['is_active', 'is_hidden', 'is_restricted', 'published_at']
-    search_fields = ['title', 'description']
-    
-    fieldsets = (
-        ('Media Content Details', {
-            'fields': ('content_type', 'title', 'description', 'file', 'link')
-        }),
-        ('Status & Dates', {
-            'fields': ('published_at', 'is_active', 'is_hidden', 'is_restricted')
-        })
-    )
-
-
-# Library Admin -----------------------------------------------------------------------------------------------------------
-@admin.register(Library)
-class LibraryAdmin(admin.ModelAdmin, MarkActiveMixin):
-    list_display = ['book_name', 'author', 'published_date', 'downloaded', 'is_upcoming', 'is_downloadable', 'is_active']
-    list_filter = ['is_active', 'is_hidden', 'is_restricted', 'is_upcoming', 'is_downloadable', 'genre_type', 'published_date']
-    search_fields = ['book_name', 'author', 'publisher_name', 'language', 'translation_language', 'translator']
-    readonly_fields = ['downloaded']
-    actions = ['make_active', 'make_inactive']
-    fieldsets = (
-        ('Book Details', {
-            'fields': ('book_name', 'author', 'publisher_name', 'language', 'translation_language', 'translator', 'genre_type', 'image', 'pdf_file')
-        }),
-        ('Licensing & Sale', {
-            'fields': ('license_type', 'sale_status', 'license_document')
-        }),
-        ('Release Info', {
-            'fields': ('is_upcoming', 'is_downloadable', 'has_print_version')
-        }),
-        ('Status & Dates', {
-            'fields': ('published_date', 'downloaded', 'is_active', 'is_hidden', 'is_restricted')
-        })
-    )
-
-    def comment_summary(self, obj):
-        """Displays a shortened version of the comment."""
-        if obj.comments.exists():
-            first_comment = obj.comments.first()
-            return first_comment.comment[:50] + "..." if len(first_comment.comment) > 50 else first_comment.comment
-        return "No comments"
-    comment_summary.short_description = 'Comment Summary'
-    
-    def get_queryset(self, request):
-        """Optimized query for related fields."""
-        queryset = super().get_queryset(request)
-        return queryset
-
-
-# Mission Admin -----------------------------------------------------------------------------------------------------------
-@admin.register(Mission)
-class MissionAdmin(admin.ModelAdmin, MarkActiveMixin):
-    list_display = ['mission_name', 'start_date', 'end_date', 'is_ongoing', 'location', 'is_active']
-    list_filter = ['is_ongoing', 'is_active', 'is_hidden', 'start_date', 'end_date', 'location']
-    search_fields = ['mission_name', 'description', 'contact_persons__username']
-    actions = ['make_active', 'make_inactive']
-    fieldsets = (
-        ('Mission Details', {
-            'fields': ('mission_name', 'description', 'image_or_video', 'location', 'contact_persons', 'start_date', 'end_date', 'is_ongoing')
-        }),
-        ('Funding Information', {
-            'fields': ('funding_goal', 'raised_funds', 'funding_link')
-        }),
-        ('Volunteer & Report', {
-            'fields': ('volunteer_opportunities', 'mission_report')
-        }),
-        ('Permissions & Status', {
-            'fields': ('is_active', 'is_hidden', 'is_restricted')
-        })
-    )
-    filter_horizontal = ['contact_persons']
-
-    def comment_summary(self, obj):
-        """Displays a shortened version of the comment."""
-        if obj.comments.exists():
-            first_comment = obj.comments.first()
-            return first_comment.comment[:50] + "..." if len(first_comment.comment) > 50 else first_comment.comment
-        return "No comments"
-    comment_summary.short_description = 'Comment Summary'
-
-    def get_queryset(self, request):
-        """Optimize the queryset for better performance."""
-        queryset = super().get_queryset(request)
-        return queryset.prefetch_related('contact_persons')
-
-
-# Conference Admin -----------------------------------------------------------------------------------------------------------@admin.register(Conference)
-class ConferenceAdmin(admin.ModelAdmin, MarkActiveMixin):
-    list_display = ['conference_name', 'conference_date', 'conference_end_date', 'is_active', 'is_hidden', 'is_restricted']
-    list_filter = ['is_active', 'is_hidden', 'is_restricted', 'conference_date', 'conference_end_date']
-    search_fields = ['conference_name', 'description']
-    date_hierarchy = 'conference_date'
-    filter_horizontal = ['workshops', 'conference_resources']
-    readonly_fields = ['slug']
-    actions = ['make_inactive', 'make_active']
-    fieldsets = (
-        ('Conference Info', {
-            'fields': ('conference_name', 'description', 'slug')
-        }),
-        ('Workshops & Resources', {
-            'fields': ('workshops', 'conference_resources')
-        }),
-        ('Dates & Status', {
-            'fields': ('conference_date', 'conference_time', 'conference_end_date', 'is_active', 'is_hidden', 'is_restricted')
-        }),
-    )
-
-
-# Future Conference Admin -----------------------------------------------------------------------------------------------------------
-@admin.register(FutureConference)
-class FutureConferenceAdmin(admin.ModelAdmin, MarkActiveMixin):
-    list_display = ['conference_name', 'conference_date', 'conference_end_date', 'registration_required', 'is_active', 'is_hidden', 'is_restricted']
-    list_filter = ['is_active', 'is_hidden', 'is_restricted', 'conference_date', 'conference_end_date', 'registration_required']
-    search_fields = ['conference_name', 'conference_description']
-    date_hierarchy = 'conference_date'
-    filter_horizontal = ['in_town_speakers', 'sponsors']
-    readonly_fields = ['slug']
-    actions = ['make_inactive', 'make_active']
-    fieldsets = (
-        ('Conference Info', {
-            'fields': ('conference_name', 'conference_description', 'slug')
-        }),
-        ('Speakers & Sponsors', {
-            'fields': ('in_town_speakers', 'out_town_speakers', 'sponsors')
-        }),
-        ('Registration & Location', {
-            'fields': ('registration_required', 'delivery_type', 'conference_location', 'registration_link')
-        }),
-        ('Dates & Status', {
-            'fields': ('conference_date', 'conference_time', 'conference_end_date', 'is_active', 'is_hidden', 'is_restricted')
-        }),
-    )
-
-
+    def deactivate_selected(self, request, queryset):
+        queryset.update(is_active=False)
+    deactivate_selected.short_description = "Deactivate selected"

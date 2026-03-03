@@ -4,6 +4,7 @@ from django.db import models
 import uuid
 from .legal_entity import LegalEntity
 from .external_entity import ExternalEntity
+from django.conf import settings
 
 
 class Opportunity(models.Model):
@@ -29,6 +30,14 @@ class Opportunity(models.Model):
         ("PARTNERSHIP", "Partnership"),
         ("SPONSORSHIP", "Sponsorship"),
         ("MISSION_SUPPORT", "Mission Support"),
+    )
+
+    assigned_to = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="advancement_assigned_opportunities",
     )
 
     # Legal routing (multi-entity support)

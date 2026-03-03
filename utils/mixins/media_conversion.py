@@ -101,13 +101,8 @@ class MediaConversionMixin:
                             "⏭️ skip image: already final (%s) – %s.%s",
                             ext, self.__class__.__name__, field_name
                         )
-
-                        # ✅ CRITICAL FIX:
-                        # Image is final → mark converted immediately
-                        if hasattr(self, "is_converted") and not self.is_converted:
-                            self.is_converted = True
-                            self.save(update_fields=["is_converted"])
-
+                        # Do NOT mark object as converted here.
+                        # A final image/thumbnail does not mean video conversion is done.
                         continue
 
                     job = upsert_job(

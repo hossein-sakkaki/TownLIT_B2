@@ -16,6 +16,72 @@ from apps.media_conversion.serializers import MediaConversionJobSerializer
 logger = logging.getLogger(__name__)
 
 
+
+# ---------------------------------------------
+# Owner resolver (generic, no model dependency)
+# ---------------------------------------------
+def _extract_owner_user_id(obj):
+    """Best-effort: return owner user_id if we can find it."""
+    if obj is None:
+        return None
+
+    # Direct user fk
+    try:
+        if hasattr(obj, "user_id") and obj.user_id:
+            return obj.user_id
+        u = getattr(obj, "user", None)
+        if u is not None and hasattr(u, "pk"):
+            return u.pk
+    except Exception:
+        pass
+
+    # GenericForeignKey-style owner
+    try:
+        owner = getattr(obj, "content_object", None)
+        if owner is not None:
+            if hasattr(owner, "user_id") and owner.user_id:
+                return owner.user_id
+            ou = getattr(owner, "user", None)
+            if ou is not None and hasattr(ou, "pk"):
+                return ou.pk
+    except Exception:
+        pass
+
+    # Common "owner" patterns
+    for attr in ("owner", "created_by", "author"):
+        try:
+            o = getattr(obj, attr, None)
+            if o is None:
+                continue
+            if hasattr(o, "user_id") and o.user_id:
+                return o.user_id
+            ou = getattr(o, "user", None)
+            if ou is not None and hasattr(ou, "pk"):
+                return ou.pk
+            if hasattr(o, "pk"):
+                # If owner is a user-like model
+                return o.pk
+        except Exception:
+            continue
+
+    return None
+
+
+def _iter_parent_candidates(obj):
+    """Yield possible parent objects (generic)."""
+    if obj is None:
+        return
+
+    # Common parent pointers (no hard dependency)
+    for attr in ("parent", "post", "moment", "prayer", "target", "source"):
+        try:
+            p = getattr(obj, attr, None)
+            if p is not None:
+                yield p
+        except Exception:
+            continue
+
+
 # ------------------------------------------------------------
 # Permission gate (must NEVER raise)
 # ------------------------------------------------------------
@@ -24,13 +90,22 @@ def _safe_can_view_target(request, target_obj) -> bool:
     Best-effort permission gate:
     - Prefer VisibilityPolicy if available
     - Allow staff/superuser
-    - Fallback to owner checks (TownLIT-style)
+    - Fallback to owner checks (generic)
+    - Try parent objects if target lacks ownership/visibility
     """
+    # 0) Anonymous guard
+    try:
+        if not request.user or not request.user.is_authenticated:
+            return False
+    except Exception:
+        return False
+
     # 1) VisibilityPolicy (if exists)
     try:
         from apps.core.visibility.policy import VisibilityPolicy
         reason = VisibilityPolicy.gate_reason(viewer=request.user, obj=target_obj)
-        return reason is None
+        if reason is None:
+            return True
     except Exception:
         pass
 
@@ -41,23 +116,28 @@ def _safe_can_view_target(request, target_obj) -> bool:
     except Exception:
         pass
 
-    # 3) owner checks (best-effort)
+    # 3) Generic owner check
     try:
-        owner_member = getattr(target_obj, "owner_member", None)
-        if owner_member:
-            u = getattr(owner_member, "name", None)
-            if u and u.pk == getattr(request.user, "pk", None):
-                return True
-
-        owner_user = getattr(target_obj, "user", None)
-        if owner_user and owner_user.pk == getattr(request.user, "pk", None):
+        owner_user_id = _extract_owner_user_id(target_obj)
+        if owner_user_id and owner_user_id == getattr(request.user, "pk", None):
             return True
+    except Exception:
+        pass
 
-        if hasattr(target_obj, "content_object"):
-            owner = getattr(target_obj, "content_object", None)
-            if owner and getattr(owner, "pk", None) == getattr(request.user, "pk", None):
-                return True
-            if owner and hasattr(owner, "name") and owner.name.pk == getattr(request.user, "pk", None):
+    # 4) Try parent objects (e.g. response -> prayer)
+    try:
+        for parent in _iter_parent_candidates(target_obj):
+            # Recurse one level (avoid deep recursion)
+            try:
+                from apps.core.visibility.policy import VisibilityPolicy
+                reason = VisibilityPolicy.gate_reason(viewer=request.user, obj=parent)
+                if reason is None:
+                    return True
+            except Exception:
+                pass
+
+            owner_user_id = _extract_owner_user_id(parent)
+            if owner_user_id and owner_user_id == getattr(request.user, "pk", None):
                 return True
     except Exception:
         pass

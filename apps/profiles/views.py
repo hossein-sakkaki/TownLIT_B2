@@ -1,3 +1,5 @@
+# apps/profiles/views.py
+
 from django.db.models import Q, Case, When, Value, IntegerField
 from django.db.models.functions import Lower, Substr
 from django.utils import timezone
@@ -18,6 +20,9 @@ from django.contrib.contenttypes.models import ContentType
 
 from apps.posts.models.moment import Moment
 from apps.posts.serializers.moments import MomentSerializer
+from apps.posts.models.pray import Prayer
+from apps.posts.serializers.prayers import PrayerSerializer
+
 from apps.core.visibility.query import VisibilityQuery
 from apps.core.visibility.constants import VISIBILITY_GLOBAL
 
@@ -769,6 +774,39 @@ class VisitorProfileViewSet(viewsets.GenericViewSet):
 
         return qs
     
+    # -------------------------------------------------------------
+    # Visibility gate (Visitor profile prayers)
+    # -------------------------------------------------------------
+    def _visible_prayers_qs(self, request, member):
+        base = (
+            Prayer.objects
+            .select_related("content_type")
+            .order_by("-published_at", "-id")
+        )
+
+        # 1) Visibility gate (exactly like moments)
+        if not request.user or not request.user.is_authenticated:
+            base = base.filter(visibility=VISIBILITY_GLOBAL)
+        else:
+            base = VisibilityQuery.for_viewer(
+                viewer=request.user,
+                base_queryset=base,
+            )
+
+        owner_ct = ContentType.objects.get_for_model(member.__class__)
+
+        qs = base.filter(
+            content_type_id=owner_ct.id,
+            object_id=member.id,
+        )
+
+        # 2) 🔐 HARD DOMAIN RULE (Prayer video)
+        # Never expose video prayers until conversion is DONE
+        qs = qs.exclude(
+            Q(video__isnull=False) & ~Q(is_converted=True)
+        )
+
+        return qs
 
     # Helpers -----------------------------------------------------
     def _with_profile_gate(self, data, user, reason):
@@ -893,7 +931,6 @@ class VisitorProfileViewSet(viewsets.GenericViewSet):
         ).data
         return Response(data, status=status.HTTP_200_OK)
 
-
     # Moments -----------------------------------------------------
     @action(detail=False, methods=["get"], url_path=r'profile/(?P<username>[^/]+)/moments')
     def moments(self, request, username=None):
@@ -912,6 +949,23 @@ class VisitorProfileViewSet(viewsets.GenericViewSet):
         serializer = MomentSerializer(page, many=True, context={"request": request})
         return self.get_paginated_response(serializer.data)
 
+    # Prayers -----------------------------------------------------
+    @action(detail=False, methods=["get"], url_path=r'profile/(?P<username>[^/]+)/prayers')
+    def prayers(self, request, username=None):
+        """
+        GET /profiles/members/profile/<username>/prayers/?page=1
+
+        Policy:
+        - AllowAny
+        - Visibility-aware
+        - Returns only this owner's prayers
+        """
+        member = self._get_member(username)
+        qs = self._visible_prayers_qs(request, member)
+
+        page = self.paginate_queryset(qs)
+        serializer = PrayerSerializer(page, many=True, context={"request": request})
+        return self.get_paginated_response(serializer.data)
 
 
 # ---------------------------------------------------------------------------------------------------------

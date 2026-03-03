@@ -1,6 +1,11 @@
 # apps/media_conversion/services/ugc_policies.py
+
 from dataclasses import dataclass
 from typing import List, Optional
+
+
+# 🔥 Unified bitrate policy
+UGC_MB_PER_MINUTE = 120
 
 
 @dataclass(frozen=True)
@@ -17,7 +22,7 @@ class VideoTier:
 
 @dataclass(frozen=True)
 class VideoPolicy:
-    # Duration rules (DO NOT change lightly)
+    # Duration rules
     min_duration_sec: int
     max_duration_sec: int
 
@@ -25,10 +30,10 @@ class VideoPolicy:
     min_fps: Optional[int] = None
     max_fps: Optional[int] = None
 
-    # Tiered size rules (preferred)
+    # Tiered size rules (not used anymore, but kept for compatibility)
     tiers: Optional[List["VideoTier"]] = None
 
-    # Fallback size rules (used if tiers is None)
+    # Fallback size rules
     cap_mb: Optional[int] = None
     mb_per_minute: Optional[int] = None
 
@@ -48,17 +53,15 @@ def compute_max_allowed_mb(duration_sec: float, policy: VideoPolicy) -> float:
 
     minutes = float(duration_sec) / 60.0
 
-    # Tiered policy (preferred)
+    # Tiered policy (kept for backward compatibility)
     if policy.tiers:
         for tier in policy.tiers:
             if duration_sec <= tier.max_duration_sec:
                 by_duration = tier.mb_per_minute * minutes
                 return _round_1(min(float(tier.cap_mb), float(by_duration)))
-
-        # Duration exceeds last tier -> reject at policy level
         return 0.0
 
-    # Non-tier fallback
+    # Standard unified policy
     if policy.cap_mb is None or policy.mb_per_minute is None:
         return 0.0
 
@@ -68,45 +71,47 @@ def compute_max_allowed_mb(duration_sec: float, policy: VideoPolicy) -> float:
 
 # -------------------------------------------------
 # Moments (Video)
-# Duration unchanged
-# Size relaxed for modern high-quality mobile videos
+# 1–3 minutes
 # -------------------------------------------------
 MOMENT_VIDEO_POLICY = VideoPolicy(
     min_duration_sec=60,
     max_duration_sec=180,
 
-    # Accept wide mobile FPS range
     min_fps=24,
     max_fps=120,
 
-    # Higher bitrate tolerance
-    cap_mb=300,
-    mb_per_minute=90,
+    cap_mb=360,  # 3 × 120
+    mb_per_minute=UGC_MB_PER_MINUTE,
 )
 
 
 # -------------------------------------------------
-# Testimonies (Video – tiered)
-# Duration unchanged
-# Designed for high-quality 1080p recordings
+# Prayers (Video)
+# 30 sec – 5 minutes
+# -------------------------------------------------
+PRAYER_VIDEO_POLICY = VideoPolicy(
+    min_duration_sec=30,
+    max_duration_sec=300,
+
+    min_fps=24,
+    max_fps=120,
+
+    cap_mb=600,  # 5 × 120
+    mb_per_minute=UGC_MB_PER_MINUTE,
+)
+
+
+# -------------------------------------------------
+# Testimonies (Video)
+# 2 – 10 minutes
 # -------------------------------------------------
 TESTIMONY_VIDEO_POLICY = VideoPolicy(
     min_duration_sec=120,
     max_duration_sec=600,
 
-    tiers=[
-        # 2–6 min: very high quality allowed
-        VideoTier(
-            max_duration_sec=360,
-            cap_mb=650,
-            mb_per_minute=110,
-        ),
+    min_fps=24,
+    max_fps=120,
 
-        # 6–10 min: high quality, controlled growth
-        VideoTier(
-            max_duration_sec=600,
-            cap_mb=950,
-            mb_per_minute=95,
-        ),
-    ],
+    cap_mb=1200,  # 10 × 120
+    mb_per_minute=UGC_MB_PER_MINUTE,
 )

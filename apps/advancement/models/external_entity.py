@@ -25,6 +25,10 @@ class ExternalEntity(models.Model):
     name = models.CharField(max_length=255)
     entity_type = models.CharField(max_length=20, choices=ENTITY_TYPE_CHOICES)
 
+    # Contact person (primary)
+    primary_contact_name = models.CharField(max_length=120, blank=True)
+    primary_contact_title = models.CharField(max_length=120, blank=True)  # optional (e.g., Grants Manager)
+
     # Geographic data (multi-country ready)
     country = models.CharField(max_length=2)  # ISO country code (CA, US, etc.)
     region = models.CharField(max_length=100, blank=True)

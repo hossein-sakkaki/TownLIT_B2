@@ -1,3 +1,5 @@
+# apps/store/admin.py
+
 from django.contrib import admin
 from django_admin_listfilter_dropdown.filters import DropdownFilter
 from .models import ServiceCategory, Store

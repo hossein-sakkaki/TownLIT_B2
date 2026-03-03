@@ -1,5 +1,3 @@
-# apps/posts/apps.py
-
 from django.apps import AppConfig
 
 
@@ -13,6 +11,7 @@ class PostsConfig(AppConfig):
         # -------------------------------------------------
         from apps.posts.signals import moment_media_cleanup
         from apps.posts.signals import testimony_media_cleanup
+        from apps.posts.signals import prayer_media_cleanup
 
         # -------------------------------------------------
         # Square registrations
@@ -25,6 +24,7 @@ class PostsConfig(AppConfig):
 
         from apps.posts.models.moment import Moment
         from apps.posts.models.testimony import Testimony
+        from apps.posts.models.pray import Prayer
 
         # -----------------------------
         # Moment → Square
@@ -48,6 +48,19 @@ class PostsConfig(AppConfig):
                     model=Testimony,
                     kind="testimony",
                     media_fields=["video"],
+                    requires_conversion=True,
+                )
+            )
+
+        # -----------------------------
+        # Prayer → Square (Prepared)
+        # -----------------------------
+        if get_square_source("prayer") is None:
+            register_square_source(
+                source=SquareContentSource(
+                    model=Prayer,
+                    kind="pray",
+                    media_fields=["image", "video"],
                     requires_conversion=True,
                 )
             )

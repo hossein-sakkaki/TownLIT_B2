@@ -81,33 +81,29 @@ def gate_media_payload(
     require_job: bool = True,
     include_job_target: bool = True,
 ) -> Dict[str, Any]:
-    """
-    ✅ Serializer-level gate:
-    - If NOT READY:
-        - strip media urls/keys/signed_urls
-        - add converting flags + job_target for MediaConversionPanel
-    - If READY:
-        - keep payload unchanged
-    """
     st = _compute_gate_state(obj, field_name=field_name, require_job=require_job)
 
     if st.ready:
         return data
 
-    # NOT READY => strip
     _strip_media_keys(data, field_name)
 
-    # Provide minimal UX flags (safe)
     data["converting"] = True
     data["ready_status"] = st.status
     data["job_id"] = st.job_id
 
     if include_job_target:
-        # Must match your jobs API expectations
+        # ✅ dynamic target based on actual object
+        ct = ContentType.objects.get_for_model(obj.__class__, for_concrete_model=False)
+
         data["job_target"] = {
-            "content_type_model": "posts.testimony",
+            # use exactly what your frontend expects
+            "content_type_model": f"{ct.app_label}.{ct.model}",  # e.g. "posts.prayerresponse"
             "object_id": obj.id,
             "field_name": field_name,
         }
+
+        # (optional but recommended if you later want a stronger contract)
+        data["job_target"]["content_type_id"] = ct.id
 
     return data

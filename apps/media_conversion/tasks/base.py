@@ -27,11 +27,13 @@ logger = logging.getLogger(__name__)
 def get_instance(app_label: str, model_name: str, pk: int, retries: int = 3, delay: float = 0.2):
     """
     Fetch model instance with tiny retry window to avoid race with on_commit.
+    Uses _base_manager to bypass custom default managers (visibility/availability filters).
     """
     Model = apps.get_model(app_label=app_label, model_name=model_name)
+
     for i in range(retries + 1):
         try:
-            return Model.objects.get(pk=pk)
+            return Model._base_manager.get(pk=pk)   # ✅ use base manager
         except Model.DoesNotExist:
             if i < retries:
                 time.sleep(delay)

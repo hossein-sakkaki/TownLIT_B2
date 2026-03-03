@@ -56,6 +56,13 @@ NOTIFICATION_TYPES = [
     ("new_moment_image", "New Image Moment"),
     ("new_moment_video", "New Video Moment"),
 
+    # ------------------------
+    # PRAYERS
+    # ------------------------
+    ("new_prayer_image", "New Image Prayer"),
+    ("new_prayer_video", "New Video Prayer"),
+    ("prayer_result_answered", "Prayer Answered Update"),
+    ("prayer_result_not_answered", "Prayer Update (Not Answered)"),
 ]
 
 # Types that should only send Push and Email notifications (no WebSocket) ---------
@@ -260,4 +267,27 @@ NOTIFICATION_PREF_METADATA = {
         "description": "You will be notified when a friend shares a new video moment.",
     },
 
+    # ------------------------
+    # PRAYERS
+    # ------------------------
+    "new_prayer_image": {
+        "category": "Prayers",
+        "label": "New image prayer from a friend",
+        "description": "You will be notified when a friend shares a new prayer with an image.",
+    },
+    "new_prayer_video": {
+        "category": "Prayers",
+        "label": "New video prayer from a friend",
+        "description": "You will be notified when a friend shares a new prayer with a video.",
+    },
+    "prayer_result_answered": {
+        "category": "Prayers",
+        "label": "Prayer answered update",
+        "description": "You will be notified when a friend shares that their prayer has been answered.",
+    },
+    "prayer_result_not_answered": {
+        "category": "Prayers",
+        "label": "Prayer follow-up update",
+        "description": "You will be notified when a friend shares a follow-up update on their prayer request.",
+    },
 }

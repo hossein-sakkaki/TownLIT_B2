@@ -23,11 +23,9 @@ router = DefaultRouter()
 
 
 # router.register(r'me/testimonies', MeTestimonyViewSet, basename='me-testimonies')
-router.register(
-    r'testimonies',
-    TestimonyViewSet,
-    basename='testimonies',
-)
+router.register(r'testimonies', TestimonyViewSet, basename='testimonies')
+router.register(r'moments', MomentViewSet, basename='moment')
+router.register(r'prayers', PrayViewSet, basename='prayer')
 
 # centralized reactions
 router.register(r'reactions', ReactionViewSet, basename='reaction')
@@ -35,12 +33,9 @@ router.register(r'reactions', ReactionViewSet, basename='reaction')
 # centralized comments 
 router.register(r'comments', CommentViewSet, basename='comment')
 
-router.register(r'moments', MomentViewSet, basename='moment')
-
 
 # public/organizational resources
 # router.register(r'testimonies', TestimonyViewSet, basename='testimony')
-router.register(r'prayers', PrayViewSet, basename='prayer')
 router.register(r'announcements', AnnouncementViewSet, basename='announcement')
 router.register(r'witnesses', WitnessViewSet, basename='witness')
 router.register(r'preaches', PreachViewSet, basename='preach')

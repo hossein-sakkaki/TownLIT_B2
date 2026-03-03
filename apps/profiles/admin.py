@@ -9,7 +9,7 @@ from django.utils.translation import gettext_lazy as _
 
 from common.aws.s3_utils import get_file_url
 from apps.posts.models.moment import Moment
-from apps.posts.models.pray import Pray
+# from apps.posts.models.pray import Pray
 from apps.profiles.admin_forms import MemberServiceTypeAdminForm, MemberAdminForm
 from .models import (
                 AcademicRecord,
@@ -167,13 +167,13 @@ class MomentInline(GenericTabularInline):
         return super().get_queryset(request).filter(content_type=ContentType.objects.get_for_model(Member))
 
 # PRAY Admin Inline
-class PrayInline(GenericTabularInline):
-    model = Pray
-    extra = 0
-    readonly_fields = ['title', 'content', 'published_at']
+# class PrayInline(GenericTabularInline):
+#     model = Pray
+#     extra = 0
+#     readonly_fields = ['title', 'content', 'published_at']
 
-    def get_queryset(self, request):
-        return super().get_queryset(request).filter(content_type=ContentType.objects.get_for_model(Member))
+#     def get_queryset(self, request):
+#         return super().get_queryset(request).filter(content_type=ContentType.objects.get_for_model(Member))
 
 
 # Member Admin ----------------------------------------------------------------

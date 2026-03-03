@@ -1,3 +1,5 @@
+# apps/notifications/services/ui_link_resolver.py
+
 from urllib.parse import urlencode
 
 # ------------------------------------------------------------
@@ -7,9 +9,8 @@ ENTRY_BY_CT = {
     # posts
     "posts.moment": "/posts/moments",
     "posts.testimony": "/posts/testimonies",
-    # add more later:
-    # "posts.pray": "/posts/prays",
-    # "posts.post": "/posts/posts",
+    "posts.prayer": "/posts/prayers",
+    # add more later...
 }
 
 # ------------------------------------------------------------

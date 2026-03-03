@@ -24,21 +24,37 @@ class OpportunityAdmin(AdvancementRoleAdminMixin, CSVExportAdminMixin, admin.Mod
         "expected_amount",
         "deadline",
         "probability_score",
+        "assigned_to",
         "is_active",
     )
+
     list_filter = (
         "stage",
         "opportunity_type",
         "currency",
         "legal_entity",
+        "assigned_to",
         "tags",
         OpportunityPipelineFilter,
         OpportunityDeadlineStatusFilter,
     )
-    search_fields = ("title", "external_entity__name", "notes")
-    list_select_related = ("external_entity", "legal_entity")
+
+    search_fields = (
+        "title",
+        "external_entity__name",
+        "legal_entity__name",
+        "notes",
+        "assigned_to__email",
+        "assigned_to__username",
+        "assigned_to__first_name",
+        "assigned_to__last_name",
+    )
+
+    list_select_related = ("external_entity", "legal_entity", "assigned_to")
     filter_horizontal = ("tags",)
+
     inlines = [CommitmentInline]
+
     actions = (
         "export_as_csv",
         "mark_opportunities_under_review",
@@ -58,6 +74,7 @@ class OpportunityAdmin(AdvancementRoleAdminMixin, CSVExportAdminMixin, admin.Mod
         "submission_date",
         "decision_date",
         "probability_score",
+        "assigned_to",
         "notes",
     ]
 
@@ -74,6 +91,9 @@ class OpportunityAdmin(AdvancementRoleAdminMixin, CSVExportAdminMixin, admin.Mod
                     "opportunity_type",
                     "stage",
                 )
+            }),
+            ("Ownership", {
+                "fields": ("assigned_to",)
             }),
             ("Funding", {
                 "fields": (

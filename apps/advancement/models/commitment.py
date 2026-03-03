@@ -2,8 +2,8 @@
 
 from django.db import models
 import uuid
-from decimal import Decimal
 from .opportunity import Opportunity
+from decimal import Decimal, ROUND_HALF_UP
 
 
 class Commitment(models.Model):
@@ -36,17 +36,18 @@ class Commitment(models.Model):
 
     currency = models.CharField(max_length=3)  # ISO currency
 
+    base_currency_amount = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+
     # Exchange rate snapshot at time of commitment
     exchange_rate_snapshot = models.DecimalField(
         max_digits=12,
         decimal_places=6,
         default=Decimal("1.0")
-    )
-
-    # Base currency converted amount (for reporting)
-    base_currency_amount = models.DecimalField(
-        max_digits=15,
-        decimal_places=2
     )
 
     commitment_date = models.DateField()
@@ -73,11 +74,12 @@ class Commitment(models.Model):
         return f"{self.opportunity.title} - {self.committed_amount} {self.currency}"
 
     def save(self, *args, **kwargs):
-        """
-        Automatically calculate base currency amount if not provided.
-        """
-        if not self.base_currency_amount:
-            self.base_currency_amount = (
-                self.committed_amount * self.exchange_rate_snapshot
-            )
+        """Auto-calc base_currency_amount when missing."""
+        if self.base_currency_amount is None:
+            rate = self.exchange_rate_snapshot or Decimal("1.0")
+            value = (self.committed_amount or Decimal("0.00")) * rate
+
+            # Keep consistent with decimal_places=2
+            self.base_currency_amount = value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
         super().save(*args, **kwargs)

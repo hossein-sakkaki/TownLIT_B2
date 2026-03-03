@@ -1,3 +1,5 @@
+# apps/posts/signals/moment_media_cleanup.py
+
 import logging
 import os
 
