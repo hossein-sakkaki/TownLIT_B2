@@ -184,6 +184,7 @@ class MemberAdmin(admin.ModelAdmin):
 
     # --- Columns in changelist ---
     list_display = [
+        'id',
         'user',
         'denomination_branch',        # ← NEW
         'denomination_family',        # ← NEW

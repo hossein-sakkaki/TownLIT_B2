@@ -81,8 +81,8 @@ class OpportunityAdmin(AdvancementRoleAdminMixin, CSVExportAdminMixin, admin.Mod
     readonly_fields = ("created_at", "updated_at", "is_active")
 
     def get_fields(self, request, obj=None):
-        """Show system fields only on change form (safe for non-editable fields)."""
-        fields = [
+        """Admin form fields (avoid non-editable system fields)."""
+        return [
             "title",
             "external_entity",
             "legal_entity",
@@ -99,9 +99,6 @@ class OpportunityAdmin(AdvancementRoleAdminMixin, CSVExportAdminMixin, admin.Mod
             "tags",
             "notes",
         ]
-        if obj is not None:
-            fields += ["is_active", "created_at", "updated_at"]
-        return fields
 
     def get_inline_instances(self, request, obj=None):
         """Hide commitments inline on add form."""

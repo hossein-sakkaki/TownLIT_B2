@@ -164,6 +164,18 @@ class Moment(
         notify_moment_ready(self)
 
 
+    def media_autoconvert_enabled(self) -> bool:
+        """
+        Disable auto-conversion when Moment is image-only.
+        Images (.jpg/.png/.jpeg) are already final and do not require pipeline.
+        """
+        if self.image and not self.video:
+            # image-only moment → already final
+            self.is_converted = True
+            return False
+
+        return True
+
 
     def get_slug_source(self):
         return f"moment-{self.published_at.strftime('%Y%m%d%H%M%S')}"
