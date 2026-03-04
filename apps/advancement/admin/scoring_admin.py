@@ -55,9 +55,7 @@ class StrategicScoreAdmin(AdvancementRoleAdminMixin, CSVExportAdminMixin, admin.
         if obj is None:
             return base
 
-        return base + (
-            ("System", {"fields": ("updated_at",)}),
-        )
+        return base
 
     def total_score_display(self, obj):
         return obj.total_score

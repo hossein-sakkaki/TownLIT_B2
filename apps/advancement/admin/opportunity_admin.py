@@ -80,48 +80,28 @@ class OpportunityAdmin(AdvancementRoleAdminMixin, CSVExportAdminMixin, admin.Mod
 
     readonly_fields = ("created_at", "updated_at", "is_active")
 
-    def get_fieldsets(self, request, obj=None):
-        """Show system fields only on change form."""
-        base = (
-            ("Core", {
-                "fields": (
-                    "title",
-                    "external_entity",
-                    "legal_entity",
-                    "opportunity_type",
-                    "stage",
-                )
-            }),
-            ("Ownership", {
-                "fields": ("assigned_to",)
-            }),
-            ("Funding", {
-                "fields": (
-                    "currency",
-                    "amount_requested",
-                    "expected_amount",
-                    "probability_score",
-                )
-            }),
-            ("Dates", {
-                "fields": ("deadline", "submission_date", "decision_date")
-            }),
-            ("Classification", {
-                "fields": ("tags",)
-            }),
-            ("Notes", {
-                "fields": ("notes",)
-            }),
-        )
-
-        if obj is None:
-            return base
-
-        return base + (
-            ("System", {
-                "fields": ("is_active", "created_at", "updated_at")
-            }),
-        )
+    def get_fields(self, request, obj=None):
+        """Show system fields only on change form (safe for non-editable fields)."""
+        fields = [
+            "title",
+            "external_entity",
+            "legal_entity",
+            "opportunity_type",
+            "stage",
+            "assigned_to",
+            "currency",
+            "amount_requested",
+            "expected_amount",
+            "probability_score",
+            "deadline",
+            "submission_date",
+            "decision_date",
+            "tags",
+            "notes",
+        ]
+        if obj is not None:
+            fields += ["is_active", "created_at", "updated_at"]
+        return fields
 
     def get_inline_instances(self, request, obj=None):
         """Hide commitments inline on add form."""

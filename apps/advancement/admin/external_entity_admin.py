@@ -95,7 +95,7 @@ class ExternalEntityAdmin(AdvancementRoleAdminMixin, CSVExportAdminMixin, admin.
         if obj is None:
             return base
 
-        return base + (("System", {"fields": ("created_at", "updated_at")}),)
+        return base
 
     def get_inline_instances(self, request, obj=None):
         """Hide inlines on add form."""
