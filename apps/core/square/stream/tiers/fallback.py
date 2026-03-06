@@ -1,3 +1,5 @@
+# apps/core/square/stream/tiers/fallback.py
+
 from django.db.models import QuerySet
 from .base import StreamTier
 

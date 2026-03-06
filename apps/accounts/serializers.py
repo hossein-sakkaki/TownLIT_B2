@@ -505,8 +505,6 @@ class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
         """
         return LITShieldGrant.objects.filter(user=obj, is_active=True).exists()
 
-
-    
      
 # -------------------------------------------------------------------
 # PublicCustomUserSerializer — full public profile, with avatar_url
@@ -613,9 +611,6 @@ class PublicCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
         return bool(mp and mp.is_townlit_verified)
 
 
-
-
-
 # -------------------------------------------------------------------
 # LimitedCustomUserSerializer — very small footprint
 # -------------------------------------------------------------------
@@ -679,8 +674,6 @@ class LimitedCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
         """
         mp = getattr(obj, "member_profile", None)
         return bool(mp and mp.is_townlit_verified)
-
-
 
  
 # Simple CustomUser Serializers For Showing Users ------------------------------------------------
@@ -834,8 +827,6 @@ class SimpleCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
         return bool(mp and mp.is_townlit_verified)
 
 
-            
-
 # ------------------------------------------------------------------------------------
 class UserMiniSerializer(AvatarURLMixin, serializers.ModelSerializer):
     is_verified_identity = serializers.BooleanField(read_only=True)
@@ -846,6 +837,9 @@ class UserMiniSerializer(AvatarURLMixin, serializers.ModelSerializer):
     avatar_url = serializers.SerializerMethodField()
     avatar_cdn_url = serializers.SerializerMethodField()
     avatar_version = serializers.IntegerField(read_only=True)
+
+    # ✅ clickable profile link
+    profile_url = serializers.SerializerMethodField()
 
     class Meta:
         model = CustomUser
@@ -858,24 +852,24 @@ class UserMiniSerializer(AvatarURLMixin, serializers.ModelSerializer):
             "is_townlit_verified",
             "label_color",
             "avatar_url", "avatar_cdn_url", "avatar_version",
+            "profile_url",
         ]
-
 
     def get_avatar_url(self, obj):
         return self.build_avatar_url(obj)
-    
+
     def get_avatar_cdn_url(self, obj):
         return self.build_avatar_cdn_url(obj)
 
+    def get_profile_url(self, obj):
+        # ✅ TownLIT public profile route
+        if getattr(obj, "username", None):
+            return f"/lit/{obj.username}"
+        return "/lit/"
+
     def get_is_townlit_verified(self, obj):
-        """
-        Derived flag:
-        True if user has a member profile AND it is TownLIT verified.
-        """
         mp = getattr(obj, "member_profile", None)
         return bool(mp and mp.is_townlit_verified)
-
-
 
 
 # Reactivation User Serializers -----------------------------------------------------------------------

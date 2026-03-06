@@ -31,6 +31,8 @@ from cryptography.fernet import Fernet
 from django.conf import settings
 cipher_suite = Fernet(settings.FERNET_KEY)
 
+from apps.profiles.selectors.friends import get_friend_user_ids
+from apps.profiles.serializers_min import PeopleSuggestionSerializer
 from apps.profiles.services.symmetric_friendship import (
                     add_symmetric_friendship, remove_symmetric_friendship, 
                 )
@@ -55,7 +57,7 @@ from .serializers import (
                     SpiritualGiftSurveyResponseSerializer, SpiritualGiftSurveyQuestionSerializer, MemberSpiritualGiftsSerializer, SpiritualGift,
                     MemberServiceTypeSerializer, SpiritualServiceSerializer, MemberServiceType
                 )
-from apps.accounts.serializers import SimpleCustomUserSerializer, CustomUserSerializer
+from apps.accounts.serializers import SimpleCustomUserSerializer, CustomUserSerializer, UserMiniSerializer
 from apps.profiles.services.listing import build_friends_list
 from apps.media_conversion.services.readiness import get_media_ready_state  
 
@@ -64,7 +66,9 @@ from django.core.exceptions import ValidationError
 from utils.common.utils import create_active_code, send_sms
 from utils.email.email_tools import send_custom_email
 from django.template.loader import render_to_string
-from services.friendship_suggestions import suggest_friends_for_friends_tab, suggest_friends_for_requests_tab
+from apps.profiles.selectors.common_suggestions import suggest_friends_for_requests_tab
+from apps.profiles.selectors.friendship_suggestions import suggest_friends_for_friends_tab
+from apps.profiles.selectors.people_suggestions import get_people_suggestions_queryset
 from django.contrib.auth import get_user_model
 from apps.core.pagination import ConfigurablePagination
 
@@ -1510,7 +1514,6 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-
     # ------------------------------------------------------------------------------------------------------
     @action(
         detail=False,
@@ -1573,8 +1576,109 @@ class FriendshipViewSet(viewsets.ModelViewSet):
         )
         return Response(serializer.data, status=status.HTTP_200_OK)
 
+    # People suggestions --------------------------------------------
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="people-suggestions",
+        permission_classes=[IsAuthenticated],
+    )
+    def people_suggestions(self, request):
+        """
+        Square → People tab (paged).
 
-    
+        Returns:
+          - ranked users (20/page)
+          - mutual_friends_count (annotated in selector)
+          - mutual_friends preview (list of mini users: username + profile_url clickable)
+        """
+        try:
+            viewer = request.user
+
+            # 1) Ranked suggestions queryset (your selector)
+            qs = get_people_suggestions_queryset(viewer)
+
+            # 2) Pagination
+            page = self.paginate_queryset(qs)
+            if page is None:
+                page = list(qs[: getattr(self, "pagination_page_size", 20)])
+
+            candidate_ids = [u.id for u in page]
+
+            # 3) Build mutual friends preview map (bulk, for only this page)
+            viewer_friend_ids = set(get_friend_user_ids(viewer))
+            mutual_preview_map = {cid: [] for cid in candidate_ids}
+
+            if viewer_friend_ids and candidate_ids:
+                # edges connecting (viewer friends) <-> (candidates)
+                edges = (
+                    Friendship.objects
+                    .filter(status="accepted", is_active=True)
+                    .filter(
+                        Q(from_user_id__in=viewer_friend_ids, to_user_id__in=candidate_ids) |
+                        Q(to_user_id__in=viewer_friend_ids, from_user_id__in=candidate_ids)
+                    )
+                    .values("from_user_id", "to_user_id")
+                )
+
+                # candidate_id -> set(mutual_friend_id)
+                mutual_ids_map = {cid: set() for cid in candidate_ids}
+
+                for e in edges:
+                    a = e["from_user_id"]
+                    b = e["to_user_id"]
+
+                    if a in candidate_ids and b in viewer_friend_ids:
+                        mutual_ids_map[a].add(b)
+                    elif b in candidate_ids and a in viewer_friend_ids:
+                        mutual_ids_map[b].add(a)
+
+                # Keep preview small (UI-friendly)
+                PREVIEW_LIMIT = 3
+
+                # flatten ids (one fetch)
+                all_mutual_ids = set()
+                for cid, mids in mutual_ids_map.items():
+                    mids_list = list(mids)[:PREVIEW_LIMIT]
+                    mutual_ids_map[cid] = mids_list
+                    all_mutual_ids.update(mids_list)
+
+                if all_mutual_ids:
+                    mutual_users = (
+                        type(viewer).objects
+                        .filter(id__in=all_mutual_ids, is_active=True, is_deleted=False)
+                        .select_related("label", "member_profile")
+                    )
+                    mutual_by_id = {u.id: u for u in mutual_users}
+
+                    # serialize per candidate
+                    for cid, mids in mutual_ids_map.items():
+                        objs = [mutual_by_id[mid] for mid in mids if mid in mutual_by_id]
+                        mutual_preview_map[cid] = UserMiniSerializer(
+                            objs,
+                            many=True,
+                            context={"request": request},
+                        ).data
+
+            # 4) Serialize candidates (includes mutual preview via context)
+            serializer = PeopleSuggestionSerializer(
+                page,
+                many=True,
+                context={
+                    "request": request,
+                    "mutual_preview_map": mutual_preview_map,
+                },
+            )
+
+            return self.get_paginated_response(serializer.data)
+
+        except Exception:
+            logger.exception("Error in people_suggestions")
+            return Response(
+                {"error": "Unable to retrieve people suggestions"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        
     # ------------------------------------------------------------------------------------------------------
     @action(
         detail=True,

@@ -1,5 +1,3 @@
-# apps/core/square/stream/resolvers.py
-
 from apps.core.square.stream.constants import (
     STREAM_SUBTYPE_VIDEO,
     STREAM_SUBTYPE_IMAGE,
@@ -9,6 +7,7 @@ from apps.core.square.stream.constants import (
 
 from apps.posts.models.testimony import Testimony
 from apps.posts.models.moment import Moment
+from apps.posts.models.pray import Prayer
 
 
 def resolve_stream_subtype(obj) -> str | None:
@@ -32,6 +31,15 @@ def resolve_stream_subtype(obj) -> str | None:
     # Moment
     # -----------------------------
     if isinstance(obj, Moment):
+        if obj.video:
+            return STREAM_SUBTYPE_VIDEO
+        if obj.image:
+            return STREAM_SUBTYPE_IMAGE
+
+    # -----------------------------
+    # Prayer
+    # -----------------------------
+    if isinstance(obj, Prayer):
         if obj.video:
             return STREAM_SUBTYPE_VIDEO
         if obj.image:

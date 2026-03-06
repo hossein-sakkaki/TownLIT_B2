@@ -1,5 +1,6 @@
-from django.apps import AppConfig
+# apps/posts/apps.py
 
+from django.apps import AppConfig
 
 class PostsConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
@@ -53,9 +54,9 @@ class PostsConfig(AppConfig):
             )
 
         # -----------------------------
-        # Prayer → Square (Prepared)
+        # Prayer → Square
         # -----------------------------
-        if get_square_source("prayer") is None:
+        if get_square_source("pray") is None:
             register_square_source(
                 source=SquareContentSource(
                     model=Prayer,

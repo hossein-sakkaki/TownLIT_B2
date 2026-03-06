@@ -1,3 +1,5 @@
+# apps/core/square/stream/engine.py
+
 from django.db.models import Q, QuerySet
 from apps.core.square.stream.tiers.registry import TIERS_BY_KIND
 

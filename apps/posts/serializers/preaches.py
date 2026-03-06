@@ -1,3 +1,5 @@
+# apps/posts/serializers/preaches.py
+
 from rest_framework import serializers
 from django.apps import apps
 from apps.posts.models.preach import Preach
