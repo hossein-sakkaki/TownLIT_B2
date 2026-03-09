@@ -1,0 +1,28 @@
+<!-- apps/accounting/templates/admin/accounting/_nav.html -->
+
+<div style="margin-bottom:20px; padding:14px 16px; border:1px solid #ddd; border-radius:8px; background:#fff;">
+  <div style="display:flex; flex-wrap:wrap; gap:10px;">
+    <a href="{% url 'accounting_admin:index' %}" class="button">Home</a>
+    <a href="{% url 'accounting_admin:accounting-dashboard-admin' %}" class="button">Dashboard</a>
+    <a href="{% url 'accounting_admin:accounting-report-hub' %}" class="button">Reports</a>
+    <a href="{% url 'accounting_admin:accounting-generate-periods' %}" class="button">Generate Periods</a>
+
+    <a href="{% url 'accounting_admin:accounting_account_changelist' %}" class="button">Accounts</a>
+    <a href="{% url 'accounting_admin:accounting_journalentry_changelist' %}" class="button">Journal Entries</a>
+    <a href="{% url 'accounting_admin:accounting_transaction_changelist' %}" class="button">Transactions</a>
+
+    <a href="{% url 'accounting_admin:accounting_fund_changelist' %}" class="button">Funds</a>
+    <a href="{% url 'accounting_admin:accounting_budget_changelist' %}" class="button">Budgets</a>
+    <a href="{% url 'accounting_admin:accounting_budgetline_changelist' %}" class="button">Budget Lines</a>
+    <a href="{% url 'accounting_admin:accounting_accountingperiod_changelist' %}" class="button">Periods</a>
+
+    <a href="{% url 'accounting_admin:accounting_bankinstitution_changelist' %}" class="button">Bank Institutions</a>
+    <a href="{% url 'accounting_admin:accounting_bankaccount_changelist' %}" class="button">Bank Accounts</a>
+    <a href="{% url 'accounting_admin:accounting_bankstatementimport_changelist' %}" class="button">Bank Imports</a>
+    <a href="{% url 'accounting_admin:accounting_bankreconciliationsession_changelist' %}" class="button">Reconciliation</a>
+
+    <a href="{% url 'accounting_admin:accounting_accountingdocument_changelist' %}" class="button">Documents</a>
+    <a href="{% url 'accounting_admin:accounting_accountingapproval_changelist' %}" class="button">Approvals</a>
+    <a href="{% url 'accounting_admin:accounting_recurringjournaltemplate_changelist' %}" class="button">Recurring</a>
+  </div>
+</div>

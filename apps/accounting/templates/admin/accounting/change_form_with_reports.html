@@ -1,0 +1,9 @@
+<!-- apps/accounting/admin/accounting/change_form_with_reports.html -->
+ 
+{% extends "admin/change_form.html" %}
+
+{% block content %}
+  {% include "admin/accounting/_nav.html" %}
+  {% include "admin/accounting/report_result_links.html" %}
+  {{ block.super }}
+{% endblock %}

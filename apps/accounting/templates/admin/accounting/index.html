@@ -1,0 +1,59 @@
+<!-- apps/accounting/admin/accounting/index.html -->
+ 
+ {% extends "admin/index.html" %}
+
+{% block content %}
+  {% include "admin/accounting/_nav.html" %}
+
+  <div style="margin-bottom:20px; padding:16px; border:1px solid #ddd; border-radius:8px; background:#fff;">
+    <h2 style="margin-top:0;">Accounting Shortcuts</h2>
+
+    <div style="display:grid; grid-template-columns:repeat(3, minmax(220px, 1fr)); gap:16px; margin-top:16px;">
+
+      <div style="border:1px solid #eee; border-radius:8px; padding:14px;">
+        <h3>Dashboard</h3>
+        <p>View financial KPIs and alerts.</p>
+        <a href="{% url 'accounting_admin:accounting-dashboard-admin' %}" class="button">Open Dashboard</a>
+      </div>
+
+      <div style="border:1px solid #eee; border-radius:8px; padding:14px;">
+        <h3>Reports</h3>
+        <p>Generate accounting and fund reports.</p>
+        <a href="{% url 'accounting_admin:accounting-report-hub' %}" class="button">Open Reports</a>
+      </div>
+
+      <div style="border:1px solid #eee; border-radius:8px; padding:14px;">
+        <h3>Generate Periods</h3>
+        <p>Create monthly fiscal-year periods from inside admin.</p>
+        <a href="{% url 'accounting_admin:accounting-generate-periods' %}" class="button">Generate</a>
+      </div>
+
+      <div style="border:1px solid #eee; border-radius:8px; padding:14px;">
+        <h3>Journal Entries</h3>
+        <p>Create and review accounting entries.</p>
+        <a href="{% url 'accounting_admin:accounting_journalentry_changelist' %}" class="button">Open Entries</a>
+      </div>
+
+      <div style="border:1px solid #eee; border-radius:8px; padding:14px;">
+        <h3>Funds</h3>
+        <p>Manage grants, restricted funds, and budgets.</p>
+        <a href="{% url 'accounting_admin:accounting_fund_changelist' %}" class="button">Open Funds</a>
+      </div>
+
+      <div style="border:1px solid #eee; border-radius:8px; padding:14px;">
+        <h3>Banking</h3>
+        <p>Manage bank accounts and reconciliation.</p>
+        <a href="{% url 'accounting_admin:accounting_bankaccount_changelist' %}" class="button">Open Banking</a>
+      </div>
+
+      <div style="border:1px solid #eee; border-radius:8px; padding:14px;">
+        <h3>Documents</h3>
+        <p>Review invoices, receipts, and attachments.</p>
+        <a href="{% url 'accounting_admin:accounting_accountingdocument_changelist' %}" class="button">Open Documents</a>
+      </div>
+
+    </div>
+  </div>
+
+  {{ block.super }}
+{% endblock %}

@@ -40,4 +40,8 @@ urlpatterns = [
 
     # Notifications
     path('', include('apps.notifications.urls')),
+
+    # Accounting
+    path("accounting/", include("apps.accounting.urls.index")),
+
 ]

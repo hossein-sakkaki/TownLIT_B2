@@ -192,6 +192,7 @@ INSTALLED_APPS = [
     "apps.media_conversion.apps.MediaConversionConfig",
 
     "apps.advancement.apps.AdvancementConfig",
+    "apps.accounting.apps.AccountingConfig",
 ]
 
 MIDDLEWARE = [

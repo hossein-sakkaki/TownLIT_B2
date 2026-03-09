@@ -1,0 +1,8 @@
+<!-- apps/accounting/templates/admin/accounting/app_index.html -->
+
+{% extends "admin/app_index.html" %}
+
+{% block content %}
+  {% include "admin/accounting/_nav.html" %}
+  {{ block.super }}
+{% endblock %}

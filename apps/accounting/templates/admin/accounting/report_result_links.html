@@ -1,0 +1,12 @@
+<!-- apps/accounting/admin/accounting/report_result_links.html -->
+
+{% if report_links %}
+  <div style="margin: 20px 0; padding: 16px; border: 1px solid #ddd; border-radius: 8px; background: #fff;">
+    <h2 style="margin-top:0;">Report Shortcuts</h2>
+    <ul style="margin:0; padding-left:18px;">
+      {% for item in report_links %}
+        <li><a href="{{ item.url }}" target="_blank">{{ item.label }}</a></li>
+      {% endfor %}
+    </ul>
+  </div>
+{% endif %}

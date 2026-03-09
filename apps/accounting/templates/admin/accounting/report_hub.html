@@ -1,0 +1,48 @@
+<!-- apps/accounting/admin/accounting/report_hub.html -->
+ 
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+  {% include "admin/accounting/_nav.html" %}
+
+  <div style="max-width: 1100px;">
+    <h1>Accounting Reports</h1>
+    <p>Generate downloadable accounting and fund reports.</p>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:24px; margin-top:24px;">
+      
+      <div style="border:1px solid #ddd; border-radius:8px; padding:20px; background:#fff;">
+        <h2>Main Reports</h2>
+        <form method="post">
+          {% csrf_token %}
+          {{ report_form.as_p }}
+          <button type="submit" name="generate_main_report" class="default">
+            Generate Report
+          </button>
+        </form>
+      </div>
+
+      <div style="border:1px solid #ddd; border-radius:8px; padding:20px; background:#fff;">
+        <h2>Object Reports</h2>
+        <form method="post">
+          {% csrf_token %}
+          {{ object_form.as_p }}
+          <button type="submit" name="generate_object_report" class="default">
+            Generate Report
+          </button>
+        </form>
+      </div>
+
+    </div>
+
+    <div style="margin-top:32px;">
+      <h2>Available Exports</h2>
+      <ul>
+        <li>CSV</li>
+        <li>Excel (.xlsx)</li>
+        <li>PDF</li>
+        <li>JSON</li>
+      </ul>
+    </div>
+  </div>
+{% endblock %}

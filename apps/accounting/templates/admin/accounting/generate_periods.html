@@ -1,0 +1,26 @@
+<!-- apps/accounting/templates/admin/accounting/generate_periods.html -->
+
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+  {% include "admin/accounting/_nav.html" %}
+
+  <div style="max-width: 760px;">
+    <h1>Generate Accounting Periods</h1>
+    <p>
+      Create or update TownLIT fiscal-year monthly periods.
+      TownLIT fiscal year runs from <strong>June 1</strong> to <strong>May 31</strong>.
+    </p>
+
+    <div style="border:1px solid #ddd; border-radius:8px; padding:20px; background:#fff; margin-top:20px;">
+      <form method="post">
+        {% csrf_token %}
+        {{ form.as_p }}
+
+        <button type="submit" class="default">
+          Generate Periods
+        </button>
+      </form>
+    </div>
+  </div>
+{% endblock %}

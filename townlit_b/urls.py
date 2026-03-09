@@ -7,6 +7,7 @@ from django.conf.urls.static import static
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from apps.advancement.admin.site import advancement_admin_site 
+from apps.accounting.admin.site import accounting_admin_site
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -21,5 +22,6 @@ urlpatterns = [
 
     # Dedicated advancement admin
     path('advancement/', advancement_admin_site.urls),
+    path('accounting/', accounting_admin_site.urls),
 
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
