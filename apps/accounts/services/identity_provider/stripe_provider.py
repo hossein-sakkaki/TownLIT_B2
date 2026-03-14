@@ -24,7 +24,6 @@ class StripeIdentityProvider(BaseIdentityProvider):
         return_url = success_url or settings.IDENTITY_RETURN_URL
 
         try:
-
             session = stripe.identity.VerificationSession.create(
                 type="document",
                 return_url=return_url,
@@ -58,14 +57,57 @@ class StripeIdentityProvider(BaseIdentityProvider):
             }
 
         except stripe.error.StripeError as exc:
-
             logger.exception(
                 "[StripeIdentity] Stripe error user_id=%s error=%s",
                 user.id,
                 exc,
             )
-
             raise RuntimeError("Stripe identity verification failed.")
+
+    def retrieve_session(self, session_id: str) -> dict:
+        """
+        Retrieve Stripe Identity verification session and normalize it.
+        """
+
+        try:
+            session = stripe.identity.VerificationSession.retrieve(session_id)
+
+            last_error = session.get("last_error")
+            reason = None
+
+            if isinstance(last_error, dict):
+                reason = last_error.get("reason") or last_error.get("code")
+            elif last_error:
+                reason = str(last_error)
+
+            return {
+                "id": session.get("id"),
+                "status": session.get("status"),
+                "reason": reason,
+                "risk": [],
+                "raw": dict(session),
+            }
+
+        except stripe.error.InvalidRequestError:
+            logger.warning(
+                "[StripeIdentity] Session not found session_id=%s",
+                session_id,
+            )
+            return {
+                "id": session_id,
+                "status": "not_found",
+                "reason": "Verification session not found on Stripe.",
+                "risk": [],
+                "raw": {},
+            }
+
+        except stripe.error.StripeError as exc:
+            logger.exception(
+                "[StripeIdentity] Failed to retrieve session session_id=%s error=%s",
+                session_id,
+                exc,
+            )
+            raise RuntimeError("Failed to retrieve Stripe identity session.")
 
     def verify_webhook(self, raw_body: bytes, signature_header: str):
         """
@@ -76,22 +118,18 @@ class StripeIdentityProvider(BaseIdentityProvider):
             return None
 
         try:
-
             event = stripe.Webhook.construct_event(
                 raw_body,
                 signature_header,
-                settings.STRIPE_IDENTITY_WEBHOOK_SECRET,   # ✅ اصلاح مهم
+                settings.STRIPE_IDENTITY_WEBHOOK_SECRET,
             )
-
             return event
 
         except stripe.error.SignatureVerificationError:
-
             logger.warning("[StripeIdentity] Invalid webhook signature")
             return None
 
         except Exception:
-
             logger.exception("[StripeIdentity] Failed to verify webhook")
             return None
 
@@ -105,23 +143,18 @@ class StripeIdentityProvider(BaseIdentityProvider):
 
         status = session.get("status")
 
-        # Stripe event mapping
         if event_type == "identity.verification_session.verified":
             status = "verified"
-
         elif event_type == "identity.verification_session.requires_input":
             status = "requires_input"
-
         elif event_type == "identity.verification_session.canceled":
             status = "canceled"
 
         last_error = session.get("last_error")
-
         reason = None
 
         if isinstance(last_error, dict):
             reason = last_error.get("reason") or last_error.get("code")
-
         elif last_error:
             reason = str(last_error)
 

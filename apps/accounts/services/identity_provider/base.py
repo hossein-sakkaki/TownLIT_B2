@@ -26,6 +26,22 @@ class BaseIdentityProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def retrieve_session(self, session_id: str) -> dict:
+        """
+        Retrieve a provider verification session and normalize it.
+
+        Must return a normalized shape:
+        {
+            "id": "...",
+            "status": "...",
+            "reason": "...",
+            "risk": [...],
+            "raw": {...}
+        }
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     def verify_webhook(self, raw_body: bytes, signature_header: str):
         """
         Verify webhook signature and return provider event/payload.

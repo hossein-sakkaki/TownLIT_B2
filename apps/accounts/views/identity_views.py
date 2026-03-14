@@ -3,7 +3,7 @@
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 
-from rest_framework import request, status, viewsets
+from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
@@ -57,6 +57,76 @@ class IdentityViewSet(viewsets.ViewSet):
     def _get_provider(self):
         return get_identity_provider()
 
+    def _reconcile_existing_provider_session(self, iv):
+        """
+        Reconcile local pending/processing row with provider truth.
+        """
+
+        if not iv.provider_reference:
+            finalize_provider_identity_rejected(
+                iv=iv,
+                reason="Previous verification session had no provider reference.",
+                provider_payload={"local_recovery": True},
+                risk_labels=[],
+            )
+            return "released"
+
+        provider = self._get_provider()
+
+        try:
+            remote = provider.retrieve_session(iv.provider_reference)
+        except Exception as exc:
+            logger.warning(
+                "[IdentityStart] Could not reconcile session user_id=%s iv_id=%s provider_reference=%s error=%s",
+                iv.user_id,
+                iv.id,
+                iv.provider_reference,
+                exc,
+            )
+            return "active"
+
+        remote_status = (remote or {}).get("status")
+        remote_raw = (remote or {}).get("raw") or remote
+        remote_reason = (remote or {}).get("reason") or "Verification failed"
+        remote_risk = (remote or {}).get("risk") or []
+
+        logger.info(
+            "[IdentityStart] Reconcile session user_id=%s iv_id=%s local_status=%s remote_status=%s provider_reference=%s",
+            iv.user_id,
+            iv.id,
+            iv.status,
+            remote_status,
+            iv.provider_reference,
+        )
+
+        if remote_status == "verified":
+            finalize_provider_identity_approved(
+                iv=iv,
+                provider_payload=remote_raw,
+                risk_labels=remote_risk,
+            )
+            return "verified"
+
+        if remote_status in ("canceled", "requires_input", "not_found"):
+            finalize_provider_identity_rejected(
+                iv=iv,
+                reason=remote_reason,
+                provider_payload=remote_raw,
+                risk_labels=remote_risk,
+            )
+            return "released"
+
+        if remote_status in ("processing", "pending"):
+            return "active"
+
+        finalize_provider_identity_rejected(
+            iv=iv,
+            reason=f"Previous verification session ended in unexpected state: {remote_status}",
+            provider_payload=remote_raw,
+            risk_labels=remote_risk,
+        )
+        return "released"
+    
     @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated])
     def eligibility(self, request):
         """
@@ -133,7 +203,7 @@ class IdentityViewSet(viewsets.ViewSet):
                 }
             )
 
-        # Load or create verification record WITHOUT forcing pending
+        # Load or create verification record
         iv, created = IdentityVerification.objects.get_or_create(
             user=request.user,
             defaults={
@@ -151,18 +221,30 @@ class IdentityViewSet(viewsets.ViewSet):
             iv.status,
         )
 
-        # Prevent duplicate sessions
-        if not created:
-            if iv.status in ["pending", "processing"]:
-                raise ValidationError(
-                    {"detail": "Verification already in progress."}
-                )
+        # If local row says pending/processing, reconcile with provider truth first
+        if not created and iv.status in ["pending", "processing"]:
+            reconcile_result = self._reconcile_existing_provider_session(iv)
+            iv.refresh_from_db()
 
-            if iv.status == IV_STATUS_VERIFIED:
+            if reconcile_result == "verified":
                 return Response(
                     {"detail": "Identity already verified."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+
+            if reconcile_result == "active":
+                raise ValidationError(
+                    {"detail": "Verification already in progress."}
+                )
+
+            # If released, continue and create a fresh provider session on the SAME row
+
+        # Prevent duplicate verified state
+        if not created and iv.status == IV_STATUS_VERIFIED:
+            return Response(
+                {"detail": "Identity already verified."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         provider = self._get_provider()
 
@@ -201,7 +283,7 @@ class IdentityViewSet(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        # Update verification record ONLY after provider success
+        # Reuse the SAME row for a fresh attempt
         iv.method = IV_METHOD_PROVIDER
         iv.status = IV_STATUS_PENDING
         iv.provider_reference = verification_id
