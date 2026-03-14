@@ -265,9 +265,9 @@ class IdentityAuditLogAdmin(admin.ModelAdmin):
         # Audit logs are immutable
         return False
 
-    def has_delete_permission(self, request, obj=None):
-        # Audit logs should not be deleted
-        return False
+    # def has_delete_permission(self, request, obj=None):
+    #     # Audit logs should not be deleted
+    #     return False
 
 
 # Identity Grant Admin -------------------------------------------------------------
@@ -311,9 +311,9 @@ class IdentityGrantAdmin(admin.ModelAdmin):
 
     actions = ["revoke_selected_grants"]
 
-    def has_delete_permission(self, request, obj=None):
-        # Prevent hard delete from admin
-        return False
+    # def has_delete_permission(self, request, obj=None):
+    #     # Prevent hard delete from admin
+    #     return False
 
     def save_model(self, request, obj, form, change):
         """
