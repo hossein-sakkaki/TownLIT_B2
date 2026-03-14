@@ -1,6 +1,6 @@
 # apps/accounts/services/identity_audit.py
 
-from apps.accounts.models import IdentityAuditLog
+from apps.accounts.models.identity import IdentityAuditLog
 
 def log_identity_event(
     *,

@@ -3,7 +3,7 @@
 from __future__ import annotations
 from typing import Dict, Iterable, Optional
 
-from apps.accounts.models import CustomUser
+from apps.accounts.models.user import CustomUser
 from apps.profiles.friends_priority.providers.base import FriendWeightProvider
 from apps.profiles.friends_priority.constants import is_default_avatar_value
 

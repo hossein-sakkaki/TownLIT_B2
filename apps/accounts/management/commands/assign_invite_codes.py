@@ -1,4 +1,5 @@
 # apps/accounts/management/commands/assign_invite_codes.py
+
 from django.core.management.base import BaseCommand
 from apps.accounts.scripts.assign_invite_codes import assign_codes_to_access_requests
 

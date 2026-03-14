@@ -3,7 +3,7 @@
 from apps.notifications.services.ui_link_resolver import build_content_link
 from apps.posts.models.testimony import Testimony
 from apps.posts.models.moment import Moment
-from apps.accounts.models import CustomUser
+from apps.accounts.models.user import CustomUser
 from apps.profilesOrg.models import Organization
 
 

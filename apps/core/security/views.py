@@ -4,7 +4,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from apps.accounts.models import CustomUser
+from apps.accounts.models.user import CustomUser
 from utils.security.security_manager import SecurityStateManager
 from utils.security.destructive_actions import handle_destructive_pin_actions
 from .access import grant_litshield_access, check_litshield_access, revoke_litshield_access

@@ -117,7 +117,7 @@ def get_users_for_campaign(campaign):
         ).exclude(email__isnull=True).exclude(email__exact='')
 
         # 2) Get emails with unused invite codes
-        from apps.accounts.models import InviteCode
+        from apps.accounts.models.invite import InviteCode
         unused_emails = InviteCode.objects.filter(
             is_used=False
         ).values_list("email", flat=True)

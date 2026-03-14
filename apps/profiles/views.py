@@ -57,7 +57,7 @@ from .serializers import (
                     SpiritualGiftSurveyResponseSerializer, SpiritualGiftSurveyQuestionSerializer, MemberSpiritualGiftsSerializer, SpiritualGift,
                     MemberServiceTypeSerializer, SpiritualServiceSerializer, MemberServiceType
                 )
-from apps.accounts.serializers import SimpleCustomUserSerializer, CustomUserSerializer, UserMiniSerializer
+from apps.accounts.serializers.user_serializers import SimpleCustomUserSerializer, CustomUserSerializer, UserMiniSerializer
 from apps.profiles.services.listing import build_friends_list
 from apps.media_conversion.services.readiness import get_media_ready_state  
 
@@ -476,7 +476,7 @@ class MemberViewSet(viewsets.ModelViewSet):
             user.mobile_verification_expiry = timezone.now() + timedelta(minutes=settings.PHONE_CODE_EXPIRATION_MINUTES)
             user.save()
 
-            # دیباگ
+            # Debugging logs
             # print('===================')
             # print(f"Original Code: {verification_code}")  # Delete after test ------------------------------------------------------------------------------
             # print('===================')

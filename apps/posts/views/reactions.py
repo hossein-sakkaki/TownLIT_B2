@@ -9,7 +9,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from apps.posts.serializers.reactions import ReactionSerializer
 
 from apps.posts.models.reaction import Reaction
-from apps.accounts.serializers import SimpleCustomUserSerializer
+from apps.accounts.serializers.user_serializers import SimpleCustomUserSerializer
 
 import logging
 logger = logging.getLogger(__name__)

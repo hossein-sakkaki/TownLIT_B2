@@ -4,7 +4,7 @@ from django.utils import timezone
 from uuid import uuid4
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
-from apps.accounts.models import Address
+from apps.accounts.models.address import Address
 from apps.profiles.models import Member
 from apps.posts.models.testimony import Testimony
 

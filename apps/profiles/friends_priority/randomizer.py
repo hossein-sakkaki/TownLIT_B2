@@ -7,7 +7,7 @@ from datetime import date
 
 from django.utils import timezone
 
-from apps.accounts.models import CustomUser
+from apps.accounts.models.user import CustomUser
 from apps.profiles.friends_priority.repository import friends_queryset_for
 
 

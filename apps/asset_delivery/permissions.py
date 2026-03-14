@@ -75,7 +75,7 @@ def safe_can_view_target(request, target_obj) -> bool:
     # ✅ SPECIAL CASE: CustomUser avatars (do NOT use VisibilityPolicy)
     # ------------------------------------------------------------
     try:
-        from apps.accounts.models import CustomUser
+        from apps.accounts.models.user import CustomUser
         if isinstance(target_obj, CustomUser):
             # 1) owner can always view
             if is_auth and target_obj.pk == getattr(viewer, "pk", None):

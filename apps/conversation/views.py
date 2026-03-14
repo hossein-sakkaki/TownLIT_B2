@@ -26,8 +26,8 @@ from .models import Dialogue, Message, MessageSearchIndex, MessageEncryption, Us
 from .serializers import DialogueSerializer, MessageSerializer, UserDialogueMarkerSerializer, DialogueParticipantSerializer, UpdateGroupInfoSerializer
 from .permissions import ConversationAccessPermission, IsDialogueParticipant
 from apps.accounts.services.sender_verification import is_sender_device_verified
-from apps.accounts.serializers import SimpleCustomUserSerializer
-from apps.accounts.models import UserDeviceKey
+from apps.accounts.serializers.user_serializers import SimpleCustomUserSerializer
+from apps.accounts.models.devices import UserDeviceKey
 from apps.conversation.utils import get_websocket_url
 from common.mime_type_validator import validate_file_type, is_unsafe_file
 from apps.core.security.decorators import require_litshield_access

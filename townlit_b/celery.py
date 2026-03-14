@@ -59,7 +59,7 @@ app.conf.beat_schedule = {
 
     # ✅ Delete Expired Tokens (Every 2 hours)
     'delete-expired-tokens-every-2-hours': {
-        'task': 'apps.accounts.tasks.delete_expired_tokens',
+        'task': 'apps.accounts.tasks.maintenance_tasks.delete_expired_tokens',
         'schedule': crontab(hour='*/2'),
     },
     
@@ -89,7 +89,7 @@ app.conf.beat_schedule = {
     },
     
     'delete-abandoned-users-daily': {
-        'task': 'apps.accounts.tasks.delete_abandoned_users',
+        'task': 'apps.accounts.tasks.maintenance_tasks.delete_abandoned_users',
         'schedule': crontab(hour=3, minute=0),  # هر روز ساعت ۳ صبح
     },
 

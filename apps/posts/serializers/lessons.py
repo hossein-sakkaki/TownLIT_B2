@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.apps import apps
 from apps.posts.models.lesson import Lesson
-from apps.accounts.serializers import SimpleCustomUserSerializer 
+from apps.accounts.serializers.user_serializers import SimpleCustomUserSerializer 
 from apps.profilesOrg.serializers_min import SimpleOrganizationSerializer
 
 from apps.posts.constants import REACTION_TYPE_CHOICES

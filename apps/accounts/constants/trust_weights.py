@@ -1,0 +1,36 @@
+# apps/accounts/constants/trust_weights.py
+
+"""
+Trust score weights for TownLIT verification eligibility.
+"""
+
+# Profile signals
+EMAIL_VERIFIED = 10
+PHONE_VERIFIED = 10
+NAME_COMPLETED = 5
+BIRTHDAY_COMPLETED = 5
+GENDER_COMPLETED = 5
+COUNTRY_COMPLETED = 5
+PRIMARY_LANGUAGE_COMPLETED = 5
+AVATAR_CHANGED = 5
+
+# Activity signals
+MOMENT_CREATED = 1
+PRAYER_CREATED = 3
+TESTIMONY_CREATED = 5
+
+# Activity caps
+MAX_MOMENT_SCORE = 20
+MAX_PRAYER_SCORE = 30
+MAX_TESTIMONY_SCORE = 15
+
+# Social signals
+FRIEND_CREATED = 1
+MAX_FRIEND_SCORE = 10
+
+# Negative signals
+ACCOUNT_REPORT_PENALTY = -15
+MAX_REPORT_PENALTY = -60
+
+# Eligibility
+VERIFICATION_THRESHOLD = 60

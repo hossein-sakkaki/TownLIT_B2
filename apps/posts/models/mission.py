@@ -6,7 +6,7 @@ from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 
 
-from apps.accounts.models import Address
+from apps.accounts.models.address import Address
 from utils.common.utils import FileUpload
 from utils.mixins.slug_mixin import SlugMixin
 from validators.mediaValidators.image_validators import validate_image_file, validate_image_size

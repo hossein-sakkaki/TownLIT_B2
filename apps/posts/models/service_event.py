@@ -5,7 +5,7 @@ from django_cryptography.fields import encrypt
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from uuid import uuid4
-from apps.accounts.models import Address
+from apps.accounts.models.address import Address
 from apps.posts.constants import (
                     CHILDREN_EVENT_TYPE_CHOICES, YOUTH_EVENT_TYPE_CHOICES, WOMEN_EVENT_TYPE_CHOICES,
                     MEN_EVENT_TYPE_CHOICES, SERVICE_EVENT_CHOICES, 

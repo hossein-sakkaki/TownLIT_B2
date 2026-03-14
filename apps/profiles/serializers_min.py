@@ -1,7 +1,7 @@
 # apps/profiles/serializers_min.py
 
 from rest_framework import serializers
-from apps.accounts.serializers import UserMiniSerializer
+from apps.accounts.serializers.user_serializers import UserMiniSerializer
 
 from .models import Member
 

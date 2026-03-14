@@ -1,6 +1,8 @@
+# apps/accounts/management/commands/seed_social_media.py
+
 from django.core.management.base import BaseCommand
-from apps.accounts.models import SocialMediaType
-from apps.accounts.constants import SOCIAL_MEDIA_DATA
+from apps.accounts.models.social import SocialMediaType
+from apps.accounts.constants.social_media import SOCIAL_MEDIA_DATA
 
 
 class Command(BaseCommand):

@@ -5,7 +5,7 @@ from typing import Optional, Sequence, List, Tuple
 
 from django.db.models.functions import Lower
 
-from apps.accounts.models import CustomUser
+from apps.accounts.models.user import CustomUser
 from apps.profiles.friends_priority.constants import is_default_avatar_value
 from apps.profiles.friends_priority.engine import FriendPriorityEngine
 from apps.profiles.friends_priority.journey import journey_weights_for

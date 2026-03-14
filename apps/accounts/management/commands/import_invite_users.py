@@ -1,5 +1,4 @@
-# From Old Json file to Access Request Modelfrom django.core.management.base import BaseCommand
-
+# apps/accounts/management/commands/import_invite_users.py
 
 from django.core.management.base import BaseCommand
 from apps.accounts.scripts.import_invite_users import import_invite_users_from_json

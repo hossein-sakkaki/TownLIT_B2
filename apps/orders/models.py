@@ -2,7 +2,7 @@ from django.db import models
 from django.utils import timezone
 from apps.products.models import Product
 from apps.store.models import Store
-from apps.accounts.models import CustomUser
+from apps.accounts.models.user import CustomUser
 from apps.profiles.models import Customer, Address
 
 from apps.orders.constants import (

@@ -12,7 +12,7 @@ from apps.sanctuary.models import SanctuaryReview
 from apps.sanctuary.constants.states import PENDING, UNDER_REVIEW, NO_OPINION
 
 if TYPE_CHECKING:
-    from apps.accounts.models import CustomUser
+    from apps.accounts.models.user import CustomUser
     from apps.sanctuary.models import SanctuaryRequest
 
 UserModel = get_user_model()

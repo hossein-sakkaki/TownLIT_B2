@@ -3,7 +3,7 @@
 from __future__ import annotations
 from typing import Dict, Iterable, List, Optional, Sequence
 
-from apps.accounts.models import CustomUser
+from apps.accounts.models.user import CustomUser
 from apps.profiles.friends_priority.providers.base import FriendWeightProvider
 
 

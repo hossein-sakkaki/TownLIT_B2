@@ -185,6 +185,7 @@ class PrayerSerializer(
             "recomments_count",
             "reactions_count",
             "reactions_breakdown",
+            "view_count_internal",
 
             "prayer_target",
             "response_target",

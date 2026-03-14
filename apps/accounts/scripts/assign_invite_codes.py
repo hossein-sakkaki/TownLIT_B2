@@ -1,6 +1,6 @@
 from django.utils.html import escape
 from django.utils.timezone import now
-from apps.accounts.models import InviteCode
+from apps.accounts.models.invite import InviteCode
 from apps.moderation.models import AccessRequest
 from apps.accounts.scripts.utils.code_tools import generate_invite_code
 

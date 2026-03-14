@@ -7,6 +7,8 @@ class SanctuaryConfig(AppConfig):
 
     def ready(self):
         import apps.sanctuary.signals.signals
+        import apps.sanctuary.signals.trust_report_signals
+        import apps.sanctuary.signals.townlit_report_signals
 
         # Register ownership resolvers
         from apps.sanctuary.services.ownership import register_default_resolvers

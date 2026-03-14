@@ -583,18 +583,11 @@ CHANNEL_LAYERS = {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
             "hosts": [REDIS_URL],
-            "capacity": 2000,  # ← افزایش ظرفیت (پیش‌فرض 100)
-            "expiry": 60 * 10,  # مدت‌زمان ذخیره‌سازی پیام‌ها
+            "capacity": 2000,  # optional 
+            "expiry": 60 * 10,  # seconds
         },
     },
 }
-
-
-# Veriff -------------------------------------------------------------------------------
-VERIFF_API_KEY = os.getenv("VERIFF_API_KEY")
-VERIFF_WEBHOOK_SECRET = os.getenv("VERIFF_WEBHOOK_SECRET")
-VERIFF_BASE_URL = 'https://api.veriff.com/v1/'
-
 
 
 # Fetch the master key from environment variables -------------------------------------
@@ -616,9 +609,17 @@ TOWNLIT_PAYMENT_CANCEL_TOKEN_EXPIRATION_MINUTES = 15
 # Configuration for Stripe ------------------------------------------------------------
 STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY')
 STRIPE_PUBLISHABLE_KEY = os.getenv('STRIPE_PUBLISHABLE_KEY')
+
 STRIPE_WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET')
+STRIPE_IDENTITY_WEBHOOK_SECRET = os.getenv("STRIPE_IDENTITY_WEBHOOK_SECRET")
+
 STRIPE_CURRENCY = os.getenv('STRIPE_CURRENCY', 'CAD')
 
+IDENTITY_RETURN_URL = os.getenv(
+    "IDENTITY_RETURN_URL",
+    "https://townlit.com/settings/identity"
+)
+IDENTITY_PROVIDER = os.getenv("IDENTITY_PROVIDER", "stripe")
 
 
 # For Translate Languages --------------------------------------------------------------

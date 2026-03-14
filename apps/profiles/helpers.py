@@ -6,7 +6,8 @@ from typing import Set
 from django.contrib.contenttypes.models import ContentType
 from django.db.models import Q
 
-from apps.accounts.models import CustomUser, SocialMediaLink
+from apps.accounts.models.user import CustomUser
+from apps.accounts.models.social import SocialMediaLink
 from apps.profiles.models import Member, Fellowship
 
 # Optional: only if you still use this helper in other places

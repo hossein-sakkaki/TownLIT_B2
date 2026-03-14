@@ -5,7 +5,7 @@ import logging
 import requests
 
 from django.conf import settings
-from apps.accounts.models import UserDeviceKey
+from apps.accounts.models.devices import UserDeviceKey
 from .google_oauth import get_google_access_token
 
 logger = logging.getLogger(__name__)

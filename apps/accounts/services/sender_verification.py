@@ -7,7 +7,7 @@ from django.conf import settings
 from django.core.cache import cache
 from django.utils import timezone
 
-from apps.accounts.models import UserDeviceKey
+from apps.accounts.models.devices import UserDeviceKey
 
 # Lightweight cache TTL to avoid hitting DB for every send
 _CACHE_TTL_SECONDS = 300  # 5 minutes

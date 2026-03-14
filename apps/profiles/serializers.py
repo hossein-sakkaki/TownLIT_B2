@@ -1,3 +1,5 @@
+# apps/profiles/serializers.py
+
 from rest_framework import serializers
 from django.apps import apps
 from django.http import QueryDict
@@ -22,14 +24,15 @@ from .helpers import (
 from apps.profiles.friends_priority.service import get_friends_for_profile
 
 from apps.profilesOrg.serializers_min import SimpleOrganizationSerializer
-from apps.accounts.models import SocialMediaLink
+from apps.accounts.models.social import SocialMediaLink
 from apps.core.ownership.utils import resolve_owner_from_request
 from validators.files_validator import validate_http_https, soft_date_bounds
-from apps.accounts.serializers import (
-                                AddressSerializer, SimpleCustomUserSerializer,
+from apps.accounts.serializers.user_serializers import (
+                                SimpleCustomUserSerializer,
                                 CustomUserSerializer, PublicCustomUserSerializer, LimitedCustomUserSerializer, 
-                                SocialMediaLinkReadOnlySerializer
                             )
+from apps.accounts.serializers.social_serializers import SocialMediaLinkReadOnlySerializer
+from apps.accounts.serializers.address_serializers import AddressSerializer
 from common.file_handlers.document_file import DocumentFileMixin
 from apps.posts.services.feed_access import get_visible_posts
 from apps.posts.models.testimony import Testimony

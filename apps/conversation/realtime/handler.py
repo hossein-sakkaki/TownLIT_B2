@@ -13,7 +13,7 @@ from django.utils import timezone
 from django.utils.timesince import timesince
 from django.contrib.auth import get_user_model
 
-from apps.accounts.models import UserDeviceKey
+from apps.accounts.models.devices import UserDeviceKey
 from apps.conversation.models import Dialogue
 from apps.conversation.utils import get_message_content
 from services.redis_online_manager import (

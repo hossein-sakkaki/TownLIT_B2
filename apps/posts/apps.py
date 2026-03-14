@@ -15,6 +15,12 @@ class PostsConfig(AppConfig):
         from apps.posts.signals import prayer_media_cleanup
 
         # -------------------------------------------------
+        # New trust-related signal registrations
+        # -------------------------------------------------
+        from apps.posts.signals import trust_activity_signals
+        from apps.posts.signals import townlit_activity_signals
+
+        # -------------------------------------------------
         # Square registrations
         # -------------------------------------------------
         from apps.core.square.registry import (

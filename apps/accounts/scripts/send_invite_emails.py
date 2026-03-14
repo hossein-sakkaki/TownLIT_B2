@@ -1,6 +1,6 @@
 from django.utils.timezone import now
 from django.conf import settings
-from apps.accounts.models import InviteCode
+from apps.accounts.models.invite import InviteCode
 from apps.moderation.models import AccessRequest
 from utils.email.email_tools import send_custom_email
 

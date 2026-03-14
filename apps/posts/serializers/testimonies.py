@@ -113,6 +113,7 @@ class TestimonySerializer(
             "comment_target",
             "reaction_target",
             "owner",
+            "view_count_internal",
 
             # moderation
             "is_active",

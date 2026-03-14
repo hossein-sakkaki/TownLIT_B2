@@ -6,7 +6,7 @@ from django.urls import reverse
 from django.conf import settings
 from django.utils.translation import gettext_lazy as _
 from django.contrib.contenttypes.fields import GenericRelation
-from apps.accounts.models import Address
+from apps.accounts.models.address import Address
 from django.core.exceptions import ValidationError
 from apps.posts.models.testimony import Testimony
 from apps.profilesOrg.constants import CHURCH_DENOMINATIONS_CHOICES
@@ -498,18 +498,10 @@ class Customer(SlugMixin):
     class Meta:
         verbose_name = "5. Customer"
         verbose_name_plural = "5. Customers"
-
         
     def __str__(self):
         shipping_address = self.shipping_addresses.first()
         return f"{self.name.username} - Shipping Address: {shipping_address if shipping_address else 'No shipping address'}"
-
-
-
-
-
-
-
 
 
 
@@ -576,7 +568,7 @@ class MemberSurveyProgress(models.Model):
         verbose_name_plural = _("Member Survey Progresses")
     
     def __str__(self):
-        return f"Survey progress for {self.member.username}"
+        return f"Survey progress for {self.member.user.username}"
 
 
 # Member Sprituual Gifts ----------------------------------------------------------------------------------

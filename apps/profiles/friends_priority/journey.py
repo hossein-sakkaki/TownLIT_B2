@@ -2,7 +2,7 @@
 from __future__ import annotations
 from typing import Dict, Iterable
 
-from apps.accounts.models import CustomUser
+from apps.accounts.models.user import CustomUser
 
 
 def journey_weights_for(user: CustomUser, friend_ids: Iterable[int]) -> Dict[int, float]:

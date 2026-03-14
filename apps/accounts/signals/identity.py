@@ -4,8 +4,8 @@ from django.db.models.signals import pre_save, post_save
 from django.dispatch import receiver
 from django.utils import timezone
 
-from apps.accounts.constants import IDENTITY_SENSITIVE_FIELDS, IV_STATUS_VERIFIED
-from apps.accounts.models import CustomUser, IdentityVerification
+from apps.accounts.constants.identity_verification import IDENTITY_SENSITIVE_FIELDS, IV_STATUS_VERIFIED
+from apps.accounts.models.user import CustomUser
 
 @receiver(pre_save, sender=CustomUser)
 def stash_old_identity_fields(sender, instance: CustomUser, **kwargs):

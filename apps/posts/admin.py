@@ -651,6 +651,8 @@ class TestimonyAdmin(admin.ModelAdmin):
         # timestamps are usually readonly in admin
         "published_at",
         "updated_at",
+        "view_count_internal",
+
     )
 
     fieldsets = (

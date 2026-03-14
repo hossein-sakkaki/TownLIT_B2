@@ -2,7 +2,7 @@
 from rest_framework import serializers
 from django.utils import timezone
 from .models import UserNotificationPreference, Notification
-from apps.accounts.serializers import UserMiniSerializer
+from apps.accounts.serializers.user_serializers import UserMiniSerializer
 from .constants import NOTIFICATION_PREF_METADATA, CHANNEL_EMAIL, CHANNEL_PUSH
 
 

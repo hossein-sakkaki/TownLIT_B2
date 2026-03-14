@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from apps.accounts.models import CustomUser
+    from apps.accounts.models.user import CustomUser
 
 
 # ------------------------------------------------------------------

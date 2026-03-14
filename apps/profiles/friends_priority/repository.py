@@ -4,7 +4,7 @@ from typing import Set
 
 from django.db.models import Q
 
-from apps.accounts.models import CustomUser
+from apps.accounts.models.user import CustomUser
 from apps.profiles.models import Friendship
 
 

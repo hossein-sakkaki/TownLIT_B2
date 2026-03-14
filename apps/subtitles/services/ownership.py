@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from apps.accounts.constants import MALE, FEMALE
+from apps.accounts.constants.gender import MALE, FEMALE
 
 
 def resolve_owner_gender_from_transcript(transcript) -> str:

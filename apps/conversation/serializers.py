@@ -1,12 +1,13 @@
+# apps/conversation/serializers.py
+
 from rest_framework import serializers
-from common.file_handlers.group_image import GroupImageMixin
 import base64
 from django.db.models import Count
 
 from .models import Dialogue, DialogueParticipant, Message, UserDialogueMarker
-from apps.accounts.serializers import SimpleCustomUserSerializer
+from apps.accounts.serializers.user_serializers import SimpleCustomUserSerializer
 from apps.conversation.mixins import GroupAvatarURLMixin
-from apps.accounts.models import UserDeviceKey
+from apps.accounts.models.devices import UserDeviceKey
 from apps.conversation.utils import get_websocket_url
 from common.aws.s3_utils import get_file_url
 from rest_framework.reverse import reverse

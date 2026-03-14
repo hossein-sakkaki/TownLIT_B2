@@ -8,7 +8,7 @@ from django.dispatch import receiver
 from django.db.models import Q
 from django.contrib.auth import get_user_model
 
-from apps.accounts.models import CustomUser
+from apps.accounts.models.user import CustomUser
 from apps.profiles.models import Friendship
 from apps.profiles.constants import ACCEPTED
 from apps.posts.models.testimony import Testimony

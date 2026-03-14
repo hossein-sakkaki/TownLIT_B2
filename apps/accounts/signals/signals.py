@@ -1,7 +1,7 @@
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 
-from apps.accounts.models import UserDeviceKey
+from apps.accounts.models.devices import UserDeviceKey
 from apps.accounts.services.sender_verification import invalidate_sender_verification_cache
 
 

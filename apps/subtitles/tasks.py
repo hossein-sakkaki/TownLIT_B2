@@ -27,7 +27,7 @@ from apps.subtitles.services.voice_tone import build_tone_profile_from_stt
 from apps.subtitles.services.voice_resolver import resolve_voice_id
 from apps.subtitles.services.ownership import resolve_owner_gender_from_transcript
 
-from apps.accounts.constants import MALE, FEMALE
+from apps.accounts.constants.gender import MALE, FEMALE
 
 logger = logging.getLogger(__name__)
 

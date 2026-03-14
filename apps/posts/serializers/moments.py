@@ -53,6 +53,7 @@ class MomentSerializer(
             "recomments_count",
             "reactions_count",
             "reactions_breakdown",
+            "view_count_internal",
 
             # timestamps
             "published_at",

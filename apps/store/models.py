@@ -1,7 +1,7 @@
 from django.db import models
 from django.utils import timezone
 from uuid import uuid4
-from apps.accounts.models import Address
+from apps.accounts.models.address import Address
 from utils.common.utils import FileUpload, SlugMixin
 from apps.profilesOrg.models import Organization
 from apps.products.models import Product

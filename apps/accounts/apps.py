@@ -8,4 +8,6 @@ class AccountsConfig(AppConfig):
     def ready(self):
         import apps.accounts.signals.signals
         import apps.accounts.signals.identity
+        import apps.accounts.signals.trust_profile_signals
+        import apps.accounts.signals.townlit_identity_dependency_signals
 

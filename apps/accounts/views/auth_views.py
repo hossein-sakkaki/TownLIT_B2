@@ -2,8 +2,6 @@ from django.contrib.auth import update_session_auth_hash
 from django.utils import timezone
 from django.conf import settings
 from django.db import IntegrityError, transaction
-from django.db.models import Q
-from django.shortcuts import get_object_or_404
 import datetime
 import traceback
 import re
@@ -12,6 +10,7 @@ import secrets
 
 
 from datetime import timedelta
+from apps.accounts.constants.user_labels import BELIEVER, PREFER_NOT_TO_SAY, SEEKER
 from apps.core.crypto import rsa as crsa
 
 from rest_framework import viewsets
@@ -25,54 +24,43 @@ from rest_framework_simplejwt.exceptions import TokenError
 from django.contrib.auth.hashers import check_password
 from rest_framework_simplejwt.tokens import RefreshToken
 from django_otp.plugins.otp_totp.models import TOTPDevice
-from django.contrib.contenttypes.models import ContentType
 
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from cryptography.fernet import Fernet
 
-from .models import (
-    CustomLabel, SocialMediaLink, SocialMediaType, InviteCode,
-    UserDeviceKey, UserDeviceKeyBackup, UserSecurityProfile,
-    IdentityVerification
-    )
-from apps.accounts.services.veriff import create_veriff_session, parse_veriff_webhook
+from apps.accounts.models.user import CustomUser
+from apps.accounts.models.labels import CustomLabel
+from apps.accounts.models.invite import InviteCode
+from apps.accounts.models.devices import UserDeviceKey, UserDeviceKeyBackup, UserSecurityProfile
+
 from apps.main.services.policy_acceptance import accept_required_policies
 from utils.security.security_manager import SecurityStateManager
-from .serializers import (
-    CustomUserAuthSerializer, CustomUserSerializer,
-    RegisterUserSerializer, LoginSerializer,
-    VerifyNewBornSerializer, ForgetPasswordSerializer, ResetPasswordSerializer,
-    SocialMediaLinkSerializer, SocialMediaLinkReadOnlySerializer, SocialMediaTypeSerializer,
-    UserDeviceKeySerializer, DevicePushTokenSerializer, ReactivationUserSerializer,
-    IdentityStartSerializer,
-    IdentityStatusSerializer,
-    IdentityRevokeSerializer,
-    )
-from apps.accounts.services.veriff_security import verify_veriff_signature
-from apps.accounts.permissions import IsAdminUserStrict
-from .constants import (
-    BELIEVER, SEEKER, PREFER_NOT_TO_SAY,
-    IV_STATUS_PENDING,
-    IV_STATUS_VERIFIED,
-    IV_STATUS_REJECTED,
-    IA_VERIFY,
-    IA_REJECT,
-    IA_SOURCE_VERIFF,
 
-    IV_METHOD_PROVIDER,
-    IV_METHOD_ADMIN,
-    IV_STATUS_REVOKED,
-    IA_REVOKE,
-    IA_SOURCE_ADMIN,
+# Auth serializers
+from apps.accounts.serializers.auth_serializers import (
+    RegisterUserSerializer,
+    LoginSerializer,
+    VerifyNewBornSerializer,
+    ForgetPasswordSerializer,
+    ResetPasswordSerializer,
 )
 
-from apps.accounts.services.identity_audit import log_identity_event
-from apps.accounts.tasks import send_believer_welcome_email
-from apps.profilesOrg.models import Organization
+# User serializers
+from apps.accounts.serializers.user_serializers import (
+    CustomUserAuthSerializer,
+    CustomUserSerializer,
+    ReactivationUserSerializer,
+)
+
+# Device serializers
+from apps.accounts.serializers.device_serializers import (
+    UserDeviceKeySerializer,
+)
+
+from apps.accounts.tasks.onboarding_tasks import send_believer_welcome_email
 from apps.profiles.models import Member, GuestUser
 from apps.conversation.models import Message, MessageEncryption
-from apps.main.models import TermsAndPolicy, UserAgreement
 from apps.communication.models import ExternalContact
 from utils.common.utils import create_active_code
 from utils.common.ip import get_client_ip, get_location_from_ip
@@ -1843,7 +1831,7 @@ class AuthViewSet(viewsets.ViewSet):
             return Response({"error": "X-Device-ID mismatch."}, status=status.HTTP_400_BAD_REQUEST)
 
         # Lightweight existence check (no blob loading)
-        from .models import UserDeviceKeyBackup
+        from apps.accounts.models.devices import UserDeviceKeyBackup
         has_backup = UserDeviceKeyBackup.objects.filter(user=user, device_id=device_id).exists()
 
         return Response({"has_backup": bool(has_backup)}, status=status.HTTP_200_OK)
@@ -1855,7 +1843,7 @@ class AuthViewSet(viewsets.ViewSet):
         Returns whether the user has already set a passphrase and (optional) KDF params.
         No passphrase is ever sent/stored server-side.
         """
-        from .models import UserSecurityProfile
+        from apps.accounts.models.devices import UserSecurityProfile
         prof, _ = UserSecurityProfile.objects.get_or_create(user=request.user)
         return Response({
             "has_passphrase": prof.has_passphrase,
@@ -2090,7 +2078,6 @@ class AuthViewSet(viewsets.ViewSet):
         except UserDeviceKey.DoesNotExist:
             return Response({"error": "Device not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        # بررسی وجود و اعتبار کد
         if not device.deletion_code or not device.deletion_code_expiry:
             return Response({"error": "No code found. Please request again."}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -2117,290 +2104,3 @@ class AuthViewSet(viewsets.ViewSet):
         return Response({"message": "Device deleted successfully."}, status=status.HTTP_200_OK)
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# Social Media Links ViewSet ------------------------------------------------------------------------------------
-class SocialLinksViewSet(viewsets.ViewSet):
-    permission_classes = [IsAuthenticated]
-        
-    @action(detail=False, methods=['get'], url_path='list', permission_classes=[IsAuthenticated])
-    def list_links(self, request):
-        content_type = request.query_params.get('content_type')
-        object_id = request.query_params.get('object_id')
-                
-        if not content_type or not object_id:
-            return Response({"error": "content_type and object_id are required."}, status=400)
-
-        try:
-            links = SocialMediaLink.objects.filter(content_type__model=content_type, object_id=object_id)
-            
-            if content_type == "customuser" and int(object_id) != request.user.id:
-                return Response({"error": "Access denied to this user's links."}, status=403)
-            elif content_type == "organization":
-                organization = Organization.objects.filter(id=object_id, org_owners=request.user).first()
-                if not organization:
-                    return Response({"error": "Access denied to this organization's links."}, status=403)
-
-            serializer = SocialMediaLinkReadOnlySerializer(links, many=True, context={'request': request})
-            return Response({"links": serializer.data, "message": "Links fetched successfully."}, status=status.HTTP_200_OK)
-
-        except (ValueError, TypeError):
-            return Response({"error": "Invalid object ID or content_type."}, status=400)
-
-
-    @action(detail=False, methods=['post'], url_path='add', permission_classes=[IsAuthenticated])
-    def add_link(self, request):
-        content_type = request.data.get('content_type')
-        object_id = request.data.get('object_id')
-        social_media_type = request.data.get('social_media_type')
-        link = request.data.get('link')
-
-        if not all([content_type, object_id, social_media_type, link]):
-            return Response({"error": "All fields are required."}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            if content_type == "customuser":
-                if int(object_id) != request.user.id:
-                    return Response({"error": "You cannot add links to this user."}, status=status.HTTP_403_FORBIDDEN)
-                content_object = request.user
-            elif content_type == "organization":
-                organization = Organization.objects.filter(id=object_id, org_owners=request.user).first()
-                if not organization:
-                    return Response({"error": "You cannot add links to this organization."}, status=status.HTTP_403_FORBIDDEN)
-                content_object = organization
-            else:
-                return Response({"error": "Invalid content_type provided."}, status=status.HTTP_400_BAD_REQUEST)
-
-            serializer = SocialMediaLinkSerializer(
-                data={
-                    'social_media_type': social_media_type,
-                    'link': link,
-                    'content_type': content_type,
-                    'object_id': object_id,
-                },
-                context={'request': request}
-            )
-            serializer.is_valid(raise_exception=True)
-            serializer.save(content_object=content_object)
-            return Response({"data": serializer.data, "message": "Social media link added successfully."}, status=status.HTTP_201_CREATED)
-
-        except (ValueError, TypeError):
-            return Response({"error": "Invalid object ID or content_type."}, status=status.HTTP_400_BAD_REQUEST)
-
-    @action(detail=False, methods=['delete'], url_path='delete', permission_classes=[IsAuthenticated])
-    def delete_link(self, request):
-        link_id = request.query_params.get('id')
-        
-        if not link_id:
-            return Response({"error": "Link ID is required for deletion."}, status=400)
-
-        try:
-            link_id = int(link_id)
-        except ValueError:
-            return Response({"error": "Invalid Link ID."}, status=400)
-
-        try:
-            link = SocialMediaLink.objects.get(id=link_id)
-            if isinstance(link.content_object, Organization):
-                organization = Organization.objects.filter(id=link.content_object.id, org_owners=request.user).first()
-                if not organization:
-                    return Response({"error": "You cannot delete this link."}, status=403)
-            elif link.content_object != request.user:
-                return Response({"error": "You cannot delete this link."}, status=403)
-            link.delete()
-            return Response({"success": True, "message": "Link deleted successfully."}, status=status.HTTP_200_OK)
-
-        except SocialMediaLink.DoesNotExist:
-            return Response({"error": "Link not found."}, status=404)
-
-    @action(detail=False, methods=['get'], url_path='social-media-types', permission_classes=[IsAuthenticated])
-    def get_social_media_types(self, request):
-        try:
-            used_social_media = SocialMediaLink.objects.filter(
-                content_type=ContentType.objects.get_for_model(request.user.__class__),
-                object_id=request.user.id
-            ).values_list('social_media_type', flat=True)
-            available_types = SocialMediaType.objects.filter(is_active=True).exclude(id__in=used_social_media)
-            serializer = SocialMediaTypeSerializer(available_types, many=True)
-            return Response(serializer.data, status=status.HTTP_200_OK)
-
-        except Exception as e:
-            return Response({"error": "Failed to fetch social media types."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
-
-# IDENTITY VERIFICATION -----------------------------------------------------------------------
-class IdentityViewSet(viewsets.ViewSet):
-    """
-    Identity Verification API
-    - Provider-based (Veriff)
-    - Manual admin override (superuser only)
-    """
-
-    # -----------------------------------------------------
-    # START PROVIDER VERIFICATION (Veriff)
-    # -----------------------------------------------------
-    @action(detail=False, methods=["post"], permission_classes=[IsAuthenticated])
-    def start(self, request):
-        serializer = IdentityStartSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        iv, _ = IdentityVerification.objects.get_or_create(
-            user=request.user,
-            defaults={
-                "method": IV_METHOD_PROVIDER,
-                "status": IV_STATUS_PENDING,
-                "level": "basic",
-            },
-        )
-
-        if iv.status == IV_STATUS_VERIFIED:
-            return Response(
-                {"detail": "Identity already verified."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        session = create_veriff_session(
-            user=request.user,
-            success_url=serializer.validated_data.get("success_url"),
-            failure_url=serializer.validated_data.get("failure_url"),
-        )
-
-        iv.method = IV_METHOD_PROVIDER
-        iv.status = IV_STATUS_PENDING
-        iv.provider_reference = session["verification"]["id"]
-        iv.provider_payload = {"session": session}
-        iv.save()
-
-        return Response(
-            {"verification_url": session["verification"]["url"]},
-            status=status.HTTP_200_OK,
-        )
-
-    # -----------------------------------------------------
-    # GET CURRENT USER IDENTITY STATUS
-    # -----------------------------------------------------
-    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated])
-    def status(self, request):
-        iv = get_object_or_404(IdentityVerification, user=request.user)
-        return Response(
-            IdentityStatusSerializer(iv).data,
-            status=status.HTTP_200_OK,
-        )
-
-    # -----------------------------------------------------
-    # ADMIN: REVOKE IDENTITY
-    # -----------------------------------------------------
-    @action(
-        detail=True,
-        methods=["post"],
-        permission_classes=[IsAuthenticated, IsAdminUserStrict],
-        url_path="revoke",
-    )
-    def revoke(self, request, pk=None):
-        serializer = IdentityRevokeSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        iv = get_object_or_404(IdentityVerification, user_id=pk)
-
-        previous_status = iv.status
-
-        iv.status = IV_STATUS_REVOKED
-        iv.revoked_at = timezone.now()
-        iv.notes = serializer.validated_data.get("reason", "Admin revoke")
-        iv.method = IV_METHOD_ADMIN
-        iv.save()
-
-        log_identity_event(
-            user=iv.user,
-            identity_verification=iv,
-            action=IA_REVOKE,
-            source=IA_SOURCE_ADMIN,
-            actor=request.user,
-            previous_status=previous_status,
-            new_status=iv.status,
-            reason=iv.notes,
-        )
-
-        return Response(
-            {"detail": "Identity revoked by admin."},
-            status=status.HTTP_200_OK,
-        )
-
-    # -----------------------------------------------------
-    # VERIFF WEBHOOK (NO AUTH)
-    # -----------------------------------------------------
-    @action(
-        detail=False,
-        methods=["post"],
-        authentication_classes=[],
-        permission_classes=[],
-        url_path="webhook/veriff",
-    )
-    def veriff_webhook(self, request):
-        # 1️⃣ Verify signature
-        signature = request.headers.get("X-Veriff-Signature")
-        if not verify_veriff_signature(request.body, signature):
-            return Response({"detail": "Invalid signature"}, status=403)
-
-        # 2️⃣ Parse payload
-        data = parse_veriff_webhook(request.data)
-        session_id = data.get("session_id")
-
-        if not session_id:
-            return Response({"detail": "Missing session id"}, status=400)
-
-        iv = get_object_or_404(IdentityVerification, provider_reference=session_id)
-
-        # 3️⃣ Idempotency guard
-        if iv.status in {IV_STATUS_VERIFIED, IV_STATUS_REJECTED, IV_STATUS_REVOKED}:
-            return Response({"ok": True}, status=200)
-
-        previous_status = iv.status
-
-        # 4️⃣ Apply decision
-        if data["status"] == "approved":
-            iv.status = IV_STATUS_VERIFIED
-            iv.level = "strong"
-            iv.verified_at = timezone.now()
-
-            log_identity_event(
-                user=iv.user,
-                identity_verification=iv,
-                action=IA_VERIFY,
-                source=IA_SOURCE_VERIFF,
-                previous_status=previous_status,
-                new_status=iv.status,
-                metadata={"risk": data.get("risk")},
-            )
-        else:
-            iv.status = IV_STATUS_REJECTED
-            iv.rejected_at = timezone.now()
-            iv.notes = data.get("reason")
-
-            log_identity_event(
-                user=iv.user,
-                identity_verification=iv,
-                action=IA_REJECT,
-                source=IA_SOURCE_VERIFF,
-                previous_status=previous_status,
-                new_status=iv.status,
-                reason=data.get("reason"),
-            )
-
-        iv.risk_flag = bool(data.get("risk"))
-        iv.provider_payload = data.get("raw")
-        iv.save()
-
-        return Response({"ok": True}, status=200)

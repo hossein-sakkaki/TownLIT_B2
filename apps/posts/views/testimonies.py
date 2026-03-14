@@ -292,7 +292,7 @@ class TestimonyViewSet(OwnerGateMixin ,viewsets.ModelViewSet):
 
         # Case B) owner is CustomUser directly -> member is user.member_profile
         try:
-            from apps.accounts.models import CustomUser  # adjust if needed
+            from apps.accounts.models.user import CustomUser  # adjust if needed
             if isinstance(owner_obj, CustomUser):
                 owner_user = owner_obj
                 owner_member = getattr(owner_user, "member_profile", None)  # related_name you mentioned ✅

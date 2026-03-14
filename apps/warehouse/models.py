@@ -4,7 +4,7 @@ from django.utils import timezone
 from datetime import timedelta
 from apps.products.models import Product
 from apps.store.models import Store
-from apps.accounts.models import Address
+from apps.accounts.models.address import Address
 from django.contrib.auth import get_user_model
 
 CustomUser = get_user_model()

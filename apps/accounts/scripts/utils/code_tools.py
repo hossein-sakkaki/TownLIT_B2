@@ -1,6 +1,6 @@
 import random
 import string
-from apps.accounts.models import InviteCode
+from apps.accounts.models.invite import InviteCode
 from apps.accounts.scripts.utils.invite_words import BIBLE_WORDS
 
 def generate_invite_code():

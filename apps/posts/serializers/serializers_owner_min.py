@@ -9,8 +9,8 @@ from rest_framework import serializers
 from django.contrib.contenttypes.models import ContentType
 
 from apps.core.ownership.utils import resolve_owner_from_request
-from apps.accounts.models import CustomUser
-from apps.accounts.serializers import CustomLabelSerializer
+from apps.accounts.models.user import CustomUser
+from apps.accounts.serializers.user_serializers import CustomLabelSerializer
 from apps.profiles.models import Member, GuestUser
 from apps.profilesOrg.models import Organization
 from common.file_handlers.org_logo import OrganizationLogoMixin

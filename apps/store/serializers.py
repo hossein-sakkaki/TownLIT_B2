@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.utils import timezone 
 
 from .models import Store, ServiceCategory
-from apps.accounts.serializers import AddressSerializer
+from apps.accounts.serializers.address_serializers import AddressSerializer
 from apps.profilesOrg.serializers_min import SimpleOrganizationSerializer
 
 

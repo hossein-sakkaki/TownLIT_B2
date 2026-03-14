@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Dict, Iterable, Optional, Protocol
 
-from apps.accounts.models import CustomUser
+from apps.accounts.models.user import CustomUser
 
 
 class FriendWeightProvider(Protocol):

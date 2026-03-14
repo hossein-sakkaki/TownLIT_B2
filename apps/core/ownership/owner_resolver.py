@@ -41,7 +41,7 @@ def resolve_owner_user_and_member(obj):
 
     # Case B: owner is CustomUser
     try:
-        from apps.accounts.models import CustomUser
+        from apps.accounts.models.user import CustomUser
         if isinstance(owner_obj, CustomUser):
             owner_user = owner_obj
             owner_member = getattr(owner_user, "member_profile", None)

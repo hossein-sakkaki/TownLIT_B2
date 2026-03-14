@@ -7,14 +7,13 @@ from apps.conversation.constants import (
     MESSAGE_POLICY_CHOICES,
     DELETE_POLICY_CHOICES,
 )
-
 # Import accounts_costants
-from apps.accounts.constants import (
+from apps.accounts.constants.social_media import (
     SOCIAL_MEDIA_CHOICES,
-    GENDER_CHOICES,
-    USER_LABEL_CHOICES,
-    ADDRESS_TYPE_CHOICES,
 )
+from apps.accounts.constants.address_types import ADDRESS_TYPE_CHOICES
+from apps.accounts.constants.gender import GENDER_CHOICES
+from apps.accounts.constants.user_labels import USER_LABEL_CHOICES
 
 from apps.main.constants import (
     TERMS_AND_POLICIES_CHOICES,
