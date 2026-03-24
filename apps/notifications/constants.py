@@ -65,6 +65,46 @@ NOTIFICATION_TYPES = [
     ("prayer_result_not_answered", "Prayer Update (Not Answered)"),
 ]
 
+
+# -------------------------------------------------------------------
+# Guest-only allowed notification types
+# Guest users do not have access to member-only features such as:
+# - LITCovenant
+# - Testimonies
+# - Prayers
+# - Sanctuary participation flows
+# -------------------------------------------------------------------
+GUEST_ALLOWED_NOTIFICATION_TYPES = {
+    # --- Comments ---
+    "new_comment",
+    "new_reply",
+    "new_reply_post_owner",
+
+    # --- Reactions ---
+    "new_reaction",
+    "new_reaction_bless",
+    "new_reaction_gratitude",
+    "new_reaction_amen",
+    "new_reaction_encouragement",
+    "new_reaction_empathy",
+
+    # --- Friendships ---
+    "friend_request_received",
+    "friend_request_accepted",
+    "friend_request_declined",
+    "friend_request_cancelled",
+    "friendship_deleted",
+
+    # --- Messages ---
+    "new_message_direct",
+    "new_message_group",
+
+    # --- Moments ---
+    "new_moment_image",
+    "new_moment_video",
+}
+
+
 # Types that should only send Push and Email notifications (no WebSocket) ---------
 NOTIFICATION_TYPES_PUSH_EMAIL_ONLY = {
     "new_message_direct",

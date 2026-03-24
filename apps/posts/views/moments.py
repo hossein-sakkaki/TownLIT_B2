@@ -21,19 +21,20 @@ from apps.core.feed.trending import TrendingEngine
 from apps.core.feed.hybrid import HybridFeedEngine
 from apps.core.feed.personalized_trending import PersonalizedTrendingEngine
 from apps.core.ownership.owner_gate_mixins import OwnerGateMixin
+from apps.core.ownership.utils import resolve_owner_from_request
 from apps.core.visibility.constants import VISIBILITY_GLOBAL
-
 
 import logging
 logger = logging.getLogger(__name__)
+
 
 class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
     """
     Moment API
     -------------------------
-    - visibility-aware (VisibilityQuery)
-    - owner-safe (Member / Guest / future Organization)
-    - feed: cursor-based pagination (Instagram-like)
+    - visibility-aware
+    - owner-safe
+    - feed: cursor-based pagination
     - explore / me: page-number pagination
     """
     serializer_class = MomentSerializer
@@ -43,23 +44,23 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
     pagination_page_size = 12
 
     # -------------------------------------------------
-    # Permissions (Visitor-safe)
+    # Permissions
     # -------------------------------------------------
     def get_permissions(self):
         """
-        Allow public (unauthenticated) access ONLY for safe read actions.
+        Allow public access only for safe read actions.
         """
         if self.action in [
-            "retrieve",     # view a single moment
-            "explore",      # public discover
-            "trending",     # public trending
+            "retrieve",
+            "explore",
+            "trending",
         ]:
             return [AllowAny()]
 
         return super().get_permissions()
 
     # -------------------------------------------------
-    # Base queryset (NO visibility logic here)
+    # Base queryset
     # -------------------------------------------------
     def get_queryset(self):
         base = (
@@ -68,6 +69,7 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
             .order_by("-published_at", "-id")
         )
 
+        # Retrieve stays open, gating happens later
         if self.action == "retrieve":
             return base
 
@@ -79,6 +81,7 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
                 base_queryset=base,
             )
 
+        # Visitors must never see not-yet-converted videos
         if not self.request.user.is_authenticated:
             qs = qs.exclude(
                 Q(video__isnull=False) & ~Q(is_converted=True)
@@ -86,20 +89,12 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
 
         return qs
 
-
     # -------------------------------------------------
-    # Owner resolution (DRY)
+    # Owner resolution
     # -------------------------------------------------
     def _get_request_owner(self):
-        user = self.request.user
-
-        if hasattr(user, "member_profile"):
-            return user.member_profile
-
-        if hasattr(user, "guest_profile"):
-            return user.guest_profile
-
-        return None
+        """Resolve active owner profile from request."""
+        return resolve_owner_from_request(self.request)
 
     def _assert_is_owner(self, obj):
         owner = self._get_request_owner()
@@ -120,9 +115,6 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
     def perform_create(self, serializer):
         owner = self._get_request_owner()
 
-        print("FILES:", self.request.FILES)
-        print("DATA:", self.request.data)
-
         if not owner:
             raise PermissionDenied(
                 "Only members or guest users can create moments."
@@ -132,7 +124,6 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
             content_type=ContentType.objects.get_for_model(owner.__class__),
             object_id=owner.id,
         )
-
 
     # -------------------------------------------------
     # Update
@@ -153,7 +144,7 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
         instance.delete()
 
     # -------------------------------------------------
-    # Feed (home timeline – cursor based)
+    # Feed
     # -------------------------------------------------
     @action(
         detail=False,
@@ -170,7 +161,7 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
         return self.get_paginated_response(serializer.data)
 
     # -------------------------------------------------
-    # Trending for me (cursor based)
+    # Trending for me
     # -------------------------------------------------
     @action(
         detail=False,
@@ -187,7 +178,7 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
         return self.get_paginated_response(serializer.data)
 
     # -------------------------------------------------
-    # Trending (cursor based)
+    # Trending
     # -------------------------------------------------
     @action(
         detail=False,
@@ -204,9 +195,8 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
         serializer = self.get_serializer(page, many=True)
         return self.get_paginated_response(serializer.data)
 
-
     # -------------------------------------------------
-    # My moments (owner only)
+    # My moments
     # -------------------------------------------------
     @action(detail=False, methods=["get"])
     def me(self, request):
@@ -237,7 +227,7 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
         return self.get_paginated_response(serializer.data)
 
     # -------------------------------------------------
-    # Explore (public discover)
+    # Explore
     # -------------------------------------------------
     @action(
         detail=False,
@@ -254,23 +244,18 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
         serializer = self.get_serializer(page, many=True)
         return self.get_paginated_response(serializer.data)
 
-
     # -------------------------------------------------
-    # Retrieve (public-safe, analytics counted)
+    # Retrieve
     # -------------------------------------------------
     def retrieve(self, request, *args, **kwargs):
         obj = self.get_object()
 
-        # 0) HARD owner-level gate (your existing rule)
+        # Hard owner-level gate
         self.apply_hard_owner_gate(request, obj)
 
-        # -------------------------------------------------
-        # 🔐 HARD DOMAIN RULE (retrieve)
-        # If video is not converted, ONLY owner can access it.
-        # Others get 404 (do not leak existence).
-        # -------------------------------------------------
+        # Not-yet-converted video is owner-only
         if obj.video and obj.is_converted is not True:
-            owner = self._get_request_owner() if request.user.is_authenticated else None
+            owner = resolve_owner_from_request(request) if request.user.is_authenticated else None
             if not owner:
                 raise NotFound("Moment not found.")
 
@@ -282,7 +267,7 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
             if not is_owner:
                 raise NotFound("Moment not found.")
 
-        # 1) Visibility gate (existing behavior)
+        # Visibility gate
         reason = VisibilityPolicy.gate_reason(viewer=request.user, obj=obj)
         if reason is not None:
             return Response(
@@ -295,7 +280,7 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # 2) Analytics (safe)
+        # Analytics
         try:
             Moment.objects.filter(pk=obj.pk).update(
                 view_count_internal=F("view_count_internal") + 1,

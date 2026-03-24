@@ -1,6 +1,6 @@
 # apps/core/visibility/query.py
 
-from django.db.models import Q, Exists, OuterRef
+from django.db.models import Q
 from django.contrib.contenttypes.models import ContentType
 
 from apps.core.visibility.constants import (
@@ -9,18 +9,20 @@ from apps.core.visibility.constants import (
     VISIBILITY_COVENANT,
     VISIBILITY_PRIVATE,
 )
+from apps.profiles.services.active_profile import get_active_profile
 
 
 class VisibilityQuery:
     """
-    MySQL-optimized visibility filtering.
-    - Polymorphic owner-safe (Member / Guest / Organization)
-    - EXISTS-based (no Python loops)
+    Active-profile-aware visibility filtering.
+    - Supports Member / Guest / Organization
+    - Keeps covenant strictly Member-only
+    - Avoids fragile OuterRef/Subquery nesting
     """
 
     @staticmethod
     def _normalize_viewer(viewer):
-        """Anonymous -> None (authenticated user stays)."""
+        """Anonymous -> None."""
         if not viewer:
             return None
         if getattr(viewer, "is_authenticated", False):
@@ -32,7 +34,7 @@ class VisibilityQuery:
         viewer = VisibilityQuery._normalize_viewer(viewer)
 
         # -------------------------------------------------
-        # 1) Base moderation filters (always applied)
+        # 1) Base moderation filters
         # -------------------------------------------------
         qs = base_queryset.filter(
             is_active=True,
@@ -40,107 +42,156 @@ class VisibilityQuery:
         )
 
         # -------------------------------------------------
-        # 2) Visitor (unauthenticated):
-        #    ONLY public content is visible
+        # 2) Visitor sees only public
         # -------------------------------------------------
         if viewer is None:
             return qs.filter(visibility=VISIBILITY_GLOBAL)
 
+        # Lazy imports
+        from apps.profiles.models.member import Member
+        from apps.profiles.models.guest import GuestUser
+        from apps.profiles.models.relationships import Friendship, Fellowship
+        from apps.profilesOrg.models import Organization
+
         user = viewer
+        active = get_active_profile(user)
+
+        member = active.member
+        guest = active.guest
+        active_profile = active.profile
+
+        member_ct = ContentType.objects.get_for_model(Member)
+        guest_ct = ContentType.objects.get_for_model(GuestUser)
+        org_ct = ContentType.objects.get_for_model(Organization)
 
         # -------------------------------------------------
-        # 3) Resolve owner identities (polymorphic-safe)
+        # 3) Owner access (active profile only)
         # -------------------------------------------------
         owner_q = Q()
 
-        member = getattr(user, "member_profile", None)
-        guest = getattr(user, "guest_profile", None)
+        if active_profile:
+            active_ct = ContentType.objects.get_for_model(active_profile.__class__)
+            owner_q |= Q(
+                content_type_id=active_ct.id,
+                object_id=active_profile.id,
+            )
 
-        # Member-owned content
+        # Member-owned organizations stay owner-visible
         if member:
-            ct = ContentType.objects.get_for_model(member.__class__)
-            owner_q |= Q(content_type_id=ct.id, object_id=member.id)
-
-        # Guest-owned content
-        if guest:
-            ct = ContentType.objects.get_for_model(guest.__class__)
-            owner_q |= Q(content_type_id=ct.id, object_id=guest.id)
-
-        # Organization-owned content (via membership)
-        if member:
-            from apps.profilesOrg.models import Organization
-
-            org_ids = Organization.objects.filter(
-                org_owners=member
-            ).values_list("id", flat=True)
-
+            org_ids = list(
+                Organization.objects.filter(
+                    org_owners=member
+                ).values_list("id", flat=True)
+            )
             if org_ids:
-                org_ct = ContentType.objects.get_for_model(Organization)
                 owner_q |= Q(
                     content_type_id=org_ct.id,
                     object_id__in=org_ids,
                 )
 
         # -------------------------------------------------
-        # 4) Public visibility (GLOBAL)
+        # 4) Public visibility
         # -------------------------------------------------
-        public_q = Q(
-            visibility__in=[VISIBILITY_GLOBAL]
-        )
+        public_q = Q(visibility=VISIBILITY_GLOBAL)
 
         # -------------------------------------------------
-        # 5) Friends visibility (Member only)
+        # 5) Friend user ids
+        # Friendship is user-level, not profile-level
+        # -------------------------------------------------
+        friendship_rows = Friendship.objects.filter(
+            Q(from_user=user) | Q(to_user=user),
+            status="accepted",
+            is_active=True,
+        ).values_list("from_user_id", "to_user_id")
+
+        friend_user_ids = set()
+        for from_user_id, to_user_id in friendship_rows:
+            if from_user_id == user.id:
+                friend_user_ids.add(to_user_id)
+            else:
+                friend_user_ids.add(from_user_id)
+
+        # -------------------------------------------------
+        # 6) Friends visibility
+        # Works for Member-owned and Guest-owned content
         # -------------------------------------------------
         friends_q = Q()
-        if member:
-            from apps.profiles.models import Friendship
 
-            friends_q = (
-                Q(visibility=VISIBILITY_FRIENDS)
-                &
-                Exists(
-                    Friendship.objects.filter(
-                        status="accepted",
-                        is_active=True,
-                    ).filter(
-                        Q(from_user=member.user, to_user_id=OuterRef("object_id")) |
-                        Q(to_user=member.user, from_user_id=OuterRef("object_id"))
-                    )
-                )
+        if friend_user_ids:
+            member_friend_profile_ids = list(
+                Member.objects.filter(
+                    user_id__in=friend_user_ids,
+                    is_active=True,
+                ).values_list("id", flat=True)
             )
 
+            guest_friend_profile_ids = list(
+                GuestUser.objects.filter(
+                    user_id__in=friend_user_ids,
+                    is_active=True,
+                ).values_list("id", flat=True)
+            )
+
+            member_friends_q = Q()
+            guest_friends_q = Q()
+
+            if member_friend_profile_ids:
+                member_friends_q = Q(
+                    visibility=VISIBILITY_FRIENDS,
+                    content_type_id=member_ct.id,
+                    object_id__in=member_friend_profile_ids,
+                )
+
+            if guest_friend_profile_ids:
+                guest_friends_q = Q(
+                    visibility=VISIBILITY_FRIENDS,
+                    content_type_id=guest_ct.id,
+                    object_id__in=guest_friend_profile_ids,
+                )
+
+            friends_q = member_friends_q | guest_friends_q
+
         # -------------------------------------------------
-        # 6) Covenant visibility (Member only, STRICT)
+        # 7) Covenant visibility
+        # STRICT: Member-only viewer + Member-owned content only
         # -------------------------------------------------
         covenant_q = Q()
+
         if member:
-            from apps.profiles.models import Fellowship, Member
+            fellowship_rows = Fellowship.objects.filter(
+                Q(from_user=user) | Q(to_user=user),
+                status__iexact="accepted",
+            ).values_list("from_user_id", "to_user_id")
 
-            member_ct = ContentType.objects.get_for_model(Member)
+            covenant_user_ids = set()
+            for from_user_id, to_user_id in fellowship_rows:
+                if from_user_id == user.id:
+                    covenant_user_ids.add(to_user_id)
+                else:
+                    covenant_user_ids.add(from_user_id)
 
-            covenant_q = (
-                Q(visibility=VISIBILITY_COVENANT)
-                &
-                Q(content_type_id=member_ct.id)
-                &
-                Exists(
-                    Fellowship.objects.filter(
-                        status="Accepted",
-                    ).filter(
-                        Q(from_user=member.user, to_user_id=OuterRef("object_id")) |
-                        Q(to_user=member.user, from_user_id=OuterRef("object_id"))
-                    )
+            if covenant_user_ids:
+                covenant_member_profile_ids = list(
+                    Member.objects.filter(
+                        user_id__in=covenant_user_ids,
+                        is_active=True,
+                    ).values_list("id", flat=True)
                 )
-            )
+
+                if covenant_member_profile_ids:
+                    covenant_q = Q(
+                        visibility=VISIBILITY_COVENANT,
+                        content_type_id=member_ct.id,
+                        object_id__in=covenant_member_profile_ids,
+                    )
 
         # -------------------------------------------------
-        # 7) Private visibility (owner only)
+        # 8) Private visibility (owner only)
         # -------------------------------------------------
         private_q = Q(visibility=VISIBILITY_PRIVATE) & owner_q
 
         # -------------------------------------------------
-        # 8) Final composition
-        #    (EXCLUSIVE visibility paths)
+        # 9) Final filter
         # -------------------------------------------------
         return qs.filter(
             public_q

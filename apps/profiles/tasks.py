@@ -1,3 +1,5 @@
+# apps/profiles/tasks.py
+
 from celery import shared_task
 import logging
 from django.utils import timezone

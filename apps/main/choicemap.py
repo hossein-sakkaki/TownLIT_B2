@@ -58,7 +58,7 @@ from apps.profilesOrg.constants import (
 )
 
 # Import Gift
-from apps.profiles.gift_constants import GIFT_LANGUAGE_CHOICES, GIFT_ANSWER_LABELS
+from apps.profiles.constants.gift_constants import GIFT_LANGUAGE_CHOICES, GIFT_ANSWER_LABELS
 
 # Import payments
 from apps.payment.constants import (

@@ -5,7 +5,7 @@ from .params import resolve_randomization_params
 from .randomization import make_day_seed, shuffle_list
 from .priority import apply_priority_modules
 
-def fetch_unique_friends(user):
+def fetch_unique_friends(user): 
     qs = (
         Friendship.objects
         .filter(Q(from_user=user) | Q(to_user=user), status="accepted")

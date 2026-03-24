@@ -1,4 +1,5 @@
 # apps/posts/serializers/moments.py
+
 from rest_framework import serializers
 from django.contrib.contenttypes.models import ContentType
 
@@ -18,9 +19,10 @@ from apps.core.ownership.utils import resolve_owner_from_request
 import logging
 logger = logging.getLogger(__name__)
 
+
 class MomentSerializer(
     InstanceTargetMixin,
-    ImageFileMixin, 
+    ImageFileMixin,
     VideoFileMixin,
     ThumbnailFileMixin,
     serializers.ModelSerializer,
@@ -28,7 +30,6 @@ class MomentSerializer(
     owner = serializers.SerializerMethodField(read_only=True)
 
     # thumbnail is generated automatically during video conversion
-    # DO NOT require thumbnail on upload for Moment
     thumbnail = serializers.ImageField(required=False, allow_null=True, use_url=True)
 
     class Meta:
@@ -79,8 +80,6 @@ class MomentSerializer(
             "comment_target",
             "reaction_target",
             "owner",
-
-            # counters should never be writable
             "comments_count",
             "recomments_count",
             "reactions_count",
@@ -88,11 +87,11 @@ class MomentSerializer(
         ]
 
     # -------------------------------------------------
-    # Owner DTO (FINAL)
+    # Owner DTO
     # -------------------------------------------------
     def get_owner(self, obj):
         """
-        Returns OwnerDTO (public or full) or None
+        Returns OwnerDTO (public or full) or None.
         """
         try:
             request = self.context.get("request")
@@ -109,9 +108,7 @@ class MomentSerializer(
             if not owner:
                 return None
 
-            # ---------------------------------------------
-            # Visitor-safe owner hardening
-            # ---------------------------------------------
+            # Hide sensitive fields from visitors
             is_authenticated = (
                 request
                 and request.user
@@ -119,7 +116,6 @@ class MomentSerializer(
             )
 
             if not is_authenticated:
-                # Strip sensitive/internal fields for visitors
                 owner.pop("email", None)
                 owner.pop("mobile_number", None)
                 owner.pop("last_seen", None)
@@ -131,28 +127,19 @@ class MomentSerializer(
             return owner
 
         except Exception:
-            logger.exception("🔥 get_owner failed for moment id=%s", obj.id)
+            logger.exception("get_owner failed for moment id=%s", obj.id)
             return None
-
 
     # -------------------------------------------------
     # Ownership helpers
     # -------------------------------------------------
     def _get_request_owner(self):
+        """Resolve active owner profile from request."""
         request = self.context.get("request")
         if not request or not request.user.is_authenticated:
             return None
 
-        user = request.user
-
-        if hasattr(user, "member_profile"):
-            return user.member_profile
-
-        if hasattr(user, "guest_profile"):
-            return user.guest_profile
-
-        return None
-
+        return resolve_owner_from_request(request)
 
     def _assert_owner(self, instance):
         owner = self._get_request_owner()
@@ -187,7 +174,7 @@ class MomentSerializer(
         return super().create(validated_data)
 
     # -------------------------------------------------
-    # Update (owner-write rules)
+    # Update
     # -------------------------------------------------
     def update(self, instance, validated_data):
         self._assert_owner(instance)
@@ -214,11 +201,9 @@ class MomentSerializer(
     def validate(self, attrs):
         request = self.context.get("request")
 
-        # Only enforce on write
+        # Enforce only on write
         if request and request.method in ("POST", "PUT", "PATCH"):
-            # -------------------------------------------------
-            # Defensive guard: forbid ownership injection
-            # -------------------------------------------------
+            # Block ownership injection
             forbidden = {"content_type", "object_id"}
             for key in forbidden:
                 if key in self.initial_data:
@@ -226,9 +211,7 @@ class MomentSerializer(
                         key: "This field is not allowed."
                     })
 
-            # -------------------------------------------------
-            # Cross-field media validation
-            # -------------------------------------------------
+            # Media validation
             image = attrs.get("image") or getattr(self.instance, "image", None)
             video = attrs.get("video") or getattr(self.instance, "video", None)
 
@@ -244,21 +227,18 @@ class MomentSerializer(
 
         return attrs
 
-
     # -------------------------------------------------
-    # Representation hardening (SAFE)
+    # Representation hardening
     # -------------------------------------------------
     def to_representation(self, obj):
         request = self.context.get("request")
         viewer = request.user if request and request.user.is_authenticated else None
 
-        # -------------------------------------------------
-        # 🔐 HARD MEDIA VISIBILITY GATE (Moment)
-        # -------------------------------------------------
+        # Hard media visibility gate
         if obj.video and not obj.is_converted:
             owner = resolve_owner_from_request(request) if request else None
 
-            # 🚫 visitor: completely invisible
+            # Visitor or non-owner cannot see in-progress media
             if not owner or (
                 obj.content_type_id
                 != ContentType.objects.get_for_model(owner.__class__).id
@@ -266,18 +246,13 @@ class MomentSerializer(
             ):
                 return None
 
-        # 👇 IMPORTANT: do NOT return None for owner
         data = super().to_representation(obj)
 
-        # -------------------------------------------------
-        # 🧠 OWNER conversion-safe payload
-        # -------------------------------------------------
+        # Owner-safe conversion payload
         if obj.video and not obj.is_converted:
-            # 1) strip unsafe media fields
             data["video"] = None
             data["thumbnail"] = None
 
-            # 2) attach conversion job metadata
             data = gate_media_payload(
                 obj=obj,
                 data=data,
@@ -287,9 +262,7 @@ class MomentSerializer(
                 include_job_target=True,
             )
 
-        # -------------------------------------------------
         # Visitor hardening
-        # -------------------------------------------------
         if not viewer:
             data.pop("visibility", None)
             data.pop("is_hidden", None)

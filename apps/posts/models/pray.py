@@ -32,17 +32,6 @@ from validators.mediaValidators.video_validators import (
 )
 from validators.security_validators import validate_no_executable_file
 
-from apps.core.visibility.constants import (
-    VISIBILITY_PRIVATE,
-    VISIBILITY_FRIENDS,
-    VISIBILITY_COVENANT,
-)
-
-from apps.notifications.services.services import create_and_dispatch_notification
-
-from apps.profiles.models import Friendship, Member
-from apps.profiles.constants import ACCEPTED
-
 
 logger = logging.getLogger(__name__)
 User = get_user_model()

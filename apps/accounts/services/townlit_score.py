@@ -7,7 +7,7 @@ from apps.accounts.constants import townlit_weights as W
 from apps.posts.models.moment import Moment
 from apps.posts.models.pray import Prayer
 from apps.posts.models.testimony import Testimony
-from apps.profiles.constants import ACCEPTED
+from apps.profiles.constants.friendship import ACCEPTED
 from apps.profiles.models import Friendship, Member, MemberSpiritualGifts
 from apps.sanctuary.models import SanctuaryRequest
 

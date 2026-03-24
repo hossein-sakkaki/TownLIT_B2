@@ -3,7 +3,8 @@ from django.utils import timezone
 from apps.products.models import Product
 from apps.store.models import Store
 from apps.accounts.models.user import CustomUser
-from apps.profiles.models import Customer, Address
+from apps.profiles.models.customer import Customer
+from apps.accounts.models.address import Address
 
 from apps.orders.constants import (
                                 ORDER_STATUS_CHOICES,

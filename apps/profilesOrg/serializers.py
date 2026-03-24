@@ -14,7 +14,7 @@ from .models import (
 from .serializers_min import SimpleOrganizationSerializer
 
 
-from apps.profiles.serializers_min import SimpleMemberSerializer
+from apps.profiles.serializers.member import SimpleMemberSerializer
 from apps.accounts.serializers.address_serializers import AddressSerializer
 from apps.store.serializers import StoreSerializer
 

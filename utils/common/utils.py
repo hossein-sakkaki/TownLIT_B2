@@ -1,26 +1,31 @@
 # utils/common/utils.py
 
 import logging
+from django.utils.deconstruct import deconstructible
 logger = logging.getLogger(__name__)
 from django.conf import settings
-
-
-# FILE DIRECTION Handler ------------------------------------------
 import os
 from uuid import uuid4
 import datetime
 
+# FILE DIRECTION Handler ------------------------------------------
+@deconstructible
 class FileUpload:
     def __init__(self, app_name, direction, folder):
         self.app_name = app_name
         self.direction = direction
         self.folder = folder
 
-    def dir_upload(self, instanse, filename):
-        prefix, suffix = os.path.splitext(filename)
-        unique_filename = f'{uuid4()}{suffix}'
+    def __call__(self, instance, filename):
+        # Allow using the object itself as upload_to.
+        return self.dir_upload(instance, filename)
+
+    def dir_upload(self, instance, filename):
+        # Keep the exact same path-building behavior.
+        _, suffix = os.path.splitext(filename)
+        unique_filename = f"{uuid4()}{suffix}"
         today = datetime.datetime.now().strftime("%Y/%m/%d")
-        return f'{self.app_name}/{self.direction}/{self.folder}/{today}/{unique_filename}'
+        return f"{self.app_name}/{self.direction}/{self.folder}/{today}/{unique_filename}"
 
     def to_dict(self):
         return {
@@ -30,10 +35,11 @@ class FileUpload:
         }
 
     def deconstruct(self):
+        # Keep a correct import path for migrations.
         return (
-            'utils.FileUpload',
+            "utils.common.utils.FileUpload",
             [self.app_name, self.direction, self.folder],
-            {}
+            {},
         )
 
 

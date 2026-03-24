@@ -2,7 +2,7 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.db.models import Q
 from apps.profiles.models import SpiritualGift, SpiritualGiftSurveyQuestion
-from apps.profiles.gift_questions_constants import QUESTIONS
+from apps.profiles.constants.gift_questions_constants import QUESTIONS
 
 
 class Command(BaseCommand):

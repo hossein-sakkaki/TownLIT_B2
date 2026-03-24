@@ -1,7 +1,7 @@
 # apps/profiles/services/gifts_service.py
 
 from apps.profiles.models import SpiritualGiftSurveyResponse
-from apps.profiles.gift_constants import (
+from apps.profiles.constants.gift_constants import (
     WISDOM, TONGUES, TEACHING, SHEPHERDING, SERVANTHOOD,
     PROPHECY, MIRACLES, LEADERSHIP, KNOWLEDGE, INTERPRETATION_OF_TONGUES,
     HELPING, HEALING, GIVING, FAITH, EXHORTATION,

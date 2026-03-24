@@ -6,7 +6,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.profiles.models import SpiritualService
-from apps.profiles.constants import SENSITIVE_MINISTRY_CHOICES, STANDARD_MINISTRY_CHOICES
+from apps.profiles.constants.ministry import SENSITIVE_MINISTRY_CHOICES, STANDARD_MINISTRY_CHOICES
 
 class Command(BaseCommand):
     help = "Seed/update SpiritualService catalog from SENSITIVE/STANDARD choices. Idempotent."

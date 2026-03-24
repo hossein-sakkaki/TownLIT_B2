@@ -226,7 +226,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     avatar_version = models.PositiveIntegerField(default=1)
     user_active_code = models.CharField(max_length=200, null=True, blank=True)
     user_active_code_expiry = models.DateTimeField(null=True, blank=True)
-    register_date = models.DateField(default=timezone.now, verbose_name='Register Date')
+    register_date = models.DateField(default=timezone.localdate, verbose_name='Register Date')
 
     deletion_requested_at = models.DateTimeField(null=True, blank=True, verbose_name='Deletion Requested At')
     is_deleted = models.BooleanField(default=False, verbose_name="Is Deleted")

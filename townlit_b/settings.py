@@ -623,7 +623,7 @@ IDENTITY_PROVIDER = os.getenv("IDENTITY_PROVIDER", "stripe")
 
 
 # For Translate Languages --------------------------------------------------------------
-from apps.profiles.gift_constants import GIFT_LANGUAGE_CHOICES
+from apps.profiles.constants.gift_constants import GIFT_LANGUAGE_CHOICES
 LANGUAGES = GIFT_LANGUAGE_CHOICES 
 LANGUAGE_CODE = 'en'
 USE_I18N = True

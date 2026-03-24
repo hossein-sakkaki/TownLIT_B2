@@ -1,11 +1,13 @@
 # apps/core/ownership/utils.py
 
+from apps.profiles.services.active_profile import get_active_profile
+
+
 def resolve_owner_from_request(request):
-    user = request.user
+    """Resolve the active owner profile from request user."""
+    user = getattr(request, "user", None)
     if not user or not user.is_authenticated:
         return None
 
-    return (
-        getattr(user, "member_profile", None)
-        or getattr(user, "guest_profile", None)
-    )
+    active = get_active_profile(user)
+    return active.profile
