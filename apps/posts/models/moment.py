@@ -1,6 +1,6 @@
 # apps/posts/models/moment.py
 
-from django.db import models
+from django.db import models, transaction
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from django.contrib.contenttypes.fields import GenericForeignKey
@@ -137,6 +137,24 @@ class Moment(
                 "Moment requires an image or a video."
             )
 
+    # -------------------------------------------------
+    # Save override for availability and notifications
+    # -------------------------------------------------
+    def save(self, *args, **kwargs):
+        is_new = self._state.adding
+        image_only = bool(self.image and not self.video)
+
+        super().save(*args, **kwargs)
+
+        # Image-only moments are immediately final
+        if image_only and not self.is_converted:
+            type(self).objects.filter(pk=self.pk).update(is_converted=True)
+            self.is_converted = True
+
+        # Trigger notifications only after DB commit
+        if is_new and image_only:
+            transaction.on_commit(lambda: self.on_available())
+            
     # -------------------------------------------------
     # Availability (Domain-level)
     # -------------------------------------------------

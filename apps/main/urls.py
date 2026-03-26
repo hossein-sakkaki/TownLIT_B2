@@ -12,16 +12,16 @@ from .views import (
     SiteAnnouncementViewSet,
     UserFeedbackViewSet,
     UserActionLogViewSet,
-    DesignTokensViewSet,
+    # DesignTokensViewSet,
     IconViewSet,
     StaticChoiceViewSet,
     VideoCategoryViewSet,
     VideoSeriesViewSet,
     OfficialVideoViewSet,
     PrayerViewSet,
-    coming_soon_view,
     AvatarViewSet,
     GroupAvatarViewSet,
+    # coming_soon_view,
 )
 
 app_name = "main"  # For namespaced reversing; does not change URLs
@@ -35,7 +35,7 @@ router.register(r'faqs', FAQViewSet, basename='main-faqs')
 router.register(r'site-announcements', SiteAnnouncementViewSet, basename='main-site-announcements')
 router.register(r'user-feedbacks', UserFeedbackViewSet, basename='main-user-feedbacks')
 router.register(r'user-action-logs', UserActionLogViewSet, basename='main-user-action-logs')
-router.register(r'design-tokens', DesignTokensViewSet, basename='main-design-tokens')
+# router.register(r'design-tokens', DesignTokensViewSet, basename='main-design-tokens')
 router.register(r'icons', IconViewSet, basename='main-icons')
 router.register(r'static-choice', StaticChoiceViewSet, basename='main-static-choice')
 router.register(r'video-categories', VideoCategoryViewSet, basename='main-video-categories')
