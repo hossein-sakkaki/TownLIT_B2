@@ -25,7 +25,7 @@ class SquareViewSet(viewsets.ViewSet):
     Notes:
     - Engines annotate only (NO ordering).
     - ViewSet applies cursor-safe ordering per mode.
-    - For kind=all: we MERGE multiple sources in Python (no UNION yet).
+    - For kind=all: we merge multiple sources in Python.
     - Serializer may gate items (return None) => we filter them out.
     """
 
@@ -34,12 +34,31 @@ class SquareViewSet(viewsets.ViewSet):
     pagination_page_size = 12
 
     # ------------------------------------------------------------------
-    # Cursor helpers (for multi-source merge "all")
+    # Score helpers
+    # ------------------------------------------------------------------
+    def _score_of(self, obj, *, mode: str | None, viewer) -> float:
+        """
+        Return the correct score for the requested mode.
+        Fallback to 0 when annotation is missing.
+        """
+        if mode == SquareEngine.MODE_TRENDING:
+            return float(getattr(obj, "trending_score", 0) or 0)
+
+        if mode == SquareEngine.MODE_FOR_YOU and viewer:
+            return float(getattr(obj, "personalized_trending_score", 0) or 0)
+
+        if mode == SquareEngine.MODE_RECENT:
+            return float(getattr(obj, "rank_score", 0) or 0)
+
+        return float(getattr(obj, "hybrid_score", 0) or 0)
+
+    # ------------------------------------------------------------------
+    # Cursor helpers
     # ------------------------------------------------------------------
     def _cursor_token_only(self, cursor: str | None) -> str | None:
         """
         Accept either:
-        - token: "p=...&id=..."
+        - token: "s=...&p=...&id=..."
         - full URL containing ?cursor=...
         Returns token only (or None).
         """
@@ -48,7 +67,6 @@ class SquareViewSet(viewsets.ViewSet):
 
         cursor = cursor.strip()
 
-        # If full URL is passed, extract its cursor param
         if cursor.startswith("http://") or cursor.startswith("https://"):
             try:
                 q = parse_qs(urlparse(cursor).query)
@@ -59,19 +77,15 @@ class SquareViewSet(viewsets.ViewSet):
 
         return cursor
 
-    def _apply_cursor_boundary(self, qs, cursor: str | None):
+    def _parse_cursor_parts(self, cursor: str | None) -> dict:
         """
-        Cursor boundary for multi-source merge.
-
-        Cursor token format:
-          "p=<iso_datetime>&id=<int>"
-        (URL-encoded is ok)
+        Parse cursor token into parts:
+          s=<score>&p=<iso_datetime>&id=<int>
         """
         token = self._cursor_token_only(cursor)
         if not token:
-            return qs
+            return {}
 
-        # token could be urlencoded "p=...&id=..."
         token = unquote(token)
 
         parts = {}
@@ -80,24 +94,79 @@ class SquareViewSet(viewsets.ViewSet):
                 k, v = chunk.split("=", 1)
                 parts[k] = v
 
+        return parts
+
+    def _apply_cursor_boundary_multi_source(self, objs, cursor: str | None, *, mode: str | None, viewer):
+        """
+        Apply an in-memory cursor boundary for merged multi-source results.
+
+        Order tuple:
+          (score DESC, published_at DESC, id DESC)
+
+        So the next page must contain only items strictly smaller than:
+          (cursor_score, cursor_published_at, cursor_id)
+        """
+        parts = self._parse_cursor_parts(cursor)
+        if not parts:
+            return objs
+
+        s_raw = parts.get("s")
         p_raw = parts.get("p")
         id_raw = parts.get("id")
-        if not p_raw or not id_raw:
-            return qs
+
+        if s_raw is None or not p_raw or not id_raw:
+            return objs
 
         try:
-            p = parse_datetime(p_raw)
-            last_id = int(id_raw)
+            cursor_score = float(s_raw)
+            cursor_published_at = parse_datetime(p_raw)
+            cursor_id = int(id_raw)
         except Exception:
-            return qs
+            return objs
 
-        if not p:
-            return qs
+        if cursor_published_at is None:
+            return objs
 
-        # (published_at, id) < (p, last_id)
-        return qs.filter(
-            Q(published_at__lt=p) | Q(published_at=p, id__lt=last_id)
+        filtered = []
+        for obj in objs:
+            obj_score = self._score_of(obj, mode=mode, viewer=viewer)
+            obj_published_at = getattr(obj, "published_at", None)
+            obj_id = getattr(obj, "id", None)
+
+            if obj_published_at is None or obj_id is None:
+                continue
+
+            # Keep items strictly after the cursor in DESC ordering.
+            if obj_score < cursor_score:
+                filtered.append(obj)
+                continue
+
+            if obj_score == cursor_score:
+                if obj_published_at < cursor_published_at:
+                    filtered.append(obj)
+                    continue
+
+                if obj_published_at == cursor_published_at and obj_id < cursor_id:
+                    filtered.append(obj)
+                    continue
+
+        return filtered
+
+    def _build_next_link(self, request, *, last_obj, mode: str | None, viewer):
+        """
+        Build the next cursor URL using the SAME ordering tuple.
+        """
+        token = urlencode(
+            {
+                "s": str(self._score_of(last_obj, mode=mode, viewer=viewer)),
+                "p": last_obj.published_at.isoformat(),
+                "id": str(last_obj.id),
+            }
         )
+
+        qd = request.query_params.copy()
+        qd["cursor"] = token
+        return request.build_absolute_uri(f"{request.path}?{qd.urlencode()}")
 
     def _order_qs_by_mode(self, qs, *, mode: str | None, viewer):
         """
@@ -134,7 +203,6 @@ class SquareViewSet(viewsets.ViewSet):
                 "rank_score",
             )
 
-        # default: hybrid
         return (
             qs.order_by(
                 F("hybrid_score").desc(nulls_last=True),
@@ -178,54 +246,66 @@ class SquareViewSet(viewsets.ViewSet):
             return Response({"next": None, "results": []})
 
         # -------------------------------------------------
-        # 2) ALL + FRIENDS => merge multiple sources (no UNION)
+        # 2) ALL + FRIENDS => merge multiple sources
         # -------------------------------------------------
         if kind in (SQUARE_KIND_ALL, SQUARE_KIND_FRIENDS):
             page_size = int(getattr(self, "pagination_page_size", 12))
 
-            # Over-fetch to survive serializer gating / duplicates
-            per_source_limit = page_size * 20
+            # Bigger fetch window for production skew.
+            per_source_limit = page_size * 40
 
             merged_objs = []
 
             try:
                 for src_qs in querysets:
-                    model_name = getattr(getattr(src_qs, "model", None), "__name__", "UnknownModel")
-                    logger.info("[Square] merge source=%s pre_engine_count=%s", model_name, src_qs.count())
-                    # annotate by engine (no ordering inside engines)
+                    model_name = getattr(
+                        getattr(src_qs, "model", None),
+                        "__name__",
+                        "UnknownModel",
+                    )
+
+                    logger.info(
+                        "[Square] merge source=%s pre_engine_count=%s",
+                        model_name,
+                        src_qs.count(),
+                    )
+
                     qs = SquareEngine.apply(
                         queryset=src_qs,
                         mode=mode,
                         viewer=viewer,
                     )
 
-
-                    # apply cursor boundary for this source (published_at/id)
-                    qs = self._apply_cursor_boundary(qs, cursor)
-
-                    # apply ordering based on mode
                     qs, score_field = self._order_qs_by_mode(
                         qs,
                         mode=mode,
                         viewer=viewer,
                     )
 
-                    # take a slice from each source
-                    merged_objs.extend(list(qs[:per_source_limit]))
-
-                # global merge ordering (simple + stable)
-                def _score_of(o):
-                    return (
-                        getattr(o, "personalized_trending_score", None)
-                        or getattr(o, "trending_score", None)
-                        or getattr(o, "rank_score", None)
-                        or getattr(o, "hybrid_score", None)
-                        or 0
+                    logger.info(
+                        "[Square] source=%s ordered_by=%s",
+                        model_name,
+                        score_field,
                     )
 
+                    merged_objs.extend(list(qs[:per_source_limit]))
+
+                # Global stable sort using the SAME tuple as cursor.
                 merged_objs.sort(
-                    key=lambda o: (_score_of(o), o.published_at, o.id),
+                    key=lambda o: (
+                        self._score_of(o, mode=mode, viewer=viewer),
+                        getattr(o, "published_at", None),
+                        getattr(o, "id", None),
+                    ),
                     reverse=True,
+                )
+
+                # Apply cursor AFTER merge using the SAME tuple.
+                merged_objs = self._apply_cursor_boundary_multi_source(
+                    merged_objs,
+                    cursor,
+                    mode=mode,
+                    viewer=viewer,
                 )
 
                 logger.info(
@@ -236,12 +316,22 @@ class SquareViewSet(viewsets.ViewSet):
                     bool(viewer),
                 )
 
+                for obj in merged_objs[:10]:
+                    logger.info(
+                        "[SquareDebug] top obj id=%s kind=%s score=%s pub=%s",
+                        getattr(obj, "id", None),
+                        getattr(obj, "square_kind", None),
+                        self._score_of(obj, mode=mode, viewer=viewer),
+                        getattr(obj, "published_at", None),
+                    )
+
             except Exception:
                 logger.exception("[Square] MERGE failed")
                 raise
 
-            # Serialize a larger candidate window; keep first page_size real items
-            candidate_window = merged_objs[: (page_size * 6)]
+            # Bigger candidate window to survive serializer gating.
+            candidate_window = merged_objs[: (page_size * 12)]
+
             serializer = SquareItemSerializer(
                 candidate_window,
                 many=True,
@@ -254,30 +344,34 @@ class SquareViewSet(viewsets.ViewSet):
             for obj, rep in zip(candidate_window, serializer.data):
                 if rep is None:
                     continue
+
                 results.append(rep)
                 last_obj_for_cursor = obj
+
                 if len(results) >= page_size:
                     break
 
             next_link = None
             if len(results) >= page_size and last_obj_for_cursor is not None:
-                token = urlencode(
-                    {
-                        "p": last_obj_for_cursor.published_at.isoformat(),
-                        "id": str(last_obj_for_cursor.id),
-                    }
+                next_link = self._build_next_link(
+                    request,
+                    last_obj=last_obj_for_cursor,
+                    mode=mode,
+                    viewer=viewer,
                 )
 
-                qd = request.query_params.copy()
-                qd["cursor"] = token
-                next_link = request.build_absolute_uri(f"{request.path}?{qd.urlencode()}")
+            logger.info(
+                "[Square] final merged results=%s next=%s",
+                len(results),
+                bool(next_link),
+            )
 
             return Response({"next": next_link, "results": results})
 
         # -------------------------------------------------
-        # 3) Non-ALL tabs => single source (cursor pagination)
+        # 3) Non-ALL tabs => single source
         # -------------------------------------------------
-        base_qs = querysets[0]  # single source for moment/testimony tabs
+        base_qs = querysets[0]
 
         try:
             ranked_qs = SquareEngine.apply(
@@ -311,10 +405,17 @@ class SquareViewSet(viewsets.ViewSet):
             logger.exception("[Square] pagination failed")
             raise
 
-        serializer = SquareItemSerializer(page, many=True, context={"request": request})
+        serializer = SquareItemSerializer(
+            page,
+            many=True,
+            context={"request": request},
+        )
         data = [item for item in serializer.data if item is not None]
 
-        gated_none_count = (len(serializer.data) - len(data)) if serializer.data else 0
+        gated_none_count = (
+            len(serializer.data) - len(data)
+        ) if serializer.data else 0
+
         logger.info(
             "[Square] page=%s returned=%s gated=%s next=%s",
             len(page or []),

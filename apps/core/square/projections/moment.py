@@ -21,7 +21,7 @@ class MomentSquareProjection(SquareProjection):
         }
 
     def get_meta(self):
+        # Moment has no title field.
         return {
-            "title": (getattr(self.obj, "title", "") or "")[:120],
             "excerpt": (getattr(self.obj, "caption", "") or "")[:160],
         }

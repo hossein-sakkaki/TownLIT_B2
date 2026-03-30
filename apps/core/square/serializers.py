@@ -10,7 +10,9 @@ logger = logging.getLogger(__name__)
 class SquareItemSerializer(serializers.Serializer):
 
     def to_representation(self, obj):
+
         try:
+
             kind = getattr(obj, "square_kind", None)
             if not kind:
                 return None
