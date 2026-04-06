@@ -387,7 +387,6 @@ class OfficialVideoViewSet(viewsets.ModelViewSet):
         ip = get_client_ip(request)
         user_agent = request.META.get("HTTP_USER_AGENT", "")[:255]
 
-        # فقط اگر در 6 ساعت گذشته همین IP این ویدیو را ندیده باشد
         recent_time = timezone.now() - timedelta(hours=6)
         if not VideoViewLog.objects.filter(video=video, ip_address=ip, viewed_at__gte=recent_time).exists():
             video.view_count = F("view_count") + 1
@@ -405,7 +404,6 @@ class VideoViewLogViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = VideoViewLog.objects.all()
     serializer_class = VideoViewLogSerializer
     permission_classes = [IsAdminUser]
-
 
 
 # -----------------------------------------------------------------------------

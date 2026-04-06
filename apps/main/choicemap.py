@@ -1,3 +1,5 @@
+# apps/main/choicemap.py
+
 from apps.moderation.constants import (
     COLLABORATION_TYPE_CHOICES, COLLABORATION_MODE_CHOICES,
     COLLABORATION_AVAILABILITY_CHOICES, HEAR_ABOUT_US_CHOICES
