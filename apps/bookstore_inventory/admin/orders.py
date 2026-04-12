@@ -51,7 +51,7 @@ class BookOrderAdmin(ProtectedAfterPostMixin, AdminSummaryMixin, admin.ModelAdmi
     # Order admin
     form = BookOrderAdminForm
     actions = [fulfill_selected_orders]
-    # change_list_template = "admin/bookstore_inventory/change_list_with_summary.html"
+    change_list_template = "admin/bookstore_inventory/change_list_with_summary.html"
 
     protected_fieldsets = (
         "order_type",
