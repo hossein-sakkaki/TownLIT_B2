@@ -193,6 +193,7 @@ INSTALLED_APPS = [
 
     "apps.advancement.apps.AdvancementConfig",
     "apps.accounting.apps.AccountingConfig",
+    "apps.bookstore_inventory.apps.BookstoreInventoryConfig",
 ]
 
 MIDDLEWARE = [
