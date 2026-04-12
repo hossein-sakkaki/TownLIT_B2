@@ -1,0 +1,21 @@
+// templates/admin/bookstore_inventory/change_list_with_summary.html
+
+{% extends "admin/change_list.html" %}
+
+{% block content_title %}
+    {{ block.super }}
+
+    {% if summary_data_verbose %}
+        <div style="margin-top:12px;margin-bottom:16px;padding:12px 14px;border:1px solid #e5e7eb;border-radius:10px;background:#f8fafc;">
+            <div style="font-weight:700;margin-bottom:8px;">Quick Summary</div>
+            <div style="display:flex;flex-wrap:wrap;gap:10px;">
+                {% for label, value in summary_data_verbose.items %}
+                    <div style="padding:8px 12px;background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;">
+                        <div style="font-size:12px;color:#64748b;">{{ label }}</div>
+                        <div style="font-size:16px;font-weight:700;color:#0f172a;">{{ value }}</div>
+                    </div>
+                {% endfor %}
+            </div>
+        </div>
+    {% endif %}
+{% endblock %}
