@@ -19,7 +19,7 @@ class CashLedgerEntryAdmin(LedgerSummaryMixin, admin.ModelAdmin):
         "reference_id",
         "recorded_by",
     )
-    change_list_template = "admin/bookstore_inventory/change_list_with_summary.html"
+    # change_list_template = "admin/bookstore_inventory/change_list_with_summary.html"
     search_fields = ("reference_type", "reference_id", "notes")
     list_filter = ("direction", "entry_type", "currency", "entry_date")
     autocomplete_fields = ("recorded_by",)

@@ -49,7 +49,7 @@ class InboundShipmentAdmin(ProtectedAfterPostMixin, AdminSummaryMixin, admin.Mod
     )
     protected_inline_message = "Posted shipments cannot be edited. Items and payments are locked."
 
-    change_list_template = "admin/bookstore_inventory/change_list_with_summary.html"
+    # change_list_template = "admin/bookstore_inventory/change_list_with_summary.html"
 
     summary_config = {
         "shipment_count": {"aggregate": "count"},
