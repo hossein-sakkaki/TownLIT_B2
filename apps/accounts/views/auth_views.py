@@ -11,6 +11,7 @@ import secrets
 
 from datetime import timedelta
 from apps.accounts.constants.user_labels import BELIEVER, PREFER_NOT_TO_SAY, SEEKER
+from apps.accounts.models import user
 from apps.core.crypto import rsa as crsa
 
 from rest_framework import viewsets
@@ -310,7 +311,6 @@ class AuthViewSet(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-
     @action(detail=False, methods=['post'], permission_classes=[AllowAny])
     def verify(self, request):  # Verify
         ser_data = VerifyNewBornSerializer(data=request.data)
@@ -398,7 +398,6 @@ class AuthViewSet(viewsets.ViewSet):
             {"valid": False, "error": "Invalid password."},
             status=status.HTTP_400_BAD_REQUEST
         )
-
 
     @action(detail=False, methods=['post'], url_path='choose-path', permission_classes=[AllowAny])
     def choose_path(self, request):  # Answer the category questions
@@ -492,7 +491,6 @@ class AuthViewSet(viewsets.ViewSet):
             "note": "Feel free to complete your profile or start exploring."
         }, status=status.HTTP_200_OK)
         
-
     # Login ----------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], permission_classes=[AllowAny])
     def login(self, request):
@@ -606,7 +604,6 @@ class AuthViewSet(viewsets.ViewSet):
             'user_id': user.id
         }, status=status.HTTP_200_OK)
 
-
     # Login with 2FA ----------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='login-with-2fa', permission_classes=[AllowAny])
     def login_with_2fa(self, request):
@@ -695,7 +692,6 @@ class AuthViewSet(viewsets.ViewSet):
                 "message": "Invalid OTP code. Please try again."
             }, status=status.HTTP_400_BAD_REQUEST)
 
-
     # Logout ---------------------------------------------------------------------------------------------------------
     @action(detail=False, methods=["post"], url_path="logout", permission_classes=[IsAuthenticated])
     def logout(self, request):
@@ -744,8 +740,6 @@ class AuthViewSet(viewsets.ViewSet):
 
         return Response({"message": "User has been successfully logged out."}, status=status.HTTP_200_OK)
 
-        
-        
     # Forgot Password -------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='forget-password', permission_classes=[AllowAny])
     def forget_password(self, request): # Forget Password
@@ -800,7 +794,6 @@ class AuthViewSet(viewsets.ViewSet):
                 return Response({"message": "The provided email does not exist in our system."}, status=status.HTTP_404_NOT_FOUND)
         return Response(ser_data.errors, status=status.HTTP_400_BAD_REQUEST)
 
-
     @action(detail=False, methods=['post'], permission_classes=[AllowAny], url_path='reset-password/(?P<reset_token>[^/.]+)')
     def reset_password(self, request, reset_token):
         try:
@@ -845,7 +838,6 @@ class AuthViewSet(viewsets.ViewSet):
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
-
     # Enable 2FA ----------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='enable-2fa', permission_classes=[IsAuthenticated])
     def enable_2fa(self, request):
@@ -930,7 +922,6 @@ class AuthViewSet(viewsets.ViewSet):
         except Exception as e:
             logger.error(f"Error in verify_2fa_token: {str(e)}")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
 
     # Disable 2FA -------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='disable-2fa', permission_classes=[IsAuthenticated])
@@ -1024,7 +1015,6 @@ class AuthViewSet(viewsets.ViewSet):
             logger.error(f"Error in verify_disable_2fa_token: {str(e)}")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-
     # Change Password In Account -----------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='change-password', permission_classes=[IsAuthenticated])
     def change_password(self, request):
@@ -1043,7 +1033,6 @@ class AuthViewSet(viewsets.ViewSet):
             return Response({"message": "Password updated successfully."}, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"error": "An unexpected error occurred. Please try again later."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
 
     # PINs Manage -----------------------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='enable-pin', permission_classes=[IsAuthenticated])
@@ -1104,8 +1093,6 @@ class AuthViewSet(viewsets.ViewSet):
             status=status.HTTP_200_OK
         )
 
-
-
     @action(detail=False, methods=['post'], url_path='disable-pin', permission_classes=[IsAuthenticated])
     def disable_pin(self, request):
         try:
@@ -1133,7 +1120,6 @@ class AuthViewSet(viewsets.ViewSet):
         except Exception as e:
             logger.error(f"Error occurred: {str(e)}")
             return Response({"error": "An unexpected error occurred"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
 
     # ---------------------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='send-delete-confirmation', permission_classes=[IsAuthenticated])
@@ -1179,7 +1165,6 @@ class AuthViewSet(viewsets.ViewSet):
         except Exception as e:
             logger.error(f"Error in send_delete_confirmation: {str(e)}")
             return Response({"error": f"An error occurred: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
 
     @action(detail=False, methods=['post'], url_path='confirm-delete-account', permission_classes=[AllowAny])
     def confirm_delete_account(self, request):
@@ -1676,9 +1661,6 @@ class AuthViewSet(viewsets.ViewSet):
             "dedup_removed": dedup_removed_ids,
         }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
-
-
-
     # Device Pop Challenge --------------------------------------------------------------------------------
     @action(detail=False, methods=["post"], url_path="device-pop-challenge", permission_classes=[IsAuthenticated])
     def device_pop_challenge(self, request):
@@ -1758,7 +1740,6 @@ class AuthViewSet(viewsets.ViewSet):
         dev.save(update_fields=["is_verified", "verified_at", "pop_challenge_hash", "pop_challenge_expiry", "pop_attempts"])
 
         return Response({"ok": True, "verified": True}, status=status.HTTP_200_OK)
-
 
     # -------------------------------------------------------------------------------------------
     @action(detail=False, methods=["post"], url_path="key-backup-save", permission_classes=[IsAuthenticated])
@@ -1992,7 +1973,6 @@ class AuthViewSet(viewsets.ViewSet):
         created_count = max(0, post_count - pre_count)
         return Response({"backfilled": created_count, "skipped": len(existing_for_new)}, status=status.HTTP_200_OK)
 
-
     # -------------------------------------------------------------------------------------------
     @action(detail=False, methods=["get"], url_path="my-devices", permission_classes=[IsAuthenticated])
     def my_devices(self, request):
@@ -2001,19 +1981,7 @@ class AuthViewSet(viewsets.ViewSet):
         serializer = UserDeviceKeySerializer(devices, many=True)
         return Response(serializer.data)
     
-
-    # @action(detail=False, methods=["delete"], url_path="remove-device/(?P<device_id>[^/.]+)", permission_classes=[IsAuthenticated])
-    # def remove_device(self, request, device_id=None):
-    #     user = request.user
-    #     try:
-    #         device_id = device_id.strip().lower()
-    #         device = UserDeviceKey.objects.get(user=user, device_id=device_id)
-    #         device.delete()
-    #         return Response({"message": f"Device {device_id} removed successfully."})
-    #     except UserDeviceKey.DoesNotExist:
-    #         return Response({"error": "Device not found."}, status=status.HTTP_404_NOT_FOUND)
-
-
+    # -------------------------------------------------------------------------------------------
     @action(detail=False, methods=["post"], url_path="send-device-deletion-code", permission_classes=[IsAuthenticated])
     def send_device_deletion_code(self, request):
         user = request.user
@@ -2034,12 +2002,10 @@ class AuthViewSet(viewsets.ViewSet):
         expiration_minutes = settings.EMAIL_CODE_EXPIRATION_MINUTES
         expiry = timezone.now() + datetime.timedelta(minutes=expiration_minutes)
 
-        # ذخیره در مدل
         device.deletion_code = encrypted_code
         device.deletion_code_expiry = expiry
         device.save()
 
-        # ارسال ایمیل
         context = {
             'activation_code': code,
             'user': user,

@@ -137,11 +137,6 @@ class MemberViewSet(viewsets.ModelViewSet):
         }, status=status.HTTP_200_OK)
     
 
-
-
-
-    
-
     # Update profile image ------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='update-profile-image', permission_classes=[IsAuthenticated])
     def update_profile_image(self, request):
@@ -184,6 +179,7 @@ class MemberViewSet(viewsets.ModelViewSet):
     # Request Email Actions -------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='request-email-change', permission_classes=[IsAuthenticated])
     def request_email_change(self, request):
+        
         try:
             user = request.user
             new_email = request.data.get('new_email')
@@ -353,7 +349,6 @@ class MemberViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-
     # Phone Number Actions -------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='request-phone-verification', permission_classes=[IsAuthenticated])
     def request_phone_verification(self, request):
@@ -408,7 +403,6 @@ The TownLIT Team 🌍
         except Exception as e:
             return Response({"error": f"An unexpected error occurred: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-
     @action(detail=False, methods=['post'], url_path='verify-phone', permission_classes=[IsAuthenticated])
     def verify_phone(self, request):
         user = request.user
@@ -450,7 +444,6 @@ The TownLIT Team 🌍
             return Response({"message": "Phone number removed successfully."}, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"error": f"An unexpected error occurred: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
 
     # Action for Change Visibility by Entrusted -----------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='toggle-visibility', permission_classes=[IsAuthenticated])

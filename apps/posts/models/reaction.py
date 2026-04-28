@@ -1,3 +1,5 @@
+# apps/posts/models/reaction.py
+
 from django.db import models
 from django.utils import timezone
 from django_cryptography.fields import encrypt

@@ -1,12 +1,15 @@
-# apps/conversation/realtime/read.py
+# apps/conversation/realtime/mixins/read.py
 
-import json
 import logging
 from asgiref.sync import sync_to_async
 from channels.db import database_sync_to_async
 
-from apps.conversation.models import Dialogue, Message
-from services.message_atomic_utils import mark_message_as_read_atomic
+from apps.conversation.models import Dialogue
+from apps.conversation.services.read_delivery import mark_dialogue_read_for_user
+from apps.conversation.services.event_contracts import (
+    build_read_event_data,
+    build_unread_snapshot_event_data,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -19,98 +22,66 @@ class ReadMixin:
     - backend/frontend separation
     """
 
-    # -------------------------------------------------------------
-    # 1) CLIENT REQUEST → MARK AS READ
-    # -------------------------------------------------------------
     async def mark_message_as_read(self, data):
-
-        # 🔒 Prevent recursion
         if getattr(self, "_processing_read", False):
             return
 
-        # 🔒 If connection is closed: do nothing
         if not getattr(self, "connected", False):
             return
 
         self._processing_read = True
+
         try:
             dialogue_slug = data.get("dialogue_slug")
             source = data.get("source", "frontend")
 
-            if not dialogue_slug:
-                return
-
-            try:
-                dialogue = await sync_to_async(Dialogue.objects.get)(
-                    slug=dialogue_slug,
-                    participants=self.user
-                )
-            except Dialogue.DoesNotExist:
-                return
-
-            # unread messages for this user
-            unread_messages = await sync_to_async(list)(
-                Message.objects.filter(dialogue=dialogue)
-                .exclude(seen_by_users=self.user)
+            result = await database_sync_to_async(mark_dialogue_read_for_user)(
+                dialogue_slug,
+                self.user,
             )
 
-            # atomic marking
-            for message in unread_messages:
-                if message.sender_id == self.user.id:
-                    continue
-                await mark_message_as_read_atomic(message, self.user)
+            if not result.get("ok"):
+                return
 
-            # -------------------------------------------------
-            # SEND READ RECEIPT TO OTHER PARTICIPANTS
-            # -------------------------------------------------
+            payload = result["payload"]
+            read_message_ids = payload.get("read_messages", [])
+
+            if not read_message_ids:
+                if source == "frontend":
+                    await self.send_unread_counts()
+                return
+
+            read_data = build_read_event_data(payload=payload)
+
             participants = await sync_to_async(
                 lambda: list(
-                    dialogue.participants
-                        .exclude(id=self.user.id)
-                        .values_list("id", flat=True)
+                    Dialogue.objects.get(
+                        slug=dialogue_slug,
+                        participants=self.user,
+                    )
+                    .participants.exclude(id=self.user.id)
+                    .values_list("id", flat=True)
                 )
             )()
 
-            payload = {
-                "dialogue_slug": dialogue_slug,
-                "reader": {
-                    "id": self.user.id,
-                    "username": self.user.username,
-                    "email": self.user.email,
-                },
-                "read_messages": [
-                    msg.id for msg in unread_messages
-                    if msg.sender_id != self.user.id
-                ],
-            }
-
             for uid in participants:
-                await self.channel_layer.group_send( 
+                await self.channel_layer.group_send(
                     f"user_{uid}",
                     {
                         "type": "dispatch_event",
                         "app": "conversation",
                         "event": "mark_as_read",
-                        "data": payload,
-                    }
+                        "data": read_data,
+                    },
                 )
 
-            # -------------------------------------------------
-            # Only FRONTEND events should trigger unread_count push
-            # -------------------------------------------------
             if source == "frontend":
                 await self.send_unread_counts()
 
         finally:
             self._processing_read = False
 
-
-
-    # -------------------------------------------------------------
-    # 3) CALCULATE & PUSH UNREAD COUNTS TO USER
-    # -------------------------------------------------------------
     async def send_unread_counts(self):
-
         if not getattr(self, "connected", False):
             return
 
@@ -118,16 +89,13 @@ class ReadMixin:
 
         try:
             dialogues = await sync_to_async(list)(
-                Dialogue.objects.filter(participants=user)
+                Dialogue.objects.filter(participants=user).exclude(deleted_by_users=user)
             )
 
             results = []
             for dialogue in dialogues:
                 unread_count = await sync_to_async(
-                    lambda: dialogue.messages
-                        .exclude(seen_by_users=user)
-                        .exclude(sender=user)
-                        .count()
+                    lambda d=dialogue: d.unread_messages_for_user(user).count()
                 )()
 
                 results.append({
@@ -136,22 +104,16 @@ class ReadMixin:
                 })
 
             if getattr(self, "connected", False):
-                await self.consumer.safe_send_json({
-                    "type": "event",
-                    "app": "conversation",
-                    "event": "unread_count_update",
-                    "payload": results,
-                })
+                await self.consumer.send_app_event(
+                    app="conversation",
+                    event="unread_count_update",
+                    data=build_unread_snapshot_event_data(results=results),
+                )
 
         except Exception as e:
-            # If WS is closed, prevent future sends
             logger.warning(f"[ReadMixin] send_unread_counts failed: {e}")
             self.connected = False
             return
 
-
-    # -------------------------------------------------------------
-    # 4) GENERIC "trigger_unread_count_update" (backend)
-    # -------------------------------------------------------------
     async def trigger_unread_count_update(self, event):
         await self.send_unread_counts()

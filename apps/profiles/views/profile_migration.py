@@ -30,7 +30,7 @@ from apps.posts.models.pray import Prayer
 from apps.profiles.models.transitions import MigrationHistory
 from apps.profiles.serializers.member import MemberSerializer
 from apps.profiles.serializers.guest import GuestUserSerializer
-from apps.profiles.services.active_profile import get_active_profile
+from apps.profiles.services.active_profile import get_active_profile 
 
 CustomUser = get_user_model()
 logger = logging.getLogger(__name__)

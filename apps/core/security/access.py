@@ -45,11 +45,9 @@ def revoke_litshield_access(scope: str):
 def check_litshield_access(scope: str, request):
     user = getattr(request, "user", None)
 
-    # ✅ اگر کاربر ندارد یا ورود نکرده:
     if user is None or not user.is_authenticated:
         return Response({"access_granted": False, "pin_security_enabled": None})
 
-    # ✅ اگر سیستم امنیتی PIN فعال نیست، نیازی به مودال نیست:
     if not getattr(user, "pin_security_enabled", False):
         return Response({
             "access_granted": False,
@@ -57,7 +55,6 @@ def check_litshield_access(scope: str, request):
             "expires_at": None
         })
 
-    # ✅ اگر دسترسی از قبل وجود دارد (از طریق کوکی):
     cookie_key = f"{scope}_access"
     if request.COOKIES.get(cookie_key) == "granted":
         expires = timezone.now() + timedelta(seconds=DEFAULT_ACCESS_DURATION)
@@ -67,7 +64,6 @@ def check_litshield_access(scope: str, request):
             "expires_at": expires.isoformat()
         })
 
-    # ❌ در غیر این صورت، دسترسی وجود ندارد
     return Response({
         "access_granted": False,
         "pin_security_enabled": True,

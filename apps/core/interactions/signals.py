@@ -8,6 +8,11 @@ from django.dispatch import receiver
 
 from apps.posts.models.comment import Comment
 from apps.posts.models.reaction import Reaction
+from apps.core.interactions.services.reaction_realtime import (
+    broadcast_reaction_summary_changed,
+    broadcast_reaction_inbox_changed,
+    resolve_owner_user_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -180,8 +185,10 @@ def comment_postdelete_counters(sender, instance: Comment, **kwargs):
 @receiver(post_save, sender=Reaction, dispatch_uid="interactions.reaction.postsave.counters")
 def reaction_postsave_counters(sender, instance: Reaction, created: bool, **kwargs):
     """
-    Only counts on creation.
-    If later you allow changing reaction_type, add a pre_save tracker like Comment.
+    Handles:
+    - DB counters
+    - realtime summary broadcast
+    - realtime owner inbox broadcast
     """
     if not created:
         return
@@ -193,11 +200,26 @@ def reaction_postsave_counters(sender, instance: Reaction, created: bool, **kwar
     model_cls = target.__class__
     pk = target.pk
 
-    # total (atomic)
     _safe_inc(model_cls, pk, "reactions_count", 1)
-
-    # per-type (locked JSON update)
     _update_reaction_breakdown_locked(model_cls, pk, instance.reaction_type, +1)
+
+    owner_user_id = resolve_owner_user_id(target)
+
+    def _after_commit():
+        try:
+            broadcast_reaction_summary_changed(
+                content_type=instance.content_type,
+                object_id=instance.object_id,
+            )
+            broadcast_reaction_inbox_changed(
+                content_type=instance.content_type,
+                object_id=instance.object_id,
+                owner_user_id=owner_user_id,
+            )
+        except Exception:
+            logger.exception("[interactions.signals] reaction post_save realtime failed")
+
+    transaction.on_commit(_after_commit)
 
 
 @receiver(post_delete, sender=Reaction, dispatch_uid="interactions.reaction.postdelete.counters")
@@ -211,3 +233,21 @@ def reaction_postdelete_counters(sender, instance: Reaction, **kwargs):
 
     _safe_dec_non_negative(model_cls, pk, "reactions_count", 1)
     _update_reaction_breakdown_locked(model_cls, pk, instance.reaction_type, -1)
+
+    owner_user_id = resolve_owner_user_id(target)
+
+    def _after_commit():
+        try:
+            broadcast_reaction_summary_changed(
+                content_type=instance.content_type,
+                object_id=instance.object_id,
+            )
+            broadcast_reaction_inbox_changed(
+                content_type=instance.content_type,
+                object_id=instance.object_id,
+                owner_user_id=owner_user_id,
+            )
+        except Exception:
+            logger.exception("[interactions.signals] reaction post_delete realtime failed")
+
+    transaction.on_commit(_after_commit)

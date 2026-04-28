@@ -6,18 +6,20 @@ logger = logging.getLogger(__name__)
 
 class NotificationsHandler:
     """
-    Unified WS handler for notifications.
-    FE → BE:
-        { app: "notifications", type: "ping" }
-        { app: "notifications", type: "delivered", payload: {...} }
+    Canonical WS handler for notifications.
 
-    BE → FE (through dispatch_event):
-        {
-            "app": "notifications",
-            "event": "notification",
-            "data": {...}
-        }
+    Client -> Server:
+        { "app": "notifications", "type": "delivered", "data": {...} }
+
+    Server -> Client:
+        { "app": "notifications", "type": "event", "event": "...", "data": {...} }
+
+    Notes:
+    - Socket heartbeat/ping/pong is owned by CentralWebSocketConsumer.
+    - This handler only manages notification domain events.
     """
+
+    APP = "notifications"
 
     def __init__(self, socket):
         self.socket = socket
@@ -25,80 +27,101 @@ class NotificationsHandler:
         self.group = f"notif_user_{self.user.id}"
 
     # ------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------
+    def _message_data(self, message: dict) -> dict:
+        data = message.get("data")
+        if isinstance(data, dict):
+            return data
+        return {}
+
+    async def _send_event(self, event: str, data: dict | None = None):
+        await self.socket.send_app_event(
+            app=self.APP,
+            event=event,
+            data=data or {},
+        )
+
+    async def _send_error(self, code: str, message: str, details: dict | None = None):
+        await self.socket.send_app_error(
+            app=self.APP,
+            code=code,
+            message=message,
+            details=details,
+        )
+
+    # ------------------------------------------------------
+    # Connect / Disconnect
+    # ------------------------------------------------------
     async def on_connect(self):
         try:
             await self.socket.join_feature_group(self.group)
         except Exception as e:
-            logger.error(f"[NotifHandler] join {self.group} failed: {e}")
+            logger.error(f"[NotifHandler] join {self.group} failed: {e}", exc_info=True)
 
-        await self.socket.safe_send_json({
-            "app": "notifications",
-            "type": "connected",
-            "status": "ok"
-        })
+        # Canonical ready event
+        await self._send_event("ready", {"status": "ok"})
 
-    # ------------------------------------------------------
     async def on_disconnect(self):
         try:
             await self.socket.leave_feature_group(self.group)
         except Exception as e:
-            logger.error(f"[NotifHandler] leave {self.group} failed: {e}")
+            logger.error(f"[NotifHandler] leave {self.group} failed: {e}", exc_info=True)
 
     # ------------------------------------------------------
-    async def handle(self, data):
-        msg_type = data.get("type")
-
-        if msg_type == "pong":
-            return
-
-        if msg_type == "ping":
-            return await self._ping()
+    # Client -> Server
+    # ------------------------------------------------------
+    async def handle(self, message: dict):
+        msg_type = message.get("type")
+        data = self._message_data(message)
 
         if msg_type == "delivered":
-            return await self._mark_delivered(data.get("payload"))
+            await self._mark_delivered(data)
+            return
 
-        logger.debug(f"[NotifHandler] Unknown event: {msg_type}")
+        await self._send_error(
+            code="UNSUPPORTED_MESSAGE_TYPE",
+            message=f"Unsupported notifications message type '{msg_type}'",
+        )
 
-    # ------------------------------------------------------
-    async def _ping(self):
-        await self.socket.safe_send_json({
-            "app": "notifications",
-            "type": "pong"
-        })
-
-    async def _mark_delivered(self, payload):
-        await self.socket.safe_send_json({
-            "app": "notifications",
-            "type": "ack",
-            "status": "ok"
-        })
-
-    # ------------------------------------------------------
-    # BACKEND → FE (called by CentralConsumer.dispatch_event)
-    # ------------------------------------------------------
-    async def handle_backend_event(self, event):
+    async def _mark_delivered(self, data: dict):
         """
-        event = {
-            "app": "notifications",
-            "event": "notification",
-            "data": {...}
-        }
-        """
+        Placeholder delivery ACK.
 
+        Keep this event for client compatibility until a real
+        notification-delivery persistence flow is introduced.
+        """
+        await self._send_event(
+            "delivered_ack",
+            {
+                "status": "ok",
+                **(data or {}),
+            },
+        )
+
+    # ------------------------------------------------------
+    # Backend -> Client
+    # ------------------------------------------------------
+    async def handle_backend_event(self, event: dict):
+        """
+        Expected event shape:
+            {
+                "app": "notifications",
+                "event": "...",
+                "data": {...}
+            }
+        """
         event_type = event.get("event")
-        data = event.get("data", {})
+        data = event.get("data", {}) or {}
 
         logger.info(
-            "[NotifHandler] handle_backend_event called: event_type=%s data=%s",
+            "[NotifHandler] handle_backend_event event_type=%s data=%s",
             event_type,
             data,
         )
 
-        await self.socket.safe_send_json({
-            "app": "notifications",
-            "type": "event",
-            "event": event_type,
-            "data": data,
-        })
+        if not event_type:
+            logger.warning("[NotifHandler] Missing backend event type")
+            return
 
-        logger.info("[NotifHandler] JSON sent to client")
+        await self._send_event(event_type, data)

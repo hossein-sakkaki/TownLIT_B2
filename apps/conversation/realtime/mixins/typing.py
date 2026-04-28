@@ -1,71 +1,88 @@
+# apps/conversation/realtime/mixins/typing.py
+
 import asyncio
-import json
+
+from apps.conversation.services.event_contracts import build_typing_status_event_data
 
 TYPING_TIMEOUTS = {}
 
+
+def build_typing_timeout_key(user_id: int, dialogue_slug: str):
+    """Build a stable timeout key."""
+    return (user_id, dialogue_slug)
+
+
+def cancel_typing_timeout(key):
+    """Cancel one typing timeout safely."""
+    task = TYPING_TIMEOUTS.pop(key, None)
+    if not task:
+        return
+
+    try:
+        task.cancel()
+    except Exception:
+        pass
+
+
+def cancel_all_typing_timeouts_for_user(user_id: int):
+    """Cancel all typing timeouts for one user safely."""
+    for key in list(TYPING_TIMEOUTS.keys()):
+        if not isinstance(key, tuple) or len(key) != 2:
+            continue
+
+        timeout_user_id, _dialogue_slug = key
+        if timeout_user_id != user_id:
+            continue
+
+        cancel_typing_timeout(key)
+
+
 class TypingMixin:
     """
-    Handles typing events without infinite loops.
-    Client → Server:      "typing_status"
-    Server → Broadcast:   "typing_status_broadcast"
+    Handles typing events for conversation realtime.
     """
 
     TYPING_DURATION = 5  # seconds
 
-    # --------------------------------------------------------------------
-    # 1) Client → server event
-    # --------------------------------------------------------------------
     async def handle_typing_status(self, data):
-        dialogue_slug = data.get("dialogue_slug")
-        is_typing = data.get("is_typing", False)
+        dialogue_slug = (data.get("dialogue_slug") or "").strip()
+        is_typing = bool(data.get("is_typing", False))
 
         if not dialogue_slug:
             return
 
-        # Broadcast typing updates (now safe, no loop)
         await self._broadcast_typing_status(dialogue_slug, is_typing)
 
-        # Auto-stop typing
         if is_typing:
             await self._schedule_typing_clear(dialogue_slug)
+        else:
+            key = build_typing_timeout_key(self.user.id, dialogue_slug)
+            cancel_typing_timeout(key)
 
-
-    # --------------------------------------------------------------------
-    # Internal: broadcast typing to dialogue group
-    # --------------------------------------------------------------------
     async def _broadcast_typing_status(self, dialogue_slug: str, is_typing: bool):
-        """Unified safe broadcast → DOES NOT re-trigger handle_typing_status."""
+        payload = build_typing_status_event_data(
+            dialogue_slug=dialogue_slug,
+            user=self.user,
+        )
+        payload["is_typing"] = is_typing
+
         await self.channel_layer.group_send(
             f"dialogue_{dialogue_slug}",
             {
                 "type": "dispatch_event",
                 "app": "conversation",
-                "event": "typing_status_broadcast",   # IMPORTANT!
-                "data": {
-                    "dialogue_slug": dialogue_slug,
-                    "sender": {
-                        "id": self.user.id,
-                        "username": self.user.username,
-                        "email": self.user.email,
-                    },
-                    "is_typing": is_typing,
-                },
-            }
+                "event": "typing_status",
+                "data": payload,
+            },
         )
 
-    # --------------------------------------------------------------------
-    # Auto-clear typing after timeout
-    # --------------------------------------------------------------------
     async def _schedule_typing_clear(self, dialogue_slug: str):
-        key = (self.user.id, dialogue_slug)
-
-        if TYPING_TIMEOUTS.get(key):
-            TYPING_TIMEOUTS[key].cancel()
+        key = build_typing_timeout_key(self.user.id, dialogue_slug)
+        cancel_typing_timeout(key)
 
         TYPING_TIMEOUTS[key] = asyncio.create_task(
             self._clear_typing_after_timeout(dialogue_slug)
         )
-
 
     async def _clear_typing_after_timeout(self, dialogue_slug: str):
         try:
@@ -75,4 +92,5 @@ class TypingMixin:
 
         await self._broadcast_typing_status(dialogue_slug, is_typing=False)
 
-        TYPING_TIMEOUTS.pop((self.user.id, dialogue_slug), None)
+        key = build_typing_timeout_key(self.user.id, dialogue_slug)
+        TYPING_TIMEOUTS.pop(key, None)

@@ -4,13 +4,14 @@ from rest_framework import serializers
 from apps.posts.constants import REACTION_TYPE_CHOICES
 
 
-
-
 # Reaction Summary Serializer ----------------------------------------------------------------------------
 class ReactionSummarySerializer(serializers.Serializer):
     """
-    Lightweight aggregation payload for hover / modal.
+    Lightweight interaction payload for UI + realtime.
     """
+
+    content_type = serializers.CharField(required=False)
+    object_id = serializers.IntegerField(required=False)
 
     # totals
     reactions_count = serializers.IntegerField()
@@ -26,6 +27,9 @@ class ReactionSummarySerializer(serializers.Serializer):
         allow_null=True,
         required=False,
     )
+
+    # optional action result from toggle
+    action = serializers.CharField(required=False)
 
 
 # Reaction Toggle Serializer -----------------------------------------------------------------------------

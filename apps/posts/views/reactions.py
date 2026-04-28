@@ -1,6 +1,10 @@
-from django.contrib.contenttypes.models import ContentType
-from django.db import models
+# apps/posts/views/reactions.py
 
+from django.contrib.contenttypes.models import ContentType
+from django.db import models, transaction
+
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 
 from rest_framework import status, viewsets, mixins
 from rest_framework.response import Response
@@ -16,6 +20,174 @@ logger = logging.getLogger(__name__)
 from django.contrib.auth import get_user_model
 
 CustomUser = get_user_model()
+
+
+# -----------------------------------------------------------------------------
+# Realtime helpers
+# -----------------------------------------------------------------------------
+def reaction_target_group_name(ct_id: int, obj_id: int) -> str:
+    return f"reactions.target.{ct_id}.{obj_id}"
+
+
+def reaction_inbox_group_name(ct_id: int, obj_id: int, user_id: int) -> str:
+    return f"reactions.inbox.{ct_id}.{obj_id}.{user_id}"
+
+
+def _safe_reaction_broadcast(group_name: str, event_name: str, payload: dict):
+    """
+    Safe WS send for reactions.
+    Never breaks HTTP flow if Redis / Channels is unavailable.
+    """
+    try:
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            logger.warning("Channel layer not configured; skip reaction WS send.")
+            return
+
+        async_to_sync(channel_layer.group_send)(
+            group_name,
+            {
+                "type": "dispatch_event",
+                "app": "reactions",
+                "event": event_name,
+                "data": payload,
+            },
+        )
+    except Exception:
+        logger.exception("Reaction WS broadcast failed (ignored)")
+
+
+def _resolve_owner_user_id(obj, request_user_id=None):
+    """
+    Resolve real owner's user_id from target object.
+    Mirrors the owner resolution logic already used in with_message.
+    """
+    base = obj
+
+    # If object wraps another via GFK, drill into the real target
+    if hasattr(base, "content_object") and getattr(base, "content_object") is not None:
+        base = base.content_object
+
+    # Common direct *_id fields
+    for fk in ("user_id", "name_id", "owner_id", "member_user_id", "org_owner_user_id"):
+        if hasattr(base, fk):
+            val = getattr(base, fk)
+            if isinstance(val, int):
+                return val
+
+    # Member model (user OneToOne)
+    if base.__class__.__name__.lower() == "member" and hasattr(base, "user_id"):
+        return getattr(base, "user_id", None)
+
+    # Related objects exposing .id
+    for rel in ("name", "owner", "member_user", "org_owner_user"):
+        if hasattr(base, rel):
+            rel_obj = getattr(base, rel)
+            if getattr(rel_obj, "id", None):
+                return rel_obj.id
+
+    # Organization owners M2M (grant if requester is among owners)
+    if hasattr(base, "org_owners") and request_user_id:
+        try:
+            if base.org_owners.filter(id=request_user_id).exists():
+                return request_user_id
+        except Exception:
+            pass
+
+    return None
+
+
+def _get_target_owner_user_id(cto: ContentType, obj_id, request_user_id=None):
+    model_cls = cto.model_class()
+    if model_cls is None:
+        return None
+
+    try:
+        target_obj = model_cls._default_manager.get(pk=obj_id)
+    except model_cls.DoesNotExist:
+        return None
+
+    return _resolve_owner_user_id(target_obj, request_user_id=request_user_id)
+
+
+def _build_summary_payload(cto: ContentType, obj_id, request_user=None):
+    """
+    Fresh summary payload for realtime sync.
+    """
+    qs = Reaction.objects.filter(content_type=cto, object_id=obj_id)
+
+    breakdown_rows = (
+        qs.values("reaction_type")
+        .annotate(count=models.Count("id"))
+        .order_by()
+    )
+
+    summary = {
+        "content_type_id": cto.id,
+        "content_type": f"{cto.app_label}.{cto.model}",
+        "object_id": int(obj_id),
+        "reactions_count": qs.count(),
+        "reactions_breakdown": {
+            row["reaction_type"]: row["count"] for row in breakdown_rows
+        },
+        "my_reaction": None,
+    }
+
+    if request_user and getattr(request_user, "is_authenticated", False):
+        summary["my_reaction"] = (
+            qs.filter(name=request_user)
+            .values_list("reaction_type", flat=True)
+            .first()
+        )
+
+    return summary
+
+
+def _broadcast_target_summary(cto: ContentType, obj_id, request_user=None):
+    payload = _build_summary_payload(cto, obj_id, request_user=request_user)
+    _safe_reaction_broadcast(
+        reaction_target_group_name(cto.id, int(obj_id)),
+        "summary_changed",
+        payload,
+    )
+
+
+def _broadcast_owner_inbox_changed(
+    *,
+    cto: ContentType,
+    obj_id,
+    owner_user_id: int | None,
+    action_name: str,
+    reaction: Reaction | None = None,
+):
+    if not owner_user_id:
+        return
+
+    payload = {
+        "content_type_id": cto.id,
+        "content_type": f"{cto.app_label}.{cto.model}",
+        "object_id": int(obj_id),
+        "owner_user_id": int(owner_user_id),
+        "action": action_name,
+    }
+
+    if reaction is not None:
+        payload.update({
+            "id": reaction.id,
+            "reaction_type": reaction.reaction_type,
+            "timestamp": reaction.timestamp.isoformat() if reaction.timestamp else None,
+            "has_message": bool((reaction.message or "").strip()),
+            "user": {
+                "id": reaction.name.id,
+                "username": getattr(reaction.name, "username", None),
+            }
+        })
+
+    _safe_reaction_broadcast(
+        reaction_inbox_group_name(cto.id, int(obj_id), int(owner_user_id)),
+        "inbox_changed",
+        payload,
+    )
 
 
 # REACTIONS Viewset --------------------------------------------------------------------------
@@ -62,7 +234,33 @@ class ReactionViewSet(
         # only owner can delete
         if instance.name_id != self.request.user.id:
             raise PermissionError("Forbidden")
-        return super().perform_destroy(instance)
+
+        cto = instance.content_type
+        obj_id = instance.object_id
+        owner_user_id = _get_target_owner_user_id(
+            cto,
+            obj_id,
+            request_user_id=self.request.user.id,
+        )
+        had_message = bool((instance.message or "").strip())
+
+        super().perform_destroy(instance)
+
+        # Realtime broadcasts after delete
+        transaction.on_commit(lambda: _broadcast_target_summary(
+            cto,
+            obj_id,
+            request_user=self.request.user,
+        ))
+
+        if had_message:
+            transaction.on_commit(lambda: _broadcast_owner_inbox_changed(
+                cto=cto,
+                obj_id=obj_id,
+                owner_user_id=owner_user_id,
+                action_name="removed",
+                reaction=None,
+            ))
 
     def create(self, request, *args, **kwargs):
         """
@@ -78,16 +276,45 @@ class ReactionViewSet(
         oid = serializer.validated_data['object_id']
         rtype = serializer.validated_data['reaction_type']
 
+        owner_user_id = _get_target_owner_user_id(
+            ct,
+            oid,
+            request_user_id=request.user.id,
+        )
+
         # 1️⃣ Check if the same reaction already exists → toggle off
         existing_same = Reaction.objects.filter(
             name=user, content_type=ct, object_id=oid, reaction_type=rtype
         ).first()
 
         if existing_same:
+            had_message = bool((existing_same.message or "").strip())
             existing_same.delete()
+
+            transaction.on_commit(lambda: _broadcast_target_summary(
+                ct,
+                oid,
+                request_user=request.user,
+            ))
+
+            if had_message:
+                transaction.on_commit(lambda: _broadcast_owner_inbox_changed(
+                    cto=ct,
+                    obj_id=oid,
+                    owner_user_id=owner_user_id,
+                    action_name="removed",
+                    reaction=None,
+                ))
+
             return Response(status=status.HTTP_204_NO_CONTENT)
 
         # 2️⃣ Delete all other reactions by this user for the same object
+        previous_with_message_exists = Reaction.objects.filter(
+            name=user,
+            content_type=ct,
+            object_id=oid,
+        ).exclude(reaction_type=rtype).exclude(message__isnull=True).exists()
+
         Reaction.objects.filter(
             name=user, content_type=ct, object_id=oid
         ).exclude(reaction_type=rtype).delete()
@@ -95,6 +322,23 @@ class ReactionViewSet(
         # 3️⃣ Create the new reaction
         instance = serializer.save()
         out = self.get_serializer(instance)
+        has_message = bool((instance.message or "").strip())
+
+        transaction.on_commit(lambda: _broadcast_target_summary(
+            ct,
+            oid,
+            request_user=request.user,
+        ))
+
+        if previous_with_message_exists or has_message:
+            transaction.on_commit(lambda: _broadcast_owner_inbox_changed(
+                cto=ct,
+                obj_id=oid,
+                owner_user_id=owner_user_id,
+                action_name="changed" if previous_with_message_exists else "added",
+                reaction=instance if has_message else None,
+            ))
+
         return Response(out.data, status=status.HTTP_201_CREATED)
 
 
@@ -187,42 +431,7 @@ class ReactionViewSet(
         except model_cls.DoesNotExist:
             return Response({"detail": "Target object not found"}, status=404)
 
-        # --- Resolve real owner's user_id (handles common FK patterns + GFK drill-down) ---
-        def resolve_owner_user_id(obj):
-            base = obj
-            # If object wraps another via GFK, drill into the real target
-            if hasattr(base, "content_object") and getattr(base, "content_object") is not None:
-                base = base.content_object
-
-            # Common direct *_id fields
-            for fk in ("user_id", "name_id", "owner_id", "member_user_id", "org_owner_user_id"):
-                if hasattr(base, fk):
-                    val = getattr(base, fk)
-                    if isinstance(val, int):
-                        return val
-
-            # Member model (user OneToOne)
-            if base.__class__.__name__.lower() == "member" and hasattr(base, "user_id"):
-                return getattr(base, "user_id", None)
-
-            # Related objects exposing .id
-            for rel in ("name", "owner", "member_user", "org_owner_user"):
-                if hasattr(base, rel):
-                    rel_obj = getattr(base, rel)
-                    if getattr(rel_obj, "id", None):
-                        return rel_obj.id
-
-            # Organization owners M2M (grant if requester is among owners)
-            if hasattr(base, "org_owners"):
-                try:
-                    if base.org_owners.filter(id=request.user.id).exists():
-                        return request.user.id
-                except Exception:
-                    pass
-
-            return None
-
-        owner_id = resolve_owner_user_id(target_obj)
+        owner_id = _resolve_owner_user_id(target_obj, request_user_id=request.user.id)
         if owner_id != request.user.id:
             return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
 
@@ -256,3 +465,4 @@ class ReactionViewSet(
             })
 
         return Response(items, status=200)
+    

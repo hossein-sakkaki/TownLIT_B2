@@ -1,3 +1,5 @@
+# utils/security/destructive_actions.py
+
 from django.utils import timezone
 from django.conf import settings
 from django.db.models import Max
@@ -22,20 +24,40 @@ def handle_destructive_pin_actions(user):
 
 # --- 1. Clean up private dialogues ---
 def cleanup_sensitive_private_dialogues(user):
-    markers = UserDialogueMarker.objects.filter(user=user, is_sensitive=True, dialogue__is_group=False).select_related("dialogue")
+    """
+    Hide sensitive private dialogues for the user in a privacy-safe way.
+
+    Rules:
+    - If both sides already deleted the dialogue, hard delete as before.
+    - Otherwise:
+        * keep old messages soft-deleted for this user
+        * remove visible sensitive marker from UI
+        * keep an internal inbound block until this user sends first outgoing message
+    """
+    markers = (
+        UserDialogueMarker.objects
+        .filter(user=user, is_sensitive=True, dialogue__is_group=False)
+        .select_related("dialogue")
+    )
+
     for marker in markers:
         dialogue = marker.dialogue
         other = dialogue.participants.exclude(id=user.id).first()
 
+        # If the other side also deleted the dialogue, fully remove it
         if other and dialogue.deleted_by_users.filter(id=other.id).exists():
             Message.objects.filter(dialogue=dialogue).delete()
             marker.delete()
             dialogue.delete()
-        else:
-            dialogue.deleted_by_users.add(user)
-            for msg in dialogue.messages.all():
-                msg.deleted_by_users.add(user)
-            marker.delete()
+            continue
+
+        # Soft-delete all existing messages for this user
+        dialogue.deleted_by_users.add(user)
+        for msg in dialogue.messages.all():
+            msg.deleted_by_users.add(user)
+
+        # Replace visible "sensitive" marker with hidden security state
+        dialogue.arm_inbound_block_until_outgoing(user)
 
 
 # --- 2. Clean up group dialogues ---

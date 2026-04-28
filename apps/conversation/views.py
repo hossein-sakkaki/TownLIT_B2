@@ -1,10 +1,22 @@
+# apps/conversation/views.py
+
 from rest_framework import viewsets, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.utils import timezone
-from django.db.models import Max, Q, Value, DateTimeField
+from django.db.models import (
+    Max,
+    Q,
+    Value,
+    DateTimeField,
+    OuterRef,
+    Subquery,
+    IntegerField,
+    Case,
+    When,
+)
 from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404
 import base64
@@ -16,14 +28,30 @@ from django.http import Http404
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 import asyncio
-from services.redis_online_manager import get_last_seen, get_online_status_for_users
+from apps.core.websocket.services.redis_online_manager import get_last_seen, get_online_status_for_users
 from datetime import datetime
 from django.utils.timesince import timesince
 from rest_framework.renderers import JSONRenderer
 
 from common.aws.s3_utils import get_file_url
-from .models import Dialogue, Message, MessageSearchIndex, MessageEncryption, UserDialogueMarker, DialogueParticipant
-from .serializers import DialogueSerializer, MessageSerializer, UserDialogueMarkerSerializer, DialogueParticipantSerializer, UpdateGroupInfoSerializer
+from .models import (
+    Dialogue,
+    Message,
+    MessageSearchIndex,
+    MessageEncryption,
+    UserDialogueMarker,
+    DialogueParticipant,
+    DialoguePin,
+)
+from .serializers import (
+    DialogueSerializer,
+    MessageSerializer,
+    UserDialogueMarkerSerializer,
+    DialogueParticipantSerializer,
+    UpdateGroupInfoSerializer,
+    DialoguePinSerializer,
+    MessagePinSerializer,
+)
 from .permissions import ConversationAccessPermission, IsDialogueParticipant
 from apps.accounts.services.sender_verification import is_sender_device_verified
 from apps.accounts.serializers.user_serializers import SimpleCustomUserSerializer
@@ -32,18 +60,120 @@ from apps.conversation.utils import get_websocket_url
 from common.mime_type_validator import validate_file_type, is_unsafe_file
 from apps.core.security.decorators import require_litshield_access
 
+# Services
+from apps.conversation.services.read_delivery import (
+    mark_message_delivered_for_user,
+    mark_dialogue_read_for_user,
+    build_mark_as_read_realtime_payload,
+    build_unread_count_snapshot_payload,
+)
+from apps.conversation.services.message_mutations import (
+    edit_message_content,
+    soft_delete_message_for_user,
+    hard_delete_message_for_user,
+    build_message_soft_deleted_realtime_payload,
+)
+from apps.conversation.services.message_creation import (
+    create_text_message,
+    validate_upload_input,
+    create_file_message,
+    prepare_encrypted_file_request,
+)
+from apps.conversation.services.group_domain import (
+    add_group_participant,
+    remove_group_participant,
+    promote_group_participant_to_elder,
+    demote_group_elder_to_participant,
+    resign_group_elder_role,
+    leave_group_as_participant,
+    transfer_group_founder,
+    build_group_role_changed_system_text,
+)
+from apps.conversation.services.dialogue_lifecycle import (
+    create_or_get_private_dialogue,
+    create_group_dialogue,
+    smart_delete_dialogue_for_user,
+)
+from apps.conversation.services.event_contracts import (
+    build_delivery_event_data,
+    build_dm_edit_message_data,
+    build_group_added_event_data,
+    build_group_edit_message_data,
+    build_group_left_event_data,
+    build_group_removed_event_data,
+    build_founder_transferred_event_data,
+    build_hard_delete_event_data,
+    build_system_chat_message_data,
+    build_message_pin_event_data,
+    build_message_unpin_event_data,
+    build_group_chat_message_data,
+    build_file_message_event_data,
+    build_dialogue_pinned_event_data,
+    build_dialogue_unpinned_event_data,
+    build_message_reaction_summary_event_data,
+    build_message_reaction_toggled_event_data,
+)
+from apps.conversation.services.realtime_dispatch import conv_group_send
+from apps.conversation.services.dialogue_pins import (
+    pin_dialogue_for_user,
+    unpin_dialogue_for_user,
+    list_pinned_dialogues_for_user,
+)
+from apps.conversation.services.message_pins import (
+    pin_message_for_dialogue,
+    unpin_message_for_dialogue,
+    list_pinned_messages_for_dialogue,
+)
+from apps.conversation.services.message_forward import (
+    create_forwarded_message_backend_assisted,
+    build_forward_preview
+)
+from apps.conversation.services.message_reactions import (
+    toggle_message_reaction,
+    get_message_reaction_summary_for_user,
+    list_message_reactors,
+)
+from django.db import transaction
+
+from apps.conversation.services.realtime_dispatch import broadcast_group_text_message
+
 import logging
 logger = logging.getLogger(__name__)
 from django.contrib.auth import get_user_model
 CustomUser = get_user_model()
 
 
+# REALTIME HELPERS ------------------------------------------------------------------------
+def conv_dispatch_payload(event: str, data: dict | None = None):
+    """
+    Canonical conversation dispatch payload for channel_layer.group_send.
+    """
+    return {
+        "type": "dispatch_event",
+        "app": "conversation",
+        "event": event,
+        "data": data or {},
+    }
+
+
+def conv_group_send(group_name: str, event: str, data: dict | None = None):
+    """
+    Send one canonical conversation realtime event to one group.
+    """
+    channel_layer = get_channel_layer()
+    async_to_sync(channel_layer.group_send)(
+        group_name,
+        conv_dispatch_payload(event, data),
+    )
+
 
 # SYSTEM MESSAGES ------------------------------------------------------------------------
 def send_system_message(dialogue, sender, system_event, content):
     plain_text = (content or "").strip()
+    if not plain_text:
+        return None
 
-    # Keep your current DB storage format (base64 in bytes)
+    # Store plaintext in current DB format (base64 bytes)
     base64_str = base64.b64encode(plain_text.encode("utf-8")).decode("utf-8")
     content_bytes = base64_str.encode("utf-8")
 
@@ -55,43 +185,21 @@ def send_system_message(dialogue, sender, system_event, content):
         system_event=system_event,
     )
 
-    dialogue.last_message = system_message
-    dialogue.save(update_fields=["last_message"])
-    channel_layer = get_channel_layer()
-
-    async_to_sync(channel_layer.group_send)(
+    # Keep system message visible in realtime chat stream,
+    # but do not overwrite global non-system last_message cache.
+    conv_group_send(
         f"dialogue_{dialogue.slug}",
-        {
-            "type": "dispatch_event",
-            "app": "conversation",
-            "event": "chat_message",
-            "data": {
-                "event_type": "system_message",
-                "dialogue_slug": dialogue.slug,
-                "message_id": system_message.id,
-
-                # IMPORTANT:
-                # ✅ send real text for realtime UI
-                "decrypted_content": plain_text,
-
-                # you can keep this for debugging/back-compat if you want
-                "content": base64_str,
-
-                "sender": {
-                    "id": sender.id,
-                    "username": sender.username,
-                },
-                "timestamp": system_message.timestamp.isoformat(),
-                "is_system": True,
-                "system_event": system_event,
-
-                # ensure frontend won't try E2EE decrypt
-                "is_encrypted": False,
-            },
-        }
+        "chat_message",
+        build_system_chat_message_data(
+            dialogue=dialogue,
+            system_message=system_message,
+            sender=sender,
+            plain_text=plain_text,
+            system_event=system_event,
+        ),
     )
 
-
+    return system_message
 
 # DIALOGUE VIEWSET -------------------------------------------------------------------------
 class DialogueViewSet(viewsets.ModelViewSet):
@@ -107,17 +215,52 @@ class DialogueViewSet(viewsets.ModelViewSet):
                 .exclude(deleted_by_users=self.request.user))
 
     def _with_last_activity(self, qs):
-        # annotate last non-system message timestamp (falls back to created_at)
-        return (qs
-                .annotate(
-                    last_msg_ts=Max(
-                        'messages__timestamp',
-                        filter=Q(messages__is_system=False)
-                    ),
-                    last_activity=Coalesce('last_msg_ts', 'created_at')  # fallback
-                )
-                .order_by('-last_activity', '-created_at')  # newest activity first
-                .prefetch_related('participants', 'participants_roles', 'marked_users')
+        """
+        Order dialogues by:
+        1) pinned dialogues first (per-user)
+        2) pinned position ascending
+        3) latest visible non-system activity
+        4) created_at fallback
+
+        Notes:
+        - pin state is per-user
+        - activity is visibility-aware per-user
+        """
+        user = self.request.user
+
+        visible_last_message_ts = Subquery(
+            Message.objects
+            .filter(dialogue=OuterRef("pk"), is_system=False)
+            .exclude(deleted_by_users=user)
+            .order_by("-timestamp")
+            .values("timestamp")[:1]
+        )
+
+        pinned_position_subquery = Subquery(
+            DialoguePin.objects
+            .filter(user=user, dialogue=OuterRef("pk"))
+            .values("position")[:1],
+            output_field=IntegerField(),
+        )
+
+        return (
+            qs.annotate(
+                last_msg_ts=visible_last_message_ts,
+                last_activity=Coalesce("last_msg_ts", "created_at"),
+                pinned_position=pinned_position_subquery,
+                is_pinned_sort=Case(
+                    When(pinned_position__isnull=False, then=Value(1)),
+                    default=Value(0),
+                    output_field=IntegerField(),
+                ),
+            )
+            .order_by(
+                "-is_pinned_sort",
+                "pinned_position",
+                "-last_activity",
+                "-created_at",
+            )
+            .prefetch_related("participants", "participants_roles", "marked_users")
         )
 
     def get_queryset(self):
@@ -125,6 +268,21 @@ class DialogueViewSet(viewsets.ModelViewSet):
         base = self._base_qs()
         return self._with_last_activity(base)
 
+    # Helper methods ---------------------------------------
+    def _serialize_single_dialogue(self, request, dialogue, device_id=None):
+        """
+        Serialize one dialogue with the same annotated ordering fields.
+        """
+        hydrated = self._with_last_activity(
+            Dialogue.objects.filter(pk=dialogue.pk)
+        ).first()
+
+        serializer = DialogueSerializer(
+            hydrated or dialogue,
+            context={"request": request, "device_id": device_id},
+        )
+        return serializer.data
+    
     # ---------------------------------------
     @action(detail=False, methods=["post"], url_path="enter-chat")
     @require_litshield_access("conversation")
@@ -183,48 +341,44 @@ class DialogueViewSet(viewsets.ModelViewSet):
         check_only = request.data.get('check_only', False)
 
         if not recipient_id:
-            return Response({'error': 'Recipient ID is required.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'error': 'Recipient ID is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         recipient = get_object_or_404(CustomUser, id=recipient_id)
 
-        dialogue = Dialogue.objects.filter(
-            participants=request.user,
-            is_group=False
-        ).filter(participants=recipient).first()
+        result = create_or_get_private_dialogue(
+            acting_user=request.user,
+            recipient=recipient,
+            check_only=check_only,
+        )
 
-        if dialogue:
-            if dialogue.deleted_by_users.filter(id=request.user.id).exists():
-                dialogue.deleted_by_users.remove(request.user)
-            
-            serializer = DialogueSerializer(dialogue, context={"request": request})
-            return Response({
-                'dialogue': serializer.data,
-                'message': 'Dialogue already exists.'
-            }, status=status.HTTP_200_OK)
+        if not result.get("ok"):
+            if result["status"] == 204:
+                return Response(
+                    {'message': result["message"]},
+                    status=status.HTTP_204_NO_CONTENT
+                )
 
-        if check_only:
-            return Response({
-                'message': 'Dialogue does not exist.'
-            }, status=status.HTTP_204_NO_CONTENT)
+            return Response(
+                {'error': result["message"], 'code': result["code"]},
+                status=result["status"]
+            )
 
-        # ایجاد دیالوگ جدید (در صورتی که check_only=False)
-        dialogue = Dialogue.objects.create(is_group=False)
-        dialogue.participants.add(request.user, recipient)
-
-        usernames = sorted([request.user.username, recipient.username])
-        dialogue.slug = Dialogue.generate_dialogue_slug(usernames)
-        dialogue.save()
-
-        DialogueParticipant.objects.create(dialogue=dialogue, user=request.user, role='participant')
-        DialogueParticipant.objects.create(dialogue=dialogue, user=recipient, role='participant')
+        payload = result["payload"]
+        dialogue = payload["dialogue"]
 
         serializer = DialogueSerializer(dialogue, context={"request": request})
-        return Response({
-            'dialogue': serializer.data,
-            'message': 'New dialogue created.'
-        }, status=status.HTTP_201_CREATED)
-
-
+        return Response(
+            {
+                'dialogue': serializer.data,
+                'message': payload["message"],
+            },
+            status=status.HTTP_201_CREATED if payload["created"] else status.HTTP_200_OK
+        )
+        
+        
     # ---------------------------------------
     @action(detail=False, methods=['post'], url_path='create-group', permission_classes=[IsAuthenticated])
     @require_litshield_access("conversation")
@@ -233,39 +387,22 @@ class DialogueViewSet(viewsets.ModelViewSet):
         group_name = data.get('group_name')
         group_image = request.FILES.get('group_image')
 
-        if not group_name:
-            return Response({'error': 'Group name is required.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        if Dialogue.objects.filter(is_group=True, group_name__iexact=group_name.strip()).exists():
-            return Response({'error': 'A group with this name already exists.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        # 1) Create dialogue without image first
-        dialogue = Dialogue.objects.create(
-            is_group=True,
-            group_name=group_name.strip(),
+        result = create_group_dialogue(
+            acting_user=request.user,
+            group_name=group_name,
+            group_image=group_image,
         )
 
-        # 2) Add image + bump version
-        if group_image:
-            dialogue.group_image = group_image
-            dialogue.group_avatar_version = (dialogue.group_avatar_version or 1) + 1
-            dialogue.save(update_fields=["group_image", "group_avatar_version"])
+        if not result.get("ok"):
+            return Response(
+                {'error': result["message"], 'code': result["code"]},
+                status=result["status"]
+            )
 
-        # founder
-        dialogue.participants.add(request.user)
-        DialogueParticipant.objects.create(
-            dialogue=dialogue,
-            user=request.user,
-            role='founder' 
-        )
-
-        # slug
-        usernames = list(dialogue.participants.values_list("username", flat=True))
-        dialogue.slug = Dialogue.generate_dialogue_slug(usernames, group_name)
-        dialogue.save(update_fields=["slug"])
-
+        dialogue = result["payload"]["dialogue"]
         serializer = DialogueSerializer(dialogue, context={"request": request})
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+    
 
     # Update Group Image Action ---------------
     @action(detail=True, methods=["post"], url_path="update-group-image", permission_classes=[IsAuthenticated])
@@ -364,35 +501,24 @@ class DialogueViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='smart-delete', permission_classes=[IsAuthenticated])
     @require_litshield_access("conversation")
     def smart_delete_dialogue(self, request, slug=None):
-        user = request.user
-        dialogue = get_object_or_404(Dialogue, slug=slug, participants=user)
+        dialogue = get_object_or_404(Dialogue, slug=slug, participants=request.user)
 
-        if not dialogue.is_group:
-            dialogue.mark_as_deleted_by_user(user)
-            
-            for msg in dialogue.messages.all():
-                msg.deleted_by_users.add(user)
-                
-            # Hard Delete if...
-            other_participant = dialogue.participants.exclude(id=user.id).first()
-            if other_participant and dialogue.deleted_by_users.filter(id=other_participant.id).exists():
-                Message.objects.filter(dialogue=dialogue).delete()
-                dialogue.delete()
-                return Response({'message': 'Dialogue permanently deleted.'}, status=status.HTTP_200_OK)
-            return Response({'message': 'Private chat deleted from your list.'}, status=status.HTTP_200_OK)
+        result = smart_delete_dialogue_for_user(
+            dialogue=dialogue,
+            acting_user=request.user,
+        )
 
-        participant = DialogueParticipant.objects.filter(dialogue=dialogue, user=user).first()
-        if not participant:
-            return Response({'error': 'You are not a participant of this group.'}, status=status.HTTP_403_FORBIDDEN)
+        if not result.get("ok"):
+            return Response(
+                {'error': result["message"], 'code': result["code"]},
+                status=result["status"]
+            )
 
-        # Complitly Delete by Founder
-        if participant.role == 'founder':
-            Message.objects.filter(dialogue=dialogue).delete()
-            DialogueParticipant.objects.filter(dialogue=dialogue).delete()
-            dialogue.delete()
-            return Response({'message': 'Group permanently deleted.'}, status=status.HTTP_200_OK)
-        send_system_message(dialogue, request.user, 'group_deleted', "Group has been deleted by the founder.")
-        return Response({'error': 'Only the founder can delete the group. To leave, use the leave action.'}, status=status.HTTP_403_FORBIDDEN)
+        payload = result["payload"]
+        return Response(
+            {'message': payload["message"]},
+            status=status.HTTP_200_OK
+        )
 
     # ---------------------------------------
     @action(detail=True, methods=['post'], url_path='add-participant', permission_classes=[IsAuthenticated])
@@ -402,54 +528,49 @@ class DialogueViewSet(viewsets.ModelViewSet):
         participant_id = request.data.get('participant_id')
 
         if not participant_id:
-            return Response({'error': 'Participant ID is required.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'error': 'Participant ID is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         participant = get_object_or_404(CustomUser, pk=participant_id)
-        current_user = request.user
-        current_participant = DialogueParticipant.objects.filter(dialogue=dialogue, user=current_user).first()
-        if not current_participant:
-            return Response({'error': 'You are not a member of this group.'}, status=status.HTTP_403_FORBIDDEN)
 
-        if current_participant.role not in ['founder', 'elder']:
-            return Response({'error': 'Only founders or elders can add new participants.'}, status=status.HTTP_403_FORBIDDEN)
-
-        if dialogue.participants.filter(id=participant.id).exists():
-            return Response({'error': f'{participant.username} is already a member of the group.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        dialogue.participants.add(participant)
-        DialogueParticipant.objects.get_or_create(
+        result = add_group_participant(
             dialogue=dialogue,
-            user=participant,
-            defaults={'role': 'participant'}
+            acting_user=request.user,
+            target_user=participant,
         )
 
-        # Serialize with request user (current_user)
+        if not result.get("ok"):
+            return Response(
+                {'error': result["message"], 'code': result["code"]},
+                status=result["status"]
+            )
+
         serializer = DialogueSerializer(dialogue, context={"request": request})
         json_data = JSONRenderer().render(serializer.data)
         parsed_data = json.loads(json_data)
         parsed_data["my_role"] = "participant"
 
-        # Send over WebSocket
-        channel_layer = get_channel_layer()
-        async_to_sync(channel_layer.group_send)(
+        # 1) Targeted realtime event
+        conv_group_send(
             f"user_{participant.id}",
-            {
-                "type": "dispatch_event",
-                "app": "conversation",
-                "event": "group_added",
-                "data": {
-                    "dialogue": parsed_data
-                }
-            }
+            "group_added",
+            build_group_added_event_data(dialogue=parsed_data),
         )
 
-        send_system_message(dialogue, request.user, 'joined', f"{participant.username} joined the group.")
+        # 2) System message after targeted event
+        send_system_message(
+            dialogue,
+            request.user,
+            "joined",
+            f"{participant.username} joined the group.",
+        )
 
-        # Restore if previously deleted
-        if dialogue.deleted_by_users.filter(id=participant.id).exists():
-            dialogue.deleted_by_users.remove(participant)
-    
-        return Response({'message': f'{participant.username} added to the group.'}, status=status.HTTP_200_OK)
+        return Response(
+            {'message': f'{participant.username} added to the group.'},
+            status=status.HTTP_200_OK
+        )
 
     # ---------------------------------------
     @action(detail=True, methods=['post'], url_path='remove-participant', permission_classes=[IsAuthenticated])
@@ -459,48 +580,49 @@ class DialogueViewSet(viewsets.ModelViewSet):
         participant_id = request.data.get('participant_id')
 
         if not participant_id:
-            return Response({'error': 'Participant ID is required.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'error': 'Participant ID is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         participant = get_object_or_404(CustomUser, pk=participant_id)
-        if not dialogue.is_group_manager(request.user):
-            return Response({'error': 'You are not authorized to remove participants.'}, status=status.HTTP_403_FORBIDDEN)
 
-        participant_role_obj = get_object_or_404(DialogueParticipant, dialogue=dialogue, user=participant)
+        result = remove_group_participant(
+            dialogue=dialogue,
+            acting_user=request.user,
+            target_user=participant,
+        )
 
-        # If Founder...
-        if participant_role_obj.role == 'founder':
-            return Response({'error': 'Cannot remove the founder from the group.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not result.get("ok"):
+            return Response(
+                {'error': result["message"], 'code': result["code"]},
+                status=result["status"]
+            )
 
-        # If Elder...
-        if participant_role_obj.role == 'elder':
-            if not dialogue.has_multiple_elders():
-                return Response({'error': 'Cannot remove the last elder from the group.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        participant_role_obj.delete()
-        dialogue.participants.remove(participant)
-        dialogue.mark_as_deleted_by_user(participant)
-        for msg in dialogue.messages.all():
-            msg.deleted_by_users.add(participant)
-            
-        channel_layer = get_channel_layer()
         serializer = DialogueSerializer(dialogue, context={"request": request})
         json_data = JSONRenderer().render(serializer.data)
         parsed_data = json.loads(json_data)
-        async_to_sync(channel_layer.group_send)(
-            f"user_{participant.id}",
-            {
-                "type": "dispatch_event",
-                "app": "conversation",
-                "event": "group_removed",
-                "data": {
-                    "dialogue": parsed_data
-                }
-            }
-        )
-                  
-        send_system_message(dialogue, request.user, 'removed', f"{participant.username} was removed from the group.")
-        return Response({'message': f'{participant.username} removed from the group.'}, status=status.HTTP_200_OK)
 
+        # 1) Targeted realtime event
+        conv_group_send(
+            f"user_{participant.id}",
+            "group_removed",
+            build_group_removed_event_data(dialogue=parsed_data),
+        )
+
+        # 2) System message after targeted event
+        send_system_message(
+            dialogue,
+            request.user,
+            "removed",
+            f"{participant.username} was removed from the group.",
+        )
+
+        return Response(
+            {'message': f'{participant.username} removed from the group.'},
+            status=status.HTTP_200_OK
+        )
+            
     # ---------------------------------------
     @action(detail=True, methods=['get'], url_path='participants', permission_classes=[IsAuthenticated])
     @require_litshield_access("conversation")
@@ -524,15 +646,31 @@ class DialogueViewSet(viewsets.ModelViewSet):
         if not user_id:
             return Response({'error': 'User ID is required.'}, status=400)
 
-        if not dialogue.is_founder(request.user):
-            return Response({'error': 'Only the founder can promote to elder.'}, status=403)
+        result = promote_group_participant_to_elder(
+            dialogue=dialogue,
+            acting_user=request.user,
+            target_user_id=user_id,
+        )
 
-        participant = get_object_or_404(DialogueParticipant, dialogue=dialogue, user_id=user_id)
-        participant.role = 'elder'
-        participant.save()
-        send_system_message(dialogue, request.user, 'promoted_to_elder', f"{participant.user.username} was promoted to Elder.")
+        if not result.get("ok"):
+            return Response(
+                {'error': result["message"], 'code': result["code"]},
+                status=result["status"]
+            )
+
+        participant_user = result["payload"]["participant"]
+        system_event, system_text = build_group_role_changed_system_text(
+            "promoted_to_elder",
+            participant_user.username,
+        )
+
+        # No special targeted realtime event here.
+        # System message is the canonical chat-stream signal.
+        send_system_message(dialogue, request.user, system_event, system_text)
+
         return Response({'message': 'User promoted to Elder.'}, status=200)
-
+    
+        
     # ---------------------------------------
     @action(detail=True, methods=['post'], url_path='demote-to-participant', permission_classes=[IsAuthenticated])
     @require_litshield_access("conversation")
@@ -543,125 +681,154 @@ class DialogueViewSet(viewsets.ModelViewSet):
         if not user_id:
             return Response({'error': 'User ID is required.'}, status=400)
 
-        if not dialogue.is_founder(request.user):
-            return Response({'error': 'Only the founder can demote elders.'}, status=403)
+        result = demote_group_elder_to_participant(
+            dialogue=dialogue,
+            acting_user=request.user,
+            target_user_id=user_id,
+        )
 
-        participant = get_object_or_404(DialogueParticipant, dialogue=dialogue, user_id=user_id)
+        if not result.get("ok"):
+            return Response(
+                {'error': result["message"], 'code': result["code"]},
+                status=result["status"]
+            )
 
-        if participant.role != 'elder':
-            return Response({'error': 'User is not an elder.'}, status=400)
+        participant_user = result["payload"]["participant"]
+        system_event, system_text = build_group_role_changed_system_text(
+            "demoted_to_participant",
+            participant_user.username,
+        )
 
-        participant.role = 'participant'
-        participant.save()
-        send_system_message(dialogue, request.user, 'demoted_to_participant', f"{participant.user.username} was demoted to Participant.")
+        send_system_message(dialogue, request.user, system_event, system_text)
+
         return Response({'message': 'User demoted to Participant.'}, status=200)
-
+    
+    
     # ---------------------------------------
     @action(detail=True, methods=['post'], url_path='resign-elder-role', permission_classes=[IsAuthenticated])
     @require_litshield_access("conversation")
     def resign_elder_role(self, request, slug=None):
         dialogue = get_object_or_404(Dialogue, slug=slug, is_group=True)
-        user = request.user
 
-        try:
-            participant = DialogueParticipant.objects.get(dialogue=dialogue, user=user)
-        except DialogueParticipant.DoesNotExist:
-            return Response({'error': 'You are not a participant of this group.'}, status=403)
+        result = resign_group_elder_role(
+            dialogue=dialogue,
+            acting_user=request.user,
+        )
 
-        if participant.role != 'elder':
-            return Response({'error': 'You are not an elder.'}, status=400)
+        if not result.get("ok"):
+            return Response(
+                {'error': result["message"], 'code': result["code"]},
+                status=result["status"]
+            )
 
-        participant.role = 'participant'
-        participant.save()
-        send_system_message(dialogue, request.user, 'resigned_from_elder', f"{user.username} resigned from Elder role.")
+        system_event, system_text = build_group_role_changed_system_text(
+            "resigned_from_elder",
+            request.user.username,
+        )
+
+        send_system_message(dialogue, request.user, system_event, system_text)
+
         return Response({'message': 'You stepped down as an Elder.'}, status=200)
 
+    
     # ---------------------------------------
     @action(detail=True, methods=['post'], url_path='leave-group', permission_classes=[IsAuthenticated])
     @require_litshield_access("conversation")
     def leave_group(self, request, slug=None):
-        user = request.user
         dialogue = get_object_or_404(Dialogue, slug=slug, is_group=True)
 
-        participant = DialogueParticipant.objects.filter(dialogue=dialogue, user=user).first()
-        if not participant:
-            return Response({'error': 'You are not a participant of this group.'}, status=status.HTTP_403_FORBIDDEN)
+        result = leave_group_as_participant(
+            dialogue=dialogue,
+            acting_user=request.user,
+        )
 
-        if participant.role == 'founder':
-            return Response({'error': 'Founders cannot leave the group. You must delete the group instead.'}, status=status.HTTP_403_FORBIDDEN)
-
-        if participant.role == 'elder':
-            return Response({'error': 'You must first resign from being an Elder before leaving the group.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        dialogue.leave_group(user)
-        for msg in dialogue.messages.all():
-            msg.deleted_by_users.add(user)
-
-        # Send System Message
-        send_system_message(dialogue, request.user, 'left', f"{user.username} left the group.")
-    
-        channel_layer = get_channel_layer()
-        serialized_user = SimpleCustomUserSerializer(user, context={"request": request}).data
-
-        for participant in dialogue.participants.exclude(id=user.id):
-            async_to_sync(channel_layer.group_send)(
-                f"user_{participant.id}",
-                {
-                    "type": "dispatch_event",
-                    "app": "conversation",
-                    "event": "group_left",
-                    "data": {
-                        "user": serialized_user,
-                        "dialogue_slug": dialogue.slug,
-                    }
-                }
+        if not result.get("ok"):
+            return Response(
+                {'error': result["message"], 'code': result["code"]},
+                status=result["status"]
             )
 
-        return Response({'message': 'You left the group and your chat was removed from the list.'}, status=status.HTTP_200_OK)
+        serialized_user = SimpleCustomUserSerializer(
+            request.user,
+            context={"request": request}
+        ).data
 
+        realtime_data = build_group_left_event_data(
+            user=serialized_user,
+            dialogue_slug=dialogue.slug,
+        )
+
+        # 1) Targeted realtime event first
+        for participant in dialogue.participants.exclude(id=request.user.id):
+            conv_group_send(
+                f"user_{participant.id}",
+                "group_left",
+                realtime_data,
+            )
+
+        # 2) Then system message to dialogue stream
+        send_system_message(
+            dialogue,
+            request.user,
+            "left",
+            f"{request.user.username} left the group.",
+        )
+
+        return Response(
+            {'message': 'You left the group and your chat was removed from the list.'},
+            status=status.HTTP_200_OK
+        )
+                    
     # ---------------------------------------
     @action(detail=True, methods=['post'], url_path='transfer-founder', permission_classes=[IsAuthenticated])
-    @require_litshield_access("conversation") 
+    @require_litshield_access("conversation")
     def transfer_founder(self, request, slug=None):
         dialogue = get_object_or_404(Dialogue, slug=slug, is_group=True)
-
-        if not dialogue.is_founder(request.user):
-            return Response({'error': 'Only founder can transfer founder role.'}, status=403)
-
         new_founder_id = request.data.get('user_id')
+
         if not new_founder_id:
             return Response({'error': 'New founder user_id is required.'}, status=400)
 
-        new_founder = get_object_or_404(DialogueParticipant, dialogue=dialogue, user_id=new_founder_id)
+        result = transfer_group_founder(
+            dialogue=dialogue,
+            acting_user=request.user,
+            new_founder_user_id=new_founder_id,
+        )
 
-        if new_founder.role != 'elder':
-            return Response({'error': 'Only an Elder can be promoted to Founder.'}, status=400)
-
-        # 👑 تغییر نقش‌ها
-        old_founder = get_object_or_404(DialogueParticipant, dialogue=dialogue, user=request.user)
-        old_founder.role = 'participant'
-        old_founder.save()
-
-        new_founder.role = 'founder'
-        new_founder.save()
-        
-        channel_layer = get_channel_layer()
-        for user in dialogue.participants.all():
-            async_to_sync(channel_layer.group_send)(
-                f"user_{user.id}",
-                {
-                    "type": "dispatch_event",
-                    "app": "conversation",
-                    "event": "founder_transferred",
-                    "data": {
-                        "dialogue_slug": dialogue.slug,
-                        "new_founder_id": new_founder.user.id
-                    }
-                }
+        if not result.get("ok"):
+            return Response(
+                {'error': result["message"], 'code': result["code"]},
+                status=result["status"]
             )
 
-        send_system_message(dialogue, request.user, 'founder_transferred', f"Founder role transferred to {new_founder.user.username}.")
-        return Response({'message': 'Founder role transferred successfully. You have left the group.'}, status=200)
+        payload = result["payload"]
+        new_founder = payload["new_founder"]
+
+        realtime_data = build_founder_transferred_event_data(
+            dialogue_slug=dialogue.slug,
+            new_founder_id=new_founder.id,
+        )
+
+        # 1) Targeted realtime event first
+        for user in dialogue.participants.all():
+            conv_group_send(
+                f"user_{user.id}",
+                "founder_transferred",
+                realtime_data,
+            )
+
+        # 2) Then system message
+        send_system_message(
+            dialogue,
+            request.user,
+            "founder_transferred",
+            f"Founder role transferred to {new_founder.username}.",
+        )
+
+        return Response(
+            {'message': 'Founder role transferred successfully. You have left the group.'},
+            status=200
+        )
 
     # Get Last Seen Users -------------------
     @action(detail=True, methods=['get'], url_path='last-seen', permission_classes=[IsAuthenticated])
@@ -727,26 +894,176 @@ class DialogueViewSet(viewsets.ModelViewSet):
 
     # Get Unread Counts -------------------------
     @action(detail=False, methods=["get"], url_path="unread-counts", permission_classes=[IsAuthenticated])
-    # @require_litshield_access("conversation")
     def get_unread_counts(self, request):
         user = request.user
-        dialogues = Dialogue.objects.filter(participants=user)
+        dialogues = Dialogue.objects.filter(participants=user).exclude(deleted_by_users=user)
 
-        unread_data = []
+        results = []
         for dialogue in dialogues:
-            unread_count = Message.objects.filter(
-                dialogue=dialogue
-            ).exclude(seen_by_users=user) \
-            .exclude(sender=user)
-
-            unread_data.append({
+            results.append({
                 "dialogue_slug": dialogue.slug,
-                "unread_count": unread_count.count()
+                "unread_count": dialogue.unread_messages_for_user(user).count(),
             })
 
-        return Response(unread_data)
+        return Response(build_unread_count_snapshot_payload(results))
 
+    # ---------------------------------------
+    @action(detail=True, methods=["post"], url_path="pin-dialogue", permission_classes=[IsAuthenticated])
+    @require_litshield_access("conversation")
+    def pin_dialogue(self, request, slug=None):
+        dialogue = get_object_or_404(Dialogue, slug=slug, participants=request.user)
 
+        result = pin_dialogue_for_user(
+            dialogue=dialogue,
+            acting_user=request.user,
+        )
+
+        if not result.get("ok"):
+            return Response(
+                {"error": result["message"], "code": result["code"]},
+                status=result["status"],
+            )
+
+        device_id = (
+            request.data.get("device_id")
+            or request.query_params.get("device_id")
+            or request.headers.get("X-Device-ID", "")
+        )
+
+        serialized_dialogue = self._serialize_single_dialogue(
+            request=request,
+            dialogue=dialogue,
+            device_id=device_id,
+        )
+
+        # Push realtime update only to the acting user's sessions
+        conv_group_send(
+            f"user_{request.user.id}",
+            "dialogue_pinned",
+            build_dialogue_pinned_event_data(dialogue=serialized_dialogue),
+        )
+
+        return Response(
+            {
+                "message": result["payload"]["message"],
+                "dialogue": serialized_dialogue,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    # ---------------------------------------
+    @action(detail=True, methods=["post"], url_path="unpin-dialogue", permission_classes=[IsAuthenticated])
+    @require_litshield_access("conversation")
+    def unpin_dialogue(self, request, slug=None):
+        dialogue = get_object_or_404(Dialogue, slug=slug, participants=request.user)
+
+        result = unpin_dialogue_for_user(
+            dialogue=dialogue,
+            acting_user=request.user,
+        )
+
+        if not result.get("ok"):
+            return Response(
+                {"error": result["message"], "code": result["code"]},
+                status=result["status"],
+            )
+
+        device_id = (
+            request.data.get("device_id")
+            or request.query_params.get("device_id")
+            or request.headers.get("X-Device-ID", "")
+        )
+
+        serialized_dialogue = self._serialize_single_dialogue(
+            request=request,
+            dialogue=dialogue,
+            device_id=device_id,
+        )
+
+        # Push realtime update only to the acting user's sessions
+        conv_group_send(
+            f"user_{request.user.id}",
+            "dialogue_unpinned",
+            build_dialogue_unpinned_event_data(dialogue=serialized_dialogue),
+        )
+
+        return Response(
+            {
+                "message": result["payload"]["message"],
+                "dialogue": serialized_dialogue,
+            },
+            status=status.HTTP_200_OK,
+        )
+        
+        
+    # Pinned Dialogues ---------------------------------------
+    @action(detail=False, methods=["get"], url_path="pinned-dialogues", permission_classes=[IsAuthenticated])
+    @require_litshield_access("conversation")
+    def pinned_dialogues(self, request):
+        result = list_pinned_dialogues_for_user(
+            acting_user=request.user,
+        )
+
+        if not result.get("ok"):
+            return Response(
+                {"error": result["message"], "code": result["code"]},
+                status=result["status"],
+            )
+
+        pins = result["payload"]["pins"]
+
+        serializer = DialoguePinSerializer(
+            pins,
+            many=True,
+            context={"request": request},
+        )
+
+        return Response(
+            {
+                "count": result["payload"]["count"],
+                "results": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+        
+    # Pinned Messages ---------------------------------------
+    @action(detail=True, methods=["get"], url_path="pinned-messages", permission_classes=[IsAuthenticated])
+    @require_litshield_access("conversation")
+    def pinned_messages(self, request, slug=None):
+        dialogue = get_object_or_404(Dialogue, slug=slug, participants=request.user)
+
+        result = list_pinned_messages_for_dialogue(
+            dialogue=dialogue,
+            acting_user=request.user,
+        )
+
+        if not result.get("ok"):
+            return Response(
+                {"error": result["message"], "code": result["code"]},
+                status=result["status"],
+            )
+
+        device_id = (
+            request.query_params.get("device_id", "")
+            or request.headers.get("X-Device-ID", "")
+        ).strip().lower()
+
+        serializer = MessagePinSerializer(
+            result["payload"]["pins"],
+            many=True,
+            context={"request": request, "device_id": device_id},
+        )
+
+        return Response(
+            {
+                "count": result["payload"]["count"],
+                "results": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+        
+        
+        
 # MESSAGE VIEWSET -------------------------------------------------------------------------
 class MessageViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, ConversationAccessPermission, IsDialogueParticipant]
@@ -763,9 +1080,7 @@ class MessageViewSet(viewsets.ModelViewSet):
 
         dialogue = get_object_or_404(Dialogue, slug=dialogue_slug, participants=request.user)
 
-        messages_query = Message.objects.filter(dialogue=dialogue)\
-            .exclude(deleted_by_users=request.user)\
-            .order_by("-timestamp")
+        messages_query = dialogue.visible_messages_for_user(request.user).order_by("-timestamp")
 
         total_messages = messages_query.count()
         has_more = offset + limit < total_messages
@@ -786,245 +1101,216 @@ class MessageViewSet(viewsets.ModelViewSet):
         }, status=status.HTTP_200_OK)
 
     # -------------------------------------------------------------------------------------------------
-    @action( detail=False, methods=['post'], url_path='send-message', permission_classes=[IsAuthenticated], parser_classes=[JSONParser] )
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path='send-message',
+        permission_classes=[IsAuthenticated],
+        parser_classes=[JSONParser],
+    )
     def send_message(self, request):
         user = request.user
         dialogue_slug = request.data.get("dialogue_slug")
         is_encrypted = bool(request.data.get("is_encrypted", False))
         encrypted_contents = request.data.get("encrypted_contents", [])
+        content = (request.data.get("content") or "").strip()
+        reply_to_message_id = request.data.get("reply_to_message_id")
 
-        # 1) Basic validation
         if not dialogue_slug:
-            return Response({"error": "dialogue_slug is required."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "dialogue_slug is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         dialogue = get_object_or_404(Dialogue, slug=dialogue_slug, participants=user)
 
-        # Un-delete if the user had deleted this dialogue
-        if dialogue.deleted_by_users.filter(id=user.id).exists():
-            dialogue.deleted_by_users.remove(user)
+        # Re-open dialogue on first outgoing message if needed.
+        dialogue.release_inbound_block_on_outgoing(user)
 
-        # 2) Enforce sender PoP (only for DMs by default; configurable in settings)
+        recipient_hidden_on_incoming = False
+        recipient = None
+
+        # Private chat restore/hide logic.
+        if not dialogue.is_group:
+            recipient = dialogue.participants.exclude(id=user.id).first()
+            if recipient:
+                if dialogue.should_restore_on_incoming_for_user(recipient):
+                    dialogue.restore_dialogue(recipient)
+
+                recipient_hidden_on_incoming = dialogue.should_hide_incoming_for_user(recipient)
+
+        # Sender PoP.
         header_device = (request.headers.get("X-Device-ID") or "").strip().lower()
         if not header_device:
-            return Response({"error": "X-Device-ID header is required."}, status=status.HTTP_400_BAD_REQUEST)
-
-        # NOTE: This enforces only for DMs if REQUIRE_SENDER_VERIFIED_DMS_ONLY=True (default).
-        #       For groups it returns True unless you change settings to enforce globally.
-        if not is_sender_device_verified(user, header_device, dialogue_is_group=bool(dialogue.is_group)):
-            # Hard-block (recommended for DMs). Replace with logging if you want a soft rollout.
             return Response(
-                {"error": "Sender device is not verified.", "code": "SENDER_DEVICE_UNVERIFIED"},
+                {"error": "X-Device-ID header is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not is_sender_device_verified(
+            user,
+            header_device,
+            dialogue_is_group=bool(dialogue.is_group),
+        ):
+            return Response(
+                {
+                    "error": "Sender device is not verified.",
+                    "code": "SENDER_DEVICE_UNVERIFIED",
+                },
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # 3) Group vs DM handling
+        result = create_text_message(
+            dialogue=dialogue,
+            sender=user,
+            is_encrypted=is_encrypted,
+            content=content,
+            encrypted_contents=encrypted_contents,
+            recipient_hidden_on_incoming=recipient_hidden_on_incoming,
+            recipient=recipient,
+            reply_to_message_id=reply_to_message_id,
+        )
+
+        if not result.get("ok"):
+            return Response(
+                {"error": result["message"], "code": result["code"]},
+                status=result["status"],
+            )
+
+        payload = result["payload"]
+        message = payload["message"]
+
+        # IMPORTANT:
+        # REST is the single creation path.
+        # After successful REST creation, backend broadcasts the canonical realtime event.
+        # This fixes iOS live group delivery without sending a second websocket create event.
         if dialogue.is_group:
-            # Group messages must NOT be encrypted (server-side stores base64-encoded bytes)
-            if is_encrypted:
-                return Response({"error": "Group messages should not be encrypted."}, status=status.HTTP_400_BAD_REQUEST)
-
-            content = (request.data.get("content") or "").strip()
-            if not content:
-                return Response({"error": "Message content is required for group chat."}, status=status.HTTP_400_BAD_REQUEST)
-
-            # Store as base64 bytes for uniformity with encrypted storage
-            base64_str = base64.b64encode(content.encode("utf-8")).decode("utf-8")
-            content_bytes = base64_str.encode("utf-8")
-
-            message = Message.objects.create(
-                dialogue=dialogue,
-                sender=user,
-                content_encrypted=content_bytes,
-            )
-
-        else:
-            # DM path: client-side E2EE is required
-            if not is_encrypted:
-                return Response({"error": "DM messages must be encrypted on client."}, status=status.HTTP_400_BAD_REQUEST)
-
-            if not encrypted_contents or not isinstance(encrypted_contents, list):
-                return Response({"error": "encrypted_contents must be a non-empty list."}, status=status.HTTP_400_BAD_REQUEST)
-
-            # Create message shell first (content is placeholder)
-            message = Message.objects.create(
-                dialogue=dialogue,
-                sender=user,
-                content_encrypted=b"[Encrypted]",
-            )
-
-            # 4) Sanitize and dedupe encrypted_contents by device_id
-            #    Keep the first occurrence per device_id (stable behavior)
-            seen = set()
-            to_create = []
-            for enc in encrypted_contents:
-                device_id = (enc.get("device_id") or "").strip().lower()
-                encrypted_content = enc.get("encrypted_content")
-
-                # Skip invalid entries
-                if not device_id or not encrypted_content or not isinstance(encrypted_content, str):
-                    continue
-                if device_id in seen:
-                    continue
-                seen.add(device_id)
-
-                to_create.append(
-                    MessageEncryption(
-                        message=message,
-                        device_id=device_id,
-                        encrypted_content=encrypted_content,
-                    )
+            transaction.on_commit(
+                lambda: broadcast_group_text_message(
+                    message=message,
+                    dialogue_slug=dialogue.slug,
+                    plain_text=content,
                 )
-
-            if not to_create:
-                # If nothing valid remains, roll back message creation for cleanliness
-                message.delete()
-                return Response({"error": "No valid encrypted contents."}, status=status.HTTP_400_BAD_REQUEST)
-
-            # (Optional) impose a safe upper bound to avoid abuse (e.g., 200 devices)
-            MAX_PER_MESSAGE = 500
-            if len(to_create) > MAX_PER_MESSAGE:
-                to_create = to_create[:MAX_PER_MESSAGE]
-
-            MessageEncryption.objects.bulk_create(to_create)
-
-        # 5) Finalize dialogue metadata
-        dialogue.last_message = message
-        dialogue.save(update_fields=["last_message"])
+            )
 
         return Response(
             {
-                "dialogue_slug": dialogue.slug,
-                "message_id": message.id,
-                "websocket_url": get_websocket_url(request, dialogue.slug), 
+                "dialogue_slug": payload["dialogue_slug"],
+                "message_id": payload["message_id"],
+                "websocket_url": get_websocket_url(request),
             },
             status=status.HTTP_201_CREATED,
         )
-
+    
+    
     # -------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='upload-file', permission_classes=[IsAuthenticated], parser_classes=[MultiPartParser, FormParser])
     def upload_file(self, request):
         user = request.user
         dialogue_slug = request.data.get("dialogue_slug")
         uploaded_file = request.FILES.get("file")
+        reply_to_message_id = request.data.get("reply_to_message_id")
 
-        # --- Basic validations -----------------------------------------------------
-        if not dialogue_slug or not uploaded_file:
-            return Response({"error": "Dialogue slug and file are required."}, status=status.HTTP_400_BAD_REQUEST)
+        if not dialogue_slug:
+            return Response(
+                {"error": "Dialogue slug is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-        MAX_FILE_SIZE = 1000 * 1024 * 1024  # 1000 MB
-        if uploaded_file.size > MAX_FILE_SIZE:
-            return Response({"error": "File too large. Max size is 1000MB."}, status=status.HTTP_400_BAD_REQUEST)
+        validation = validate_upload_input(uploaded_file=uploaded_file)
+        if not validation.get("ok"):
+            return Response(
+                {"error": validation["message"], "code": validation["code"]},
+                status=validation["status"],
+            )
 
-        file_name = (uploaded_file.name or "").lower()
-        file_type = uploaded_file.content_type or "application/octet-stream"
-
-        if is_unsafe_file(file_name):
-            return Response({"error": "This file type is not allowed for security reasons."}, status=status.HTTP_400_BAD_REQUEST)
-
-        field_name = validate_file_type(file_name, file_type)
-        if not field_name:
-            return Response({"error": f"Unsupported file type: {file_type}"}, status=status.HTTP_400_BAD_REQUEST)
+        validation_payload = validation["payload"]
+        field_name = validation_payload["field_name"]
+        file_type = validation_payload["file_type"]
 
         dialogue = get_object_or_404(Dialogue, slug=dialogue_slug, participants=user)
 
-        # If user had deleted the dialogue, revive it on new activity
-        if dialogue.deleted_by_users.filter(id=user.id).exists():
-            dialogue.deleted_by_users.remove(user)
+        # Re-open dialogue on first outgoing file
+        dialogue.release_inbound_block_on_outgoing(user)
 
-        # --- Sender PoP enforcement (DMs by default; groups bypass unless configured) ---
+        recipient_hidden_on_incoming = False
+        recipient = None
+
+        if not dialogue.is_group:
+            recipient = dialogue.participants.exclude(id=user.id).first()
+            if recipient:
+                if dialogue.should_restore_on_incoming_for_user(recipient):
+                    dialogue.restore_dialogue(recipient)
+
+                recipient_hidden_on_incoming = dialogue.should_hide_incoming_for_user(recipient)
+
+        # Sender PoP
         header_device = (request.headers.get("X-Device-ID") or "").strip().lower()
         if not header_device:
-            return Response({"error": "X-Device-ID header is required."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "X-Device-ID header is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         if not is_sender_device_verified(user, header_device, dialogue_is_group=bool(dialogue.is_group)):
             return Response(
-                {"error": "Sender device is not verified.", "code": "SENDER_DEVICE_UNVERIFIED"},
+                {
+                    "error": "Sender device is not verified.",
+                    "code": "SENDER_DEVICE_UNVERIFIED",
+                },
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # --- E2EE flags & inputs ---------------------------------------------------
-        is_encrypted_file = str(request.data.get("is_encrypted_file", "")).strip().lower() in ("true", "1", "yes")
-        aes_key_encrypted_main = request.data.get("aes_key_encrypted")
-        encrypted_for_device = (request.data.get("encrypted_for_device") or "").strip().lower()  # normalize
+        encrypted_prepare = prepare_encrypted_file_request(
+            is_encrypted_file=str(request.data.get("is_encrypted_file", "")).strip().lower() in ("true", "1", "yes"),
+            encrypted_for_device=request.data.get("encrypted_for_device"),
+            aes_key_encrypted=request.data.get("aes_key_encrypted"),
+            encrypted_keys_per_device=request.data.get("encrypted_keys_per_device"),
+        )
 
-        # Policy: group messages must NOT be client-encrypted; DMs MUST be client-encrypted
-        if dialogue.is_group and is_encrypted_file:
-            return Response({"error": "Group files must not be client-encrypted."}, status=status.HTTP_400_BAD_REQUEST)
-        if (not dialogue.is_group) and (not is_encrypted_file):
-            return Response({"error": "DM file uploads must be end-to-end encrypted."}, status=status.HTTP_400_BAD_REQUEST)
-
-        # --- Case 1: Group OR non-encrypted file in general (only groups allowed here) ---
-        if dialogue.is_group:
-            message = Message.objects.create(
-                dialogue=dialogue,
-                sender=user,
-                is_encrypted_file=False,
-                **{field_name: uploaded_file},
+        if not encrypted_prepare.get("ok"):
+            return Response(
+                {"error": encrypted_prepare["message"], "code": encrypted_prepare["code"]},
+                status=encrypted_prepare["status"],
             )
 
-        # --- Case 2: DM + client-side E2EE file upload ----------------------------------
-        else:
-            # Basic required E2EE fields
-            if not aes_key_encrypted_main or not encrypted_for_device:
-                return Response({"error": "Missing E2EE fields: aes_key_encrypted and encrypted_for_device."}, status=status.HTTP_400_BAD_REQUEST)
+        encrypted_payload = encrypted_prepare["payload"]
 
-            # Decode the main AES key (encrypted with recipient device's public key)
-            try:
-                aes_key_bytes = base64.b64decode(aes_key_encrypted_main.encode("utf-8"))
-            except Exception:
-                return Response({"error": "Invalid base64 for aes_key_encrypted."}, status=status.HTTP_400_BAD_REQUEST)
+        result = create_file_message(
+            dialogue=dialogue,
+            sender=user,
+            uploaded_file=uploaded_file,
+            field_name=field_name,
+            is_encrypted_file=encrypted_payload["is_encrypted_file"],
+            encrypted_for_device=encrypted_payload["encrypted_for_device"],
+            aes_key_encrypted_bytes=encrypted_payload["aes_key_encrypted_bytes"],
+            encrypted_keys_per_device=encrypted_payload["encrypted_keys_per_device"],
+            recipient_hidden_on_incoming=recipient_hidden_on_incoming,
+            recipient=recipient,
+            reply_to_message_id=reply_to_message_id,
+        )
 
-            message = Message.objects.create(
-                dialogue=dialogue,
-                sender=user,
-                is_encrypted_file=True,
-                encrypted_for_device=encrypted_for_device,  # normalized device_id
-                aes_key_encrypted=aes_key_bytes,
-                **{field_name: uploaded_file},
+        if not result.get("ok"):
+            return Response(
+                {"error": result["message"], "code": result["code"]},
+                status=result["status"],
             )
 
-            # Optional: per-device key envelopes (JSON dict: {device_id: encrypted_key})
-            encrypted_keys_json = request.data.get("encrypted_keys_per_device")
-            if encrypted_keys_json:
-                try:
-                    payload = json.loads(encrypted_keys_json)
-                    if isinstance(payload, dict):
-                        seen = set()
-                        to_create = []
-                        for dev_id, enc_key in payload.items():
-                            did = (str(dev_id or "").strip().lower())
-                            enc = enc_key if isinstance(enc_key, str) else None
-                            if not did or not enc:
-                                continue
-                            if did in seen:
-                                continue
-                            seen.add(did)
-                            to_create.append(
-                                MessageEncryption(message=message, device_id=did, encrypted_content=enc)
-                            )
-                        if to_create:
-                            # Optional upper bound
-                            MAX_PER_MESSAGE = 500
-                            MessageEncryption.objects.bulk_create(to_create[:MAX_PER_MESSAGE])
-                except Exception as e:
-                    # Non-fatal: we keep the message but report parsing error
-                    logger.error("❌ Failed to parse/store per-device keys:", e)
+        payload = result["payload"]
+        message = payload["message"]
 
-        # --- Finalize dialogue metadata --------------------------------------------
-        dialogue.last_message = message
-        dialogue.save(update_fields=["last_message"])
-
-        # file_url = request.build_absolute_uri(getattr(message, field_name).url)
         stored_file = getattr(message, field_name)
-        file_url = stored_file.url if not message.is_encrypted_file else None
+        file_key = getattr(stored_file, "name", None)
+        file_url = get_file_url(file_key) if (file_key and not message.is_encrypted_file) else None
 
         return Response(
             {
                 "file_url": file_url,
-                "message_id": message.id,
+                "message_id": payload["message_id"],
                 "file_type": file_type,
-                "dialogue_slug": dialogue.slug,
+                "dialogue_slug": payload["dialogue_slug"],
                 "is_encrypted_file": bool(message.is_encrypted_file),
+                "websocket_url": get_websocket_url(request),
             },
             status=status.HTTP_201_CREATED,
         )
@@ -1076,213 +1362,193 @@ class MessageViewSet(viewsets.ModelViewSet):
         )
 
 
-
     # Edit Message -----------------------------------------------------------------------------------------
     @action(detail=True, methods=['post'], url_path='edit-message', permission_classes=[IsAuthenticated])
     def edit_message(self, request, pk=None):
         try:
             logger.info(">> [EDIT] Starting edit_message for pk=%s user=%s", pk, request.user)
 
-            # 1) Load & basic ownership check
-            message = get_object_or_404(Message, pk=pk, sender=request.user)
+            message = get_object_or_404(
+                Message.objects.select_related("dialogue", "sender"),
+                pk=pk
+            )
             dialogue = message.dialogue
             is_group = bool(dialogue.is_group)
-            logger.info(">> [EDIT] Dialogue=%s Group=%s", dialogue.slug, is_group)
 
-            if not message.can_edit():
-                return Response({'error': 'You can only edit messages within 12 hours of sending.'},
-                                status=status.HTTP_403_FORBIDDEN)
-
-            # 2) Verify device PoP
+            # Verify device PoP
             header_device = (request.headers.get("X-Device-ID") or "").strip().lower()
             if not header_device:
-                logger.error(">> [EDIT] Missing device header")
-                return Response({"error": "X-Device-ID header is required."}, status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    {"error": "X-Device-ID header is required."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
-            if not is_sender_device_verified(request.user, header_device, dialogue_is_group=is_group):
-                logger.error(">> [EDIT] Device not verified")
-                return Response({"error": "Sender device is not verified.",
-                                "code": "SENDER_DEVICE_UNVERIFIED"},
-                                status=status.HTTP_403_FORBIDDEN)
+            if not is_sender_device_verified(
+                request.user,
+                header_device,
+                dialogue_is_group=is_group,
+            ):
+                return Response(
+                    {
+                        "error": "Sender device is not verified.",
+                        "code": "SENDER_DEVICE_UNVERIFIED",
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
 
-            # 3) Handle edit
-            encrypted_contents = request.data.get('encrypted_contents', [])
-            logger.info(">> [EDIT] encrypted_contents=%s", encrypted_contents)
-
-            new_content = None
-
-            if is_group:
-                new_content = (request.data.get("content") or "").strip()
-                logger.info(">> [EDIT] new_content=%s", new_content)
-
-                if not new_content:
-                    return Response({'error': 'Message content cannot be empty.'},
-                                    status=status.HTTP_400_BAD_REQUEST)
-
-                base64_str = base64.b64encode(new_content.encode("utf-8")).decode("utf-8")
-                message.content_encrypted = base64_str.encode("utf-8")
-                message.edited_at = timezone.now()
-                message.is_edited = True
-                message.encrypted_for_device = None
-                message.aes_key_encrypted = None
-                message.save()
-
-            else:
-                # DM encrypted version
-                if not isinstance(encrypted_contents, list) or not encrypted_contents:
-                    logger.error(">> [EDIT] Invalid encrypted_contents")
-                    return Response({'error': 'Missing or invalid encrypted_contents for private chat.'},
-                                    status=status.HTTP_400_BAD_REQUEST)
-
-                MessageEncryption.objects.filter(message=message).delete()
-
-                message.content_encrypted = b"[Encrypted]"
-                message.edited_at = timezone.now()
-                message.is_edited = True
-                message.save()
-
-                seen = set()
-                to_create = []
-                for enc in encrypted_contents:
-                    device_id = (enc.get('device_id') or '').strip().lower()
-                    encrypted_content = enc.get('encrypted_content')
-
-                    if not device_id or not encrypted_content:
-                        logger.warning(">> [EDIT] Skipped invalid entry: %s", enc)
-                        continue
-
-                    if device_id not in seen:
-                        seen.add(device_id)
-                        to_create.append(
-                            MessageEncryption(
-                                message=message,
-                                device_id=device_id,
-                                encrypted_content=encrypted_content
-                            )
-                        )
-
-                MessageEncryption.objects.bulk_create(to_create)
-
-            # ------------------------------------------------------------------
-            # 4) WebSocket broadcast
-            # ------------------------------------------------------------------
-            logger.info(">> [EDIT] Broadcasting edit_message event to WS group=%s", dialogue.slug)
-
-            channel_layer = get_channel_layer()
-            async_to_sync(channel_layer.group_send)(
-                f"dialogue_{dialogue.slug}",
-                {
-                    "type": "dispatch_event",   # consumer این را تبدیل می‌کند به WS envelope
-                    "app": "conversation",
-                    "event": "edit_message",
-                    "data": {
-                        "dialogue_slug": dialogue.slug,
-                        "edited_at": message.edited_at.isoformat(),
-                        "is_encrypted": not is_group,
-                        "is_edited": True,
-                        "encrypted_contents": encrypted_contents if not is_group else None,
-                        "new_content": new_content if is_group else None,
-                    }
-                }
+            result = edit_message_content(
+                message_id=message.id,
+                acting_user=request.user,
+                new_content=(request.data.get("content") or "").strip(),
+                encrypted_contents=request.data.get("encrypted_contents", []),
             )
 
+            if not result.get("ok"):
+                return Response(
+                    {"error": result["message"], "code": result["code"]},
+                    status=result["status"],
+                )
 
-            logger.info(">> [EDIT] Completed successfully")
-            return Response({'message': 'Message edited successfully.'}, status=status.HTTP_200_OK)
+            payload = result["payload"]
+
+            # Group edit -> broadcast one canonical group payload
+            if payload["is_group"]:
+                conv_group_send(
+                    f"dialogue_{payload['dialogue_slug']}",
+                    "edit_message",
+                    build_group_edit_message_data(payload=payload),
+                )
+            else:
+                # DM edit -> broadcast per-device canonical payload
+                participants = list(dialogue.participants.all())
+                participant_ids = [p.id for p in participants]
+
+                user_device_map = {}
+                for uid in participant_ids:
+                    user_device_map[uid] = set(
+                        UserDeviceKey.objects.filter(user_id=uid, is_active=True)
+                        .values_list("device_id", flat=True)
+                    )
+
+                for enc in payload.get("encrypted_contents", []):
+                    device_id = enc["device_id"]
+                    encrypted_blob = enc["encrypted_content"]
+
+                    edit_data = build_dm_edit_message_data(
+                        payload=payload,
+                        device_id=device_id,
+                        encrypted_content=encrypted_blob,
+                    )
+
+                    for participant in participants:
+                        participant_device_ids = user_device_map.get(participant.id, set())
+                        if device_id not in participant_device_ids:
+                            continue
+
+                        conv_group_send(
+                            f"user_device_{participant.id}_{device_id}",
+                            "edit_message",
+                            edit_data,
+                        )
+
+            return Response(
+                {"message": "Message edited successfully."},
+                status=status.HTTP_200_OK
+            )
 
         except Exception as e:
             logger.exception("‼️ ERROR DURING edit_message(): %s", e)
-            return Response({'error': 'Internal server error', 'details': str(e)},
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-
+            return Response(
+                {"error": "Internal server error", "details": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
         
+
     # Mark As Delivered  -----------------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='mark-as-delivered')
     def mark_as_delivered(self, request):
-        message_id = request.data.get("message_id")
-        dialogue_slug = request.data.get("dialogue_slug")
+        result = mark_message_delivered_for_user(
+            request.data.get("dialogue_slug"),
+            request.data.get("message_id"),
+            request.user,
+        )
 
-        if not message_id or not dialogue_slug:
+        if not result.get("ok"):
             return Response(
-                {'error': 'message_id and dialogue_slug are required.'},
-                status=status.HTTP_400_BAD_REQUEST
+                {"error": result["message"], "code": result["code"]},
+                status=result["status"]
             )
 
-        try:
-            dialogue = get_object_or_404(Dialogue, slug=dialogue_slug, participants=request.user)
-            message = get_object_or_404(Message, id=message_id, dialogue=dialogue)
+        payload = result["payload"]
 
-            user = request.user
-            if user not in dialogue.participants.all():
-                return Response({'error': 'Not a participant.'}, status=status.HTTP_403_FORBIDDEN)
+        realtime_data = build_delivery_event_data(
+            dialogue_slug=payload["dialogue_slug"],
+            message_id=payload["message_id"],
+            user_id=payload["user_id"],
+            is_delivered=payload["is_delivered"],
+        )
 
-            if message.sender_id == user.id:
-                return Response({'error': 'Sender cannot ack delivered.'}, status=status.HTTP_403_FORBIDDEN)
+        conv_group_send(
+            f"user_{payload['sender_id']}",
+            "mark_as_delivered",
+            realtime_data,
+        )
 
-            if not message.is_delivered:
-                message.is_delivered = True
-                message.save(update_fields=["is_delivered"])
+        conv_group_send(
+            f"dialogue_{payload['dialogue_slug']}",
+            "mark_as_delivered",
+            realtime_data,
+        )
 
-            # broadcast to sender
-            channel_layer = get_channel_layer()
-            async_to_sync(channel_layer.group_send)(
-                f"user_{message.sender_id}",
-                {
-                    "type": "dispatch_event",
-                    "app": "conversation",
-                    "event": "mark_as_delivered",
-                    "data": {
-                        "dialogue_slug": dialogue.slug,
-                        "message_id": message.id,
-                        "user_id": user.id,
-                    }
-                }
-            )
-
-            # broadcast to dialogue group (optional)
-            async_to_sync(channel_layer.group_send)(
-                f"dialogue_{dialogue.slug}",
-                {
-                    "type": "dispatch_event",
-                    "app": "conversation",
-                    "event": "mark_as_delivered",
-                    "data": {
-                        "dialogue_slug": dialogue.slug,
-                        "message_id": message.id,
-                        "user_id": user.id,
-                    }
-                }
-            )
-
-
-            return Response({'message': 'Message marked as delivered.'}, status=status.HTTP_200_OK)
-
-        except Http404:
-            return Response({'error': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+        return Response(
+            {"message": "Message marked as delivered."},
+            status=status.HTTP_200_OK
+        )
+                
 
     # Mark As Read  --------------------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='mark-as-read')
     def mark_as_read(self, request):
-        message_ids = request.data.get("message_ids")
         dialogue_slug = request.data.get("dialogue_slug")
         user = request.user
 
-        if not isinstance(message_ids, list) or not dialogue_slug:
-            return Response({'error': 'message_ids (list) and dialogue_slug are required.'}, status=status.HTTP_400_BAD_REQUEST)
+        result = mark_dialogue_read_for_user(dialogue_slug, user)
 
-        dialogue = get_object_or_404(Dialogue, slug=dialogue_slug, participants=user)
-        messages = Message.objects.filter(id__in=message_ids, dialogue=dialogue)
+        if not result.get("ok"):
+            return Response(
+                {'error': result["message"], 'code': result["code"]},
+                status=result["status"]
+            )
 
-        for msg in messages:
-            if user != msg.sender and user not in msg.seen_by_users.all():
-                msg.seen_by_users.add(user)
+        payload = result["payload"]
+        realtime_data = build_mark_as_read_realtime_payload(payload)
 
-        return Response({'message': 'Messages marked as read.'}, status=status.HTTP_200_OK)
+        participant_ids = list(
+            Dialogue.objects.get(slug=payload["dialogue_slug"], participants=user)
+            .participants.exclude(id=user.id)
+            .values_list("id", flat=True)
+        )
+
+        for uid in participant_ids:
+            conv_group_send(
+                f"user_{uid}",
+                "mark_as_read",
+                realtime_data,
+            )
+
+        conv_group_send(
+            f"dialogue_{payload['dialogue_slug']}",
+            "mark_as_read",
+            realtime_data,
+        )
+
+        return Response(
+            {
+                'message': 'Messages marked as read.',
+                'read_messages': payload.get("read_messages", []),
+            },
+            status=status.HTTP_200_OK
+        )
 
     # Seen by -----------------------------------------------------------------------------------------
     @action(detail=True, methods=['get'], url_path='seen-by', permission_classes=[IsAuthenticated])
@@ -1317,41 +1583,76 @@ class MessageViewSet(viewsets.ModelViewSet):
     # Soft Delete Message ----------------------------------------------------------------------------------
     @action(detail=True, methods=['post'], url_path='soft-delete', permission_classes=[IsAuthenticated])
     def soft_delete_message(self, request, pk=None):
-        message = get_object_or_404(Message, pk=pk)
-        user = request.user
+        result = soft_delete_message_for_user(
+            message_id=pk,
+            acting_user=request.user,
+        )
 
-        if user in message.deleted_by_users.all():
-            return Response({'error': 'Message already deleted from your chat.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not result.get("ok"):
+            return Response(
+                {'error': result["message"], 'code': result["code"]},
+                status=result["status"]
+            )
 
-        message.mark_as_deleted_by_user(user)
-        return Response({'message': 'Message soft deleted successfully.'}, status=status.HTTP_200_OK)
+        payload = result["payload"]
+        realtime_data = build_message_soft_deleted_realtime_payload(payload)
+
+        conv_group_send(
+            f"user_{request.user.id}",
+            "message_soft_deleted",
+            realtime_data,
+        )
+
+        conv_group_send(
+            f"user_{request.user.id}",
+            "trigger_unread_count_update",
+            {},
+        )
+
+        return Response(
+            {'message': 'Message soft deleted successfully.'},
+            status=status.HTTP_200_OK
+        )
 
 
     # Hard Delete Message ----------------------------------------------------------------------------------
     @action(detail=True, methods=['post'], url_path='hard-delete', permission_classes=[IsAuthenticated])
     def hard_delete_message(self, request, pk=None):
-        message = get_object_or_404(Message, pk=pk)
-        user = request.user
+        result = hard_delete_message_for_user(
+            message_id=pk,
+            acting_user=request.user,
+        )
 
-        is_sender = message.sender == user
-        is_unseen = not message.seen_by_users.exclude(id=message.sender.id).exists()
-        is_group_manager = message.dialogue.is_group and message.dialogue.is_group_manager(user)
+        if not result.get("ok"):
+            return Response(
+                {"error": result["message"], "code": result["code"]},
+                status=result["status"]
+            )
 
-        if (is_sender and is_unseen) or is_group_manager:
-            if message.image:
-                message.image.delete(save=False)
-            if message.video:
-                message.video.delete(save=False)
-            if message.audio:
-                message.audio.delete(save=False)
-            if message.file:
-                message.file.delete(save=False)
+        payload = result["payload"]
 
-            message.delete()
-            return Response({'message': 'Message permanently deleted.'}, status=status.HTTP_200_OK)
+        realtime_data = build_hard_delete_event_data(
+            dialogue_slug=payload["dialogue_slug"],
+            message_id=payload["message_id"],
+        )
 
-        return Response({'error': 'You are not allowed to permanently delete this message.'}, status=status.HTTP_403_FORBIDDEN)
-    
+        for uid in payload["participant_ids"]:
+            conv_group_send(
+                f"user_{uid}",
+                "message_hard_deleted",
+                realtime_data,
+            )
+
+            conv_group_send(
+                f"user_{uid}",
+                "trigger_unread_count_update",
+                {},
+            )
+
+        return Response(
+            {"message": "Message permanently deleted."},
+            status=status.HTTP_200_OK
+        )
 
     # Search Messages -----------------------------------------------------------------------------------------
     @action(detail=True, methods=["get"], url_path="search-messages", permission_classes=[IsAuthenticated])
@@ -1373,7 +1674,8 @@ class MessageViewSet(viewsets.ModelViewSet):
             )
             messages = (
                 Message.objects
-                .filter(id__in=matching_message_ids, is_system=False)
+                .filter(id__in=matching_message_ids, is_system=False, dialogue=dialogue)
+                .exclude(deleted_by_users=request.user)
                 .order_by("-timestamp")[:100]
             )
 
@@ -1395,13 +1697,300 @@ class MessageViewSet(viewsets.ModelViewSet):
         if not message.dialogue.participants.filter(id=request.user.id).exists():
             return Response({"error": "Access denied."}, status=403)
 
+        if message.deleted_by_users.filter(id=request.user.id).exists():
+            return Response({"error": "Message not found."}, status=404)
+
         serializer = MessageSerializer(message, context={"request": request})
         return Response(serializer.data)
 
+    # Pin Message -------------------------------------------------------------------------------------------
+    @action(detail=True, methods=["post"], url_path="pin-message", permission_classes=[IsAuthenticated])
+    def pin_message(self, request, pk=None):
+        pin_duration = (request.data.get("pin_duration") or "none").strip()
+        reminders_enabled = bool(request.data.get("reminders_enabled", False))
+
+        result = pin_message_for_dialogue(
+            message_id=pk,
+            acting_user=request.user,
+            pin_duration=pin_duration,
+            reminders_enabled=reminders_enabled,
+        )
+
+        if not result.get("ok"):
+            return Response(
+                {"error": result["message"], "code": result["code"]},
+                status=result["status"],
+            )
+
+        pin = result["payload"]["pin"]
+        dialogue = result["payload"]["dialogue"]
+
+        realtime_data = build_message_pin_event_data(pin=pin)
+
+        for uid in dialogue.participants.values_list("id", flat=True):
+            conv_group_send(
+                f"user_{uid}",
+                "message_pinned",
+                realtime_data,
+            )
+
+        return Response(
+            {
+                "message": result["payload"]["result_message"],
+                "pin": MessagePinSerializer(
+                    pin,
+                    context={"request": request},
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    # Unpin Message -----------------------------------------------------------------------------------------
+    @action(detail=True, methods=["post"], url_path="unpin-message", permission_classes=[IsAuthenticated])
+    def unpin_message(self, request, pk=None):
+        result = unpin_message_for_dialogue(
+            message_id=pk,
+            acting_user=request.user,
+        )
+
+        if not result.get("ok"):
+            return Response(
+                {"error": result["message"], "code": result["code"]},
+                status=result["status"],
+            )
+
+        dialogue = result["payload"]["dialogue"]
+        message = result["payload"]["message"]
+
+        realtime_data = build_message_unpin_event_data(
+            dialogue_slug=dialogue.slug,
+            message_id=message.id,
+        )
+
+        for uid in dialogue.participants.values_list("id", flat=True):
+            conv_group_send(
+                f"user_{uid}",
+                "message_unpinned",
+                realtime_data,
+            )
+
+        return Response(
+            {
+                "message": result["payload"]["result_message"],
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    # Forward Message ----------------------------------------------------------------------------------------
+    @action(detail=False, methods=['post'], url_path='forward-message', permission_classes=[IsAuthenticated])
+    def forward_message(self, request):
+        source_message_id = request.data.get("source_message_id")
+        target_dialogue_slug = (request.data.get("target_dialogue_slug") or "").strip()
+
+        result = create_forwarded_message_backend_assisted(
+            source_message_id=source_message_id,
+            target_dialogue_slug=target_dialogue_slug,
+            acting_user=request.user,
+        )
+
+        if not result.get("ok"):
+            return Response(
+                {
+                    "error": result["message"],
+                    "code": result["code"],
+                    "extra": result.get("extra", {}),
+                },
+                status=result["status"],
+            )
+
+        payload = result["payload"]
+        message = payload["message"]
+        dialogue = payload["dialogue"]
+
+        # Group target is the only backend-assisted mode for now
+        if payload["kind"] == "text":
+            plain_text = ""
+            try:
+                raw = message.content_encrypted
+                if isinstance(raw, memoryview):
+                    raw = raw.tobytes()
+                if isinstance(raw, bytes):
+                    raw = raw.decode("utf-8", errors="ignore")
+                plain_text = base64.b64decode(raw).decode("utf-8")
+            except Exception:
+                plain_text = ""
+
+            realtime_data = build_group_chat_message_data(
+                message=message,
+                plain_text=plain_text,
+                reply_preview=None,
+                forward_preview=build_forward_preview(message=message),
+            )
+
+            for uid in dialogue.participants.values_list("id", flat=True):
+                conv_group_send(
+                    f"user_{uid}",
+                    "chat_message",
+                    realtime_data,
+                )
+
+            for uid in dialogue.participants.exclude(id=request.user.id).values_list("id", flat=True):
+                conv_group_send(
+                    f"user_{uid}",
+                    "unread_count_update",
+                    {
+                        "payload": [
+                            {
+                                "dialogue_slug": dialogue.slug,
+                                "unread_count": 1,
+                                "sender_id": request.user.id,
+                            }
+                        ]
+                    },
+                )
+
+        else:
+            file_field = payload.get("file_field")
+            file_type = file_field or "file"
+
+            file_url = None
+            if file_field:
+                stored_field = getattr(message, file_field, None)
+                file_key = getattr(stored_field, "name", None) if stored_field else None
+                file_url = get_file_url(file_key) if file_key else None
+
+            realtime_data = build_file_message_event_data(
+                message=message,
+                dialogue_slug=dialogue.slug,
+                file_type=file_type,
+                file_url=file_url,
+                reply_preview=None,
+                forward_preview=build_forward_preview(message=message),
+            )
+
+            for uid in dialogue.participants.values_list("id", flat=True):
+                conv_group_send(
+                    f"user_{uid}",
+                    "file_message",
+                    realtime_data,
+                )
+
+            for uid in dialogue.participants.exclude(id=request.user.id).values_list("id", flat=True):
+                conv_group_send(
+                    f"user_{uid}",
+                    "unread_count_update",
+                    {
+                        "payload": [
+                            {
+                                "dialogue_slug": dialogue.slug,
+                                "unread_count": 1,
+                                "sender_id": request.user.id,
+                            }
+                        ]
+                    },
+                )
+
+        return Response(
+            {
+                "message": "Message forwarded successfully.",
+                "forward_mode": payload["forward_mode"],
+                "kind": payload["kind"],
+                "dialogue_slug": payload["dialogue_slug"],
+                "message_id": payload["message_id"],
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 
+    # Toggle Message Reaction -------------------------------------------------------------------------------
+    @action(detail=True, methods=["post"], url_path="toggle-reaction", permission_classes=[IsAuthenticated])
+    def toggle_reaction(self, request, pk=None):
+        reaction_type = request.data.get("reaction_type")
 
+        result = toggle_message_reaction(
+            message_id=pk,
+            acting_user=request.user,
+            reaction_type=reaction_type,
+        )
 
+        if not result.get("ok"):
+            return Response(
+                {"error": result["message"], "code": result["code"]},
+                status=result["status"],
+            )
+
+        payload = result["payload"]
+        message = payload["message"]
+        dialogue = message.dialogue
+        summary = payload["summary"]
+
+        realtime_data = build_message_reaction_toggled_event_data(
+            dialogue_slug=dialogue.slug,
+            message_id=message.id,
+            user_id=request.user.id,
+            reaction_type=payload["reaction_type"],
+            action=payload["action"],
+            summary=summary,
+        )
+
+        # Shared dialogue state -> broadcast to all participants
+        for uid in dialogue.participants.values_list("id", flat=True):
+            conv_group_send(
+                f"user_{uid}",
+                "message_reaction_toggled",
+                realtime_data,
+            )
+
+        return Response(
+            {
+                "message": "Reaction updated successfully.",
+                "action": payload["action"],
+                "summary": summary,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    # Message Reaction Summary ------------------------------------------------------------------------------
+    @action(detail=True, methods=["get"], url_path="reaction-summary", permission_classes=[IsAuthenticated])
+    def reaction_summary(self, request, pk=None):
+        result = get_message_reaction_summary_for_user(
+            message_id=pk,
+            acting_user=request.user,
+        )
+
+        if not result.get("ok"):
+            return Response(
+                {"error": result["message"], "code": result["code"]},
+                status=result["status"],
+            )
+
+        return Response(
+            result["payload"]["summary"],
+            status=status.HTTP_200_OK,
+        )
+
+    # Message Reactors --------------------------------------------------------------------------------------
+    @action(detail=True, methods=["get"], url_path="reactors", permission_classes=[IsAuthenticated])
+    def reactors(self, request, pk=None):
+        result = list_message_reactors(
+            message_id=pk,
+            acting_user=request.user,
+        )
+
+        if not result.get("ok"):
+            return Response(
+                {"error": result["message"], "code": result["code"]},
+                status=result["status"],
+            )
+
+        return Response(
+            {
+                "count": result["payload"]["count"],
+                "results": result["payload"]["reactors"],
+            },
+            status=status.HTTP_200_OK,
+        )
+        
 
 # USER DIALOGUE MARKER VIEWSET -------------------------------------------------------------------------
 class UserDialogueMarkerViewSet(viewsets.ViewSet):

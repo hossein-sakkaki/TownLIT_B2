@@ -3,14 +3,17 @@
 from rest_framework import serializers
 import base64
 from django.db.models import Count
+from rest_framework.reverse import reverse
 
-from .models import Dialogue, DialogueParticipant, Message, UserDialogueMarker
+from .models import Dialogue, DialogueParticipant, Message, UserDialogueMarker, DialoguePin, MessagePin, MessageReaction
 from apps.accounts.serializers.user_serializers import SimpleCustomUserSerializer
 from apps.conversation.mixins import GroupAvatarURLMixin
 from apps.accounts.models.devices import UserDeviceKey
 from apps.conversation.utils import get_websocket_url
 from common.aws.s3_utils import get_file_url
-from rest_framework.reverse import reverse
+from apps.conversation.services.message_reply import build_reply_preview
+from apps.conversation.services.message_forward import build_forward_preview
+from apps.conversation.services.message_reactions import build_message_reaction_summary
 
 # Dialogue Participant Serializer ------------------------------------------------------
 class DialogueParticipantSerializer(serializers.ModelSerializer):
@@ -49,6 +52,9 @@ class DialogueSerializer(GroupAvatarURLMixin, serializers.ModelSerializer):
     group_avatar_url = serializers.SerializerMethodField()
     group_avatar_cdn_url = serializers.SerializerMethodField()
     group_avatar_version = serializers.IntegerField(read_only=True)
+    
+    is_pinned = serializers.SerializerMethodField()
+    pinned_position = serializers.IntegerField(read_only=True, allow_null=True)
 
     class Meta:
         model = Dialogue
@@ -67,8 +73,10 @@ class DialogueSerializer(GroupAvatarURLMixin, serializers.ModelSerializer):
             "my_role",
             "is_sensitive",
             "marker_id",
-            # NEW
+            
             "group_avatar_url", "group_avatar_cdn_url", "group_avatar_version",
+            
+            "is_pinned", "pinned_position",
         ]
 
     # -------------------------------------------------------------------
@@ -77,7 +85,7 @@ class DialogueSerializer(GroupAvatarURLMixin, serializers.ModelSerializer):
     def get_websocket_url(self, obj):
         request = self.context.get("request")
         if request:
-            return get_websocket_url(request, obj.slug)
+            return get_websocket_url(request)
         return None
 
     # -------------------------------------------------------------------
@@ -140,27 +148,24 @@ class DialogueSerializer(GroupAvatarURLMixin, serializers.ModelSerializer):
     # -------------------------------------------------------------------
     def get_last_message(self, obj):
         request = self.context.get("request")
+        if not request or not hasattr(request, "user"):
+            return None
+
         device_id = (
-            request.query_params.get("device_id", "").strip().lower()
-            if request
-            else None
+            request.query_params.get("device_id", "")
+            or request.headers.get("X-Device-ID", "")
+        ).strip().lower()
+
+        last_msg = obj.get_last_message_for_user(request.user)
+        if not last_msg:
+            return None
+
+        serializer = MessageSerializer(
+            last_msg,
+            context={"request": request, "device_id": device_id},
         )
-
-        last_msg = (
-            obj.messages
-            .filter(is_system=False)
-            .order_by("-timestamp")
-            .first()
-        )
-
-        if last_msg:
-            serializer = MessageSerializer(
-                last_msg,
-                context={"request": request, "device_id": device_id},
-            )
-            return serializer.data
-        return None
-
+        return serializer.data
+    
     # -------------------------------------------------------------------
     # My role in this dialogue
     # -------------------------------------------------------------------
@@ -195,7 +200,22 @@ class DialogueSerializer(GroupAvatarURLMixin, serializers.ModelSerializer):
     def get_group_avatar_cdn_url(self, obj):
         return GroupAvatarURLMixin.get_group_avatar_cdn_url(self, obj)
 
+    # -------------------------------------------------------------------
+    # Pin state
+    # -------------------------------------------------------------------
+    def get_is_pinned(self, obj):
+        annotated_position = getattr(obj, "pinned_position", None)
+        if annotated_position is not None:
+            return True
 
+        request = self.context.get("request")
+        if not request or not hasattr(request, "user"):
+            return False
+
+        return DialoguePin.objects.filter(
+            user=request.user,
+            dialogue=obj,
+        ).exists()
 
 
 # Update Group Info Serializer --------------------------------------------------------
@@ -229,12 +249,27 @@ class MessageSerializer(serializers.ModelSerializer):
     audio_download_url = serializers.SerializerMethodField()
     file_url = serializers.SerializerMethodField()
     file_download_url = serializers.SerializerMethodField()
+    
+    is_pinned = serializers.SerializerMethodField()
+    pinned_position = serializers.SerializerMethodField()
 
+    reply_to_message_id = serializers.IntegerField(source="reply_to_id", read_only=True)
+    reply_preview = serializers.SerializerMethodField()
+
+    is_forwarded = serializers.BooleanField(read_only=True)
+    forwarded_from_message_id = serializers.IntegerField(source="forwarded_from_id", read_only=True, allow_null=True)
+    forward_preview = serializers.SerializerMethodField()
+    
+    reaction_summary = serializers.SerializerMethodField()
+    
     class Meta:
         model = Message
         fields = [
             'id', 'dialogue', 'sender', 'timestamp', 'edited_at', 'is_edited',
             'seen_by_users', 'seen_count', 'seen_count_others', 'is_delivered',
+            'reply_to_message_id', 'reply_preview',
+            'is_forwarded', 'forwarded_from_message_id', 'forward_preview',
+            'reaction_summary',
             'content_encrypted', 'aes_key_encrypted', 'encrypted_for_device',
             'image', 'video', 'file', 'audio',
             'image_url','image_download_url',
@@ -243,7 +278,7 @@ class MessageSerializer(serializers.ModelSerializer):
             'audio_url','audio_download_url',
             'is_system', 'system_event',
             'self_destruct_at', 'is_encrypted', 'is_encrypted_file',
-            
+            'is_pinned', 'pinned_position',
         ]
         extra_kwargs = {
             'sender': {'read_only': True},
@@ -261,7 +296,11 @@ class MessageSerializer(serializers.ModelSerializer):
         This helps after localStorage reset + restore (new device_id) so old messages remain decryptable.
         """
         request = self.context.get("request")
-        device_id = self.context.get("device_id") or (request.query_params.get("device_id") if request else None)
+        device_id = (
+            self.context.get("device_id")
+            or (request.query_params.get("device_id") if request else None)
+            or (request.headers.get("X-Device-ID") if request else None)
+        )
 
         if device_id:
             device_id = device_id.strip().lower()  # Normalize
@@ -299,7 +338,13 @@ class MessageSerializer(serializers.ModelSerializer):
 
 
     def get_encrypted_for_device(self, obj):
-        return self.context.get("device_id")
+        request = self.context.get("request")
+        device_id = (
+            self.context.get("device_id")
+            or (request.query_params.get("device_id") if request else None)
+            or (request.headers.get("X-Device-ID") if request else None)
+        )
+        return device_id.strip().lower() if device_id else None
 
     def get_aes_key_encrypted(self, obj):
         return base64.b64encode(obj.aes_key_encrypted).decode('utf-8') if obj.aes_key_encrypted else None
@@ -332,7 +377,7 @@ class MessageSerializer(serializers.ModelSerializer):
     def get_file_url(self, obj):             return self._maybe(obj, 'file', download=False)
     def get_file_download_url(self, obj):    return self._maybe(obj, 'file', download=True)
 
-    # --- Seen counters ---
+    #  Seen counters ----------------------------------
     def get_seen_count(self, obj):
         """Number of viewers excluding the sender."""
         return obj.seen_by_users.exclude(pk=obj.sender_id).count()
@@ -348,6 +393,31 @@ class MessageSerializer(serializers.ModelSerializer):
             qs = qs.exclude(pk=request.user.pk)
         return qs.count()
 
+    # Pin state --------------------------------------
+    def get_is_pinned(self, obj):
+        return obj.pins.exists()
+
+    def get_pinned_position(self, obj):
+        pin = obj.pins.order_by("position", "created_at", "id").first()
+        return pin.position if pin else None
+    
+    # Reply preview ----------------------------------
+    def get_reply_preview(self, obj):
+        request = self.context.get("request")
+        acting_user = request.user if request and hasattr(request, "user") else None
+        return build_reply_preview(message=obj, acting_user=acting_user)
+    
+    # Forward preview --------------------------------
+    def get_forward_preview(self, obj):
+        return build_forward_preview(message=obj)
+
+    # Reaction summary -------------------------------
+    def get_reaction_summary(self, obj):
+        
+        request = self.context.get("request")
+        acting_user = request.user if request and hasattr(request, "user") else None
+        return build_message_reaction_summary(message=obj, acting_user=acting_user)
+    
 # User Dialogue Marker Serializer -----------------------------------------------------
 class UserDialogueMarkerSerializer(serializers.ModelSerializer):
     dialogue_id = serializers.IntegerField(source='dialogue.id', read_only=True)
@@ -356,3 +426,69 @@ class UserDialogueMarkerSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserDialogueMarker
         fields = ['id', 'user', 'dialogue_id', 'dialogue_slug', 'is_sensitive', 'delete_policy']
+
+
+# Dialogue Pin Serializer ------------------------------------------------------------
+class DialoguePinSerializer(serializers.ModelSerializer):
+    dialogue = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DialoguePin
+        fields = ["id", "position", "pinned_at", "dialogue"]
+
+    def get_dialogue(self, obj):
+        serializer = DialogueSerializer(
+            obj.dialogue,
+            context=self.context,
+        )
+        return serializer.data
+    
+    
+# Message Pin Serializer ------------------------------------------------------
+class MessagePinSerializer(serializers.ModelSerializer):
+    message = serializers.SerializerMethodField()
+    pinned_by = SimpleCustomUserSerializer(read_only=True)
+
+    class Meta:
+        model = MessagePin
+        fields = [
+            "id",
+            "position",
+            "pin_duration",
+            "expires_at",
+            "reminders_enabled",
+            "next_reminder_at",
+            "last_reminded_at",
+            "created_at",
+            "pinned_by",
+            "message",
+        ]
+
+    def get_message(self, obj):
+        request = self.context.get("request")
+        device_id = (
+            self.context.get("device_id")
+            or (request.query_params.get("device_id") if request else None)
+            or (request.headers.get("X-Device-ID") if request else None)
+        )
+
+        serializer = MessageSerializer(
+            obj.message,
+            context={"request": request, "device_id": device_id},
+        )
+        return serializer.data
+    
+
+# Message Reaction Serializer ------------------------------------------------------
+class MessageReactionSerializer(serializers.ModelSerializer):
+    user = SimpleCustomUserSerializer(read_only=True)
+
+    class Meta:
+        model = MessageReaction
+        fields = [
+            "id",
+            "reaction_type",
+            "created_at",
+            "updated_at",
+            "user",
+        ]

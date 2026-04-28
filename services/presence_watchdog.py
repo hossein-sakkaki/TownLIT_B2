@@ -9,7 +9,7 @@ from django.utils import timezone
 from django.utils.timesince import timesince
 
 from apps.conversation.models import Dialogue
-from services.redis_online_manager import get_redis_connection, get_last_seen
+from apps.core.websocket.services.redis_online_manager import get_redis_connection, get_last_seen
 
 _LOCK_KEY = "presence_watchdog_lock"
 _LOCK_TTL = 20  # seconds

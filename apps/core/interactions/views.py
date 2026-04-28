@@ -1,4 +1,5 @@
 # apps/core/interactions/views.py
+from django.apps import apps
 from django.contrib.contenttypes.models import ContentType
 from django.db import transaction
 
@@ -11,6 +12,77 @@ from apps.core.interactions.serializers import (
     ReactionSummarySerializer,
     ReactionToggleSerializer,
 )
+
+
+def _resolve_content_type(raw_value):
+    """
+    Accepts:
+      - numeric id: "23"
+      - dotted key: "posts.testimony"
+      - plain model: "testimony"
+    Returns:
+      - ContentType instance
+    Raises:
+      - ContentType.DoesNotExist
+    """
+    raw = str(raw_value).strip()
+
+    if raw.isdigit():
+        return ContentType.objects.get(pk=int(raw))
+
+    if "." in raw:
+        app_label, model = raw.split(".", 1)
+        return ContentType.objects.get(app_label=app_label, model=model)
+
+    return ContentType.objects.get(model=raw)
+
+
+def _resolve_model_class(ct: ContentType):
+    """
+    Resolve a stable model class even if ct.model_class() is None.
+    Supports stale/legacy content-type aliases like posts.pray -> posts.Prayer.
+    """
+    model_class = ct.model_class()
+    if model_class is not None:
+        return model_class
+
+    # 1) direct fallback
+    try:
+        model_class = apps.get_model(ct.app_label, ct.model)
+        if model_class is not None:
+            return model_class
+    except Exception:
+        pass
+
+    # 2) known legacy aliases
+    alias_map = {
+        ("posts", "pray"): "Prayer",
+    }
+
+    alias_target = alias_map.get((ct.app_label, ct.model))
+    if alias_target:
+        try:
+            model_class = apps.get_model(ct.app_label, alias_target)
+            if model_class is not None:
+                return model_class
+        except Exception:
+            pass
+
+    return None
+
+
+def _fetch_target_reaction_counters(model_class, object_id):
+    """
+    Read denormalized counters without hydrating the model instance.
+    This avoids recursion caused by problematic model properties /
+    custom attribute resolution / deep model graph side effects.
+    """
+    return (
+        model_class.objects
+        .filter(pk=object_id)
+        .values("reactions_count", "reactions_breakdown")
+        .first()
+    )
 
 
 class InteractionReactionViewSet(viewsets.ModelViewSet):
@@ -29,7 +101,7 @@ class InteractionReactionViewSet(viewsets.ModelViewSet):
     queryset = Reaction.objects.none()  # not used (action-based only)
 
     # ------------------------------------------------------------------
-    # 🔍 Reaction summary (hover / modal / sync)
+    # 🔍 Reaction summary
     # ------------------------------------------------------------------
     @action(detail=False, methods=["get"])
     def summary(self, request):
@@ -42,36 +114,41 @@ class InteractionReactionViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Resolve ContentType
         try:
-            ct = ContentType.objects.get(model=content_type_param)
+            object_id = int(object_id)
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "Invalid object_id."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            ct = _resolve_content_type(content_type_param)
         except ContentType.DoesNotExist:
             return Response(
                 {"detail": "Invalid content_type."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        model_class = ct.model_class()
+        model_class = _resolve_model_class(ct)
         if not model_class:
             return Response(
-                {"detail": "Invalid target model."},
+                {
+                    "detail": (
+                        f"Invalid target model. "
+                        f"content_type={ct.app_label}.{ct.model}"
+                    )
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Fetch target (DENORMALIZED FIELDS ONLY)
-        try:
-            target = (
-                model_class.objects
-                .only("reactions_count", "reactions_breakdown")
-                .get(pk=object_id)
-            )
-        except model_class.DoesNotExist:
+        target = _fetch_target_reaction_counters(model_class, object_id)
+        if not target:
             return Response(
                 {"detail": "Target not found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # Current user's reaction (optional)
         my_reaction = (
             Reaction.objects
             .filter(
@@ -84,8 +161,10 @@ class InteractionReactionViewSet(viewsets.ModelViewSet):
         )
 
         payload = {
-            "reactions_count": target.reactions_count,
-            "reactions_breakdown": target.reactions_breakdown or {},
+            "content_type": content_type_param,
+            "object_id": object_id,
+            "reactions_count": target.get("reactions_count") or 0,
+            "reactions_breakdown": target.get("reactions_breakdown") or {},
             "my_reaction": my_reaction,
         }
 
@@ -95,7 +174,7 @@ class InteractionReactionViewSet(viewsets.ModelViewSet):
         )
 
     # ------------------------------------------------------------------
-    # 🔁 Reaction toggle (idempotent, race-safe)
+    # 🔁 Reaction toggle
     # ------------------------------------------------------------------
     @action(detail=False, methods=["post"])
     @transaction.atomic
@@ -107,18 +186,35 @@ class InteractionReactionViewSet(viewsets.ModelViewSet):
         object_id = serializer.validated_data["object_id"]
         reaction_type = serializer.validated_data["reaction_type"]
 
-        # Resolve ContentType
         try:
-            ct = ContentType.objects.get(model=content_type_param)
+            ct = _resolve_content_type(content_type_param)
         except ContentType.DoesNotExist:
             return Response(
                 {"detail": "Invalid content_type."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        model_class = _resolve_model_class(ct)
+        if not model_class:
+            return Response(
+                {
+                    "detail": (
+                        f"Invalid target model. "
+                        f"content_type={ct.app_label}.{ct.model}"
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        target = _fetch_target_reaction_counters(model_class, object_id)
+        if not target:
+            return Response(
+                {"detail": "Target not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
         user = request.user
 
-        # Lock existing reactions for this user + target
         existing = (
             Reaction.objects
             .select_for_update()
@@ -129,13 +225,12 @@ class InteractionReactionViewSet(viewsets.ModelViewSet):
             )
         )
 
-        # Toggle logic
         if existing.exists():
             current = existing.first()
 
             if current.reaction_type == reaction_type:
                 current.delete()
-                action = "removed"
+                action_name = "removed"
             else:
                 current.delete()
                 Reaction.objects.create(
@@ -144,7 +239,7 @@ class InteractionReactionViewSet(viewsets.ModelViewSet):
                     name=user,
                     reaction_type=reaction_type,
                 )
-                action = "changed"
+                action_name = "changed"
         else:
             Reaction.objects.create(
                 content_type=ct,
@@ -152,15 +247,14 @@ class InteractionReactionViewSet(viewsets.ModelViewSet):
                 name=user,
                 reaction_type=reaction_type,
             )
-            action = "added"
+            action_name = "added"
 
-        # Fetch updated summary (single source of truth)
-        model_class = ct.model_class()
-        target = (
-            model_class.objects
-            .only("reactions_count", "reactions_breakdown")
-            .get(pk=object_id)
-        )
+        target = _fetch_target_reaction_counters(model_class, object_id)
+        if not target:
+            return Response(
+                {"detail": "Target not found after toggle."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         my_reaction = (
             Reaction.objects
@@ -174,9 +268,11 @@ class InteractionReactionViewSet(viewsets.ModelViewSet):
         )
 
         payload = {
-            "action": action,
-            "reactions_count": target.reactions_count,
-            "reactions_breakdown": target.reactions_breakdown or {},
+            "content_type": content_type_param,
+            "object_id": object_id,
+            "action": action_name,
+            "reactions_count": target.get("reactions_count") or 0,
+            "reactions_breakdown": target.get("reactions_breakdown") or {},
             "my_reaction": my_reaction,
         }
 
