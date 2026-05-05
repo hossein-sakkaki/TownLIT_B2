@@ -396,10 +396,10 @@ class Message(models.Model):
     def edit_message(self, new_content, receiver_public_key=None, receiver_device_id=None):
         if self.is_encrypted and receiver_public_key:
             self.encrypt_message(new_content, receiver_public_key)
-            self.encrypted_for_device = receiver_device_id  # 🟢 اضافه شد
+            self.encrypted_for_device = receiver_device_id
         else:
             self.content_encrypted = new_content.encode()
-            self.encrypted_for_device = None  # اگر رمزنگاری نشده باشد
+            self.encrypted_for_device = None
         
         self.edited_at = timezone.now()
         self.is_edited = True

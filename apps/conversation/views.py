@@ -125,8 +125,10 @@ from apps.conversation.services.message_pins import (
     list_pinned_messages_for_dialogue,
 )
 from apps.conversation.services.message_forward import (
+    build_forward_preview,
     create_forwarded_message_backend_assisted,
-    build_forward_preview
+    create_forwarded_text_client_reencrypted,
+    create_forwarded_text_client_decrypted_group,
 )
 from apps.conversation.services.message_reactions import (
     toggle_message_reaction,
@@ -306,32 +308,63 @@ class DialogueViewSet(viewsets.ModelViewSet):
     def get_dialogue_keys(self, request, slug=None):
         dialogue = self.get_object()
         user = request.user
+
         if not dialogue.participants.filter(id=user.id).exists():
             return Response({"error": "Forbidden"}, status=403)
 
-        partner = dialogue.participants.exclude(id=user.id).first()
-        if not partner:
-            return Response({"error": "No chat partner found."}, status=404)
-
-        qs_verified = (UserDeviceKey.objects
-                    .filter(user=partner, is_active=True, is_verified=True)
-                    .only("device_id", "public_key")
-                    .order_by("-last_used", "device_id"))
-
-        qs_unverified = (UserDeviceKey.objects
-                        .filter(user=partner, is_active=True, is_verified=False)
-                        .only("device_id", "public_key")
-                        .order_by("-last_used", "device_id"))
-
         full = request.query_params.get("full", "").lower() in ("1", "true", "yes")
 
-        if full:
-            return Response({
-                "verified":   [{"device_id": k.device_id, "public_key": k.public_key} for k in qs_verified],
-                "unverified": [{"device_id": k.device_id, "public_key": k.public_key} for k in qs_unverified],
-            }, status=200)
+        participant_ids = list(
+            dialogue.participants.values_list("id", flat=True)
+        )
 
-        return Response([{"device_id": k.device_id, "public_key": k.public_key} for k in qs_verified], status=200)
+        if not participant_ids:
+            return Response(
+                {"error": "No dialogue participants found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        qs_verified = (
+            UserDeviceKey.objects
+            .filter(
+                user_id__in=participant_ids,
+                is_active=True,
+                is_verified=True,
+            )
+            .only("device_id", "public_key", "user_id")
+            .order_by("user_id", "-last_used", "device_id")
+        )
+
+        qs_unverified = (
+            UserDeviceKey.objects
+            .filter(
+                user_id__in=participant_ids,
+                is_active=True,
+                is_verified=False,
+            )
+            .only("device_id", "public_key", "user_id")
+            .order_by("user_id", "-last_used", "device_id")
+        )
+
+        def serialize_key(key):
+            return {
+                "device_id": key.device_id,
+                "public_key": key.public_key,
+            }
+
+        if full:
+            return Response(
+                {
+                    "verified": [serialize_key(k) for k in qs_verified],
+                    "unverified": [serialize_key(k) for k in qs_unverified],
+                },
+                status=status.HTTP_200_OK
+            )
+
+        return Response(
+            [serialize_key(k) for k in qs_verified],
+            status=status.HTTP_200_OK
+        )
         
     # ---------------------------------------   
     @action(detail=False, methods=['post'], url_path='create-dialogue', permission_classes=[IsAuthenticated])
@@ -1204,17 +1237,24 @@ class MessageViewSet(viewsets.ModelViewSet):
     
     
     # -------------------------------------------------------------------------------------------------
-    @action(detail=False, methods=['post'], url_path='upload-file', permission_classes=[IsAuthenticated], parser_classes=[MultiPartParser, FormParser])
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path='upload-file',
+        permission_classes=[IsAuthenticated],
+        parser_classes=[MultiPartParser, FormParser],
+    )
     def upload_file(self, request):
         user = request.user
         dialogue_slug = request.data.get("dialogue_slug")
         uploaded_file = request.FILES.get("file")
         reply_to_message_id = request.data.get("reply_to_message_id")
+        forwarded_from_message_id = request.data.get("forwarded_from_message_id")
 
         if not dialogue_slug:
             return Response(
                 {"error": "Dialogue slug is required."},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         validation = validate_upload_input(uploaded_file=uploaded_file)
@@ -1230,7 +1270,52 @@ class MessageViewSet(viewsets.ModelViewSet):
 
         dialogue = get_object_or_404(Dialogue, slug=dialogue_slug, participants=user)
 
-        # Re-open dialogue on first outgoing file
+        # Validate forwarded source when iOS performs client-side media forwarding.
+        forwarded_from_message = None
+
+        if forwarded_from_message_id:
+            try:
+                forwarded_from_message = Message.objects.select_related(
+                    "dialogue",
+                    "sender",
+                ).get(id=forwarded_from_message_id)
+            except Message.DoesNotExist:
+                return Response(
+                    {
+                        "error": "Forward source message not found.",
+                        "code": "FORWARD_SOURCE_NOT_FOUND",
+                    },
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            if not forwarded_from_message.dialogue.participants.filter(id=user.id).exists():
+                return Response(
+                    {
+                        "error": "You do not have access to the forward source message.",
+                        "code": "FORWARD_SOURCE_FORBIDDEN",
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            if forwarded_from_message.deleted_by_users.filter(id=user.id).exists():
+                return Response(
+                    {
+                        "error": "Forward source message is not visible to you.",
+                        "code": "FORWARD_SOURCE_NOT_VISIBLE",
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            if forwarded_from_message.is_system:
+                return Response(
+                    {
+                        "error": "System messages cannot be forwarded.",
+                        "code": "INVALID_FORWARD_SOURCE",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        # Re-open dialogue on first outgoing file.
         dialogue.release_inbound_block_on_outgoing(user)
 
         recipient_hidden_on_incoming = False
@@ -1244,15 +1329,19 @@ class MessageViewSet(viewsets.ModelViewSet):
 
                 recipient_hidden_on_incoming = dialogue.should_hide_incoming_for_user(recipient)
 
-        # Sender PoP
+        # Sender PoP.
         header_device = (request.headers.get("X-Device-ID") or "").strip().lower()
         if not header_device:
             return Response(
                 {"error": "X-Device-ID header is required."},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if not is_sender_device_verified(user, header_device, dialogue_is_group=bool(dialogue.is_group)):
+        if not is_sender_device_verified(
+            user,
+            header_device,
+            dialogue_is_group=bool(dialogue.is_group),
+        ):
             return Response(
                 {
                     "error": "Sender device is not verified.",
@@ -1262,7 +1351,8 @@ class MessageViewSet(viewsets.ModelViewSet):
             )
 
         encrypted_prepare = prepare_encrypted_file_request(
-            is_encrypted_file=str(request.data.get("is_encrypted_file", "")).strip().lower() in ("true", "1", "yes"),
+            is_encrypted_file=str(request.data.get("is_encrypted_file", "")).strip().lower()
+            in ("true", "1", "yes"),
             encrypted_for_device=request.data.get("encrypted_for_device"),
             aes_key_encrypted=request.data.get("aes_key_encrypted"),
             encrypted_keys_per_device=request.data.get("encrypted_keys_per_device"),
@@ -1270,7 +1360,10 @@ class MessageViewSet(viewsets.ModelViewSet):
 
         if not encrypted_prepare.get("ok"):
             return Response(
-                {"error": encrypted_prepare["message"], "code": encrypted_prepare["code"]},
+                {
+                    "error": encrypted_prepare["message"],
+                    "code": encrypted_prepare["code"],
+                },
                 status=encrypted_prepare["status"],
             )
 
@@ -1288,6 +1381,7 @@ class MessageViewSet(viewsets.ModelViewSet):
             recipient_hidden_on_incoming=recipient_hidden_on_incoming,
             recipient=recipient,
             reply_to_message_id=reply_to_message_id,
+            forwarded_from_message=forwarded_from_message,
         )
 
         if not result.get("ok"):
@@ -1554,31 +1648,59 @@ class MessageViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'], url_path='seen-by', permission_classes=[IsAuthenticated])
     def seen_by(self, request, pk=None):
         message = get_object_or_404(
-            Message.objects.select_related('dialogue', 'sender').prefetch_related('seen_by_users'),
-            pk=pk
+            Message.objects
+            .select_related("dialogue", "sender")
+            .prefetch_related("seen_by_users"),
+            pk=pk,
         )
+
         user = request.user
         dialogue = message.dialogue
 
+        # User must belong to the dialogue.
         if not dialogue.participants.filter(pk=user.pk).exists():
-            return Response({'error': 'Access denied.'}, status=403)
+            return Response(
+                {"error": "Access denied.", "code": "DIALOGUE_ACCESS_DENIED"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
-        if not (dialogue.is_founder(user) or dialogue.is_elder(user)):
-            return Response({'error': 'Permission denied.'}, status=403)
+        is_sender = message.sender_id == user.id
+
+        if dialogue.is_group:
+            # Group policy:
+            # - Founder / elder can inspect seen details.
+            # - Message sender can inspect seen details for their own message.
+            can_view_seen_by = (
+                is_sender
+                or dialogue.is_founder(user)
+                or dialogue.is_elder(user)
+            )
+        else:
+            # Private E2EE policy:
+            # - Only the sender can inspect seen details for their own outgoing message.
+            can_view_seen_by = is_sender
+
+        if not can_view_seen_by:
+            return Response(
+                {"error": "Permission denied.", "code": "SEEN_BY_PERMISSION_DENIED"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         seen_qs = (
             message.seen_by_users
             .exclude(pk=message.sender_id)
-            .exclude(pk=request.user.pk)
-            .select_related("label", "member_profile")       # ← Optimization
+            .exclude(pk=user.pk)
+            .select_related("label", "member_profile")
             .order_by("username")
         )
 
         serializer = SimpleCustomUserSerializer(
-            seen_qs, many=True, context={"request": request}
+            seen_qs,
+            many=True,
+            context={"request": request},
         )
-        return Response(serializer.data, status=200)
 
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
     # Soft Delete Message ----------------------------------------------------------------------------------
     @action(detail=True, methods=['post'], url_path='soft-delete', permission_classes=[IsAuthenticated])
@@ -1901,7 +2023,206 @@ class MessageViewSet(viewsets.ModelViewSet):
             status=status.HTTP_201_CREATED,
         )
 
+    # Forward E2EE Text Message -------------------------------------------------------------------------------
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="forward-message-client-reencrypted",
+        permission_classes=[IsAuthenticated],
+    )
+    def forward_message_client_reencrypted(self, request):
+        """
+        Forward text into an E2EE private dialogue.
 
+        The client sends encrypted envelopes.
+        Backend never receives plaintext.
+        """
+        source_message_id = request.data.get("source_message_id")
+        target_dialogue_slug = (request.data.get("target_dialogue_slug") or "").strip()
+        encrypted_contents = request.data.get("encrypted_contents") or []
+
+        result = create_forwarded_text_client_reencrypted(
+            source_message_id=source_message_id,
+            target_dialogue_slug=target_dialogue_slug,
+            encrypted_contents=encrypted_contents,
+            acting_user=request.user,
+        )
+
+        if not result.get("ok"):
+            return Response(
+                {
+                    "error": result["message"],
+                    "code": result["code"],
+                    "extra": result.get("extra", {}),
+                },
+                status=result["status"],
+            )
+
+        payload = result["payload"]
+        message = payload["message"]
+        dialogue = payload["dialogue"]
+
+        # Minimal realtime payload. iOS fetches authoritative message by id.
+        realtime_data = {
+            "id": message.id,
+            "dialogue": dialogue.id,
+            "dialogue_slug": dialogue.slug,
+            "sender": {
+                "id": request.user.id,
+                "username": request.user.username,
+                "email": request.user.email,
+            },
+            "timestamp": message.timestamp.isoformat(),
+            "edited_at": None,
+            "is_edited": False,
+            "seen_by_users": [],
+            "seen_count": 0,
+            "seen_count_others": 0,
+            "is_delivered": False,
+            "reply_to_message_id": None,
+            "reply_preview": None,
+            "is_forwarded": True,
+            "forwarded_from_message_id": message.forwarded_from_id,
+            "forward_preview": build_forward_preview(message=message),
+            "reaction_summary": None,
+            "content_encrypted": None,
+            "decrypted_content": None,
+            "aes_key_encrypted": None,
+            "encrypted_for_device": None,
+            "image": None,
+            "video": None,
+            "file": None,
+            "audio": None,
+            "image_url": None,
+            "image_download_url": None,
+            "video_url": None,
+            "video_download_url": None,
+            "file_url": None,
+            "file_download_url": None,
+            "audio_url": None,
+            "audio_download_url": None,
+            "is_system": False,
+            "system_event": None,
+            "self_destruct_at": None,
+            "is_encrypted": True,
+            "is_encrypted_file": False,
+            "is_pinned": False,
+            "pinned_position": None,
+        }
+
+        for uid in dialogue.participants.values_list("id", flat=True):
+            conv_group_send(
+                f"user_{uid}",
+                "chat_message",
+                realtime_data,
+            )
+
+        for uid in dialogue.participants.exclude(id=request.user.id).values_list("id", flat=True):
+            conv_group_send(
+                f"user_{uid}",
+                "unread_count_update",
+                {
+                    "payload": [
+                        {
+                            "dialogue_slug": dialogue.slug,
+                            "unread_count": 1,
+                            "sender_id": request.user.id,
+                        }
+                    ]
+                },
+            )
+
+        return Response(
+            {
+                "message": "Message forwarded successfully.",
+                "forward_mode": payload["forward_mode"],
+                "kind": payload["kind"],
+                "dialogue_slug": payload["dialogue_slug"],
+                "message_id": payload["message_id"],
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    # Forward Decrypted Text To Group -------------------------------------------------------------------------
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="forward-message-client-decrypted-group",
+        permission_classes=[IsAuthenticated],
+    )
+    def forward_message_client_decrypted_group(self, request):
+        """
+        Forward private text into a backend-managed group.
+
+        The client decrypts source text first, then backend stores group plaintext.
+        """
+        source_message_id = request.data.get("source_message_id")
+        target_dialogue_slug = (request.data.get("target_dialogue_slug") or "").strip()
+        content = request.data.get("content") or ""
+
+        result = create_forwarded_text_client_decrypted_group(
+            source_message_id=source_message_id,
+            target_dialogue_slug=target_dialogue_slug,
+            content=content,
+            acting_user=request.user,
+        )
+
+        if not result.get("ok"):
+            return Response(
+                {
+                    "error": result["message"],
+                    "code": result["code"],
+                    "extra": result.get("extra", {}),
+                },
+                status=result["status"],
+            )
+
+        payload = result["payload"]
+        message = payload["message"]
+        dialogue = payload["dialogue"]
+        plain_text = payload.get("plain_text") or ""
+
+        realtime_data = build_group_chat_message_data(
+            message=message,
+            plain_text=plain_text,
+            reply_preview=None,
+            forward_preview=build_forward_preview(message=message),
+        )
+
+        for uid in dialogue.participants.values_list("id", flat=True):
+            conv_group_send(
+                f"user_{uid}",
+                "chat_message",
+                realtime_data,
+            )
+
+        for uid in dialogue.participants.exclude(id=request.user.id).values_list("id", flat=True):
+            conv_group_send(
+                f"user_{uid}",
+                "unread_count_update",
+                {
+                    "payload": [
+                        {
+                            "dialogue_slug": dialogue.slug,
+                            "unread_count": 1,
+                            "sender_id": request.user.id,
+                        }
+                    ]
+                },
+            )
+
+        return Response(
+            {
+                "message": "Message forwarded successfully.",
+                "forward_mode": payload["forward_mode"],
+                "kind": payload["kind"],
+                "dialogue_slug": payload["dialogue_slug"],
+                "message_id": payload["message_id"],
+            },
+            status=status.HTTP_201_CREATED,
+        )
+        
+        
     # Toggle Message Reaction -------------------------------------------------------------------------------
     @action(detail=True, methods=["post"], url_path="toggle-reaction", permission_classes=[IsAuthenticated])
     def toggle_reaction(self, request, pk=None):

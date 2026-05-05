@@ -41,6 +41,7 @@ class MessageMixin:
         is_encrypted = bool(data.get("is_encrypted", False))
         content = (data.get("content") or "").strip()
         encrypted_contents = data.get("encrypted_contents", [])
+        reply_to_message_id = self._normalize_reply_to_message_id(data)
 
         if not dialogue_slug:
             await self._send_error(
@@ -110,6 +111,7 @@ class MessageMixin:
             encrypted_contents=encrypted_contents,
             recipient_hidden_on_incoming=bool(hidden_recipient_ids),
             recipient=recipient,
+            reply_to_message_id=reply_to_message_id,
         )
 
         if not result.get("ok"):
@@ -335,6 +337,33 @@ class MessageMixin:
         except Exception:
             return ""
 
+    def _normalize_reply_to_message_id(self, data):
+        """
+        Accept reply target id from current and legacy client payload keys.
+
+        Supported keys:
+        - reply_to_message_id  canonical
+        - reply_to_id          compatibility
+        - reply_to             compatibility
+        - replyToMessageID     iOS compatibility
+        """
+        raw = (
+            data.get("reply_to_message_id")
+            or data.get("reply_to_id")
+            or data.get("reply_to")
+            or data.get("replyToMessageID")
+        )
+
+        if raw in (None, "", 0, "0"):
+            return None
+
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            return None
+
+        return value if value > 0 else None
+    
     async def _broadcast_incremental_unread_count(
         self,
         dialogue_slug: str,

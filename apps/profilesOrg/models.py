@@ -113,7 +113,7 @@ class Organization(SlugMixin):
     organization_services = models.ManyToManyField(OrganizationService, verbose_name='Organization Services')
     services = models.ManyToManyField('Service', blank=True, related_name='organization_services', verbose_name='Services')
 
-    primary_language = models.CharField(max_length=5, choices=LANGUAGE_CHOICES, default=ENGLISH, verbose_name='Primary Language')
+    primary_language = models.CharField(max_length=5, choices=LANGUAGE_CHOICES, null=True, blank=True, verbose_name='Primary Language')
     secondary_language = models.CharField(max_length=5, choices=LANGUAGE_CHOICES, null=True, blank=True, verbose_name='Secondary Language')
 
     is_branch = models.BooleanField(default=False, verbose_name='Is Branch')

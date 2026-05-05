@@ -7,12 +7,13 @@ from datetime import timedelta
 from django.core.files.base import ContentFile
 from django.db import transaction
 
-from apps.conversation.models import Dialogue, Message
+from apps.conversation.models import Dialogue, Message, MessageEncryption
 from apps.conversation.services.message_reply import build_reply_preview
 
 
 FORWARD_MODE_BACKEND_ASSISTED = "backend_assisted"
 FORWARD_MODE_CLIENT_REENCRYPT = "client_reencrypt"
+FORWARD_MODE_CLIENT_DECRYPT_TO_BACKEND_GROUP = "client_decrypt_to_backend_group"
 
 
 def _error(code: str, message: str, status_code: int, extra: dict | None = None):
@@ -90,11 +91,20 @@ def _resolve_forward_mode(*, source_message, target_dialogue):
     Resolve secure forward mode.
 
     Rules:
-    - Only Group -> Group is backend-assisted
-    - Anything involving DM requires client-side re-encryption
+    - Group -> Group: backend can copy/store directly.
+    - Group -> DM: client must encrypt for target devices.
+    - DM -> DM: client must decrypt source and re-encrypt for target devices.
+    - DM -> Group: client must decrypt source, then backend stores group plaintext.
     """
-    if source_message.dialogue.is_group and target_dialogue.is_group:
+    source_is_group = bool(source_message.dialogue.is_group)
+    target_is_group = bool(target_dialogue.is_group)
+
+    if source_is_group and target_is_group:
         return FORWARD_MODE_BACKEND_ASSISTED
+
+    if target_is_group:
+        return FORWARD_MODE_CLIENT_DECRYPT_TO_BACKEND_GROUP
+
     return FORWARD_MODE_CLIENT_REENCRYPT
 
 
@@ -317,4 +327,194 @@ def create_forwarded_message_backend_assisted(*, source_message_id, target_dialo
         "forward_mode": forward_mode,
         "kind": "file",
         "file_field": copied_field,
+    })
+    
+    
+def _validate_encrypted_contents(encrypted_contents):
+    """
+    Validate encrypted device envelopes from the client.
+    """
+    if not isinstance(encrypted_contents, list) or not encrypted_contents:
+        return False
+
+    for item in encrypted_contents:
+        if not isinstance(item, dict):
+            return False
+
+        device_id = (item.get("device_id") or "").strip()
+        encrypted_content = item.get("encrypted_content") or ""
+
+        if not device_id or not encrypted_content:
+            return False
+
+    return True
+
+
+def create_forwarded_text_client_reencrypted(
+    *,
+    source_message_id,
+    target_dialogue_slug,
+    encrypted_contents,
+    acting_user,
+):
+    """
+    Create forwarded text message for E2EE target dialogue.
+
+    Used for:
+    - Group -> DM
+    - DM -> DM
+
+    The backend never receives plaintext here.
+    """
+    validation = validate_forward_request(
+        source_message_id=source_message_id,
+        target_dialogue_slug=target_dialogue_slug,
+        acting_user=acting_user,
+    )
+
+    if not validation.get("ok"):
+        return validation
+
+    source_message = validation["payload"]["source_message"]
+    target_dialogue = validation["payload"]["target_dialogue"]
+    forward_mode = validation["payload"]["forward_mode"]
+
+    if forward_mode != FORWARD_MODE_CLIENT_REENCRYPT:
+        return _error(
+            "INVALID_FORWARD_MODE",
+            "This target does not require client re-encryption.",
+            400,
+            extra={
+                "forward_mode": forward_mode,
+                "source_message_id": source_message.id,
+                "target_dialogue_slug": target_dialogue.slug,
+            },
+        )
+
+    if target_dialogue.is_group:
+        return _error(
+            "INVALID_FORWARD_TARGET",
+            "Client re-encrypted forward requires a private target dialogue.",
+            400,
+        )
+
+    if not _validate_encrypted_contents(encrypted_contents):
+        return _error(
+            "BAD_REQUEST",
+            "encrypted_contents must contain at least one valid device envelope.",
+            400,
+        )
+
+    with transaction.atomic():
+        forwarded = Message.objects.create(
+            dialogue=target_dialogue,
+            sender=acting_user,
+            content_encrypted=None,
+            reply_to=None,
+            is_forwarded=True,
+            forwarded_from=source_message,
+        )
+
+        MessageEncryption.objects.bulk_create([
+            MessageEncryption(
+                message=forwarded,
+                device_id=(item["device_id"] or "").strip().lower(),
+                encrypted_content=item["encrypted_content"],
+            )
+            for item in encrypted_contents
+        ])
+
+        target_dialogue.last_message = forwarded
+        target_dialogue.save(update_fields=["last_message"])
+
+    return _success({
+        "message": forwarded,
+        "dialogue": target_dialogue,
+        "message_id": forwarded.id,
+        "dialogue_slug": target_dialogue.slug,
+        "is_group": False,
+        "is_forwarded": True,
+        "forward_mode": forward_mode,
+        "kind": "text",
+    })
+
+
+def create_forwarded_text_client_decrypted_group(
+    *,
+    source_message_id,
+    target_dialogue_slug,
+    content,
+    acting_user,
+):
+    """
+    Create forwarded text message for backend-managed group target.
+
+    Used for:
+    - DM -> Group
+
+    The client decrypts the private source first, then sends plaintext to backend.
+    """
+    validation = validate_forward_request(
+        source_message_id=source_message_id,
+        target_dialogue_slug=target_dialogue_slug,
+        acting_user=acting_user,
+    )
+
+    if not validation.get("ok"):
+        return validation
+
+    source_message = validation["payload"]["source_message"]
+    target_dialogue = validation["payload"]["target_dialogue"]
+    forward_mode = validation["payload"]["forward_mode"]
+
+    if forward_mode != FORWARD_MODE_CLIENT_DECRYPT_TO_BACKEND_GROUP:
+        return _error(
+            "INVALID_FORWARD_MODE",
+            "This target does not require client-decrypted group forwarding.",
+            400,
+            extra={
+                "forward_mode": forward_mode,
+                "source_message_id": source_message.id,
+                "target_dialogue_slug": target_dialogue.slug,
+            },
+        )
+
+    if not target_dialogue.is_group:
+        return _error(
+            "INVALID_FORWARD_TARGET",
+            "Client-decrypted group forward requires a group target dialogue.",
+            400,
+        )
+
+    plain_text = (content or "").strip()
+    if not plain_text:
+        return _error(
+            "BAD_REQUEST",
+            "content is required.",
+            400,
+        )
+
+    with transaction.atomic():
+        forwarded = Message.objects.create(
+            dialogue=target_dialogue,
+            sender=acting_user,
+            content_encrypted=_encode_group_plaintext(plain_text),
+            reply_to=None,
+            is_forwarded=True,
+            forwarded_from=source_message,
+        )
+
+        target_dialogue.last_message = forwarded
+        target_dialogue.save(update_fields=["last_message"])
+
+    return _success({
+        "message": forwarded,
+        "dialogue": target_dialogue,
+        "message_id": forwarded.id,
+        "dialogue_slug": target_dialogue.slug,
+        "is_group": True,
+        "is_forwarded": True,
+        "forward_mode": forward_mode,
+        "kind": "text",
+        "plain_text": plain_text,
     })

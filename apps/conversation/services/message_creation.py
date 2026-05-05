@@ -306,12 +306,15 @@ def create_file_message(
     recipient_hidden_on_incoming=False,
     recipient=None,
     reply_to_message_id=None,
+    forwarded_from_message=None,
 ):
     """
     Create one file message in a shared backend service path.
+
     Supports:
     - Group non-encrypted file messages
     - DM encrypted file messages
+    - Forward metadata for client-side media forwarding
     """
     reply_validation = validate_reply_target(
         dialogue=dialogue,
@@ -326,7 +329,11 @@ def create_file_message(
         )
 
     reply_to_message = reply_validation["message_obj"]
-    
+
+    # Forward metadata is only a relation marker.
+    # Actual file bytes are still created through the normal upload path.
+    is_forwarded = forwarded_from_message is not None
+
     if dialogue.is_group:
         if is_encrypted_file:
             return _error("BAD_REQUEST", "Group files must not be client-encrypted.", 400)
@@ -336,6 +343,8 @@ def create_file_message(
             sender=sender,
             is_encrypted_file=False,
             reply_to=reply_to_message,
+            is_forwarded=is_forwarded,
+            forwarded_from=forwarded_from_message,
             **{field_name: uploaded_file},
         )
 
@@ -350,6 +359,8 @@ def create_file_message(
             "is_encrypted_file": False,
             "field_name": field_name,
             "reply_to_message_id": reply_to_message.id if reply_to_message else None,
+            "is_forwarded": is_forwarded,
+            "forwarded_from_message_id": forwarded_from_message.id if forwarded_from_message else None,
         })
 
     # DM flow
@@ -373,6 +384,8 @@ def create_file_message(
             encrypted_for_device=encrypted_for_device,
             aes_key_encrypted=aes_key_encrypted_bytes,
             reply_to=reply_to_message,
+            is_forwarded=is_forwarded,
+            forwarded_from=forwarded_from_message,
             **{field_name: uploaded_file},
         )
 
@@ -402,4 +415,6 @@ def create_file_message(
         "is_encrypted_file": True,
         "field_name": field_name,
         "reply_to_message_id": reply_to_message.id if reply_to_message else None,
+        "is_forwarded": is_forwarded,
+        "forwarded_from_message_id": forwarded_from_message.id if forwarded_from_message else None,
     })

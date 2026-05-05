@@ -67,7 +67,7 @@ class CustomUserManager(BaseUserManager):
         gender = gender if gender else None
         image_name = image_name if image_name else None
 
-        primary_language = primary_language or 'en'
+        primary_language = primary_language or None
         secondary_language = secondary_language or None
         country = country or None
         city = city or None
@@ -362,7 +362,11 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     @property
     def image_url(self):
         if self.image_name:
-            return self.image_name.url
+            try:
+                return self.image_name.url
+            except Exception:
+                return settings.DEFAULT_USER_AVATAR_URL
+
         return settings.DEFAULT_USER_AVATAR_URL
 
     @property

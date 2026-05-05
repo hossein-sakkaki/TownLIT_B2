@@ -70,6 +70,7 @@ from utils.security.destructive_actions import handle_destructive_pin_actions
 import utils as utils
 import logging
 from django.contrib.auth import get_user_model
+from apps.accounts.utils.country import normalize_profile_country
 
 CustomUser = get_user_model()
 logger = logging.getLogger(__name__)
@@ -123,6 +124,47 @@ class AuthViewSet(viewsets.ViewSet):
         self.throttle_scope = "crypto_heavy" if getattr(self, "action", None) in heavy_actions else "crypto"
         return super().get_throttles()
     
+    # Country Inference for Registration -------------------------------
+    def _infer_registration_country(self, request):
+        """
+        Best-effort country inference for initial profile prefill.
+
+        Priority:
+        1) Explicit client value from body
+        2) Optional app/device headers
+        3) CDN/proxy country headers
+        4) IP geolocation fallback
+
+        This must never be treated as verified identity data.
+        """
+        candidates = [
+            request.data.get("country"),
+            request.data.get("device_country"),
+            request.headers.get("X-Device-Country"),
+            request.headers.get("X-App-Country"),
+            request.headers.get("CloudFront-Viewer-Country"),
+            request.headers.get("CF-IPCountry"),
+        ]
+
+        for value in candidates:
+            country = normalize_profile_country(value)
+            if country:
+                return country
+
+        ip_address = get_client_ip(request)
+        location = get_location_from_ip(ip_address) or {}
+
+        for value in [
+            location.get("country_code"),
+            location.get("countryCode"),
+            location.get("country"),
+        ]:
+            country = normalize_profile_country(value)
+            if country:
+                return country
+
+        return None
+
     # Source of Truth -------------------------
     @action(
         detail=False,
@@ -159,11 +201,25 @@ class AuthViewSet(viewsets.ViewSet):
                     )
                 else:
                     if ser_data.is_valid():
-                        existing_user.set_password(ser_data.validated_data['password'])
+                        existing_user.set_password(ser_data.validated_data["password"])
                         existing_user.user_active_code = None
                         existing_user.user_active_code_expiry = None
                         existing_user.registration_started_at = timezone.now()
-                        existing_user.save()
+
+                        update_fields = [
+                            "password",
+                            "user_active_code",
+                            "user_active_code_expiry",
+                            "registration_started_at",
+                        ]
+
+                        if not existing_user.country:
+                            inferred_country = self._infer_registration_country(request)
+                            if inferred_country:
+                                existing_user.country = inferred_country
+                                update_fields.append("country")
+
+                        existing_user.save(update_fields=update_fields)
 
                         # choose language
                         lang = (request.data.get("language") or "en").strip().lower()
@@ -230,12 +286,13 @@ class AuthViewSet(viewsets.ViewSet):
 
             # Create new user
             if ser_data.is_valid():
+                inferred_country = self._infer_registration_country(request)
+
                 user = CustomUser.objects.create_user(
-                    email=ser_data.validated_data['email'],
+                    email=ser_data.validated_data["email"],
+                    password=ser_data.validated_data["password"],
+                    country=inferred_country,
                 )
-                user.set_password(ser_data.validated_data['password']) 
-                user.image_name = settings.DEFAULT_USER_AVATAR_URL
-                user.save()
 
                 # choose language
                 lang = (request.data.get("language") or "en").strip().lower()
@@ -1404,6 +1461,12 @@ class AuthViewSet(viewsets.ViewSet):
         longitude = location.get("longitude")
         postal = location.get("postal")
 
+        profile_country = normalize_profile_country(
+            location.get("country_code")
+            or location.get("countryCode")
+            or country
+        )
+
         # ----- Limits -----
         try:
             MAX_ACTIVE_DEVICE_KEYS = int(getattr(settings, "MAX_ACTIVE_DEVICE_KEYS", 10))
@@ -1649,6 +1712,13 @@ class AuthViewSet(viewsets.ViewSet):
                     dedup_removed_ids.extend(list(stale_fp_qs.values_list("device_id", flat=True)))
                     stale_fp_qs.delete()
 
+            # =================================================================================
+            # Optional profile country fallback
+            # =================================================================================
+            if not user.country and profile_country:
+                user.country = profile_country
+                user.save(update_fields=["country"])
+                
         # =====================================================================================
         # RESPONSE
         # =====================================================================================
