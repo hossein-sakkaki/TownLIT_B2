@@ -1,8 +1,18 @@
 # apps/asset_delivery/services/field_aliases.py
 
 FIELD_ALIAS_MAP = {
+    # User avatar/profile image
     ("accounts", "customuser", "avatar"): "image_name",
+    ("accounts", "customuser", "image"): "image_name",
+    ("accounts", "customuser", "photo"): "image_name",
+    ("accounts", "customuser", "thumbnail"): "image_name",
+
+    # Dialogue / group cover image
     ("conversation", "dialogue", "avatar"): "group_image",
+    ("conversation", "dialogue", "image"): "group_image",
+    ("conversation", "dialogue", "cover"): "group_image",
+    ("conversation", "dialogue", "group_image"): "group_image",
+    ("conversation", "dialogue", "thumbnail"): "group_image",
 }
 
 
