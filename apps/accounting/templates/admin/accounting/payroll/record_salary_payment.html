@@ -1,0 +1,87 @@
+<!-- apps/accounting/templates/admin/accounting/payroll/record_salary_payment.html -->
+
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<div id="content-main">
+  <h1>{{ title }}</h1>
+
+  <div class="module">
+    <h2>Payment Summary</h2>
+
+    <p>
+      This page records the actual salary payment made from the bank.
+      The default payment amount is the remaining net pay after CPP/EI/tax deductions.
+      You may reduce the amount if this is a partial payment.
+    </p>
+
+    <p>
+      <strong>Pay run:</strong> {{ pay_run.run_number }}<br>
+      <strong>Total net pay:</strong> {{ pay_run.total_net_pay }}<br>
+      <strong>Total already paid:</strong> {{ pay_run.total_actual_paid }}<br>
+      <strong>Total remaining payable:</strong> {{ total_remaining_payable }}
+    </p>
+  </div>
+
+  <div class="module">
+    <h2>Payable Pay Stubs</h2>
+
+    {% if payable_stubs %}
+      <table>
+        <thead>
+          <tr>
+            <th>Employee</th>
+            <th>Net Pay</th>
+            <th>Already Paid</th>
+            <th>Remaining Payable</th>
+            <th>Payment Note</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for stub in payable_stubs %}
+            <tr>
+              <td>{{ stub.employee.display_name }}</td>
+              <td>{{ stub.net_pay }}</td>
+              <td>{{ stub.actual_paid }}</td>
+              <td><strong>{{ stub.net_salary_payable }}</strong></td>
+              <td>{{ stub.payment_note }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p>
+        There are no unpaid salary balances for this pay run.
+      </p>
+    {% endif %}
+  </div>
+
+  <form method="post" novalidate>
+    {% csrf_token %}
+
+    <fieldset class="module aligned">
+      <h2>Record Payment</h2>
+
+      {% for field in form %}
+        <div class="form-row">
+          {{ field.errors }}
+
+          <div>
+            {{ field.label_tag }}
+            {{ field }}
+
+            {% if field.help_text %}
+              <div class="help">{{ field.help_text }}</div>
+            {% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </fieldset>
+
+    <div class="submit-row">
+      <input type="submit" value="Record Salary Payment" class="default">
+      <a href="../">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

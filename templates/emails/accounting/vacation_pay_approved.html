@@ -1,0 +1,31 @@
+<!-- templates/emails/accounting/vacation_pay_approved.html -->
+
+{% extends "base_email.html" %}
+
+{% block subject %}
+TownLIT Vacation Pay Statement
+{% endblock %}
+
+{% block content %}
+
+<h1>{{ email_title }}</h1>
+
+<p>Hello {{ employee.display_name }},</p>
+
+<p>{{ message_intro }}</p>
+
+<p>
+  <strong>Pay period:</strong> {{ period_start }} to {{ period_end }}<br>
+  <strong>Pay date:</strong> {{ pay_date }}<br>
+  <strong>Vacation pay gross:</strong> {{ vacation_pay_paid }}<br>
+  <strong>Total deductions:</strong> {{ total_employee_deductions }}<br>
+  <strong>Net vacation pay:</strong> {{ net_pay }}
+</p>
+
+<p>
+  The attached PDF contains your vacation pay statement and deduction details.
+</p>
+
+<p class="email-signature">With love and light,<br />TownLIT</p>
+
+{% endblock %}

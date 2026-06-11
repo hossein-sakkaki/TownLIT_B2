@@ -1,4 +1,4 @@
-# main/utils/image_utils.py
+# utils/common/image_utils.py
 
 import os
 import logging
@@ -48,3 +48,5 @@ def convert_image_to_jpg(source_path: str, instance, fileupload: FileUpload) -> 
         for path in [locals().get("temp_input_path"), locals().get("output_abs_path")]:
             if path and os.path.exists(path):
                 os.remove(path)
+
+                

@@ -1,0 +1,34 @@
+<!-- templates/emails/accounting/salary_payment_confirmation.html -->
+{% extends "base_email.html" %}
+
+{% block subject %}
+TownLIT Salary Payment Confirmation
+{% endblock %}
+
+{% block content %}
+
+<h1>{{ email_title }}</h1>
+
+<p>Hello {{ employee.display_name }},</p>
+
+<p>{{ message_intro }}</p>
+
+<p>
+  <strong>Pay period:</strong> {{ period_start }} to {{ period_end }}<br />
+  <strong>Payment date:</strong> {{ salary_paid_on }}<br />
+  <strong>Payment method:</strong> {{ salary_payment_method }}<br />
+  <strong>Payment reference:</strong> {{ salary_payment_reference }}<br />
+  <strong>Amount paid:</strong> ${{ actual_paid }}
+</p>
+
+{% if net_salary_payable and net_salary_payable != 0 %}
+<p>
+  <strong>Remaining salary payable:</strong> ${{ net_salary_payable }}
+</p>
+{% endif %}
+
+<p>Your pay stub PDF is attached again for your records.</p>
+
+<p class="email-signature">With care,<br />TownLIT Accounting</p>
+
+{% endblock %}

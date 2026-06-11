@@ -1,0 +1,40 @@
+<!-- apps/accounting/templates/admin/accounting/payroll/create_pay_run.html -->
+
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<div id="content-main">
+  <h1>Create Payroll Run</h1>
+
+  <p>
+    Enter official CRA/PDOC deduction values when available.
+    The system will store both payroll results and calculation snapshots.
+  </p>
+
+  <form method="post" novalidate>
+    {% csrf_token %}
+
+    <fieldset class="module aligned">
+      {% for field in form %}
+        <div class="form-row">
+          {{ field.errors }}
+          <div>
+            {{ field.label_tag }}
+            {{ field }}
+            {% if field.help_text %}
+              <div class="help">{{ field.help_text }}</div>
+            {% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </fieldset>
+
+    <div class="submit-row">
+      <input type="submit" value="Create Pay Run" class="default">
+      <a href="../">Cancel</a>
+    </div>
+  </form>
+</div>
+
+<script src="/static/accounting/admin/create_pay_run.js"></script>
+{% endblock %}

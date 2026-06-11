@@ -15,3 +15,5 @@ urlpatterns = [
     path("founder-balance-summary/", FounderBalanceSummaryView.as_view(), name="accounting-founder-balance-summary"),
     path("monthly-summary/", MonthlySummaryReportView.as_view(), name="accounting-monthly-summary"),
 ]
+
+

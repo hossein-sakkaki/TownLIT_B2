@@ -44,3 +44,6 @@ class CSVReportExporter:
             writer.writerow(row)
 
         return buffer.getvalue().encode("utf-8")
+    
+    
+    

@@ -1,0 +1,169 @@
+<!-- apps/accounting/templates/admin/accounting/payroll/create_vacation_pay_run.html -->
+
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<div id="content-main">
+  <h1>{{ title }}</h1>
+
+  <div class="module">
+    <h2>Vacation Pay Run</h2>
+
+    <p>
+      This creates a standalone taxable vacation pay run.
+      The payment will go through CPP/EI/income tax calculation.
+      Actual bank payment must be recorded later through Record Salary Payment.
+    </p>
+
+    <p id="vacation-balance-summary" style="font-weight: 600;">
+      Select an employee and pay period to load vacation balance.
+    </p>
+  </div>
+
+  <form method="post" novalidate>
+    {% csrf_token %}
+
+    <fieldset class="module aligned">
+      {% for field in form %}
+        <div class="form-row payroll-field-row field-{{ field.name }}">
+          {{ field.errors }}
+
+          <div>
+            {{ field.label_tag }}
+            {{ field }}
+
+            {% if field.help_text %}
+              <div class="help">{{ field.help_text }}</div>
+            {% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </fieldset>
+
+    <div class="submit-row">
+      <input type="submit" value="Create Vacation Pay Run" class="default">
+      <a href="../">Cancel</a>
+    </div>
+  </form>
+</div>
+
+<script>
+(function () {
+  const employeeSelect = document.getElementById("id_employee");
+  const payPeriodSelect = document.getElementById("id_pay_period");
+  const amountInput = document.getElementById("id_vacation_pay_amount");
+  const summary = document.getElementById("vacation-balance-summary");
+  const overrideCheckbox = document.getElementById("id_use_manual_overrides");
+
+  const overrideRows = [
+    "employee_cpp",
+    "employer_cpp",
+    "employee_cpp2",
+    "employer_cpp2",
+    "employee_ei",
+    "employer_ei",
+    "federal_income_tax",
+    "provincial_income_tax",
+    "override_source",
+    "override_note"
+  ].map(function (name) {
+    return document.querySelector(".field-" + name);
+  }).filter(Boolean);
+
+  function setOverrideRowsVisible() {
+    const visible = overrideCheckbox && overrideCheckbox.checked;
+
+    overrideRows.forEach(function (row) {
+      row.style.display = visible ? "" : "none";
+    });
+  }
+
+  function loadVacationBalance() {
+    if (!employeeSelect || !payPeriodSelect || !amountInput || !summary) {
+      return;
+    }
+
+    const employeeId = employeeSelect.value;
+    const payPeriodId = payPeriodSelect.value;
+
+    if (!employeeId || !payPeriodId) {
+      summary.textContent = "Select an employee and pay period to load vacation balance.";
+      return;
+    }
+
+    const url = "{% url 'accounting_admin:accounting_vacation_balance' %}"
+      + "?employee_id=" + encodeURIComponent(employeeId)
+      + "&pay_period_id=" + encodeURIComponent(payPeriodId);
+
+    summary.textContent = "Loading vacation balance...";
+
+    fetch(url, {
+      credentials: "same-origin"
+    })
+      .then(function (response) {
+        return response.json();
+      })
+      .then(function (data) {
+        if (!data.ok) {
+          summary.textContent = data.message || "Could not load vacation balance.";
+          return;
+        }
+
+        const submitButton = document.querySelector('input[type="submit"]');
+
+        if (data.has_existing_vacation_run) {
+          summary.textContent =
+            "A vacation pay run already exists for this employee and pay period: " +
+            data.existing_run_number +
+            ". Void the existing run before creating another one for this period.";
+
+          amountInput.value = "";
+          amountInput.disabled = true;
+
+          if (submitButton) {
+            submitButton.disabled = true;
+          }
+
+          return;
+        }
+
+        summary.textContent =
+          "Vacation earned: " + data.earned +
+          " | Vacation paid/reserved: " + data.paid +
+          " | Available balance: " + data.balance +
+          " | Full balance must be processed.";
+
+        amountInput.disabled = false;
+        amountInput.readOnly = true;
+        amountInput.value = data.balance;
+
+        if (submitButton) {
+          submitButton.disabled = (data.balance === "0" || data.balance === "0.00");
+        }
+
+        if (!amountInput.value || amountInput.value === "0" || amountInput.value === "0.00") {
+          amountInput.value = data.balance;
+        }
+      })
+      .catch(function () {
+        summary.textContent = "Could not load vacation balance.";
+      });
+  }
+
+  if (employeeSelect) {
+    employeeSelect.addEventListener("change", loadVacationBalance);
+  }
+
+  if (payPeriodSelect) {
+    payPeriodSelect.addEventListener("change", loadVacationBalance);
+  }
+
+  if (overrideCheckbox) {
+    overrideCheckbox.addEventListener("change", setOverrideRowsVisible);
+  }
+
+  setOverrideRowsVisible();
+  loadVacationBalance();
+})();
+</script>
+{% endblock %}

@@ -10,6 +10,9 @@ from django.conf import settings
 from django.core.files import File
 from django.core.files.storage import default_storage
 
+from apps.media_conversion.services.video_policy import (
+    get_video_rendition_policy_for_instance,
+)
 from utils.common.utils import FileUpload, get_hls_output_dir
 from apps.media_conversion.services.progress import touch_job
 
@@ -208,18 +211,30 @@ class _EtaEstimator:
 # -------------------------------------------------
 # Main pipeline
 # -------------------------------------------------
-
 def convert_video_to_multi_hls(
     source_path: str,
     instance,
     fileupload: FileUpload,
     *,
     job=None,
+    field_name: str = "video",
 ) -> str:
     """
-    Multi-bitrate HLS conversion with TRUE weighted virtual timeline
-    + Correct handling for vertical videos (rotation metadata).
+    HLS conversion with policy-based renditions.
+
+    Policy examples:
+    - Testimony video: multi HLS
+    - Moment/Prayer/PrayerResponse video: single HLS
     """
+
+    policy = get_video_rendition_policy_for_instance(
+        instance,
+        field_name=field_name,
+    )
+
+    PREPARE_WEIGHT = 3
+    FINALIZE_WEIGHT = 7
+    ENCODE_TOTAL_WEIGHT = 100 - PREPARE_WEIGHT - FINALIZE_WEIGHT
 
     VIDEO_BASE_WEIGHTS = {
         "source": 40,
@@ -227,17 +242,29 @@ def convert_video_to_multi_hls(
         "720p": 20,
         "480p": 10,
     }
-    FINALIZE_WEIGHT = 5
 
     temp_input = None
     output_dir = None
 
     try:
         # -------------------------------------------------
-        # Load source to local temp
+        # Prepare local source
         # -------------------------------------------------
+        if job:
+            touch_job(
+                job,
+                stage="prepare",
+                stage_index=0,
+                stage_count=None,
+                stage_weight=PREPARE_WEIGHT,
+                stage_completed_weight=0,
+                stage_progress=0.0,
+                message="Preparing video…",
+            )
+
         rel = source_path if not os.path.isabs(source_path) else os.path.relpath(
-            source_path, settings.MEDIA_ROOT
+            source_path,
+            settings.MEDIA_ROOT,
         )
 
         with default_storage.open(rel, "rb") as f:
@@ -247,43 +274,20 @@ def convert_video_to_multi_hls(
                 temp_input = tmp.name
 
         # -------------------------------------------------
-        # Probe source (including rotation)
+        # Probe source metadata
         # -------------------------------------------------
         meta = _probe_json(temp_input)
         s0 = (meta.get("streams") or [{}])[0]
         s = s0
 
-
-        # -------------------------------------------------
-        # Color metadata (for HDR detection / range handling)
-        # -------------------------------------------------
         cp = (s.get("color_primaries") or "").lower()
         ct = (s.get("color_transfer") or "").lower()
-        cs = (s.get("color_space") or "").lower()
-        cr = (s.get("color_range") or "").lower()
 
-        # HDR detection (common for iPhone HDR)
+        # Real HDR detection.
         is_hdr = (cp == "bt2020") or (ct in ("smpte2084", "arib-std-b67"))
-
 
         coded_w = _even(int(s.get("width") or 0))
         coded_h = _even(int(s.get("height") or 0))
-
-        try:
-            ssd = s0.get("side_data_list") or []
-            tags_rotate = (s0.get("tags") or {}).get("rotate")
-
-            side_rotations = []
-            for item in ssd:
-                if isinstance(item, dict) and "rotation" in item:
-                    side_rotations.append(item.get("rotation"))
-
-            disp_w, disp_h = _decide_display_size(meta, coded_w, coded_h)
-
-        except Exception:
-            logger.exception("ROT DEBUG BLOCK FAILED")
-
-
 
         if not coded_w or not coded_h:
             raise RuntimeError("Invalid source dimensions")
@@ -294,60 +298,96 @@ def convert_video_to_multi_hls(
             coded_h,
         )
 
-        rot_meta, rot_src = _extract_rotation_with_source(meta)
         total_ms = _probe_duration_ms(temp_input)
 
         # -------------------------------------------------
-        # Rendition plan (SOURCE-FIRST, orientation-safe)
+        # Build policy-based rendition plan
         # -------------------------------------------------
         renditions = []
+        max_height = max(240, int(policy.max_height or 1080))
 
-        # 1️⃣ SOURCE — exact display size (CRITICAL FIX)
+        # Main output is always capped for cost/speed safety.
+        if disp_h > max_height:
+            main_h = max_height
+            main_w = _compute_width(disp_w, disp_h, main_h)
+        else:
+            main_h = disp_h
+            main_w = disp_w
+
+        # Always create one main HLS output.
         renditions.append({
             "key": "source",
-            "width": disp_w,
-            "height": disp_h,
-            "bitrate": "5000000",
+            "width": main_w,
+            "height": main_h,
+            "bitrate": "5000000" if main_h >= 1080 else "3000000",
         })
 
-        # 2️⃣ OPTIONAL DOWNSCALES (only if source is larger)
-        for h in (1080, 720, 480):
-            if disp_h > h:
-                renditions.append({
-                    "key": f"{h}p",
-                    "height": h,
-                    "width": _compute_width(disp_w, disp_h, h),
-                    "bitrate": "3000000" if h >= 720 else "1000000",
-                })
-
+        # Multi mode adds useful lower renditions.
+        if policy.mode == "multi":
+            for h in (1080, 720, 480):
+                if main_h > h:
+                    renditions.append({
+                        "key": f"{h}p",
+                        "height": h,
+                        "width": _compute_width(main_w, main_h, h),
+                        "bitrate": "3000000" if h >= 720 else "1000000",
+                    })
 
         # -------------------------------------------------
-        # Normalize weights so total stays == 100
-        # - Keep finalize fixed at 5
-        # - Redistribute remaining 95 across present renditions proportionally
+        # Normalize encoding weights
         # -------------------------------------------------
         present_keys = [r["key"] for r in renditions]
         base_sum = sum(VIDEO_BASE_WEIGHTS.get(k, 0) for k in present_keys) or 1
-        target_sum = 100 - FINALIZE_WEIGHT  # 95
 
         def _stage_weight(key: str) -> int:
-            w = VIDEO_BASE_WEIGHTS.get(key, 0)
-            return int(round((w / float(base_sum)) * target_sum))
+            raw = VIDEO_BASE_WEIGHTS.get(key, 0)
+            return int(round((raw / float(base_sum)) * ENCODE_TOTAL_WEIGHT))
 
-        # Fix rounding drift (ensure exact sum=95)
         weights = {k: _stage_weight(k) for k in present_keys}
-        drift = target_sum - sum(weights.values())
+
+        # Fix rounding drift so encoding sum is exact.
+        drift = ENCODE_TOTAL_WEIGHT - sum(weights.values())
         if drift != 0 and present_keys:
             weights[present_keys[0]] = max(0, weights[present_keys[0]] + drift)
 
-        STAGE_WEIGHTS = {**weights, "finalize": FINALIZE_WEIGHT}
+        STAGE_WEIGHTS = {
+            "prepare": PREPARE_WEIGHT,
+            **weights,
+            "finalize": FINALIZE_WEIGHT,
+        }
 
         # -------------------------------------------------
-        # Build stage_plan (AUTHORITATIVE)
+        # Authoritative weighted stage plan
         # -------------------------------------------------
-        stage_plan = [{"key": r["key"], "weight": STAGE_WEIGHTS[r["key"]]} for r in renditions]
-        stage_plan.append({"key": "finalize", "weight": STAGE_WEIGHTS["finalize"]})
+        stage_plan = [
+            {
+                "key": "prepare",
+                "label": "Preparing",
+                "weight": STAGE_WEIGHTS["prepare"],
+            }
+        ]
+
+        stage_plan.extend(
+            {
+                "key": r["key"],
+                "label": (
+                    "Encoding main quality"
+                    if r["key"] == "source"
+                    else f"Encoding {r['key']}"
+                ),
+                "weight": STAGE_WEIGHTS[r["key"]],
+            }
+            for r in renditions
+        )
+
+        stage_plan.append({
+            "key": "finalize",
+            "label": "Publishing",
+            "weight": STAGE_WEIGHTS["finalize"],
+        })
+
         total_weight = sum(x["weight"] for x in stage_plan) or 100
+        stage_count = len(stage_plan)
 
         if job:
             touch_job(
@@ -355,23 +395,27 @@ def convert_video_to_multi_hls(
                 stage_plan=stage_plan,
                 stage_total_weight=total_weight,
                 stage_completed_weight=0,
-                message="Preparing renditions…",
+                stage="prepare",
+                stage_index=0,
+                stage_count=stage_count,
+                stage_weight=STAGE_WEIGHTS["prepare"],
+                stage_progress=0.95,
+                message="Video prepared…",
             )
 
         # -------------------------------------------------
-        # Output dirs
+        # Output directory
         # -------------------------------------------------
         output_dir, relative_dir = get_hls_output_dir(instance, fileupload)
         os.makedirs(output_dir, exist_ok=True)
 
         variants = []
-        completed_weight = 0
-
+        completed_weight = PREPARE_WEIGHT
 
         # -------------------------------------------------
         # Encode each rendition
         # -------------------------------------------------
-        for idx, r in enumerate(renditions):
+        for idx, r in enumerate(renditions, start=1):
             key = r["key"]
 
             if key in ("source", "1080p"):
@@ -388,7 +432,7 @@ def convert_video_to_multi_hls(
                     job,
                     stage=key,
                     stage_index=idx,
-                    stage_count=len(stage_plan),
+                    stage_count=stage_count,
                     stage_weight=weight,
                     stage_completed_weight=completed_weight,
                     stage_progress=0.0,
@@ -400,43 +444,25 @@ def convert_video_to_multi_hls(
 
             playlist = os.path.join(subdir, "playlist.m3u8")
 
-            # -------------------------------------------------
-            # Detect REAL HDR mastering metadata
-            # -------------------------------------------------
+            # Real HDR mastering metadata.
             has_mastering = any(
                 isinstance(sd, dict) and "mastering_display_metadata" in sd
                 for sd in (s0.get("side_data_list") or [])
             )
 
-            # -------------------------------------------------
-            # Build vf chain
-            # -------------------------------------------------
-
             if is_hdr and has_mastering:
-                # 🎥 REAL HDR (cinema / mastered HDR) → tonemap required
+                # Real mastered HDR -> controlled SDR tonemap.
                 vf = ",".join([
-                    # Decode PQ HDR into linear light (scene-referred)
                     "zscale=transfer=smpte2084:primaries=bt2020:matrix=bt2020nc:range=tv",
-
                     "zscale=transfer=linear",
-
-                    # Highlight-only compression (controlled, YouTube-style)
                     "tonemap=tonemap=mobius:peak=300:desat=0.15",
-
-                    # Back to SDR (single conversion!)
                     "zscale=transfer=bt709:primaries=bt709:matrix=bt709:range=tv",
-
-                    # Spatial resize
                     f"scale={r['width']}:{r['height']}:flags=lanczos",
-
-                    # Output hygiene
                     "setsar=1",
                     "format=yuv420p",
                 ])
-
             else:
-                # 📱 SDR or MOBILE HDR (iPhone / display-referred HDR)
-                # → NO tonemap at all (critical!)
+                # SDR / mobile HDR -> safe conversion.
                 vf = ",".join([
                     f"scale={r['width']}:{r['height']}:flags=lanczos",
                     "setsar=1",
@@ -444,31 +470,50 @@ def convert_video_to_multi_hls(
                 ])
 
             cmd = [
-                "ffmpeg", "-y",
+                "ffmpeg",
+                "-y",
                 "-hide_banner",
-                "-i", temp_input,
+                "-i",
+                temp_input,
 
-                "-vf", vf,
-                "-metadata:s:v:0", "rotate=0",
+                "-vf",
+                vf,
+                "-metadata:s:v:0",
+                "rotate=0",
 
-                "-c:v", "libx264",
-                "-preset", "fast",
-                "-crf", crf,
-                "-profile:v", "high",
-                "-level", "4.1",
-                "-pix_fmt", "yuv420p",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-crf",
+                crf,
+                "-profile:v",
+                "high",
+                "-level",
+                "4.1",
+                "-pix_fmt",
+                "yuv420p",
 
-                "-c:a", "aac", "-b:a", "128k", "-ac", "2",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                "-ac",
+                "2",
 
-                "-f", "hls",
-                "-hls_time", "4",
-                "-hls_flags", "independent_segments",
-                "-hls_playlist_type", "vod",
-                "-hls_segment_filename", os.path.join(subdir, "seg_%03d.ts"),
+                "-f",
+                "hls",
+                "-hls_time",
+                "4",
+                "-hls_flags",
+                "independent_segments",
+                "-hls_playlist_type",
+                "vod",
+                "-hls_segment_filename",
+                os.path.join(subdir, "seg_%03d.ts"),
                 playlist,
             ]
 
-            # progress output on stderr via -progress pipe:2
             proc = subprocess.Popen(
                 ["ffmpeg", "-progress", "pipe:2", "-nostats"] + cmd[1:],
                 stderr=subprocess.PIPE,
@@ -486,7 +531,6 @@ def convert_video_to_multi_hls(
 
                     out_ms = _parse_out_time_ms(line.strip())
 
-                    # Keep heartbeat alive (throttled)
                     now_ts = time.time()
                     if job and (now_ts - last_push >= 1.5):
                         last_push = now_ts
@@ -494,7 +538,7 @@ def convert_video_to_multi_hls(
                             job,
                             stage=key,
                             stage_index=idx,
-                            stage_count=len(stage_plan),
+                            stage_count=stage_count,
                             stage_weight=weight,
                             stage_completed_weight=completed_weight,
                             message=f"Encoding {key}…",
@@ -521,7 +565,6 @@ def convert_video_to_multi_hls(
 
             completed_weight += weight
 
-            # 🔍 probe REAL encoded size (critical for Safari)
             real_w, real_h = _probe_video_size(
                 os.path.join(subdir, "seg_000.ts")
             )
@@ -535,9 +578,10 @@ def convert_video_to_multi_hls(
             })
 
         # -------------------------------------------------
-        # Finalize (5%)
+        # Build master playlist
         # -------------------------------------------------
         master = os.path.join(output_dir, "master.m3u8")
+
         with open(master, "w") as f:
             f.write("#EXTM3U\n#EXT-X-VERSION:3\n")
             for v in variants:
@@ -547,37 +591,89 @@ def convert_video_to_multi_hls(
                 )
                 f.write(f"{v['path']}\n")
 
+        finalize_index = stage_count - 1
+
         if job:
             touch_job(
                 job,
                 stage="finalize",
+                stage_index=finalize_index,
+                stage_count=stage_count,
                 stage_weight=STAGE_WEIGHTS["finalize"],
                 stage_completed_weight=completed_weight,
-                stage_progress=1.0,
-                message="Finalizing…",
+                stage_progress=0.0,
+                message="Publishing media…",
             )
 
         # -------------------------------------------------
-        # Upload to storage
+        # Upload generated HLS files to storage
         # -------------------------------------------------
-        master_storage_path = None
+        upload_files = []
+
         for root, _, files in os.walk(output_dir):
             for name in files:
                 full = os.path.join(root, name)
-                relp = os.path.join(relative_dir, os.path.relpath(full, output_dir))
-                with open(full, "rb") as fh:
-                    default_storage.save(relp, File(fh))
-                if name == "master.m3u8":
-                    master_storage_path = relp
+                relp = os.path.join(
+                    relative_dir,
+                    os.path.relpath(full, output_dir),
+                )
+                upload_files.append((full, relp, name))
+
+        total_files = max(1, len(upload_files))
+        master_storage_path = None
+
+        for index, (full, relp, name) in enumerate(upload_files, start=1):
+            with open(full, "rb") as fh:
+                default_storage.save(relp, File(fh))
+
+            if name == "master.m3u8":
+                master_storage_path = relp
+
+            if job:
+                # Keep final stage below 100 until task marks DONE.
+                raw_frac = index / float(total_files)
+                safe_frac = min(0.90, raw_frac * 0.90)
+
+                touch_job(
+                    job,
+                    stage="finalize",
+                    stage_index=finalize_index,
+                    stage_count=stage_count,
+                    stage_weight=STAGE_WEIGHTS["finalize"],
+                    stage_completed_weight=completed_weight,
+                    stage_progress=safe_frac,
+                    message="Publishing media…",
+                )
 
         if not master_storage_path:
             raise RuntimeError("master.m3u8 missing")
+
+        if job:
+            # Do not force 100 here. DONE status will make UI show 100.
+            touch_job(
+                job,
+                stage="finalize",
+                stage_index=finalize_index,
+                stage_count=stage_count,
+                stage_weight=STAGE_WEIGHTS["finalize"],
+                stage_completed_weight=completed_weight,
+                stage_progress=0.95,
+                message="Final checks…",
+            )
+
+        logger.info(
+            "✅ HLS conversion completed policy=%s max_height=%s output=%s",
+            policy.mode,
+            policy.max_height,
+            master_storage_path,
+        )
 
         return master_storage_path
 
     finally:
         if temp_input and os.path.exists(temp_input):
             os.remove(temp_input)
+
         if output_dir and os.path.exists(output_dir):
             import shutil
             shutil.rmtree(output_dir)

@@ -18,3 +18,5 @@ def get_static_logo_path(filename: str) -> str:
 
     base_dir = Path(settings.BASE_DIR)
     return str(base_dir / "static" / "logo" / filename)
+
+

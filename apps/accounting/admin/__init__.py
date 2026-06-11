@@ -12,3 +12,5 @@ from .recurring_admin import *  # noqa
 from .bank_admin import *  # noqa
 from .bank_reconciliation_admin import *  # noqa
 from .accounting_period_admin import *  # noqa
+
+from .payroll_admin import *  # noqa

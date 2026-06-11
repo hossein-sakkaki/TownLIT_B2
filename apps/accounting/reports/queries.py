@@ -320,3 +320,5 @@ def build_monthly_summary(report_filter: ReportFilter) -> MonthlySummaryReport:
         total_expense=total_expense,
         total_net_result=total_net_result,
     )
+    
+    

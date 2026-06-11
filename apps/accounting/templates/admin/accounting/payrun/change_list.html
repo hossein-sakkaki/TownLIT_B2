@@ -1,0 +1,19 @@
+<!-- apps/accounting/templates/admin/accounting/payrun/change_list.html -->
+
+{% extends "admin/change_list.html" %}
+
+{% block object-tools-items %}
+  <li>
+    <a href="{% url 'accounting_admin:accounting-create-pay-run' %}" class="addlink">
+      Create Payroll Run
+    </a>
+  </li>
+
+  <li>
+    <a href="{% url 'accounting_admin:accounting-create-vacation-pay-run' %}" class="addlink">
+      Create Vacation Pay Run
+    </a>
+  </li>
+
+  {{ block.super }}
+{% endblock %}

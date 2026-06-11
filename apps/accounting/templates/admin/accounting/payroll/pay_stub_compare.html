@@ -1,0 +1,61 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<div id="content-main">
+  <h1>{{ title }}</h1>
+
+  <div class="module">
+    <h2>Pay Stub</h2>
+    <p>
+      <strong>Employee:</strong> {{ payload.employee }}<br>
+      <strong>Pay run:</strong> {{ payload.pay_run }}<br>
+      <strong>Manual overrides used:</strong>
+      {% if payload.has_manual_overrides %}
+        <span style="color:#b45309;font-weight:bold;">Yes</span>
+      {% else %}
+        <span style="color:green;font-weight:bold;">No</span>
+      {% endif %}
+      <br>
+      <strong>Override source:</strong> {{ payload.override_source|default:"-" }}<br>
+      <strong>Override note:</strong> {{ payload.override_note|default:"-" }}
+    </p>
+  </div>
+
+  <div class="module">
+    <h2>Auto Calculation vs Final Values</h2>
+
+    <table style="width:100%;">
+      <thead>
+        <tr>
+          <th>Item</th>
+          <th style="text-align:right;">Auto calculation</th>
+          <th style="text-align:right;">Final value on pay stub</th>
+          <th style="text-align:right;">Difference</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in payload.rows %}
+          <tr>
+            <td>{{ row.label }}</td>
+            <td style="text-align:right;">{{ row.auto_value }}</td>
+            <td style="text-align:right;">{{ row.final_value }}</td>
+            <td style="text-align:right;">{{ row.difference }}</td>
+            <td>
+              {% if row.matches %}
+                <span style="color: green; font-weight: bold;">Match</span>
+              {% else %}
+                <span style="color: #b45309; font-weight: bold;">Review</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    <a class="button" href="../">Back to Pay Stub</a>
+  </p>
+</div>
+{% endblock %}

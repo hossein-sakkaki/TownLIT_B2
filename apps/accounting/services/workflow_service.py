@@ -110,3 +110,6 @@ def mark_posted(*, journal_entry: JournalEntry) -> AccountingApproval:
     workflow.status = AccountingApproval.STATUS_POSTED
     workflow.save(update_fields=["status", "updated_at"])
     return workflow
+
+
+

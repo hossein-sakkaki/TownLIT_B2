@@ -109,7 +109,25 @@ if SESSION_COOKIE_SAMESITE == "None" and not SESSION_COOKIE_SECURE:
 RESET_LINK_EXPIRATION_MINUTES = int(os.getenv('RESET_LINK_EXPIRATION_MINUTES', 30))
 EMAIL_CODE_EXPIRATION_MINUTES = int(os.getenv('EMAIL_CODE_EXPIRATION_MINUTES', 10))
 PHONE_CODE_EXPIRATION_MINUTES = int(os.getenv("PHONE_CODE_EXPIRATION_MINUTES", 10))
+
+# LITShiels access tokens -----------------------------------------------------
 LITSHIELD_ACCESS_EXPIRATION_SECONDS = int(os.getenv("LITSHIELD_ACCESS_EXPIRATION_SECONDS", 300))
+
+# One successful LITShield PIN unlocks these scopes together for the same short session.
+LITSHIELD_SHARED_SCOPES = [
+    "conversation",
+    "covenant",
+]
+# PIN brute-force protection
+LITSHIELD_PIN_MAX_FAILED_ATTEMPTS = int(os.getenv("LITSHIELD_PIN_MAX_FAILED_ATTEMPTS", 5))
+LITSHIELD_PIN_LOCKOUT_SECONDS = int(os.getenv("LITSHIELD_PIN_LOCKOUT_SECONDS", 900))
+
+# Mobile/device-bound access
+LITSHIELD_REQUIRE_REGISTERED_DEVICE_FOR_HEADER_ACCESS = (
+    os.getenv("LITSHIELD_REQUIRE_REGISTERED_DEVICE_FOR_HEADER_ACCESS", "true").lower() == "true"
+)
+
+
 
 # Set to False to disable invite code requirement -----------------------------
 USE_INVITE_CODE = os.getenv("USE_INVITE_CODE", "False").lower() in ("true", "1", "yes")
@@ -182,8 +200,11 @@ INSTALLED_APPS = [
     'apps.payment.apps.PaymentConfig',
     'apps.warehouse.apps.WarehouseConfig',
     # "apps.core.square.apps.SquareConfig",
-
+    
+    "apps.core.streams.apps.StreamsConfig",
     "apps.core.interactions",
+    "apps.core.boundaries.apps.BoundariesConfig",
+    
     'apps.asset_delivery.apps.AssetDeliveryConfig',
     "apps.subtitles.apps.SubtitlesConfig",
     
@@ -205,9 +226,14 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'django_otp.middleware.OTPMiddleware',  # 2FA
+    'django_otp.middleware.OTPMiddleware',
+
+    # Central owner restriction gate.
+    # Separate from LITShield.
+    'apps.core.security.account_gate.middleware.RestrictedOwnerAccountGateMiddleware',
+
     'whitenoise.middleware.WhiteNoiseMiddleware',
-    
+
     'townlit_b.middleware.media_headers.AddMediaCORSHeadersMiddleware',
     "common.middleware.security_headers.ContentSecurityPolicyMiddleware",
 ]
@@ -575,6 +601,18 @@ if not FIREBASE_PROJECT_ID:
 
 # Real-Time Notification --------------------------------------------------------------
 ASGI_APPLICATION = 'townlit_b.asgi.application'
+
+# --------------------------------------------------------------------
+# APNs / Apple Push Notifications
+# --------------------------------------------------------------------
+APNS_ENABLED = os.getenv("APNS_ENABLED", "false").lower() == "true"
+
+APNS_KEY_ID = os.getenv("APNS_KEY_ID", "")
+APNS_TEAM_ID = os.getenv("APNS_TEAM_ID", "")
+APNS_TOPIC = os.getenv("APNS_TOPIC", "com.townlit.TownLIT")
+APNS_AUTH_KEY_PATH = os.getenv("APNS_AUTH_KEY_PATH", "")
+
+APNS_USE_SANDBOX = os.getenv("APNS_USE_SANDBOX", "true").lower() == "true"
 
 
 

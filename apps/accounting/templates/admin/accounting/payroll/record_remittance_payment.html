@@ -1,0 +1,43 @@
+<!-- apps/accounting/templates/admin/accounting/payroll/record_remittance_payment.html -->
+
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<div id="content-main">
+  <h1>{{ title }}</h1>
+
+  <p>
+    This will post the CRA payroll remittance payment to the general ledger.
+  </p>
+
+  <p>
+    <strong>Pay run:</strong> {{ remittance.pay_run.run_number }}<br>
+    <strong>Total due:</strong> {{ remittance.total_due }}<br>
+    <strong>Status:</strong> {{ remittance.status }}
+  </p>
+
+  <form method="post" novalidate>
+    {% csrf_token %}
+
+    <fieldset class="module aligned">
+      {% for field in form %}
+        <div class="form-row">
+          {{ field.errors }}
+          <div>
+            {{ field.label_tag }}
+            {{ field }}
+            {% if field.help_text %}
+              <div class="help">{{ field.help_text }}</div>
+            {% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </fieldset>
+
+    <div class="submit-row">
+      <input type="submit" value="Record CRA Payment" class="default">
+      <a href="../">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

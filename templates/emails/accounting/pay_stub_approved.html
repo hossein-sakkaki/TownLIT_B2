@@ -1,0 +1,30 @@
+<!-- templates/emails/accounting/pay_stub_approved.html -->
+{% extends "base_email.html" %}
+
+{% block subject %}
+TownLIT Pay Stub
+{% endblock %}
+
+{% block content %}
+
+<h1>{{ email_title }}</h1>
+
+<p>Hello {{ employee.display_name }},</p>
+
+<p>{{ message_intro }}</p>
+
+<p>
+  <strong>Pay period:</strong> {{ period_start }} to {{ period_end }}<br />
+  <strong>Pay date:</strong> {{ pay_date }}<br />
+  <strong>Gross pay:</strong> ${{ gross_salary }}<br />
+  <strong>Employee deductions:</strong> ${{ total_employee_deductions }}<br />
+  <strong>Net pay:</strong> ${{ net_pay }}
+</p>
+
+<p>Your official pay stub PDF is attached to this email.</p>
+
+<p>If you have any questions about this payroll record, please contact TownLIT administration.</p>
+
+<p class="email-signature">With care,<br />TownLIT Accounting</p>
+
+{% endblock %}
