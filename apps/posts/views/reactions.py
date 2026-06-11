@@ -14,10 +14,14 @@ from apps.posts.serializers.reactions import ReactionSerializer
 
 from apps.posts.models.reaction import Reaction
 from apps.accounts.serializers.user_serializers import SimpleCustomUserSerializer
+from django.contrib.auth import get_user_model
+from apps.posts.services.boundary_interactions import (
+    check_reaction_create_boundary,
+    content_interaction_error_payload,
+)
 
 import logging
 logger = logging.getLogger(__name__)
-from django.contrib.auth import get_user_model
 
 CustomUser = get_user_model()
 
@@ -264,17 +268,20 @@ class ReactionViewSet(
 
     def create(self, request, *args, **kwargs):
         """
-        Toggle logic (single reaction per user per object):
-        - If same reaction exists → delete → 204
-        - Else remove any previous reaction for same object, then create new → 201
+        Toggle logic with Boundary enforcement.
+
+        Rules:
+        - Same reaction exists -> remove it. This is allowed even with Boundary.
+        - New reaction or changing previous reaction -> blocked if Boundary exists
+        between actor and content owner.
         """
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         user = request.user
-        ct = serializer.validated_data['content_type']
-        oid = serializer.validated_data['object_id']
-        rtype = serializer.validated_data['reaction_type']
+        ct = serializer.validated_data["content_type"]
+        oid = serializer.validated_data["object_id"]
+        rtype = serializer.validated_data["reaction_type"]
 
         owner_user_id = _get_target_owner_user_id(
             ct,
@@ -282,9 +289,15 @@ class ReactionViewSet(
             request_user_id=request.user.id,
         )
 
-        # 1️⃣ Check if the same reaction already exists → toggle off
+        # ------------------------------------------------------------
+        # 1) Same reaction already exists -> toggle off.
+        # This is cleanup/removal, not a new interaction.
+        # ------------------------------------------------------------
         existing_same = Reaction.objects.filter(
-            name=user, content_type=ct, object_id=oid, reaction_type=rtype
+            name=user,
+            content_type=ct,
+            object_id=oid,
+            reaction_type=rtype,
         ).first()
 
         if existing_same:
@@ -308,18 +321,54 @@ class ReactionViewSet(
 
             return Response(status=status.HTTP_204_NO_CONTENT)
 
-        # 2️⃣ Delete all other reactions by this user for the same object
-        previous_with_message_exists = Reaction.objects.filter(
-            name=user,
+        # ------------------------------------------------------------
+        # 2) Boundary enforcement for new/change reaction.
+        # ------------------------------------------------------------
+        boundary_check = check_reaction_create_boundary(
+            actor=request.user,
             content_type=ct,
             object_id=oid,
-        ).exclude(reaction_type=rtype).exclude(message__isnull=True).exists()
+        )
 
-        Reaction.objects.filter(
-            name=user, content_type=ct, object_id=oid
-        ).exclude(reaction_type=rtype).delete()
+        if not boundary_check.allowed:
+            return Response(
+                content_interaction_error_payload(
+                    message=boundary_check.message,
+                    code=boundary_check.code,
+                ),
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
-        # 3️⃣ Create the new reaction
+        # ------------------------------------------------------------
+        # 3) Delete all other reactions by this user for same object.
+        # This is a replacement/change.
+        # ------------------------------------------------------------
+        previous_with_message_exists = (
+            Reaction.objects
+            .filter(
+                name=user,
+                content_type=ct,
+                object_id=oid,
+            )
+            .exclude(reaction_type=rtype)
+            .exclude(message__isnull=True)
+            .exists()
+        )
+
+        (
+            Reaction.objects
+            .filter(
+                name=user,
+                content_type=ct,
+                object_id=oid,
+            )
+            .exclude(reaction_type=rtype)
+            .delete()
+        )
+
+        # ------------------------------------------------------------
+        # 4) Create new reaction.
+        # ------------------------------------------------------------
         instance = serializer.save()
         out = self.get_serializer(instance)
         has_message = bool((instance.message or "").strip())
@@ -340,8 +389,6 @@ class ReactionViewSet(
             ))
 
         return Response(out.data, status=status.HTTP_201_CREATED)
-
-
 
     @action(detail=False, methods=['get'], url_path='summary', permission_classes=[AllowAny])
     def summary(self, request):

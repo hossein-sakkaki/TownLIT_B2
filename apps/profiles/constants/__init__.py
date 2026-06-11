@@ -7,3 +7,4 @@ from .identity import *
 from .customer import *
 from .education import *
 from .ministry import *
+from .gift_constants import *

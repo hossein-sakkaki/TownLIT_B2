@@ -220,26 +220,7 @@ class DesignTokensViewSet(viewsets.ViewSet):
             return Response({'error': 'Error parsing design tokens file'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-# ICONS ViewSet ---------------------------------------------------------------------------------
-class IconViewSet(viewsets.ViewSet):
-    permission_classes = [AllowAny]
 
-    def retrieve(self, request, pk=None):
-        icon_name = pk
-        icon_path = os.path.join(settings.BASE_DIR, 'static', 'icons', f"{icon_name}.svg")
-        if not os.path.exists(icon_path):
-            return Response({'error': 'Icon not found'}, status=404)        
-        return FileResponse(open(icon_path, 'rb'), content_type='image/svg+xml')
-    
-    # Define the path to the icons directory
-    def list(self, request):
-        icons_path = os.path.join(settings.BASE_DIR, 'static', 'icons')
-        if os.path.exists(icons_path):
-            icons = [f.split('.')[0] for f in os.listdir(icons_path) if f.endswith('.svg')]
-        else:
-            icons = []
-        return Response({'icons': icons})
-    
 
 # STATIC CHOICE MAP ViewSet -------------------------------------------------------------------------
 class StaticChoiceViewSet(viewsets.ViewSet):
@@ -271,6 +252,27 @@ class StaticChoiceViewSet(viewsets.ViewSet):
                     choices = [choice for choice in choices if choice[0] != "Confidant"]
 
         return Response(choices)
+
+
+# ICONS ViewSet ---------------------------------------------------------------------------------
+class IconViewSet(viewsets.ViewSet):
+    permission_classes = [AllowAny]
+
+    def retrieve(self, request, pk=None):
+        icon_name = pk
+        icon_path = os.path.join(settings.BASE_DIR, 'static', 'icons', f"{icon_name}.svg")
+        if not os.path.exists(icon_path):
+            return Response({'error': 'Icon not found'}, status=404)        
+        return FileResponse(open(icon_path, 'rb'), content_type='image/svg+xml')
+    
+    # Define the path to the icons directory
+    def list(self, request):
+        icons_path = os.path.join(settings.BASE_DIR, 'static', 'icons')
+        if os.path.exists(icons_path):
+            icons = [f.split('.')[0] for f in os.listdir(icons_path) if f.endswith('.svg')]
+        else:
+            icons = []
+        return Response({'icons': icons})
     
     
 # PRAYER View -----------------------------------------------------------------------------------------------

@@ -31,6 +31,9 @@ from apps.profiles.models.transitions import MigrationHistory
 from apps.profiles.serializers.member import MemberSerializer
 from apps.profiles.serializers.guest import GuestUserSerializer
 from apps.profiles.services.active_profile import get_active_profile 
+from apps.profiles.services.profile_migration_content_safety import (
+    privatize_member_covenant_moments_before_guest_migration,
+)
 
 CustomUser = get_user_model()
 logger = logging.getLogger(__name__)
@@ -532,7 +535,15 @@ class ProfileMigrationViewSet(viewsets.ViewSet):
 
                     guest, created = self._activate_guest(user)
 
+                    covenant_moments_privatized = 0
+
                     if previous_member:
+                        covenant_moments_privatized = (
+                            privatize_member_covenant_moments_before_guest_migration(
+                                previous_member
+                            )
+                        )
+
                         self._migrate_moment_ownership(
                             from_profile=previous_member,
                             to_profile=guest,
@@ -568,6 +579,9 @@ class ProfileMigrationViewSet(viewsets.ViewSet):
                             "created": created,
                             "label": guest_label,
                             "profile": guest_data,
+                            "content_safety": {
+                                "covenant_moments_privatized": covenant_moments_privatized,
+                            },
                         },
                         status=status.HTTP_200_OK,
                     )

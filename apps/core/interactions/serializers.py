@@ -1,7 +1,7 @@
 # apps/core/interactions/serializers.py
 
 from rest_framework import serializers
-from apps.posts.constants import REACTION_TYPE_CHOICES
+from apps.posts.constants.constants import REACTION_TYPE_CHOICES
 
 
 # Reaction Summary Serializer ----------------------------------------------------------------------------

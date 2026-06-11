@@ -19,6 +19,7 @@ from apps.core.ownership.ownership_predicates import owner_q_for_user_ids
 from apps.core.square.registry import get_square_sources
 from apps.core.visibility.query import VisibilityQuery
 from apps.core.owner_visibility.query import OwnerVisibilityQuery
+from apps.core.boundaries.query import BoundaryVisibilityQuery
 from apps.profiles.selectors.friends import get_friend_user_ids
 
 logger = logging.getLogger(__name__)
@@ -27,16 +28,33 @@ logger = logging.getLogger(__name__)
 class SquareQuery:
     """
     Unified Square feed query builder.
-    Debug strategy:
-    - Log counts at each filter stage to locate where items drop to zero.
+
+    Responsibilities:
+    - source selection
+    - media/conversion availability
+    - visibility policy
+    - owner visibility policy
+    - Boundary visibility policy
+    - Square UI policy: exclude viewer-owned content
+    - friends tab filtering
+    - square metadata annotations
+
+    Stillness policy:
+    - Stillness does NOT remove content from Square.
+    - It only suppresses interruptions/notifications elsewhere.
+
+    Boundary policy:
+    - Boundary removes content owned by users where Boundary exists
+      in either direction between viewer and owner.
     """
 
     @staticmethod
     def build(*, viewer, kind: str = SQUARE_KIND_ALL) -> List[QuerySet]:
         # -------------------------------------------------
-        # 0) Friends scope precompute (only when needed)
+        # 0) Friends scope precompute
         # -------------------------------------------------
         friend_ids: list[int] = []
+
         if kind == SQUARE_KIND_FRIENDS:
             if not viewer:
                 return []
@@ -52,21 +70,24 @@ class SquareQuery:
             model = source.model
 
             # ---------------------------------------------
-            # 1) Kind filter (tabs)
+            # 1) Kind filter
             # ---------------------------------------------
-            if kind not in (SQUARE_KIND_ALL, SQUARE_KIND_FRIENDS) and source.kind != kind:
+            if (
+                kind not in (SQUARE_KIND_ALL, SQUARE_KIND_FRIENDS)
+                and source.kind != kind
+            ):
                 continue
 
             qs = model.objects.all()
 
             # ---------------------------------------------
-            # 2) Availability (conversion-aware)
+            # 2) Availability / conversion
             # ---------------------------------------------
             if source.requires_conversion:
                 qs = qs.filter(is_converted=True)
 
             # ---------------------------------------------
-            # 3) Media existence filter (only if matched)
+            # 3) Media existence filter
             # ---------------------------------------------
             media_q = Q()
             matched = False
@@ -80,11 +101,16 @@ class SquareQuery:
                 qs = qs.filter(media_q)
 
             # ---------------------------------------------
-            # 4) Visibility filtering (permission-level)
+            # 4) Visibility filtering
             # ---------------------------------------------
-            qs = VisibilityQuery.for_viewer(viewer=viewer, base_queryset=qs)
+            qs = VisibilityQuery.for_viewer(
+                viewer=viewer,
+                base_queryset=qs,
+            )
 
-            # OWNER VISIBILITY FILTER (BEFORE EXCLUDE OWNED)
+            # ---------------------------------------------
+            # 5) Owner visibility filtering
+            # ---------------------------------------------
             qs = OwnerVisibilityQuery.filter_queryset_for_square(
                 qs,
                 viewer=viewer,
@@ -92,26 +118,48 @@ class SquareQuery:
             )
 
             # ---------------------------------------------
-            # 5) Exclude own content (Square UI policy)
+            # 6) Boundary visibility filtering
             # ---------------------------------------------
-            qs = exclude_owned_by_viewer(qs, viewer)
+            qs = BoundaryVisibilityQuery.exclude_boundary_conflicts(
+                qs,
+                viewer=viewer,
+            )
 
             # ---------------------------------------------
-            # 6) Friends scope (only for kind="friends")
+            # 7) Exclude viewer-owned content
+            # Square discovery policy:
+            # user should not see their own content in Square.
+            # ---------------------------------------------
+            qs = exclude_owned_by_viewer(
+                qs,
+                viewer,
+            )
+
+            # ---------------------------------------------
+            # 8) Friends scope
             # ---------------------------------------------
             if kind == SQUARE_KIND_FRIENDS:
-                qs = qs.filter(owner_q_for_user_ids(user_ids=friend_ids))
+                qs = qs.filter(
+                    owner_q_for_user_ids(user_ids=friend_ids)
+                )
 
             # ---------------------------------------------
-            # 7) Annotate square metadata
+            # 9) Annotate square metadata
             # ---------------------------------------------
             qs = qs.annotate(
-                square_kind=models.Value(source.kind, output_field=models.CharField()),
+                square_kind=models.Value(
+                    source.kind,
+                    output_field=models.CharField(),
+                ),
                 square_ct=models.Value(
                     ContentType.objects.get_for_model(model).id,
                     output_field=models.IntegerField(),
                 ),
             )
+
             querysets.append(qs)
 
         return querysets
+    
+    
+    

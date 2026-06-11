@@ -1,4 +1,7 @@
+# apps/media_conversion/tasks/health.py
+
 from celery import shared_task
+from django.db.models import Q
 from django.utils import timezone
 from datetime import timedelta
 import logging
@@ -15,60 +18,61 @@ def auto_fail_stale_media_jobs(self):
     Runs via Celery Beat.
     """
     now = timezone.now()
-    STALE_AFTER = timedelta(minutes=2)
+    stale_after = timedelta(minutes=2)
+    cutoff = now - stale_after
 
-    qs = MediaConversionJob.objects.filter(
-        status=MediaJobStatus.PROCESSING,
-    ).filter(
-        # stale heartbeat OR never-heartbeated jobs
-        (
-            MediaConversionJob._meta.get_field("heartbeat_at").attname + "__lt",
-            now - STALE_AFTER
+    qs = (
+        MediaConversionJob.objects
+        .filter(status=MediaJobStatus.PROCESSING)
+        .filter(
+            Q(heartbeat_at__lt=cutoff)
+            |
+            Q(heartbeat_at__isnull=True)
         )
+        .distinct()
     )
-
-    # Safer explicit version (clearer, recommended):
-    qs = MediaConversionJob.objects.filter(
-        status=MediaJobStatus.PROCESSING,
-    ).filter(
-        heartbeat_at__lt=now - STALE_AFTER
-    ) | MediaConversionJob.objects.filter(
-        status=MediaJobStatus.PROCESSING,
-        heartbeat_at__isnull=True,
-    )
-
-    qs = qs.distinct()
 
     count = qs.count()
     if not count:
         return
 
+    failed_count = 0
+
     for job in qs:
         try:
             job.status = MediaJobStatus.FAILED
             job.progress = min(job.progress or 0, 99)
+            job.message = "Auto-failed: stale heartbeat"
             job.error = "auto_failed:heartbeat_stale"
             job.finished_at = now
-            job.updated_at = now
+            job.heartbeat_at = now
 
-            # optional but consistent with base.py
+            update_fields = [
+                "status",
+                "progress",
+                "message",
+                "error",
+                "finished_at",
+                "heartbeat_at",
+                "updated_at",
+            ]
+
             if job.started_at and job.duration_ms is None:
                 job.duration_ms = int(
                     (job.finished_at - job.started_at).total_seconds() * 1000
                 )
+                update_fields.append("duration_ms")
 
-            job.save(update_fields=[
-                "status",
-                "progress",
-                "error",
-                "finished_at",
-                "updated_at",
-                "duration_ms",
-            ])
+            job.save(update_fields=update_fields)
+            failed_count += 1
+
         except Exception:
             logger.exception(
                 "Failed to auto-fail MediaConversionJob id=%s",
-                job.id
+                job.id,
             )
 
-    logger.warning("🧠 Auto-failed %s stale media jobs", count)
+    logger.warning(
+        "🧠 Auto-failed %s stale media jobs",
+        failed_count,
+    )

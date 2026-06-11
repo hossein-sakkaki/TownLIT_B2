@@ -13,13 +13,30 @@ from validators.security_validators import validate_no_executable_file
 
 
 
-# Enums for job statuses and subtitle formats ---------------------------------------------------------
+# Enums for job statuses and subtitle formats ----------------------------
 class TranscriptJobStatus(models.TextChoices):
     PENDING = "pending"
     RUNNING = "running"
     DONE = "done"
     FAILED = "failed"
 
+# Enums for content review status ---------------------------------------
+class TranscriptContentReviewStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    APPROVED = "approved", "Approved"
+    REJECTED = "rejected", "Rejected"
+    NEEDS_REVIEW = "needs_review", "Needs review"
+    
+# Enums for content type detection ---------------------------------------
+class TranscriptDetectedContentType(models.TextChoices):
+    PERSONAL_TESTIMONY = "personal_testimony", "Personal testimony"
+    WORSHIP_SONG = "worship_song", "Worship song"
+    MUSIC = "music", "Music"
+    TEACHING = "teaching", "Teaching"
+    PRAYER = "prayer", "Prayer"
+    OTHER = "other", "Other"
+    UNKNOWN = "unknown", "Unknown"
+    
 # Subtitle related models ------------------------------------------------
 class SubtitleJobStatus(models.TextChoices):
     PENDING = "pending"
@@ -76,6 +93,44 @@ class VideoTranscript(models.Model):
     )
     tone_profile = models.JSONField(blank=True, null=True, default=dict)
 
+    # ------------------------------------------------------------------
+    # Testimony content review gate
+    # ------------------------------------------------------------------
+    content_review_status = models.CharField(
+        max_length=20,
+        choices=TranscriptContentReviewStatus.choices,
+        default=TranscriptContentReviewStatus.PENDING,
+        db_index=True,
+    )
+
+    detected_content_type = models.CharField(
+        max_length=40,
+        choices=TranscriptDetectedContentType.choices,
+        default=TranscriptDetectedContentType.UNKNOWN,
+        db_index=True,
+    )
+
+    content_review_confidence = models.FloatField(
+        null=True,
+        blank=True,
+    )
+
+    content_review_reason = models.TextField(
+        blank=True,
+        default="",
+    )
+
+    ai_processing_allowed = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="Allows expensive subtitle/translation/voice generation.",
+    )
+
+    content_reviewed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

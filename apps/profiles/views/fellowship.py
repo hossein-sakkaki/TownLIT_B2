@@ -2,7 +2,7 @@
 
 import logging
 
-from django.db import transaction
+from django.db import transaction, IntegrityError
 from django.db.models import Q
 
 from rest_framework import status, serializers, viewsets
@@ -23,6 +23,8 @@ from apps.profiles.services.symmetric_fellowship import (
     add_symmetric_fellowship,
     remove_symmetric_fellowship,
 )
+from apps.core.boundaries.services.policy import BoundaryPolicy
+from apps.core.boundaries.constants import BOUNDARY_GENERIC_UNAVAILABLE_MESSAGE
 
 CustomUser = get_user_model()
 logger = logging.getLogger(__name__)
@@ -46,6 +48,50 @@ class FellowshipViewSet(viewsets.ModelViewSet):
         # DRF already evaluated .data -> list; filter out None
         return [item for item in ser.data if item is not None]
 
+    def _validation_error_response(self, exc):
+        """
+        Normalize DRF validation errors into a frontend-friendly shape.
+        """
+        detail = getattr(exc, "detail", exc)
+
+        if isinstance(detail, dict):
+            if "error" in detail:
+                error = detail["error"]
+                if isinstance(error, list) and error:
+                    error = str(error[0])
+                return Response(
+                    {"error": str(error)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Field-level errors fallback
+            first_key = next(iter(detail), None)
+            if first_key:
+                first_value = detail[first_key]
+                if isinstance(first_value, list) and first_value:
+                    message = str(first_value[0])
+                else:
+                    message = str(first_value)
+
+                return Response(
+                    {
+                        "error": message,
+                        "field": first_key,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        if isinstance(detail, list) and detail:
+            return Response(
+                {"error": str(detail[0])},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(
+            {"error": "Unable to process this fellowship request."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+        
     def get_queryset(self):
         user = self.request.user
         return (
@@ -79,6 +125,15 @@ class FellowshipViewSet(viewsets.ModelViewSet):
             if to_user == self.request.user:
                 raise serializers.ValidationError({"error": "You cannot send a fellowship request to yourself."})
 
+            if not BoundaryPolicy.can_send_fellowship_request(
+                sender=self.request.user,
+                recipient=to_user,
+            ):
+                raise serializers.ValidationError({
+                    "error": BOUNDARY_GENERIC_UNAVAILABLE_MESSAGE,
+                    "code": "interaction_unavailable",
+                })
+                
             # --- Confidant safety: block hidden Confidant re-requests silently ---
             # If user is in 'hide_confidants' mode and this is a Confidant request,
             # and the target is already an accepted Confidant, return a generic error.
@@ -127,14 +182,46 @@ class FellowshipViewSet(viewsets.ModelViewSet):
     @require_litshield_access("covenant")
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        self.perform_create(serializer)
+
+        try:
+            serializer.is_valid(raise_exception=True)
+            self.perform_create(serializer)
+
+        except serializers.ValidationError as exc:
+            return self._validation_error_response(exc)
+
+        except IntegrityError:
+            logger.warning(
+                "Duplicate fellowship blocked by database constraint",
+                extra={
+                    "user_id": getattr(request.user, "id", None),
+                    "payload": request.data,
+                },
+            )
+            return Response(
+                {
+                    "error": "This covenant relationship already exists or is already being processed."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except Exception:
+            logger.exception("Unexpected error while creating fellowship request")
+            return Response(
+                {"error": "An unexpected error occurred while creating this fellowship request."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
         headers = self.get_success_headers(serializer.data)
-        
-        return Response({
-            "message": "Fellowship request created successfully!",
-            "data": serializer.data
-        }, status=status.HTTP_201_CREATED, headers=headers)
+
+        return Response(
+            {
+                "message": "Fellowship request created successfully!",
+                "data": serializer.data,
+            },
+            status=status.HTTP_201_CREATED,
+            headers=headers,
+        )
 
     # ---------------------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['get'], url_path='search-friends', permission_classes=[IsAuthenticated])
@@ -170,6 +257,15 @@ class FellowshipViewSet(viewsets.ModelViewSet):
                 e["to_user_id"] if e["from_user_id"] == uid else e["from_user_id"]
                 for e in edges
             }
+
+            if not friend_ids:
+                return Response([], status=status.HTTP_200_OK)
+
+            boundary_excluded_ids = set(
+                BoundaryPolicy.user_ids_with_boundary_between(request.user)
+            )
+
+            friend_ids = friend_ids.difference(boundary_excluded_ids)
 
             if not friend_ids:
                 return Response([], status=status.HTTP_200_OK)
@@ -361,6 +457,18 @@ class FellowshipViewSet(viewsets.ModelViewSet):
             if fellowship.to_user != request.user:
                 return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
 
+            if not BoundaryPolicy.can_send_fellowship_request(
+                sender=fellowship.from_user,
+                recipient=fellowship.to_user,
+            ):
+                return Response(
+                    {
+                        "error": BOUNDARY_GENERIC_UNAVAILABLE_MESSAGE,
+                        "code": "interaction_unavailable",
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+                
             # block if requester is deleted now
             if getattr(fellowship.from_user, "is_deleted", False):
                 return Response({'error': 'This request is no longer valid (requester deactivated).'}, status=status.HTTP_400_BAD_REQUEST)

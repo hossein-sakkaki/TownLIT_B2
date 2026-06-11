@@ -4,9 +4,13 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 
 from apps.accounts.serializers.label_serializers import CustomLabelSerializer
-
+from apps.accounts.services.age_policy import validate_standard_account_birthday
 from ..mixins import AvatarURLMixin
 from ..models import CustomLabel, LITShieldGrant
+from django.core.exceptions import ValidationError as DjangoValidationError
+
+from apps.accounts.models.username_reservation import UsernameReservation
+from validators.usernameValidators.username_validator import validate_username_format
 
 CustomUser = get_user_model()
 
@@ -185,50 +189,80 @@ class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
     # UPDATE USER (owner updates their profile)
     # --------------------------------------------------------------------
     def update(self, instance, validated_data):
+        old_username = instance.username
+
         password = validated_data.pop('password', None)
 
-        # Non-editable fields
         validated_data.pop('is_active', None)
         validated_data.pop('is_admin', None)
         validated_data.pop('is_superuser', None)
 
-        # Handle avatar change
         profile_image = validated_data.pop('profile_image', None)
 
-        # Update normal fields
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
 
         if password:
             instance.set_password(password)
 
-        # ⬅️ Avatar changed?
         if profile_image:
             instance.image_name = profile_image
             instance.avatar_version = (instance.avatar_version or 1) + 1
 
         instance.save()
+
+        if old_username and instance.username != old_username:
+            UsernameReservation.reserve(old_username, instance)
+
         return instance
 
+
+    # --------------------------------------------------------------------
+    # VALIDATE BIRTHDAY / AGE POLICY
+    # --------------------------------------------------------------------
+    def validate_birthday(self, value):
+        """
+        Standard TownLIT accounts currently require age 13+.
+
+        This validation is intentionally placed on CustomUserSerializer because
+        birthday belongs to CustomUser but is updated through nested Member/Guest
+        profile serializers.
+        """
+        return validate_standard_account_birthday(value)
 
     # --------------------------------------------------------------------
     # VALIDATE USERNAME
     # --------------------------------------------------------------------
     def validate_username(self, value):
-        if self.instance and value == self.instance.username:
-            return value
-        if CustomUser.objects.filter(username=value).exists():
-            raise serializers.ValidationError(
-                "Unfortunately, this username is already taken. Please choose another one."
-            )
-        return value
+        try:
+            username = validate_username_format(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.messages)
 
+        if self.instance and username == self.instance.username:
+            return username
+
+        if UsernameReservation.is_reserved_for_other_user(username, self.instance):
+            raise serializers.ValidationError(
+                "This username was recently used by another account and is temporarily unavailable."
+            )
+
+        if CustomUser.objects.filter(username=username).exists():
+            raise serializers.ValidationError(
+                "This username is already taken by another account. Please choose a different username."
+            )
+
+        return username
+
+    # --------------------------------------------------------------------
+    # Profile URL
+    # --------------------------------------------------------------------
     def get_profile_url(self, obj):
         try:
             return obj.get_absolute_url()
         except Exception:
             return None
-
+        
     # --------------------------------------------------------------------
     # Fast avatar proxy URL
     # --------------------------------------------------------------------

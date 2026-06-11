@@ -18,10 +18,10 @@ VIMEO = 'vimeo'
 LINE = 'line'
 
 VK = 'vk'
-
 QQ = 'qq'
 REDDIT = 'reddit'
 WEBSITE = 'website'
+
 SOCIAL_MEDIA_CHOICES = [
     (FACEBOOK, 'Facebook'),
     (INSTAGRAM, 'Instagram'),

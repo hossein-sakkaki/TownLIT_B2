@@ -17,7 +17,9 @@ from apps.subtitles.models import (
     TranscriptJobStatus,
     VoiceTrack,
     VoiceJobStatus,
-    SubtitleJobStatus
+    SubtitleJobStatus,
+    TranscriptContentReviewStatus,
+    TranscriptDetectedContentType,
 )
 from apps.subtitles.services.stt_openai import transcribe_audio
 from apps.subtitles.services.subtitle_builder import build_subtitle_track
@@ -26,6 +28,13 @@ from apps.translations.services.language_codes import normalize_language_code
 from apps.subtitles.services.voice_tone import build_tone_profile_from_stt
 from apps.subtitles.services.voice_resolver import resolve_voice_id
 from apps.subtitles.services.ownership import resolve_owner_gender_from_transcript
+from apps.subtitles.services.testimony_review import (
+    review_and_update_transcript,
+    assert_transcript_ai_allowed,
+)
+from apps.subtitles.services.testimony_enforcement import (
+    enforce_testimony_review_outcome,
+)
 
 from apps.accounts.constants.gender import MALE, FEMALE
 
@@ -59,6 +68,9 @@ def generate_subtitles_task(
     if transcript.status != TranscriptJobStatus.DONE:
         raise RuntimeError("Transcript not ready")
 
+    # Guard expensive subtitle generation.
+    assert_transcript_ai_allowed(transcript)
+
     track = build_subtitle_track(
         transcript=transcript,
         target_language=target_language,
@@ -83,10 +95,11 @@ def build_transcript_for_video(self, transcript_id: int) -> int:
     Canonical STT pipeline:
 
     stored STT audio
-        → STT (raw)
-        → LLM cleanup 
-        → segments (raw timing preserved)
-        → subtitle generation
+        → STT raw
+        → early testimony review gate
+        → if rejected: delete testimony media
+        → if needs_review: keep raw transcript for admin review only
+        → if approved: LLM cleanup + segments + subtitles
     """
     transcript = VideoTranscript.objects.get(pk=transcript_id)
 
@@ -116,31 +129,19 @@ def build_transcript_for_video(self, transcript_id: int) -> int:
         local_audio_path = fetch_audio_from_storage(audio_field)
 
         # -------------------------------------------------
-        # 3) Speech-to-Text (RAW)
+        # 3) Speech-to-Text raw
         # -------------------------------------------------
         stt = transcribe_audio(wav_path=local_audio_path)
         tone_profile = build_tone_profile_from_stt(stt)
 
         raw_lang = stt.get("language", "") or ""
         source_lang = normalize_language_code(raw_lang)
+        raw_text = (stt.get("text", "") or "").strip()
 
-        raw_text = stt.get("text", "") or ""
-
-        # -------------------------------------------------
-        # 4) CLEANUP source transcript (LLM, conservative)
-        # -------------------------------------------------
-        from apps.subtitles.services.source_humanizer import (
-            humanize_transcript_text, 
-        )
-
-        clean_text = humanize_transcript_text(
-            text=raw_text,
-            language=source_lang,
-        )
-
+        # Save raw transcript first so admin/debug has something if needed.
         transcript.source_language = source_lang
         transcript.tone_profile = tone_profile
-        transcript.full_text = clean_text
+        transcript.full_text = raw_text
         transcript.stt_model = stt.get("model", "")
         transcript.status = TranscriptJobStatus.DONE
         transcript.updated_at = timezone.now()
@@ -156,12 +157,8 @@ def build_transcript_for_video(self, transcript_id: int) -> int:
         )
 
         # -------------------------------------------------
-        # 5) Replace segments (timing-safe + humanized text)
+        # 4) Store raw segments before review
         # -------------------------------------------------
-        from apps.subtitles.services.segment_humanizer import (
-            humanize_segments_text, 
-        )
-
         raw_segments = []
         segment_meta = []
 
@@ -176,23 +173,12 @@ def build_transcript_for_video(self, transcript_id: int) -> int:
                 "end_ms": int(float(seg["end"]) * 1000),
             })
 
-        # 🔹 Humanize segments in ONE batch (safe)
-        clean_segments = humanize_segments_text(
-            language=source_lang,
-            segments=raw_segments,
-        )
-
-        # Safety fallback
-        if len(clean_segments) != len(raw_segments):
-            clean_segments = raw_segments
-
-        # Replace DB segments
         TranscriptSegment.objects.filter(transcript=transcript).delete()
 
-        bulk: list[TranscriptSegment] = []
+        raw_bulk: list[TranscriptSegment] = []
 
-        for idx, (text, meta) in enumerate(zip(clean_segments, segment_meta)):
-            bulk.append(
+        for idx, (text, meta) in enumerate(zip(raw_segments, segment_meta)):
+            raw_bulk.append(
                 TranscriptSegment(
                     transcript=transcript,
                     idx=idx,
@@ -202,12 +188,136 @@ def build_transcript_for_video(self, transcript_id: int) -> int:
                 )
             )
 
-        if bulk:
-            TranscriptSegment.objects.bulk_create(bulk, batch_size=500)
-
+        if raw_bulk:
+            TranscriptSegment.objects.bulk_create(raw_bulk, batch_size=500)
 
         # -------------------------------------------------
-        # 6) Trigger subtitle generation (source + preset langs)
+        # 5) Cheap local rejection before OpenAI review
+        # -------------------------------------------------
+        word_count = len(raw_text.split())
+
+        if not raw_text or word_count < 4 or not raw_segments:
+            transcript.content_review_status = TranscriptContentReviewStatus.REJECTED
+            transcript.detected_content_type = TranscriptDetectedContentType.UNKNOWN
+            transcript.content_review_confidence = 1.0
+            transcript.content_review_reason = "Transcript contains no discernible content."
+            transcript.ai_processing_allowed = False
+            transcript.content_reviewed_at = timezone.now()
+            transcript.updated_at = timezone.now()
+            transcript.save(
+                update_fields=[
+                    "content_review_status",
+                    "detected_content_type",
+                    "content_review_confidence",
+                    "content_review_reason",
+                    "ai_processing_allowed",
+                    "content_reviewed_at",
+                    "updated_at",
+                ]
+            )
+
+            outcome = enforce_testimony_review_outcome(transcript)
+
+            if outcome == "deleted":
+                logger.warning(
+                    "🚫 Rejected testimony removed after local transcript guard transcript=%s",
+                    transcript_id,
+                )
+                return transcript_id
+
+            return transcript.id
+        
+        # -------------------------------------------------
+        # 6) Early review before expensive cleanup/subtitle/voice jobs
+        # -------------------------------------------------
+        transcript.refresh_from_db()
+        transcript = review_and_update_transcript(transcript)
+
+        outcome = enforce_testimony_review_outcome(transcript)
+
+        if outcome == "deleted":
+            logger.warning(
+                "🚫 Rejected testimony removed after early transcript review transcript=%s",
+                transcript_id,
+            )
+            return transcript_id
+
+        if outcome == "needs_review":
+            logger.info(
+                "🟡 Testimony needs admin review transcript=%s type=%s confidence=%s",
+                transcript.id,
+                transcript.detected_content_type,
+                transcript.content_review_confidence,
+            )
+            return transcript.id
+
+        if not transcript.ai_processing_allowed:
+            logger.info(
+                "🚫 Testimony AI pipeline blocked transcript=%s status=%s type=%s confidence=%s",
+                transcript.id,
+                transcript.content_review_status,
+                transcript.detected_content_type,
+                transcript.content_review_confidence,
+            )
+            return transcript.id
+
+        # -------------------------------------------------
+        # 7) Approved only: cleanup source transcript
+        # -------------------------------------------------
+        from apps.subtitles.services.source_humanizer import (
+            humanize_transcript_text,
+        )
+
+        clean_text = humanize_transcript_text(
+            text=raw_text,
+            language=source_lang,
+        )
+
+        transcript.full_text = clean_text
+        transcript.updated_at = timezone.now()
+        transcript.save(
+            update_fields=[
+                "full_text",
+                "updated_at",
+            ]
+        )
+
+        # -------------------------------------------------
+        # 8) Approved only: cleanup segments
+        # -------------------------------------------------
+        from apps.subtitles.services.segment_humanizer import (
+            humanize_segments_text,
+        )
+
+        clean_segments = humanize_segments_text(
+            language=source_lang,
+            segments=raw_segments,
+        )
+
+        # Safety fallback
+        if len(clean_segments) != len(raw_segments):
+            clean_segments = raw_segments
+
+        TranscriptSegment.objects.filter(transcript=transcript).delete()
+
+        clean_bulk: list[TranscriptSegment] = []
+
+        for idx, (text, meta) in enumerate(zip(clean_segments, segment_meta)):
+            clean_bulk.append(
+                TranscriptSegment(
+                    transcript=transcript,
+                    idx=idx,
+                    start_ms=meta["start_ms"],
+                    end_ms=meta["end_ms"],
+                    text=text,
+                )
+            )
+
+        if clean_bulk:
+            TranscriptSegment.objects.bulk_create(clean_bulk, batch_size=500)
+
+        # -------------------------------------------------
+        # 9) Approved only: trigger subtitle generation
         # -------------------------------------------------
         enqueue_default_subtitles(transcript)
 
@@ -221,15 +331,11 @@ def build_transcript_for_video(self, transcript_id: int) -> int:
         raise
 
     finally:
-        # -------------------------------------------------
-        # Cleanup temp audio file
-        # -------------------------------------------------
         try:
             if local_audio_path and os.path.exists(local_audio_path):
                 os.remove(local_audio_path)
         except Exception:
             pass
-
 
 # ---------------------------------------------------------------------
 # Voice Track (TTS + Voice Humanizer)
@@ -259,6 +365,9 @@ def generate_voice_task(self, voice_track_id: int) -> int:
     except VoiceTrack.DoesNotExist:
         raise self.retry(countdown=10, max_retries=5)
 
+    # Guard expensive voice generation.
+    assert_transcript_ai_allowed(track.transcript)
+    
     # -------------------------------------------------
     # 1) Idempotency
     # -------------------------------------------------

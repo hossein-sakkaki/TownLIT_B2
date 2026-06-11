@@ -17,13 +17,11 @@ from django.db.models import (
     Case,
     When,
 )
+from django.db import transaction
 from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404
 import base64
 import json
-from django.db import transaction
-from django.http import Http404
-
 
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
@@ -49,6 +47,7 @@ from .serializers import (
     UserDialogueMarkerSerializer,
     DialogueParticipantSerializer,
     UpdateGroupInfoSerializer,
+    CreateGroupSerializer,
     DialoguePinSerializer,
     MessagePinSerializer,
 )
@@ -113,7 +112,6 @@ from apps.conversation.services.event_contracts import (
     build_message_reaction_summary_event_data,
     build_message_reaction_toggled_event_data,
 )
-from apps.conversation.services.realtime_dispatch import conv_group_send
 from apps.conversation.services.dialogue_pins import (
     pin_dialogue_for_user,
     unpin_dialogue_for_user,
@@ -135,9 +133,25 @@ from apps.conversation.services.message_reactions import (
     get_message_reaction_summary_for_user,
     list_message_reactors,
 )
-from django.db import transaction
-
+from apps.conversation.services.realtime_dispatch import (
+    conv_group_send,
+    conv_multi_group_send,
+    conversation_dialogue_group_name,
+)
+from apps.conversation.services.event_contracts import (
+    build_group_updated_event_data,
+)
 from apps.conversation.services.realtime_dispatch import broadcast_group_text_message
+from apps.conversation.services.boundary_access import (
+    can_create_private_dialogue,
+    can_add_user_to_group,
+    private_dialogue_boundary_response_payload,
+    conversation_boundary_error_payload,
+    should_send_conversation_notification,
+    CONVERSATION_INTERACTION_UNAVAILABLE_CODE,
+)
+from apps.core.boundaries.constants import BOUNDARY_GENERIC_UNAVAILABLE_MESSAGE
+from apps.core.boundaries.services.policy import BoundaryPolicy
 
 import logging
 logger = logging.getLogger(__name__)
@@ -168,7 +182,50 @@ def conv_group_send(group_name: str, event: str, data: dict | None = None):
         conv_dispatch_payload(event, data),
     )
 
+def _dialogue_payload_for_realtime(dialogue, request):
+    """
+    Serialize dialogue once for realtime UI sync.
 
+    Note:
+    my_role is request-user scoped. For shared group_updated events, clients should
+    treat this snapshot as display-oriented and refresh participants/roles when needed.
+    """
+    serializer = DialogueSerializer(dialogue, context={"request": request})
+    json_data = JSONRenderer().render(serializer.data)
+    return json.loads(json_data)
+
+
+def _broadcast_group_updated(
+    *,
+    dialogue,
+    request,
+    reason: str,
+    actor_user=None,
+    target_user=None,
+):
+    """
+    Broadcast a generic group_updated event to active group sockets.
+
+    This is intentionally separate from system messages:
+    - system message updates the chat stream
+    - group_updated updates header/list/avatar/roles/member count
+    """
+    dialogue_payload = _dialogue_payload_for_realtime(dialogue, request)
+
+    data = build_group_updated_event_data(
+        dialogue_slug=dialogue.slug,
+        reason=reason,
+        dialogue=dialogue_payload,
+        actor_id=getattr(actor_user, "id", None),
+        target_user_id=getattr(target_user, "id", None),
+    )
+
+    conv_group_send(
+        conversation_dialogue_group_name(dialogue.slug),
+        "group_updated",
+        data,
+    )
+    
 # SYSTEM MESSAGES ------------------------------------------------------------------------
 def send_system_message(dialogue, sender, system_event, content):
     plain_text = (content or "").strip()
@@ -381,6 +438,20 @@ class DialogueViewSet(viewsets.ModelViewSet):
 
         recipient = get_object_or_404(CustomUser, id=recipient_id)
 
+        boundary_check = can_create_private_dialogue(
+            acting_user=request.user,
+            recipient=recipient,
+        )
+
+        if not boundary_check.allowed:
+            return Response(
+                conversation_boundary_error_payload(
+                    message=boundary_check.message,
+                    code=boundary_check.code,
+                ),
+                status=status.HTTP_403_FORBIDDEN,
+            )
+            
         result = create_or_get_private_dialogue(
             acting_user=request.user,
             recipient=recipient,
@@ -401,8 +472,11 @@ class DialogueViewSet(viewsets.ModelViewSet):
 
         payload = result["payload"]
         dialogue = payload["dialogue"]
-
-        serializer = DialogueSerializer(dialogue, context={"request": request})
+        device_id = request.data.get("device_id")
+        serializer = DialogueSerializer(
+            dialogue,
+            context={"request": request, "device_id": device_id}, 
+        )
         return Response(
             {
                 'dialogue': serializer.data,
@@ -416,9 +490,14 @@ class DialogueViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'], url_path='create-group', permission_classes=[IsAuthenticated])
     @require_litshield_access("conversation")
     def create_group(self, request):
-        data = request.data
-        group_name = data.get('group_name')
-        group_image = request.FILES.get('group_image')
+        serializer = CreateGroupSerializer(
+            data=request.data,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+
+        group_name = serializer.validated_data["group_name"]
+        group_image = serializer.validated_data.get("group_image")
 
         result = create_group_dialogue(
             acting_user=request.user,
@@ -428,15 +507,21 @@ class DialogueViewSet(viewsets.ModelViewSet):
 
         if not result.get("ok"):
             return Response(
-                {'error': result["message"], 'code': result["code"]},
-                status=result["status"]
+                {
+                    "error": result["message"],
+                    "code": result["code"],
+                },
+                status=result["status"],
             )
 
         dialogue = result["payload"]["dialogue"]
-        serializer = DialogueSerializer(dialogue, context={"request": request})
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
-    
+        output_serializer = DialogueSerializer(
+            dialogue,
+            context={"request": request},
+        )
 
+        return Response(output_serializer.data, status=status.HTTP_201_CREATED)
+        
     # Update Group Image Action ---------------
     @action(detail=True, methods=["post"], url_path="update-group-image", permission_classes=[IsAuthenticated])
     @require_litshield_access("conversation")
@@ -444,27 +529,56 @@ class DialogueViewSet(viewsets.ModelViewSet):
         dialogue = self.get_object()
 
         if not dialogue.is_group:
-            return Response({"detail": "Only group dialogues can have images."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "Only group dialogues can have images."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-        # Check role
-        participant = DialogueParticipant.objects.filter(dialogue=dialogue, user=request.user).first()
+        participant = DialogueParticipant.objects.filter(
+            dialogue=dialogue,
+            user=request.user
+        ).first()
+
         if not participant:
-            return Response({"detail": "You are not a participant of this group."}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"detail": "You are not a participant of this group."},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
         if participant.role not in ["founder", "elder"]:
-            return Response({"detail": "You don't have permission to update the group image."}, status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {"detail": "You don't have permission to update the group image."},
+                status=status.HTTP_403_FORBIDDEN
+            )
 
         group_image = request.FILES.get("group_image")
-        if not group_image:
-            return Response({"detail": "No image uploaded."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Update image + bump version
+        if not group_image:
+            return Response(
+                {"detail": "No image uploaded."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         dialogue.group_image = group_image
-        dialogue.group_avatar_version = (dialogue.group_avatar_version or 1) + 1
+        dialogue.group_avatar_version = (dialogue.group_avatar_version or 0) + 1
         dialogue.save(update_fields=["group_image", "group_avatar_version"])
 
-        return Response({"detail": "Group image updated successfully."}, status=status.HTTP_200_OK)
+        _broadcast_group_updated(
+            dialogue=dialogue,
+            request=request,
+            reason="group_image_updated",
+            actor_user=request.user,
+        )
 
+        serializer = DialogueSerializer(dialogue, context={"request": request})
+
+        return Response(
+            {
+                "detail": "Group image updated successfully.",
+                "dialogue": serializer.data,
+            },
+            status=status.HTTP_200_OK
+        )
 
     # Update Group Name & ... Action ---------------
     @action(detail=True, methods=["post", "patch"], url_path="update-group-info", permission_classes=[IsAuthenticated])
@@ -521,6 +635,13 @@ class DialogueViewSet(viewsets.ModelViewSet):
             except Exception:
                 dialogue.save()
 
+        _broadcast_group_updated(
+            dialogue=dialogue,
+            request=request,
+            reason="group_info_updated",
+            actor_user=request.user,
+        )
+
         return Response(
             {
                 "detail": "Group info updated successfully.",
@@ -568,6 +689,20 @@ class DialogueViewSet(viewsets.ModelViewSet):
 
         participant = get_object_or_404(CustomUser, pk=participant_id)
 
+        boundary_check = can_add_user_to_group(
+            dialogue=dialogue,
+            target_user=participant,
+        )
+
+        if not boundary_check.allowed:
+            return Response(
+                {
+                    "error": boundary_check.message,
+                    "code": boundary_check.code,
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+    
         result = add_group_participant(
             dialogue=dialogue,
             acting_user=request.user,
@@ -598,6 +733,14 @@ class DialogueViewSet(viewsets.ModelViewSet):
             request.user,
             "joined",
             f"{participant.username} joined the group.",
+        )
+
+        _broadcast_group_updated(
+            dialogue=dialogue,
+            request=request,
+            reason="member_added",
+            actor_user=request.user,
+            target_user=participant,
         )
 
         return Response(
@@ -651,6 +794,14 @@ class DialogueViewSet(viewsets.ModelViewSet):
             f"{participant.username} was removed from the group.",
         )
 
+        _broadcast_group_updated(
+            dialogue=dialogue,
+            request=request,
+            reason="member_removed",
+            actor_user=request.user,
+            target_user=participant,
+        )
+
         return Response(
             {'message': f'{participant.username} removed from the group.'},
             status=status.HTTP_200_OK
@@ -701,6 +852,14 @@ class DialogueViewSet(viewsets.ModelViewSet):
         # System message is the canonical chat-stream signal.
         send_system_message(dialogue, request.user, system_event, system_text)
 
+        _broadcast_group_updated(
+            dialogue=dialogue,
+            request=request,
+            reason="role_promoted_to_elder",
+            actor_user=request.user,
+            target_user=participant_user,
+        )
+
         return Response({'message': 'User promoted to Elder.'}, status=200)
     
         
@@ -734,6 +893,14 @@ class DialogueViewSet(viewsets.ModelViewSet):
 
         send_system_message(dialogue, request.user, system_event, system_text)
 
+        _broadcast_group_updated(
+            dialogue=dialogue,
+            request=request,
+            reason="role_demoted_to_participant",
+            actor_user=request.user,
+            target_user=participant_user,
+        )
+
         return Response({'message': 'User demoted to Participant.'}, status=200)
     
     
@@ -760,6 +927,14 @@ class DialogueViewSet(viewsets.ModelViewSet):
         )
 
         send_system_message(dialogue, request.user, system_event, system_text)
+
+        _broadcast_group_updated(
+            dialogue=dialogue,
+            request=request,
+            reason="elder_resigned",
+            actor_user=request.user,
+            target_user=request.user,
+        )
 
         return Response({'message': 'You stepped down as an Elder.'}, status=200)
 
@@ -791,6 +966,16 @@ class DialogueViewSet(viewsets.ModelViewSet):
             dialogue_slug=dialogue.slug,
         )
 
+        # Notify all current devices of the leaving user to remove this group locally
+        # and discard stale dialogue channel membership.
+        dialogue_payload = _dialogue_payload_for_realtime(dialogue, request)
+
+        conv_group_send(
+            f"user_{request.user.id}",
+            "group_removed",
+            build_group_removed_event_data(dialogue=dialogue_payload),
+        )
+
         # 1) Targeted realtime event first
         for participant in dialogue.participants.exclude(id=request.user.id):
             conv_group_send(
@@ -805,6 +990,14 @@ class DialogueViewSet(viewsets.ModelViewSet):
             request.user,
             "left",
             f"{request.user.username} left the group.",
+        )
+
+        _broadcast_group_updated(
+            dialogue=dialogue,
+            request=request,
+            reason="member_left",
+            actor_user=request.user,
+            target_user=request.user,
         )
 
         return Response(
@@ -858,8 +1051,16 @@ class DialogueViewSet(viewsets.ModelViewSet):
             f"Founder role transferred to {new_founder.username}.",
         )
 
+        _broadcast_group_updated(
+            dialogue=dialogue,
+            request=request,
+            reason="founder_transferred",
+            actor_user=request.user,
+            target_user=new_founder,
+        )
+
         return Response(
-            {'message': 'Founder role transferred successfully. You have left the group.'},
+            {'message': 'Founder role transferred successfully.'},
             status=200
         )
 
@@ -1157,6 +1358,17 @@ class MessageViewSet(viewsets.ModelViewSet):
 
         dialogue = get_object_or_404(Dialogue, slug=dialogue_slug, participants=user)
 
+        boundary_payload = private_dialogue_boundary_response_payload(
+            dialogue=dialogue,
+            acting_user=user,
+        )
+
+        if boundary_payload:
+            return Response(
+                boundary_payload,
+                status=status.HTTP_403_FORBIDDEN,
+            )
+            
         # Re-open dialogue on first outgoing message if needed.
         dialogue.release_inbound_block_on_outgoing(user)
 
@@ -1270,6 +1482,17 @@ class MessageViewSet(viewsets.ModelViewSet):
 
         dialogue = get_object_or_404(Dialogue, slug=dialogue_slug, participants=user)
 
+        boundary_payload = private_dialogue_boundary_response_payload(
+            dialogue=dialogue,
+            acting_user=user,
+        )
+
+        if boundary_payload:
+            return Response(
+                boundary_payload,
+                status=status.HTTP_403_FORBIDDEN,
+            )
+            
         # Validate forwarded source when iOS performs client-side media forwarding.
         forwarded_from_message = None
 
@@ -1909,6 +2132,26 @@ class MessageViewSet(viewsets.ModelViewSet):
         source_message_id = request.data.get("source_message_id")
         target_dialogue_slug = (request.data.get("target_dialogue_slug") or "").strip()
 
+        if target_dialogue_slug:
+            target_dialogue = (
+                Dialogue.objects
+                .filter(slug=target_dialogue_slug, participants=request.user)
+                .prefetch_related("participants")
+                .first()
+            )
+
+            if target_dialogue:
+                boundary_payload = private_dialogue_boundary_response_payload(
+                    dialogue=target_dialogue,
+                    acting_user=request.user,
+                )
+
+                if boundary_payload:
+                    return Response(
+                        boundary_payload,
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+                    
         result = create_forwarded_message_backend_assisted(
             source_message_id=source_message_id,
             target_dialogue_slug=target_dialogue_slug,
@@ -1956,9 +2199,15 @@ class MessageViewSet(viewsets.ModelViewSet):
                     realtime_data,
                 )
 
-            for uid in dialogue.participants.exclude(id=request.user.id).values_list("id", flat=True):
+            for participant in dialogue.participants.exclude(id=request.user.id).only("id"):
+                if not should_send_conversation_notification(
+                    actor=request.user,
+                    recipient=participant,
+                ):
+                    continue
+
                 conv_group_send(
-                    f"user_{uid}",
+                    f"user_{participant.id}",
                     "unread_count_update",
                     {
                         "payload": [
@@ -2039,6 +2288,27 @@ class MessageViewSet(viewsets.ModelViewSet):
         """
         source_message_id = request.data.get("source_message_id")
         target_dialogue_slug = (request.data.get("target_dialogue_slug") or "").strip()
+
+        if target_dialogue_slug:
+            target_dialogue = (
+                Dialogue.objects
+                .filter(slug=target_dialogue_slug, participants=request.user)
+                .prefetch_related("participants")
+                .first()
+            )
+
+            if target_dialogue:
+                boundary_payload = private_dialogue_boundary_response_payload(
+                    dialogue=target_dialogue,
+                    acting_user=request.user,
+                )
+
+        if boundary_payload:
+            return Response(
+                boundary_payload,
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         encrypted_contents = request.data.get("encrypted_contents") or []
 
         result = create_forwarded_text_client_reencrypted(
@@ -2196,9 +2466,15 @@ class MessageViewSet(viewsets.ModelViewSet):
                 realtime_data,
             )
 
-        for uid in dialogue.participants.exclude(id=request.user.id).values_list("id", flat=True):
+        for participant in dialogue.participants.exclude(id=request.user.id).only("id"):
+            if not should_send_conversation_notification(
+                actor=request.user,
+                recipient=participant,
+            ):
+                continue
+
             conv_group_send(
-                f"user_{uid}",
+                f"user_{participant.id}",
                 "unread_count_update",
                 {
                     "payload": [
@@ -2228,6 +2504,32 @@ class MessageViewSet(viewsets.ModelViewSet):
     def toggle_reaction(self, request, pk=None):
         reaction_type = request.data.get("reaction_type")
 
+        target_message = get_object_or_404(
+            Message.objects.select_related("dialogue", "sender"),
+            pk=pk,
+        )
+
+        if not target_message.dialogue.participants.filter(id=request.user.id).exists():
+            return Response(
+                {
+                    "error": "Access denied.",
+                    "code": "DIALOGUE_ACCESS_DENIED",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if (
+            target_message.sender_id != request.user.id
+            and BoundaryPolicy.has_boundary_between(request.user, target_message.sender)
+        ):
+            return Response(
+                {
+                    "error": BOUNDARY_GENERIC_UNAVAILABLE_MESSAGE,
+                    "code": CONVERSATION_INTERACTION_UNAVAILABLE_CODE,
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+    
         result = toggle_message_reaction(
             message_id=pk,
             acting_user=request.user,
@@ -2323,6 +2625,7 @@ class UserDialogueMarkerViewSet(viewsets.ViewSet):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=['post'], url_path='mark-dialogue', permission_classes=[IsAuthenticated])
+    @require_litshield_access("conversation")
     def mark_dialogue(self, request):
         dialogue_slug = request.data.get('dialogue_slug')
         is_sensitive = request.data.get('is_sensitive', False)
@@ -2348,6 +2651,7 @@ class UserDialogueMarkerViewSet(viewsets.ViewSet):
 
 
     @action(detail=True, methods=['post'], url_path='unmark-dialogue', permission_classes=[IsAuthenticated])
+    @require_litshield_access("conversation")
     def unmark_dialogue(self, request, pk=None):
         marker = get_object_or_404(UserDialogueMarker, pk=pk, user=request.user)
         marker.delete()

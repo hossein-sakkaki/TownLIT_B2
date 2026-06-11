@@ -8,6 +8,7 @@ from django.db import transaction
 from apps.conversation.models import Dialogue, Message, MessageEncryption
 from common.mime_type_validator import validate_file_type, is_unsafe_file
 from apps.conversation.services.message_reply import validate_reply_target
+from apps.conversation.services.boundary_access import check_private_dialogue_boundary
 
 def _error(code: str, message: str, status_code: int):
     """Build a stable service error payload."""
@@ -183,6 +184,18 @@ def create_text_message(
 
     reply_to_message = reply_validation["message_obj"]
     
+    boundary_check = check_private_dialogue_boundary(
+        dialogue=dialogue,
+        acting_user=sender,
+    )
+
+    if not boundary_check.allowed:
+        return _error(
+            boundary_check.code,
+            boundary_check.message,
+            403,
+        )
+        
     if dialogue.is_group:
         if is_encrypted:
             return _error("BAD_REQUEST", "Group messages should not be encrypted.", 400)
@@ -330,6 +343,18 @@ def create_file_message(
 
     reply_to_message = reply_validation["message_obj"]
 
+    boundary_check = check_private_dialogue_boundary(
+        dialogue=dialogue,
+        acting_user=sender,
+    )
+
+    if not boundary_check.allowed:
+        return _error(
+            boundary_check.code,
+            boundary_check.message,
+            403,
+        )
+        
     # Forward metadata is only a relation marker.
     # Actual file bytes are still created through the normal upload path.
     is_forwarded = forwarded_from_message is not None

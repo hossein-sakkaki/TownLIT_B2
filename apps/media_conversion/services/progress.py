@@ -390,3 +390,4 @@ def auto_fail_stale_jobs(
         return updated
     except Exception:
         return 0
+

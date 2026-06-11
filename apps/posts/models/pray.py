@@ -28,7 +28,7 @@ from validators.mediaValidators.image_validators import (
     validate_image_size,
 )
 from validators.mediaValidators.video_validators import (
-    validate_moment_video_file,  # reuse validator (safe default)
+    validate_prayer_video_file,
 )
 from validators.security_validators import validate_no_executable_file
 
@@ -88,7 +88,7 @@ class Prayer(
         upload_to=PRAY_VIDEO.dir_upload,
         null=True,
         blank=True,
-        validators=[validate_moment_video_file, validate_no_executable_file],
+        validators=[validate_prayer_video_file, validate_no_executable_file],
         verbose_name="Video",
     )
 
@@ -255,7 +255,7 @@ class PrayerResponse(
         upload_to=PRAY_VIDEO.dir_upload,
         null=True,
         blank=True,
-        validators=[validate_moment_video_file, validate_no_executable_file],
+        validators=[validate_prayer_video_file, validate_no_executable_file],
         verbose_name="Response Video",
     )
 

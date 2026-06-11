@@ -140,3 +140,99 @@ class MediaConversionJob(models.Model):
             self.duration_ms = int((now - self.started_at).total_seconds() * 1000)
         self.heartbeat_at = now
         self.save(update_fields=["status", "message", "error", "finished_at", "duration_ms", "heartbeat_at", "updated_at"])
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.status in {
+            MediaJobStatus.DONE,
+            MediaJobStatus.FAILED,
+            MediaJobStatus.CANCELED,
+        }
+
+    @property
+    def is_active(self) -> bool:
+        return self.status in {
+            MediaJobStatus.QUEUED,
+            MediaJobStatus.PROCESSING,
+        }
+
+    def mark_canceled(self, msg="Canceled"):
+        now = timezone.now()
+        self.status = MediaJobStatus.CANCELED
+        self.message = msg
+        self.finished_at = now
+        self.heartbeat_at = now
+
+        if self.started_at:
+            self.duration_ms = int(
+                (now - self.started_at).total_seconds() * 1000
+            )
+
+        self.save(
+            update_fields=[
+                "status",
+                "message",
+                "finished_at",
+                "duration_ms",
+                "heartbeat_at",
+                "updated_at",
+            ]
+        )
+
+    def mark_retry_queued(self, msg="Queued for retry"):
+        now = timezone.now()
+
+        self.status = MediaJobStatus.QUEUED
+        self.progress = 0
+        self.message = msg
+        self.error = None
+
+        self.attempt = min(
+            (self.attempt or 0) + 1,
+            self.max_attempts or ((self.attempt or 0) + 1),
+        )
+
+        self.task_id = None
+        self.started_at = None
+        self.finished_at = None
+        self.duration_ms = None
+        self.heartbeat_at = now
+
+        self.stage = None
+        self.stage_index = None
+        self.stage_count = None
+        self.stage_weight = None
+        self.stage_progress = None
+        self.stage_started_at = None
+
+        self.stage_plan = None
+        self.stage_total_weight = None
+        self.stage_completed_weight = None
+
+        self.output_path = None
+
+        self.save(
+            update_fields=[
+                "status",
+                "progress",
+                "message",
+                "error",
+                "attempt",
+                "task_id",
+                "started_at",
+                "finished_at",
+                "duration_ms",
+                "heartbeat_at",
+                "stage",
+                "stage_index",
+                "stage_count",
+                "stage_weight",
+                "stage_progress",
+                "stage_started_at",
+                "stage_plan",
+                "stage_total_weight",
+                "stage_completed_weight",
+                "output_path",
+                "updated_at",
+            ]
+        )

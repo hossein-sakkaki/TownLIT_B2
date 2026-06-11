@@ -349,3 +349,173 @@ class PrayerSerializer(
             }
         except Exception:
             return None
+        
+        
+class PrayerResponseProfileGridSerializer(serializers.ModelSerializer):
+    """
+    Lightweight response serializer for profile Prayer grid.
+    Avoids full response representation overhead.
+    """
+
+    thumbnail = serializers.ImageField(
+        required=False,
+        allow_null=True,
+        use_url=True,
+    )
+
+    class Meta:
+        model = PrayerResponse
+        fields = [
+            "id",
+            "result_status",
+            "image",
+            "video",
+            "thumbnail",
+            "is_converted",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+    def to_representation(self, obj):
+        request = self.context.get("request")
+        viewer = request.user if request and request.user.is_authenticated else None
+
+        data = super().to_representation(obj)
+
+        # Conversion-safe payload for response video.
+        if obj.video and not obj.is_converted:
+            data["video"] = None
+            data["thumbnail"] = None
+
+            data = gate_media_payload(
+                obj=obj,
+                data=data,
+                viewer=viewer,
+                field_name="video",
+                require_job=True,
+                include_job_target=True,
+            )
+
+        return data
+
+class PrayerProfileGridSerializer(serializers.ModelSerializer):
+    """
+    Lightweight serializer for profile Prayer grid.
+
+    Used by /posts/prayers/me/.
+    Keeps the payload small but includes enough data for:
+    - profile grid media preview
+    - response preview
+    - conversion state
+    - owner action menu detection on web/iOS
+    """
+
+    thumbnail = serializers.ImageField(
+        required=False,
+        allow_null=True,
+        use_url=True,
+    )
+
+    response = PrayerResponseProfileGridSerializer(read_only=True)
+    owner = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = Prayer
+        fields = [
+            "id",
+            "slug",
+
+            # media
+            "image",
+            "video",
+            "thumbnail",
+
+            # lifecycle
+            "status",
+            "answered_at",
+
+            # visibility / UI
+            "visibility",
+            "is_hidden",
+
+            # pipeline
+            "is_converted",
+
+            # timestamps
+            "published_at",
+            "updated_at",
+
+            # owner action menu support
+            "owner",
+
+            # nested lightweight response
+            "response",
+        ]
+        read_only_fields = fields
+
+    # -------------------------------------------------
+    # Owner DTO
+    # -------------------------------------------------
+    def get_owner(self, obj):
+        """
+        Minimal owner payload for profile grid.
+
+        /me/ should only return current owner's content, but we still verify
+        against the request owner before marking is_me=True.
+        """
+        try:
+            request = self.context.get("request")
+            owner = resolve_owner_from_request(request) if request else None
+
+            is_me = False
+
+            if owner:
+                owner_ct = ContentType.objects.get_for_model(owner.__class__)
+                is_me = (
+                    obj.content_type_id == owner_ct.id
+                    and obj.object_id == owner.id
+                )
+
+            return {
+                "type": "current",
+                "id": obj.object_id,
+                "is_me": bool(is_me),
+            }
+
+        except Exception:
+            logger.exception(
+                "get_owner failed for profile grid prayer id=%s",
+                obj.id,
+            )
+            return {
+                "type": "current",
+                "id": getattr(obj, "object_id", None),
+                "is_me": False,
+            }
+
+    # -------------------------------------------------
+    # Representation hardening
+    # -------------------------------------------------
+    def to_representation(self, obj):
+        request = self.context.get("request")
+        viewer = request.user if request and request.user.is_authenticated else None
+
+        data = super().to_representation(obj)
+
+        # Conversion-safe payload for main prayer video.
+        # Prayer image remains available because image is required.
+        if obj.video and not obj.is_converted:
+            data["video"] = None
+            data["thumbnail"] = None
+
+            data = gate_media_payload(
+                obj=obj,
+                data=data,
+                viewer=viewer,
+                field_name="video",
+                require_job=True,
+                include_job_target=True,
+            )
+
+        return data

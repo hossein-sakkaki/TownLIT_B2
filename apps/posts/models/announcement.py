@@ -6,7 +6,7 @@ from django.contrib.contenttypes.models import ContentType
 
 
 from apps.accounts.models.address import Address
-from apps.posts.constants import DELIVERY_METHOD_CHOICES 
+from apps.posts.constants.constants import DELIVERY_METHOD_CHOICES 
 
 
 from utils.common.utils import FileUpload

@@ -3,7 +3,7 @@ from django.utils import timezone
 from django.urls import reverse
 
 from apps.accounts.models.address import Address
-from apps.posts.constants import RESOURCE_TYPE_CHOICES
+from apps.posts.constants.constants import RESOURCE_TYPE_CHOICES
 from utils.common.utils import FileUpload
 from validators.mediaValidators.pdf_validators import validate_pdf_file
 from validators.security_validators import validate_no_executable_file

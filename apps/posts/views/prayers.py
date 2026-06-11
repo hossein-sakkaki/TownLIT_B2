@@ -15,7 +15,7 @@ from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied, NotFound, ValidationError
 
 from apps.posts.models.pray import Prayer, PrayerResponse, PrayerStatus
-from apps.posts.serializers.prayers import PrayerSerializer, PrayerResponseSerializer
+from apps.posts.serializers.prayers import PrayerProfileGridSerializer, PrayerSerializer, PrayerResponseSerializer
 
 from apps.core.visibility.query import VisibilityQuery
 from apps.core.visibility.policy import VisibilityPolicy
@@ -27,7 +27,7 @@ from apps.core.feed.personalized_trending import PersonalizedTrendingEngine
 
 from apps.core.ownership.owner_gate_mixins import OwnerGateMixin
 from apps.core.visibility.constants import VISIBILITY_GLOBAL
-
+from apps.core.boundaries.query import BoundaryVisibilityQuery
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ class PrayViewSet(OwnerGateMixin, viewsets.ModelViewSet):
         base = (
             Prayer.objects
             .select_related("content_type")
-            .select_related("response")  # one-to-one
+            .select_related("response")
             .order_by("-published_at", "-id")
         )
 
@@ -78,6 +78,11 @@ class PrayViewSet(OwnerGateMixin, viewsets.ModelViewSet):
             qs = VisibilityQuery.for_viewer(
                 viewer=self.request.user,
                 base_queryset=base,
+            )
+
+            qs = BoundaryVisibilityQuery.exclude_boundary_conflicts(
+                qs,
+                viewer=self.request.user,
             )
 
         # Visitor: hide unconverted prayer videos
@@ -174,16 +179,71 @@ class PrayViewSet(OwnerGateMixin, viewsets.ModelViewSet):
             raise PermissionDenied("Invalid owner type.")
 
         owner_ct = ContentType.objects.get_for_model(owner.__class__)
-        qs = self.get_queryset().filter(content_type_id=owner_ct.id, object_id=owner.id)
+
+        qs = (
+            Prayer.objects
+            .filter(
+                content_type_id=owner_ct.id,
+                object_id=owner.id,
+            )
+            .select_related("response")
+            .only(
+                # Prayer fields needed by profile grid
+                "id",
+                "slug",
+                "image",
+                "video",
+                "thumbnail",
+                "status",
+                "answered_at",
+
+                # Visibility / UI
+                "visibility",
+                "is_hidden",
+
+                # Pipeline / timestamps
+                "is_converted",
+                "published_at",
+                "updated_at",
+
+                # Ownership for owner action detection
+                "content_type_id",
+                "object_id",
+
+                # Response fields needed by profile grid
+                "response__id",
+                "response__result_status",
+                "response__image",
+                "response__video",
+                "response__thumbnail",
+                "response__is_converted",
+                "response__created_at",
+                "response__updated_at",
+            )
+            .order_by("-published_at", "-id")
+        )
 
         try:
             page = self.paginate_queryset(qs)
         except NotFound:
-            return Response({"count": qs.count(), "next": None, "previous": None, "results": []})
+            return Response(
+                {
+                    "count": qs.count(),
+                    "next": None,
+                    "previous": None,
+                    "results": [],
+                }
+            )
 
-        serializer = self.get_serializer(page, many=True)
+        serializer = PrayerProfileGridSerializer(
+            page,
+            many=True,
+            context={"request": request},
+        )
+
         return self.get_paginated_response(serializer.data)
-
+    
+    
     # -------------------------------------------------------------------------
     # Explore (public discover)
     # -------------------------------------------------------------------------
@@ -247,26 +307,67 @@ class PrayViewSet(OwnerGateMixin, viewsets.ModelViewSet):
         prayer: Prayer = self.get_object()
         self._assert_is_owner(prayer)
 
-        with transaction.atomic():  # <-- single transaction boundary
+        existing = getattr(prayer, "response", None)
 
-            existing = getattr(prayer, "response", None)
+        # Short debug log: keeps upload diagnosis precise without dumping files.
+        logger.info(
+            "[PrayerRespond] incoming request prayer_id=%s slug=%s method=%s user_id=%s data_keys=%s file_keys=%s files=%s existing_response=%s",
+            getattr(prayer, "id", None),
+            getattr(prayer, "slug", None),
+            request.method,
+            getattr(request.user, "id", None),
+            list(request.data.keys()),
+            list(request.FILES.keys()),
+            {
+                key: {
+                    "name": getattr(file_obj, "name", None),
+                    "content_type": getattr(file_obj, "content_type", None),
+                    "size": getattr(file_obj, "size", None),
+                }
+                for key, file_obj in request.FILES.items()
+            },
+            bool(existing),
+        )
 
-            result_status = request.data.get("result_status")
-            if result_status not in (PrayerStatus.ANSWERED, PrayerStatus.NOT_ANSWERED):
-                raise ValidationError({"result_status": "Must be 'answered' or 'not_answered'."})
+        result_status = request.data.get("result_status")
+        if result_status not in (PrayerStatus.ANSWERED, PrayerStatus.NOT_ANSWERED):
+            logger.warning(
+                "[PrayerRespond] invalid result_status prayer_id=%s slug=%s result_status=%r allowed=%s",
+                getattr(prayer, "id", None),
+                getattr(prayer, "slug", None),
+                result_status,
+                [PrayerStatus.ANSWERED, PrayerStatus.NOT_ANSWERED],
+            )
+            raise ValidationError({
+                "result_status": "Must be 'answered' or 'not_answered'."
+            })
 
+        with transaction.atomic():
             if existing is None:
                 serializer = PrayerResponseSerializer(
                     data=request.data,
-                    context={"request": request}
+                    context={"request": request},
                 )
-                serializer.is_valid(raise_exception=True)
+
+                if not serializer.is_valid():
+                    logger.warning(
+                        "[PrayerRespond] create serializer invalid prayer_id=%s slug=%s errors=%s data_keys=%s file_keys=%s",
+                        getattr(prayer, "id", None),
+                        getattr(prayer, "slug", None),
+                        serializer.errors,
+                        list(request.data.keys()),
+                        list(request.FILES.keys()),
+                    )
+                    raise ValidationError(serializer.errors)
 
                 response_obj = serializer.save(prayer=prayer)
 
                 return Response(
-                    PrayerResponseSerializer(response_obj, context={"request": request}).data,
-                    status=201
+                    PrayerResponseSerializer(
+                        response_obj,
+                        context={"request": request},
+                    ).data,
+                    status=status.HTTP_201_CREATED,
                 )
 
             serializer = PrayerResponseSerializer(
@@ -275,15 +376,29 @@ class PrayViewSet(OwnerGateMixin, viewsets.ModelViewSet):
                 partial=(request.method == "PATCH"),
                 context={"request": request},
             )
-            serializer.is_valid(raise_exception=True)
+
+            if not serializer.is_valid():
+                logger.warning(
+                    "[PrayerRespond] update serializer invalid prayer_id=%s response_id=%s slug=%s errors=%s data_keys=%s file_keys=%s",
+                    getattr(prayer, "id", None),
+                    getattr(existing, "id", None),
+                    getattr(prayer, "slug", None),
+                    serializer.errors,
+                    list(request.data.keys()),
+                    list(request.FILES.keys()),
+                )
+                raise ValidationError(serializer.errors)
 
             response_obj = serializer.save(updated_at=timezone.now())
 
             return Response(
-                PrayerResponseSerializer(response_obj, context={"request": request}).data,
-                status=200
+                PrayerResponseSerializer(
+                    response_obj,
+                    context={"request": request},
+                ).data,
+                status=status.HTTP_200_OK,
             )
-
+            
     # -------------------------------------------------------------------------
     # Delete response (optional endpoint)
     # -------------------------------------------------------------------------

@@ -4,14 +4,19 @@ import logging
 from django.apps import apps
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import FieldDoesNotExist, ObjectDoesNotExist
+from django.core.exceptions import ValidationError
 
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from apps.media_conversion.models import MediaConversionJob
+from apps.media_conversion.models import MediaConversionJob, MediaJobStatus
 from apps.media_conversion.serializers import MediaConversionJobSerializer
+from apps.media_conversion.services.actions import (
+    cancel_media_job,
+    retry_media_job,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +196,37 @@ class MediaConversionJobViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = MediaConversionJobSerializer
     permission_classes = [IsAuthenticated]
 
+    # --------------------------------------------------------
+    # Internal helpers
+    # --------------------------------------------------------
+    def _get_owned_job_or_response(self, request, pk):
+        try:
+            job = self.get_queryset().get(pk=pk)
+        except MediaConversionJob.DoesNotExist:
+            return None, Response(
+                {"detail": "Job not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        target = job.content_object
+
+        if target is None:
+            return None, Response(
+                {"detail": "Target not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not _safe_can_view_target(request, target):
+            return None, Response(
+                {"detail": "Access restricted."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        return job, None
+    
+    # --------------------------------------------------------
+    # Base queryset
+    # --------------------------------------------------------
     def get_queryset(self):
         # Base queryset (no filtering here)
         return (
@@ -323,3 +359,128 @@ class MediaConversionJobViewSet(viewsets.ReadOnlyModelViewSet):
                 app_label, model, slug, getattr(request.user, "pk", None)
             )
             return Response({"detail": "Internal error."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+    # --------------------------------------------------------
+    # Cancel
+    # --------------------------------------------------------
+    # --------------------------------------------------------
+    # Cancel job
+    # --------------------------------------------------------
+    @action(detail=True, methods=["post"], url_path="cancel")
+    def cancel(self, request, pk=None):
+        try:
+            job = self.get_queryset().get(pk=pk)
+            target = job.content_object
+
+            if not _safe_can_view_target(request, target):
+                return Response(
+                    {"detail": "Access restricted."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            job = cancel_media_job(job)
+
+            return Response(
+                self.get_serializer(job).data,
+                status=status.HTTP_200_OK,
+            )
+
+        except MediaConversionJob.DoesNotExist:
+            return Response(
+                {"detail": "Job not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        except ValidationError as e:
+            return Response(
+                {"detail": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except Exception:
+            logger.exception(
+                "media_jobs.cancel failed job=%s user=%s",
+                pk,
+                getattr(request.user, "pk", None),
+            )
+            return Response(
+                {"detail": "Internal error."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    # --------------------------------------------------------
+    # Retry job
+    # --------------------------------------------------------
+    @action(detail=True, methods=["post"], url_path="cancel")
+    def cancel(self, request, pk=None):
+        try:
+            job, error_response = self._get_owned_job_or_response(
+                request,
+                pk,
+            )
+
+            if error_response:
+                return error_response
+
+            job = cancel_media_job(job)
+
+            return Response(
+                self.get_serializer(job).data,
+                status=status.HTTP_200_OK,
+            )
+
+        except ValidationError as e:
+            return Response(
+                {"detail": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except Exception:
+            logger.exception(
+                "media_jobs.cancel failed job=%s user=%s",
+                pk,
+                getattr(request.user, "pk", None),
+            )
+            return Response(
+                {"detail": "Internal error."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    # --------------------------------------------------------
+    # Retry
+    # --------------------------------------------------------
+    @action(detail=True, methods=["post"], url_path="retry")
+    def retry(self, request, pk=None):
+        try:
+            job, error_response = self._get_owned_job_or_response(
+                request,
+                pk,
+            )
+
+            if error_response:
+                return error_response
+
+            job = retry_media_job(job)
+
+            return Response(
+                self.get_serializer(job).data,
+                status=status.HTTP_200_OK,
+            )
+
+        except ValidationError as e:
+            return Response(
+                {"detail": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except Exception:
+            logger.exception(
+                "media_jobs.retry failed job=%s user=%s",
+                pk,
+                getattr(request.user, "pk", None),
+            )
+            return Response(
+                {"detail": "Internal error."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )

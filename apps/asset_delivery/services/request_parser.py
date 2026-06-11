@@ -39,3 +39,6 @@ def parse_target_lookup(data):
         "(app_label, model, object_id) OR "
         "(app_label, model, slug)."
     )
+    
+    
+    

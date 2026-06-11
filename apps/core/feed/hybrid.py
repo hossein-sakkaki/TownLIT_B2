@@ -23,23 +23,42 @@ from apps.core.visibility.constants import (
     VISIBILITY_FRIENDS,
     VISIBILITY_COVENANT,
 )
+from apps.core.boundaries.query import BoundaryVisibilityQuery
 
 
 class HybridFeedEngine:
     """
-    Hybrid: Feed rank + Trending heat (when engagement exists).
-    - Annotate only (no ordering, no dropping content)
+    Hybrid: Feed rank + Trending heat.
+
+    Important:
+    - Boundary filtering happens before ranking/trending.
+    - Stillness does not affect feed visibility.
+    - viewer is optional for backward compatibility.
     """
 
     @staticmethod
-    def apply(queryset):
-        # 1) Base feed score
-        qs = FeedRankingEngine.apply(queryset)
+    def apply(queryset, *, viewer=None):
+        # ------------------------------------------------------------
+        # 0) Boundary visibility gate
+        # ------------------------------------------------------------
+        qs = BoundaryVisibilityQuery.exclude_boundary_conflicts(
+            queryset,
+            viewer=viewer,
+        )
 
-        # 2) Trending score (annotate-only; do NOT filter by window)
+        # ------------------------------------------------------------
+        # 1) Base feed score
+        # ------------------------------------------------------------
+        qs = FeedRankingEngine.apply(qs)
+
+        # ------------------------------------------------------------
+        # 2) Trending score
+        # ------------------------------------------------------------
         qs = TrendingEngine.apply(qs, filter_window=False)
 
+        # ------------------------------------------------------------
         # 3) Relationship boost
+        # ------------------------------------------------------------
         relationship_boost = ExpressionWrapper(
             Value(1.0)
             + Case(
@@ -56,7 +75,9 @@ class HybridFeedEngine:
             output_field=FloatField(),
         )
 
-        # 4) Engagement total (annotate FIRST so we can reference it in When lookups)
+        # ------------------------------------------------------------
+        # 4) Engagement total
+        # ------------------------------------------------------------
         engagement_total_expr = ExpressionWrapper(
             Coalesce(F("reactions_count"), Value(0))
             + Coalesce(F("comments_count"), Value(0))
@@ -66,14 +87,18 @@ class HybridFeedEngine:
 
         qs = qs.annotate(engagement_total=engagement_total_expr)
 
+        # ------------------------------------------------------------
         # 5) Weighted hybrid
+        # ------------------------------------------------------------
         weighted_hybrid = ExpressionWrapper(
             (Coalesce(F("rank_score"), Value(0.0)) * Value(HYBRID_FEED_WEIGHT))
             + (Coalesce(F("trending_score"), Value(0.0)) * Value(HYBRID_TREND_WEIGHT)),
             output_field=FloatField(),
         )
 
-        # 6) Early-phase fallback (no trend blending if engagement is too low)
+        # ------------------------------------------------------------
+        # 6) Early-phase fallback
+        # ------------------------------------------------------------
         safe_hybrid = Case(
             When(
                 engagement_total__lt=Value(float(HYBRID_ENABLE_MIN_ENGAGEMENT)),

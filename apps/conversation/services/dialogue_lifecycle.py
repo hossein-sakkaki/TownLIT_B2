@@ -1,8 +1,14 @@
 # apps/conversation/services/dialogue_lifecycle.py
 
 from django.db import transaction
+from django.core.exceptions import ValidationError as DjangoValidationError
 
 from apps.conversation.models import Dialogue, DialogueParticipant, Message
+from validators.groupNames.group_name_validator import validate_group_name
+
+from apps.conversation.services.boundary_access import (
+    can_create_private_dialogue,
+)
 
 
 def _error(code: str, message: str, status_code: int):
@@ -26,7 +32,24 @@ def _success(payload: dict):
 def create_or_get_private_dialogue(*, acting_user, recipient, check_only=False):
     """
     Find existing DM or create a new one.
+
+    Boundary policy:
+    - Existing history is not deleted.
+    - Direct interaction/open-for-action is blocked if Boundary exists.
+    - This keeps the service safe even if a future endpoint bypasses View-level guards.
     """
+    boundary_check = can_create_private_dialogue(
+        acting_user=acting_user,
+        recipient=recipient,
+    )
+
+    if not boundary_check.allowed:
+        return _error(
+            boundary_check.code,
+            boundary_check.message,
+            403,
+        )
+
     dialogue = (
         Dialogue.objects.filter(participants=acting_user, is_group=False)
         .filter(participants=recipient)
@@ -75,13 +98,26 @@ def create_or_get_private_dialogue(*, acting_user, recipient, check_only=False):
 def create_group_dialogue(*, acting_user, group_name, group_image=None):
     """
     Create a new group dialogue with founder role.
+
+    Boundary policy:
+    - Creating a group with only the acting user has no conflict.
+    - Adding future participants must be guarded in group participant services/views.
     """
-    clean_name = (group_name or "").strip()
-    if not clean_name:
-        return _error("BAD_REQUEST", "Group name is required.", 400)
+    try:
+        clean_name = validate_group_name(group_name)
+    except DjangoValidationError as exc:
+        return _error(
+            "INVALID_GROUP_NAME",
+            exc.messages[0] if exc.messages else "Invalid group name.",
+            400,
+        )
 
     if Dialogue.objects.filter(is_group=True, group_name__iexact=clean_name).exists():
-        return _error("BAD_REQUEST", "A group with this name already exists.", 400)
+        return _error(
+            "DUPLICATE_GROUP_NAME",
+            "A group with this name already exists.",
+            400,
+        )
 
     with transaction.atomic():
         dialogue = Dialogue.objects.create(
@@ -95,6 +131,7 @@ def create_group_dialogue(*, acting_user, group_name, group_image=None):
             dialogue.save(update_fields=["group_image", "group_avatar_version"])
 
         dialogue.participants.add(acting_user)
+
         DialogueParticipant.objects.create(
             dialogue=dialogue,
             user=acting_user,
@@ -113,6 +150,10 @@ def create_group_dialogue(*, acting_user, group_name, group_image=None):
 def smart_delete_dialogue_for_user(*, dialogue, acting_user):
     """
     Smart delete for DM or group.
+
+    Boundary policy:
+    - Boundary does not delete existing history.
+    - Users can still remove a dialogue from their own list.
     """
     if not dialogue.participants.filter(id=acting_user.id).exists():
         return _error("FORBIDDEN", "You are not a participant of this dialogue.", 403)

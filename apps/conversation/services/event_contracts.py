@@ -426,3 +426,38 @@ def build_message_reaction_toggled_event_data(
         "action": action,
         "summary": summary,
     }
+    
+# -------------------------------------------------------------------
+# Group events
+# -------------------------------------------------------------------
+def build_group_updated_event_data(
+    *,
+    dialogue_slug: str,
+    reason: str,
+    dialogue: dict | None = None,
+    actor_id: int | None = None,
+    target_user_id: int | None = None,
+) -> dict:
+    """
+    Canonical lightweight group sync event.
+
+    This event tells clients:
+    - this group changed
+    - refresh local dialogue/member/avatar state
+    - optionally apply the embedded dialogue snapshot immediately
+    """
+    payload = {
+        "dialogue_slug": dialogue_slug,
+        "reason": reason,
+    }
+
+    if dialogue is not None:
+        payload["dialogue"] = dialogue
+
+    if actor_id is not None:
+        payload["actor_id"] = actor_id
+
+    if target_user_id is not None:
+        payload["target_user_id"] = target_user_id
+
+    return payload

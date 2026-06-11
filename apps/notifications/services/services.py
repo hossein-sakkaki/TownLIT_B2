@@ -9,6 +9,7 @@ from channels.layers import get_channel_layer
 from typing import Optional, Dict, Any
 
 from utils.firebase.push_engine import push_engine  # NEW: Firebase REST engine
+from utils.apple.apns_engine import apns_engine  # NEW: Apple APNs engine
 from apps.notifications.models import Notification, UserNotificationPreference
 from apps.notifications.constants import (
     CHANNEL_PUSH,
@@ -16,12 +17,19 @@ from apps.notifications.constants import (
     CHANNEL_EMAIL,
     CHANNEL_DEFAULT,
     NOTIFICATION_TYPES_PUSH_EMAIL_ONLY,
+    NOTIFICATION_TYPES_NO_EMAIL,
+    NOTIFICATION_TYPES_FORCE_ENABLED,
+    NOTIFICATION_TYPES_EXCLUDED_FROM_GENERAL_UNREAD,
+    NOTIFICATION_TYPES_PUSH_ONLY,
 )
 from apps.notifications.services.ui_link_resolver import (
     build_content_link,
     guess_entry_section, 
     ENTRY_BY_CT
-) 
+)
+from apps.notifications.services.delivery_policy import (
+    apply_relationship_delivery_policy,
+)
 
 from apps.notifications.tasks import send_email_notification  # Celery async task
 
@@ -32,6 +40,16 @@ logger = logging.getLogger(__name__)
 # Check if notification type is enabled for user
 # -------------------------------------------------------------------------
 def _is_enabled(user, notif_type):
+    """
+    Return notification preference state.
+
+    Messenger notification types are intentionally not controlled by
+    general notification preferences. They should later be controlled by
+    conversation-level mute/silence settings.
+    """
+    if notif_type in NOTIFICATION_TYPES_FORCE_ENABLED:
+        return True, CHANNEL_DEFAULT
+
     try:
         pref = UserNotificationPreference.objects.get(
             user=user,
@@ -39,9 +57,8 @@ def _is_enabled(user, notif_type):
         )
         return pref.enabled, (pref.channels_mask if pref.enabled else 0)
     except UserNotificationPreference.DoesNotExist:
-        # Default: enabled, all 3 channels active (Push + WS + Email)
         return True, CHANNEL_DEFAULT
-
+    
 
 # -------------------------------------------------------------------------
 # Safe ContentType resolver
@@ -195,6 +212,323 @@ def _smart_ui_link(target_obj, action_obj, extra_payload: dict | None) -> str | 
         mode=mode,
     )
 
+def _email_subject_for_notification(
+    notification_type: str,
+) -> str:
+    """
+    Pick a clear email subject for important notification types.
+    """
+    if notification_type == "testimony_video_rejected":
+        return "Your TownLIT video testimony was not accepted"
+
+    return "New Notification from TownLIT"
+
+def _push_title_for_notification(
+    notification_type: str,
+) -> str:
+    """
+    Pick a clear push title.
+    """
+    if notification_type == "testimony_video_rejected":
+        return "Video testimony not accepted"
+
+    if notification_type == "new_message_direct":
+        return "New message"
+
+    if notification_type == "new_message_group":
+        return "New group message"
+
+    return "TownLIT Notification"
+
+def _push_body_for_notification(
+    notification_type: str,
+    message: str,
+) -> str:
+    """
+    Push body should be shorter than the full in-app/email message.
+    """
+    if notification_type == "testimony_video_rejected":
+        return (
+            "Your video did not appear to be a personal testimony. "
+            "You can upload a new testimony from your profile."
+        )
+
+    clean = (message or "").strip()
+    if len(clean) > 180:
+        return clean[:177] + "..."
+
+    return clean
+
+def _push_sound_for_notification(
+    notification_type: str,
+) -> str:
+    """
+    Pick the APNs custom sound file for iOS.
+
+    The returned file name must exactly match a .caf file included
+    in the iOS app bundle under Copy Bundle Resources.
+    """
+    if notification_type in {"new_message_direct", "new_message_group"}:
+        return "townlit_message.caf"
+
+    return "townlit_notify.caf"
+
+def _general_unread_notification_count_for_user(user) -> int:
+    """
+    Count unread non-messenger notifications.
+
+    Messenger notification records are excluded because Messenger unread
+    count comes from Dialogue unread messages.
+    """
+    if not user:
+        return 0
+
+    try:
+        return max(
+            Notification.objects.filter(
+                user=user,
+                is_read=False,
+            )
+            .exclude(
+                notification_type__in=NOTIFICATION_TYPES_EXCLUDED_FROM_GENERAL_UNREAD
+            )
+            .count(),
+            0,
+        )
+    except Exception:
+        logger.warning(
+            "[Notif] Failed to calculate general unread notification count user=%s",
+            getattr(user, "id", None),
+            exc_info=True,
+        )
+        return 0
+
+
+def _messenger_unread_count_for_user(user) -> int:
+    """
+    Count unread messenger messages using the same source as the
+    conversation unread-counts API.
+
+    This intentionally uses Dialogue.unread_messages_for_user(user)
+    to stay consistent with DialogueViewSet.get_unread_counts.
+    """
+    if not user:
+        return 0
+
+    try:
+        from apps.conversation.models import Dialogue
+
+        dialogues = (
+            Dialogue.objects
+            .filter(participants=user)
+            .exclude(deleted_by_users=user)
+        )
+
+        total = 0
+
+        for dialogue in dialogues:
+            total += dialogue.unread_messages_for_user(user).count()
+
+        return max(int(total), 0)
+
+    except Exception:
+        logger.warning(
+            "[Notif] Failed to calculate messenger unread count user=%s",
+            getattr(user, "id", None),
+            exc_info=True,
+        )
+        return 0
+
+
+def _badge_count_for_user(user) -> int:
+    """
+    Calculate the iOS app icon badge count.
+
+    Badge = unread general notifications + unread messenger messages.
+    """
+    general_count = _general_unread_notification_count_for_user(user)
+    messenger_count = _messenger_unread_count_for_user(user)
+
+    total = general_count + messenger_count
+
+    logger.debug(
+        "[Notif] Badge count calculated user=%s general=%s messenger=%s total=%s",
+        getattr(user, "id", None),
+        general_count,
+        messenger_count,
+        total,
+    )
+
+    return max(int(total), 0)
+
+
+# -------------------------------------------------------------------------
+# Push-only notification dispatch (no DB, no WS, no Email)
+# -------------------------------------------------------------------------
+def dispatch_push_only_notification(
+    *,
+    recipient,
+    actor=None,
+    notif_type: str,
+    message: str,
+    link: Optional[str] = None,
+    extra_payload: Optional[Dict[str, Any]] = None,
+):
+    """
+    Send push-only notifications without creating a Notification row.
+
+    Used for Messenger:
+    - no Notification Center item
+    - no notification WebSocket item
+    - no email
+    - push only
+    """
+    if not recipient:
+        logger.warning("[Notif][PushOnly] Missing recipient; skipped.")
+        return False
+
+    if actor and getattr(actor, "id", None) == getattr(recipient, "id", None):
+        logger.debug(
+            "[Notif][PushOnly] Self notification skipped actor=%s type=%s",
+            getattr(actor, "id", None),
+            notif_type,
+        )
+        return False
+
+    enabled, channels_mask = _is_enabled(recipient, notif_type)
+
+    if not enabled:
+        logger.info(
+            "[Notif][PushOnly] Disabled by preference user=%s type=%s",
+            getattr(recipient, "id", None),
+            notif_type,
+        )
+        return False
+
+    # Push-only means no DB, no WS, no Email.
+    channels_mask = channels_mask & CHANNEL_PUSH
+
+    delivery_decision = apply_relationship_delivery_policy(
+        recipient=recipient,
+        actor=actor,
+        channels_mask=channels_mask,
+    )
+
+    if not delivery_decision.persist:
+        logger.info(
+            "[Notif][PushOnly] Suppressed by relationship policy user=%s actor=%s type=%s reason=%s",
+            getattr(recipient, "id", None),
+            getattr(actor, "id", None),
+            notif_type,
+            delivery_decision.reason,
+        )
+        return False
+
+    channels_mask = delivery_decision.channels_mask & CHANNEL_PUSH
+
+    if not (channels_mask & CHANNEL_PUSH):
+        logger.info(
+            "[Notif][PushOnly] Push channel suppressed user=%s actor=%s type=%s reason=%s",
+            getattr(recipient, "id", None),
+            getattr(actor, "id", None),
+            notif_type,
+            delivery_decision.reason,
+        )
+        return False
+
+    resolved_link = link or ""
+
+    base_data = {
+        "link": resolved_link,
+        "deep_link": resolved_link,
+        "url": resolved_link,
+        "notification_type": notif_type,
+        "notification_id": "",
+    }
+
+    if extra_payload:
+        try:
+            base_data.update(extra_payload)
+        except Exception:
+            logger.warning(
+                "[Notif][PushOnly] extra_payload merge failed user=%s type=%s",
+                getattr(recipient, "id", None),
+                notif_type,
+                exc_info=True,
+            )
+
+    safe_data = {
+        str(key): "" if value is None else str(value)
+        for key, value in base_data.items()
+    }
+
+    push_title = _push_title_for_notification(notif_type)
+    push_body = _push_body_for_notification(notif_type, message)
+
+    sent_any = False
+
+    try:
+        push_engine.send_to_user(
+            recipient,
+            title=push_title,
+            body=push_body,
+            data=safe_data,
+        )
+
+        sent_any = True
+
+        logger.debug(
+            "[Notif][PushOnly] Firebase push dispatched user=%s type=%s",
+            getattr(recipient, "id", None),
+            notif_type,
+        )
+
+    except Exception as e:
+        logger.warning(
+            "[Notif][PushOnly] Firebase push failed user=%s type=%s error=%s",
+            getattr(recipient, "id", None),
+            notif_type,
+            e,
+            exc_info=True,
+        )
+
+    try:
+        apns_engine.send_to_user(
+            recipient,
+            title=push_title,
+            body=push_body,
+            data=safe_data,
+            badge=_badge_count_for_user(recipient),
+            sound=_push_sound_for_notification(notif_type),
+        )
+
+        sent_any = True
+
+        logger.debug(
+            "[Notif][PushOnly] APNs push dispatched user=%s type=%s",
+            getattr(recipient, "id", None),
+            notif_type,
+        )
+
+    except Exception as e:
+        logger.warning(
+            "[Notif][PushOnly] APNs push failed user=%s type=%s error=%s",
+            getattr(recipient, "id", None),
+            notif_type,
+            e,
+            exc_info=True,
+        )
+
+    logger.info(
+        "[Notif][PushOnly] Done user=%s actor=%s type=%s sent_any=%s link=%s",
+        getattr(recipient, "id", None),
+        getattr(actor, "id", None),
+        notif_type,
+        sent_any,
+        resolved_link,
+    )
+
+    return sent_any
 
 
 # -------------------------------------------------------------------------
@@ -215,23 +549,64 @@ def create_and_dispatch_notification(
     """
     Centralized notification creation + dispatch
     (DB + WebSocket + Push + Email).
+
+    Relationship policy:
+    - Boundary suppresses notification completely.
+    - Stillness keeps DB notification but suppresses WS/Push/Email.
     """
+
+    if not recipient:
+        logger.warning("[Notif] Missing recipient; notification skipped.")
+        return None
+
+    if actor and getattr(actor, "id", None) == getattr(recipient, "id", None):
+        logger.debug(
+            "[Notif] Self notification skipped actor=%s type=%s",
+            getattr(actor, "id", None),
+            notif_type,
+        )
+        return None
 
     # Resolve user preference + channel mask
     enabled, channels_mask = _is_enabled(recipient, notif_type)
 
-    # For some types (e.g. messages) we only want Push + Email, no WS
+    # For some types, only Push + Email are allowed, no WS.
     if notif_type in NOTIFICATION_TYPES_PUSH_EMAIL_ONLY:
-        # Keep only PUSH + EMAIL bits, drop WebSocket
         channels_mask = channels_mask & (CHANNEL_PUSH | CHANNEL_EMAIL)
 
+    # Messenger notifications must never send email.
+    # They may still use DB persistence, WebSocket, and Push.
+    if notif_type in NOTIFICATION_TYPES_NO_EMAIL:
+        channels_mask = channels_mask & ~CHANNEL_EMAIL
+
     if not enabled:
-        logger.error(
-            "⛔ SERVICE STOP: Notification disabled → user=%s type=%s",
+        logger.info(
+            "[Notif] Notification disabled by preference → user=%s type=%s",
             recipient.id,
             notif_type,
         )
         return None
+
+    # ------------------------------------------------------------
+    # Boundary / Stillness policy
+    # ------------------------------------------------------------
+    delivery_decision = apply_relationship_delivery_policy(
+        recipient=recipient,
+        actor=actor,
+        channels_mask=channels_mask,
+    )
+
+    if not delivery_decision.persist:
+        logger.info(
+            "[Notif] Suppressed by relationship policy → user=%s actor=%s type=%s reason=%s",
+            getattr(recipient, "id", None),
+            getattr(actor, "id", None),
+            notif_type,
+            delivery_decision.reason,
+        )
+        return None
+
+    channels_mask = delivery_decision.channels_mask
 
     target_ct = _safe_ct(target_obj)
     target_id = getattr(target_obj, "pk", None)
@@ -263,27 +638,72 @@ def create_and_dispatch_notification(
                         link=link,
                     ),
                 )
+
                 if created:
+                    logger.info(
+                        "[Notif] Created → notif_id=%s user=%s actor=%s type=%s policy=%s mask=%s",
+                        notif.id,
+                        recipient.id,
+                        getattr(actor, "id", None),
+                        notif_type,
+                        delivery_decision.reason,
+                        channels_mask,
+                    )
                     _deliver_notification(notif, channels_mask, extra_payload)
                 else:
-                    logger.info("[Notif] Dedup hit → notif_id=%s dedupe_key=%s", notif.id, dedupe_key)
+                    logger.info(
+                        "[Notif] Dedup hit → notif_id=%s dedupe_key=%s",
+                        notif.id,
+                        dedupe_key,
+                    )
+
                 return notif
 
-            # old behavior
-            notif = Notification.objects.create(...)
+            notif = Notification.objects.create(
+                user=recipient,
+                actor=actor,
+                message=message,
+                notification_type=notif_type,
+                target_content_type=target_ct,
+                target_object_id=target_id,
+                action_content_type=action_ct,
+                action_object_id=action_id,
+                link=link,
+            )
+
+            logger.info(
+                "[Notif] Created no-dedupe → notif_id=%s user=%s actor=%s type=%s policy=%s mask=%s",
+                notif.id,
+                recipient.id,
+                getattr(actor, "id", None),
+                notif_type,
+                delivery_decision.reason,
+                channels_mask,
+            )
+
             _deliver_notification(notif, channels_mask, extra_payload)
             return notif
 
-        except Exception as e:
-            logger.error(..., exc_info=True)
+        except Exception:
+            logger.error(
+                "[Notif] Failed to create/deliver notification user=%s actor=%s type=%s",
+                getattr(recipient, "id", None),
+                getattr(actor, "id", None),
+                notif_type,
+                exc_info=True,
+            )
             return None
 
     if transaction.get_connection().in_atomic_block:
-        logger.warning("[Notif] in_atomic → scheduling on_commit (type=%s user=%s)", notif_type, recipient.id)
+        logger.debug(
+            "[Notif] in_atomic → scheduling on_commit type=%s user=%s",
+            notif_type,
+            recipient.id,
+        )
         transaction.on_commit(lambda: _persist())
-    else:
-        _persist()
+        return None
 
+    return _persist()
 
 
 
@@ -298,46 +718,50 @@ def _deliver_notification(
     """
     Fan-out to WebSocket, Push (Firebase REST), and Email via Celery.
     """
+    # ------------------------------------------------------------------
+    # 1) WebSocket Delivery
+    # ------------------------------------------------------------------
     try:
         if channels_mask & CHANNEL_WS:
             layer = get_channel_layer()
+
             if not layer:
                 logger.warning("[Notif] No channel_layer; skipping WS")
-                return
+            else:
+                payload = {
+                    "id": notif.id,
+                    "type": notif.notification_type,
+                    "message": notif.message,
+                    "link": notif.link,
+                    "created_at": notif.created_at.isoformat(),
+                    "is_read": notif.is_read,
+                }
 
-            payload = {
-                "id": notif.id,
-                "type": notif.notification_type,
-                "message": notif.message,
-                "link": notif.link,
-                "created_at": notif.created_at.isoformat(),
-                "is_read": notif.is_read,
-            }
+                if extra_payload:
+                    payload["extra"] = extra_payload
 
-            if extra_payload:
-                payload["extra"] = extra_payload
+                group_name = f"notif_user_{notif.user_id}"
+                logger.info(
+                    "[Notif] WS about to send → group=%s payload=%s",
+                    group_name,
+                    payload,
+                )
 
-            group_name = f"notif_user_{notif.user_id}"
-            logger.info(
-                "[Notif] WS about to send → group=%s payload=%s",
-                group_name,
-                payload,
-            )
+                async_to_sync(layer.group_send)(
+                    group_name,
+                    {
+                        "type": "dispatch_event",
+                        "app": "notifications",
+                        "event": "notification",
+                        "data": payload,
+                    },
+                )
 
-            async_to_sync(layer.group_send)( 
-                group_name,
-                {
-                    "type": "dispatch_event",
-                    "app": "notifications",
-                    "event": "notification",
-                    "data": payload,
-                },
-            )
+                logger.info(
+                    "[Notif] WS sent to group %s OK",
+                    group_name,
+                )
 
-            logger.info(
-                "[Notif] WS sent to group %s OK",
-                group_name,
-            )
     except Exception as e:
         logger.warning(
             "[Notif] WS delivery failed for user %s: %s",
@@ -346,21 +770,22 @@ def _deliver_notification(
             exc_info=True,
         )
 
-
     # ------------------------------------------------------------------
-    # 2) Push Delivery (Firebase REST)
+    # 2) Push Delivery (Firebase REST + APNs)
     # ------------------------------------------------------------------
     try:
-
         if channels_mask & CHANNEL_PUSH:
 
+            resolved_link = notif.link or ""
+
             base_data = {
-                "link": notif.link or "",
+                "link": resolved_link,
+                "deep_link": resolved_link,
+                "url": resolved_link,
                 "notification_type": notif.notification_type,
                 "notification_id": str(notif.id),
             }
 
-            # Add extra payload
             if extra_payload:
                 try:
                     base_data.update(extra_payload)
@@ -372,22 +797,61 @@ def _deliver_notification(
                         exc_info=True,
                     )
 
-            # FCM requires all values to be strings
             safe_data = {}
             for key, value in base_data.items():
                 safe_data[key] = "" if value is None else str(value)
 
-            push_engine.send_to_user(
-                notif.user,
-                title="TownLIT Notification",
-                body=notif.message,
-                data=safe_data,
+            push_title = _push_title_for_notification(notif.notification_type)
+            push_body = _push_body_for_notification(
+                notif.notification_type,
+                notif.message,
             )
 
-            logger.debug(
-                "[Notif] Push dispatched via Firebase REST for user %s",
-                notif.user_id,
-            )
+            # Web / Firebase push
+            try:
+                push_engine.send_to_user(
+                    notif.user,
+                    title=push_title,
+                    body=push_body,
+                    data=safe_data,
+                )
+
+                logger.debug(
+                    "[Notif] Push dispatched via Firebase REST for user %s",
+                    notif.user_id,
+                )
+
+            except Exception as e:
+                logger.warning(
+                    "[Notif] Firebase push delivery failed for user %s: %s",
+                    notif.user_id,
+                    e,
+                    exc_info=True,
+                )
+
+            # Native iOS / APNs push
+            try:
+                apns_engine.send_to_user(
+                    notif.user,
+                    title=push_title,
+                    body=push_body,
+                    data=safe_data,
+                    badge=_badge_count_for_user(notif.user),
+                    sound=_push_sound_for_notification(notif.notification_type),
+                )
+
+                logger.debug(
+                    "[Notif] Push dispatched via APNs for user %s",
+                    notif.user_id,
+                )
+
+            except Exception as e:
+                logger.warning(
+                    "[Notif] APNs push delivery failed for user %s: %s",
+                    notif.user_id,
+                    e,
+                    exc_info=True,
+                )
 
     except Exception as e:
         logger.warning(
@@ -415,14 +879,20 @@ def _deliver_notification(
                 logger.info("[Notif] No email for user %s (notif %s)", notif.user_id, notif.id)
                 return
 
-            subject = "New Notification from TownLIT"
+            subject = _email_subject_for_notification(notif.notification_type)
             body_text = f"{notif.message}"
+
+            email_link = None
+            if isinstance(extra_payload, dict):
+                email_link = extra_payload.get("email_link") or extra_payload.get("web_link")
+
+            email_link = email_link or notif.link
 
             res = send_email_notification.delay(
                 email,
                 subject,
                 body_text,
-                notif.link,
+                email_link,
             )
 
             logger.info(

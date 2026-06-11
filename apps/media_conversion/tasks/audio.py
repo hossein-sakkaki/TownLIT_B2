@@ -16,6 +16,8 @@ from .base import (
     get_job_by_current_task,
     job_update,
     bind_converted_file,
+    raise_if_job_canceled,
+    MediaConversionCanceled,
 )
 
 logger = logging.getLogger(__name__)
@@ -32,11 +34,11 @@ def convert_audio_to_mp3_task(
 ):
     """
     Celery task:
-    - audio → MP3
+    - audio -> MP3
     - bind result to model
     - cleanup RAW
+    - cancel-aware
     """
-
     close_old_connections()
     job = get_job_by_current_task()
 
@@ -50,17 +52,20 @@ def convert_audio_to_mp3_task(
     )
 
     try:
+        raise_if_job_canceled(job)
+
         logger.info(
             "🔊 Audio conversion task started: %s[%s]",
             model_name,
             instance_id,
         )
 
-        # -------------------------------------------------
-        # Fetch instance (tolerant)
-        # -------------------------------------------------
         try:
-            instance = get_instance(app_label, model_name, instance_id)
+            instance = get_instance(
+                app_label,
+                model_name,
+                instance_id,
+            )
         except Exception:
             job_update(
                 job,
@@ -69,6 +74,7 @@ def convert_audio_to_mp3_task(
                 message="Canceled: target object no longer exists",
                 finished=True,
             )
+
             logger.warning(
                 "Target %s[%s] missing; canceling audio task",
                 model_name,
@@ -76,12 +82,15 @@ def convert_audio_to_mp3_task(
             )
             return
 
+        raise_if_job_canceled(job)
+
         upload = FileUpload(**fileupload)
 
-        # -------------------------------------------------
-        # Convert audio
-        # -------------------------------------------------
-        job_update(job, progress=10, message="Converting audio to MP3")
+        job_update(
+            job,
+            progress=10,
+            message="Converting audio to MP3",
+        )
 
         relative_output_path = convert_audio_to_mp3(
             source_path,
@@ -89,10 +98,13 @@ def convert_audio_to_mp3_task(
             upload,
         )
 
-        # -------------------------------------------------
-        # Bind output
-        # -------------------------------------------------
-        job_update(job, progress=90, message="Finalizing output")
+        raise_if_job_canceled(job)
+
+        job_update(
+            job,
+            progress=90,
+            message="Finalizing output",
+        )
 
         bind_converted_file(
             model_name=model_name,
@@ -102,16 +114,15 @@ def convert_audio_to_mp3_task(
             relative_path=relative_output_path,
         )
 
-        # -------------------------------------------------
-        # Cleanup RAW
-        # -------------------------------------------------
+        raise_if_job_canceled(job)
+
         if source_path and default_storage.exists(source_path):
             default_storage.delete(source_path)
-            logger.info("🗑️ Deleted original uploaded audio: %s", source_path)
+            logger.info(
+                "🗑️ Deleted original uploaded audio: %s",
+                source_path,
+            )
 
-        # -------------------------------------------------
-        # Finalize
-        # -------------------------------------------------
         job_update(
             job,
             status=MediaJobStatus.DONE,
@@ -126,15 +137,32 @@ def convert_audio_to_mp3_task(
             relative_output_path,
         )
 
-    except Exception as e:
+    except MediaConversionCanceled:
+        job_update(
+            job,
+            status=MediaJobStatus.CANCELED,
+            progress=100,
+            message="Canceled",
+            finished=True,
+        )
+
+        logger.info(
+            "🚫 Audio conversion canceled: %s[%s]",
+            model_name,
+            instance_id,
+        )
+        return
+
+    except Exception as exc:
         job_update(
             job,
             status=MediaJobStatus.FAILED,
             progress=100,
             message="Conversion failed",
-            error=str(e),
+            error=str(exc),
             finished=True,
         )
+
         logger.exception(
             "❌ Audio conversion failed for %s[%s]",
             model_name,

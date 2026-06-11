@@ -18,14 +18,20 @@ from rest_framework.response import Response
 
 from apps.profiles.models.member import Member
 from apps.profiles.models.relationships import Fellowship
-from apps.profiles.serializers.member import MemberSerializer
+from apps.profiles.serializers.member import (
+    MemberSerializer,
+    LimitedMemberSerializer,
+)
 from apps.accounts.serializers.user_serializers import CustomUserSerializer
+from apps.posts.serializers.testimonies import TestimonyProfileHeaderSerializer
 from apps.media_conversion.services.readiness import get_media_ready_state
+from utils.api.error_response import build_validation_error_response
 
 from validators.user_validators import validate_phone_number
 from utils.common.utils import create_active_code, send_sms
 from utils.email.email_tools import send_custom_email
 from django.contrib.auth import get_user_model
+
 
 CustomUser = get_user_model()
 logger = logging.getLogger(__name__)
@@ -39,6 +45,28 @@ class MemberViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     serializer_class = MemberSerializer
 
+    # Helper for temporarily limited profile response --------------------------
+    def _limited_self_profile_response(self, request, member: Member):
+        """
+        Return a safe limited owner profile when profile access is restricted.
+
+        Do not expose internal safety/confidant reasons to the client.
+        """
+        data = LimitedMemberSerializer(
+            member,
+            context={"request": request},
+        ).data
+
+        data["profile_gate"] = {
+            "key": "profile_temporarily_unavailable",
+            "reason": "temporarily_unavailable",
+            "redirect_to": f"/lit/{member.user.username}",
+            "owner_message": "Your profile is currently unavailable. Please contact TownLIT Support for more information.",
+        }
+
+        return Response(data, status=status.HTTP_200_OK)
+    
+    # Get current user's member profile ---------------------------------------
     def get_queryset(self):
         # If deleted, return no rows (hard stop at the query level)
         if getattr(self.request.user, "is_deleted", False):
@@ -54,7 +82,7 @@ class MemberViewSet(viewsets.ModelViewSet):
         return ctx
 
     def retrieve(self, request, *args, **kwargs):
-        # Block deleted accounts from reading "self" profile
+        # Block deleted accounts from reading "self" profile.
         if getattr(request.user, "is_deleted", False):
             return Response(
                 {"error": "Your account is deactivated. Reactivate first to access your profile."},
@@ -62,21 +90,28 @@ class MemberViewSet(viewsets.ModelViewSet):
             )
 
         member = self.get_object()
+
         if member.user_id != request.user.id:
             raise PermissionDenied("You can only access your own profile here.")
+
         if member.user.is_suspended:
-            return Response({"error": "Your profile is suspended and cannot be accessed by you."},
-                            status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {"error": "Your profile is suspended and cannot be accessed by you."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Safety gate:
+        # Keep the owner profile limited without exposing internal reasons.
         if member.is_hidden_by_confidants:
-            return Response({"error": "Your profile is currently hidden and cannot be accessed by you."},
-                            status=status.HTTP_403_FORBIDDEN)
+            return self._limited_self_profile_response(request, member)
 
         serializer = self.get_serializer(member)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
+    # Get current user's member profile ---------------------------------------
     @action(detail=False, methods=['get'], url_path='my-profile', permission_classes=[IsAuthenticated])
     def my_profile(self, request):
-        # Block deleted accounts here too
+        # Block deleted accounts here too.
         if getattr(request.user, "is_deleted", False):
             return Response(
                 {"error": "Your account is deactivated. Reactivate first to access your profile."},
@@ -86,19 +121,27 @@ class MemberViewSet(viewsets.ModelViewSet):
         try:
             member = request.user.member_profile
         except (Member.DoesNotExist, AttributeError):
-            return Response({"error": "Profile not found. Please complete your profile registration."},
-                            status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"error": "Profile not found. Please complete your profile registration."},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
         if member.user.is_suspended:
-            return Response({"error": "Your profile is suspended and cannot be accessed by you."},
-                            status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {"error": "Your profile is suspended and cannot be accessed by you."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Safety gate:
+        # Return limited profile with a neutral reason.
+        # Never mention confidants, entrusted users, or safety internals.
         if member.is_hidden_by_confidants:
-            return Response({"error": "Your profile is currently hidden and cannot be accessed by you."},
-                            status=status.HTTP_403_FORBIDDEN)
+            return self._limited_self_profile_response(request, member)
 
         serializer = self.get_serializer(member)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
+    # Update current user's member profile ------------------------------------
     @action(detail=False, methods=['post'], url_path='update-profile', permission_classes=[IsAuthenticated])
     def update_profile(self, request):
         # Block updates for deleted accounts
@@ -114,10 +157,19 @@ class MemberViewSet(viewsets.ModelViewSet):
             return Response({"error": "Profile not found. Please create a profile first."},
                             status=status.HTTP_404_NOT_FOUND)
 
+        if member.is_hidden_by_confidants:
+            return Response(
+                {
+                    "code": "profile_temporarily_unavailable",
+                    "detail": "Your profile is currently unavailable. Please contact TownLIT Support for more information.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+            
         serializer = self.get_serializer(member, data=request.data, partial=True)
+
         if not serializer.is_valid():
-            return Response({"error": "Invalid data. Please check the provided fields.",
-                             "details": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+            return build_validation_error_response(serializer.errors)
 
         updated_member = serializer.save()
         user_data = CustomUserSerializer(
@@ -156,6 +208,15 @@ class MemberViewSet(viewsets.ModelViewSet):
             member = request.user.member_profile
         except (Member.DoesNotExist, AttributeError):
             return Response({"error": "Profile not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if member.is_hidden_by_confidants:
+            return Response(
+                {
+                    "code": "profile_temporarily_unavailable",
+                    "detail": "Your profile is currently unavailable. Please contact TownLIT Support for more information.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         custom_user = member.user
 
@@ -475,93 +536,9 @@ The TownLIT Team 🌍
                 return Response({"error": "You are not authorized to change the visibility of this profile."}, status=status.HTTP_403_FORBIDDEN)
         except Member.DoesNotExist:
             return Response({"error": "Member not found"}, status=status.HTTP_404_NOT_FOUND)
+
         
-    # My Testimonies Summary -----------------------------------------------------------------
-    @action(detail=False, methods=['get'], url_path='my-testimonies-summary',permission_classes=[IsAuthenticated])
-    def my_testimonies_summary(self, request):
-        from apps.posts.models.testimony import Testimony
-
-        member = getattr(request.user, "member_profile", None) or getattr(request.user, "member", None)
-        if not member:
-            return Response(
-                {"type": "about:blank", "title": "Not Found", "status": 404, "detail": "Profile not found."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        ct = ContentType.objects.get_for_model(Member, for_concrete_model=False)
-        base_qs = Testimony.objects.filter(content_type=ct, object_id=member.id, is_active=True)
-
-        def pack_written(t: Testimony):
-            # Written is not conversion-dependent
-            return {
-                "exists": True,
-                "type": Testimony.TYPE_WRITTEN,
-                "id": t.id,
-                "slug": t.slug,
-                "title": t.title,
-                "published_at": t.published_at,
-                "converting": False,
-                "excerpt": (t.content[:140] + "…") if t.content and len(t.content) > 140 else (t.content or ""),
-            }
-
-        def pack_media(ttype: str, field_name: str):
-            t = base_qs.filter(type=ttype).first()
-            if not t:
-                return {"exists": False}
-
-            # ✅ require_job=True => missing job = NOT ready (prevents race leaks)
-            st = get_media_ready_state(t, field_name, require_job=True)
-
-            if not st.ready:
-                # 🚫 Do NOT send testimony payload while converting
-                # (no id, slug, title, keys, urls, thumbnail, etc.)
-                return {
-                    "exists": False,                 # prevents "ready card" UI paths
-                    "type": ttype,
-                    "converting": True,
-                    "ready_status": st.status,
-                    "job_id": st.job_id,
-                    # ✅ only what conversion panel needs
-                    "job_target": {
-                        "content_type_model": "posts.testimony",  # must match jobs API
-                        "object_id": t.id,                        # testimony id is OK (not playable)
-                        "field_name": field_name,
-                    },
-                }
-
-            # ✅ Ready: now safe to return minimal identifiers
-            out = {
-                "exists": True,
-                "type": ttype,
-                "id": t.id,
-                "slug": t.slug,
-                "title": t.title,
-                "published_at": t.published_at,
-                "converting": False,
-                "ready_status": st.status,
-                "job_id": st.job_id,
-            }
-
-            # Keys are only meaningful when ready
-            if ttype == Testimony.TYPE_AUDIO:
-                out["audio_key"] = getattr(t.audio, "name", None)
-            else:
-                out["video_key"] = getattr(t.video, "name", None)
-
-            return out
-
-        # pick written once
-        written = base_qs.filter(type=Testimony.TYPE_WRITTEN).first()
-
-        return Response(
-            {
-                "audio": pack_media(Testimony.TYPE_AUDIO, "audio"),
-                "video": pack_media(Testimony.TYPE_VIDEO, "video"),
-                "written": pack_written(written) if written else {"exists": False},
-            },
-            status=status.HTTP_200_OK,
-        )
-
+        
     # Action for Delete Academic Record -----------------------------------------------------------------------------------
     @action(detail=False, methods=['delete'], url_path='delete-academic-record', permission_classes=[IsAuthenticated])
     def delete_academic_record(self, request):
@@ -579,3 +556,5 @@ The TownLIT Team 🌍
         member.save(update_fields=["academic_record"])
 
         return Response({"message": "Academic record deleted successfully."}, status=status.HTTP_200_OK)
+    
+    

@@ -34,6 +34,7 @@ from apps.profiles.constants import (
     EDUCATION_DOCUMENT_TYPE_CHOICES,
     EDUCATION_DEGREE_CHOICES,
     SPIRITUAL_MINISTRY_CHOICES,
+    GIFT_DESCRIPTIONS
 )
 
 from apps.profilesOrg.constants_denominations import (
@@ -74,7 +75,7 @@ from apps.payment.constants import (
 )
 
 # Import posts
-from apps.posts.constants import (
+from apps.posts.constants.constants import (
     SERVICE_EVENT_CHOICES,
     CHILDREN_EVENT_TYPE_CHOICES,
     YOUTH_EVENT_TYPE_CHOICES,
@@ -160,6 +161,7 @@ CHOICES_MAP = {
     'customer_deactivation_reason': CUSTOMER_DEACTIVATION_REASON_CHOICES,
     'education_document_type': EDUCATION_DOCUMENT_TYPE_CHOICES,
     'education_degree': EDUCATION_DEGREE_CHOICES,
+    'gift_descriptions': GIFT_DESCRIPTIONS,
 
     # Organizations constants
     "church_denominations_branch": CHURCH_BRANCH_CHOICES,

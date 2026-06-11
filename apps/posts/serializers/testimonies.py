@@ -4,6 +4,7 @@ from rest_framework import serializers
 from django.contrib.contenttypes.models import ContentType
 import logging
 
+from apps.profiles.models.member import Member
 from apps.posts.models.testimony import Testimony
 from apps.subtitles.models import VideoTranscript, TranscriptJobStatus
 from apps.core.visibility.constants import VISIBILITY_GLOBAL
@@ -148,11 +149,14 @@ class TestimonySerializer(
     # Ownership helpers
     # -------------------------------------------------
     def _get_request_owner(self):
+        """
+        Testimony is Member-only.
+        """
         request = self.context.get("request")
-        if not request:
+        if not request or not request.user.is_authenticated:
             return None
 
-        return resolve_owner_from_request(request)
+        return getattr(request.user, "member_profile", None)
 
 
     def _assert_owner(self, instance):
@@ -295,7 +299,7 @@ class TestimonySerializer(
             # If NOT converted → object must be invisible to non-owner
             if not obj.is_converted:
                 # Allow ONLY owner to see conversion state
-                owner = resolve_owner_from_request(request) if request else None
+                owner = getattr(request.user, "member_profile", None) if request and request.user.is_authenticated else None
 
                 if not owner or (
                     obj.content_type_id != ContentType.objects.get_for_model(owner.__class__).id
@@ -349,3 +353,138 @@ class TestimonySerializer(
     def get_transcript_language(self, obj):
         tr = self._get_transcript(obj)
         return tr.source_language if tr else None
+
+
+# -------------------------------------------------
+# Profile header serializer
+# -------------------------------------------------
+class TestimonyProfileHeaderSerializer(serializers.ModelSerializer):
+    """
+    Lightweight serializer for profile testimony header/carousel.
+
+    Used by /posts/testimonies/me/ and /posts/testimonies/summary/.
+
+    Testimony is Member-only, so owner detection is based directly on
+    request.user.member_profile.
+    """
+
+    owner = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = Testimony
+        fields = [
+            "id",
+            "slug",
+
+            # Core
+            "type",
+            "title",
+            "content",
+
+            # Media
+            "audio",
+            "video",
+            "thumbnail",
+
+            # Visibility / UI
+            "visibility",
+            "is_hidden",
+
+            # Timestamps / pipeline
+            "published_at",
+            "updated_at",
+            "is_converted",
+
+            # Owner action menu support
+            "owner",
+        ]
+        read_only_fields = fields
+
+    # -------------------------------------------------
+    # Owner DTO
+    # -------------------------------------------------
+    def get_owner(self, obj):
+        """
+        Minimal owner payload for current user's testimony UI.
+        """
+        try:
+            request = self.context.get("request")
+
+            member = (
+                getattr(request.user, "member_profile", None)
+                if request and request.user.is_authenticated
+                else None
+            )
+
+            member_ct = ContentType.objects.get_for_model(
+                Member,
+                for_concrete_model=False,
+            )
+
+            is_me = bool(
+                member
+                and obj.content_type_id == member_ct.id
+                and obj.object_id == member.id
+            )
+
+            return {
+                "type": "member",
+                "id": obj.object_id,
+                "is_me": is_me,
+            }
+
+        except Exception:
+            logger.exception(
+                "get_owner failed for profile header testimony id=%s",
+                getattr(obj, "id", None),
+            )
+            return {
+                "type": "member",
+                "id": getattr(obj, "object_id", None),
+                "is_me": False,
+            }
+
+    # -------------------------------------------------
+    # Representation hardening
+    # -------------------------------------------------
+    def to_representation(self, obj):
+        request = self.context.get("request")
+        viewer = request.user if request and request.user.is_authenticated else None
+
+        # Owner can see converting audio/video for progress UI.
+        # Non-owner should never receive unconverted media.
+        if obj.type in (Testimony.TYPE_VIDEO, Testimony.TYPE_AUDIO) and not obj.is_converted:
+            member = (
+                getattr(request.user, "member_profile", None)
+                if request and request.user.is_authenticated
+                else None
+            )
+
+            member_ct = ContentType.objects.get_for_model(
+                Member,
+                for_concrete_model=False,
+            )
+
+            is_owner = bool(
+                member
+                and obj.content_type_id == member_ct.id
+                and obj.object_id == member.id
+            )
+
+            if not is_owner:
+                return None
+
+        data = super().to_representation(obj)
+
+        # Include conversion panel payload only while processing.
+        if obj.type in (Testimony.TYPE_VIDEO, Testimony.TYPE_AUDIO) and not obj.is_converted:
+            data = gate_media_payload(
+                obj=obj,
+                data=data,
+                viewer=viewer,
+                field_name="video" if obj.type == Testimony.TYPE_VIDEO else "audio",
+                require_job=True,
+                include_job_target=True,
+            )
+
+        return data

@@ -13,8 +13,9 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, NotFound
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
+from apps.profiles.models.member import Member
 from apps.posts.models.testimony import Testimony
-from apps.posts.serializers.testimonies import TestimonySerializer
+from apps.posts.serializers.testimonies import TestimonyProfileHeaderSerializer, TestimonySerializer
 from apps.core.visibility.query import VisibilityQuery
 from apps.core.pagination import ConfigurablePagination, FeedCursorPagination
 from apps.core.visibility.policy import VisibilityPolicy
@@ -92,7 +93,18 @@ class TestimonyViewSet(OwnerGateMixin ,viewsets.ModelViewSet):
     # Owner resolver
     # -------------------------------------------------
     def _get_owner(self):
-        return resolve_owner_from_request(self.request)
+        """
+        Testimony is Member-only.
+
+        Do not use the generic active-owner resolver here, because Testimony
+        is attached directly to Member through GenericRelation.
+        """
+        user = getattr(self.request, "user", None)
+
+        if not user or not getattr(user, "is_authenticated", False):
+            return None
+
+        return getattr(user, "member_profile", None)
 
 
     def _assert_is_owner(self, obj):
@@ -167,31 +179,82 @@ class TestimonyViewSet(OwnerGateMixin ,viewsets.ModelViewSet):
         return self.get_paginated_response(serializer.data)
 
     # -------------------------------------------------
-    # My testimonies (owner-only)
+    # My testimonies - lightweight profile header
     # -------------------------------------------------
     @action(detail=False, methods=["get"])
     def me(self, request):
         owner = self._get_owner()
         if not owner:
-            raise PermissionDenied("Invalid owner type.")
+            raise PermissionDenied("Testimonies are available for member profiles only.")
 
-        owner_ct = ContentType.objects.get_for_model(owner.__class__)
+        owner_ct = ContentType.objects.get_for_model(
+            Member,
+            for_concrete_model=False,
+        )
 
         qs = (
             Testimony.objects
-            .select_related("content_type")
             .filter(
                 content_type_id=owner_ct.id,
                 object_id=owner.id,
+                is_active=True,
+            )
+            .only(
+                "id",
+                "slug",
+
+                # Core
+                "type",
+                "title",
+                "content",
+
+                # Media
+                "audio",
+                "video",
+                "thumbnail",
+
+                # Visibility / UI
+                "visibility",
+                "is_hidden",
+
+                # Timestamps / pipeline
+                "published_at",
+                "updated_at",
+                "is_converted",
+
+                # Ownership for owner action detection
+                "content_type_id",
+                "object_id",
             )
             .order_by("-published_at", "-id")
         )
 
-        page = self.paginate_queryset(qs)
-        serializer = self.get_serializer(page, many=True)
-        return self.get_paginated_response(serializer.data)
+        try:
+            page = self.paginate_queryset(qs)
+        except NotFound:
+            return Response(
+                {
+                    "count": qs.count(),
+                    "next": None,
+                    "previous": None,
+                    "results": [],
+                }
+            )
 
+        serializer = TestimonyProfileHeaderSerializer(
+            page,
+            many=True,
+            context={"request": request},
+        )
 
+        results = [
+            item for item in serializer.data
+            if item is not None
+        ]
+
+        return self.get_paginated_response(results)
+    
+    
     # -------------------------------------------------
     # Explore (public discover)
     # -------------------------------------------------
@@ -206,49 +269,159 @@ class TestimonyViewSet(OwnerGateMixin ,viewsets.ModelViewSet):
         serializer = self.get_serializer(page, many=True)
         return self.get_paginated_response(serializer.data)
 
-
     # -------------------------------------------------
-    # Profile summary (1 per type)
+    # Profile summary - one per testimony type
     # -------------------------------------------------
     @action(detail=False, methods=["get"])
     def summary(self, request):
+        """
+        Owner-only testimony summary.
+
+        Backward-compatible contract for web:
+        {
+            audio:   { exists: true/false, ...payload },
+            video:   { exists: true/false, ...payload },
+            written: { exists: true/false, ...payload },
+        }
+
+        Testimony is Member-only, so owner is always request.user.member_profile.
+        """
         owner = self._get_owner()
         if not owner:
-            raise PermissionDenied("Invalid owner type.")
+            raise PermissionDenied(
+                "Testimonies are available for member profiles only."
+            )
 
-        owner_ct = ContentType.objects.get_for_model(owner.__class__)
-        qs = Testimony.objects.filter(
-            content_type=owner_ct,
-            object_id=owner.id,
+        owner_ct = ContentType.objects.get_for_model(
+            Member,
+            for_concrete_model=False,
         )
 
-        def pack(ttype):
-            t = qs.filter(type=ttype).first()
-            if not t:
-                return {"exists": False}
-            data = {
-                "exists": True,
-                "id": t.id,
-                "slug": t.slug,
-                "title": t.title,
-                "published_at": t.published_at,
-                "is_converted": t.is_converted,
+        qs = (
+            Testimony.objects
+            .filter(
+                content_type_id=owner_ct.id,
+                object_id=owner.id,
+                is_active=True,
+            )
+            .only(
+                "id",
+                "slug",
+
+                # Core
+                "type",
+                "title",
+                "content",
+
+                # Media
+                "audio",
+                "video",
+                "thumbnail",
+
+                # Visibility / UI
+                "visibility",
+                "is_hidden",
+
+                # Timestamps / pipeline
+                "published_at",
+                "updated_at",
+                "is_converted",
+
+                # Ownership for owner action detection
+                "content_type_id",
+                "object_id",
+            )
+            .order_by("-published_at", "-id")
+        )
+
+        by_type = {}
+
+        for item in qs:
+            if item.type not in by_type:
+                by_type[item.type] = item
+
+        def empty_payload(ttype):
+            return {
+                "exists": False,
+                "type": ttype,
+                "id": None,
+                "slug": None,
+                "title": None,
+                "content": None,
+                "audio": None,
+                "video": None,
+                "thumbnail": None,
+                "is_converted": False,
+                "converting": False,
+                "ready_status": None,
+                "job_id": None,
+                "owner": {
+                    "type": "member",
+                    "id": owner.id,
+                    "is_me": True,
+                },
             }
-            if t.type == Testimony.TYPE_WRITTEN:
-                excerpt = (
-                    t.content[:140] + "…"
-                    if t.content and len(t.content) > 140
-                    else t.content
+
+        def pack(ttype):
+            item = by_type.get(ttype)
+
+            if not item:
+                return empty_payload(ttype)
+
+            data = TestimonyProfileHeaderSerializer(
+                item,
+                context={"request": request},
+            ).data
+
+            if not data:
+                return empty_payload(ttype)
+
+            # -------------------------------------------------
+            # Backward-compatible web contract
+            # -------------------------------------------------
+            data["exists"] = True
+            data["converting"] = bool(
+                item.type in (Testimony.TYPE_VIDEO, Testimony.TYPE_AUDIO)
+                and not item.is_converted
+            )
+            data["ready_status"] = "done" if item.is_converted else None
+            data["job_id"] = None
+
+            # Older frontend aliases
+            if item.type == Testimony.TYPE_AUDIO:
+                data["audio_key"] = getattr(item.audio, "name", None)
+
+            if item.type == Testimony.TYPE_VIDEO:
+                data["video_key"] = getattr(item.video, "name", None)
+                data["thumbnail_key"] = getattr(item.thumbnail, "name", None)
+
+            if item.type == Testimony.TYPE_WRITTEN:
+                content = getattr(item, "content", "") or ""
+                data["excerpt"] = (
+                    content[:140] + "…"
+                    if len(content) > 140
+                    else content
                 )
-                data["excerpt"] = excerpt
+
+            # Owner menu support, even if serializer shape changes later.
+            data["owner"] = {
+                "type": "member",
+                "id": owner.id,
+                "is_me": True,
+            }
+
             return data
 
-        return Response({
-            "audio": pack(Testimony.TYPE_AUDIO),
-            "video": pack(Testimony.TYPE_VIDEO),
-            "written": pack(Testimony.TYPE_WRITTEN),
-        })
-
+        return Response(
+            {
+                "audio": pack(Testimony.TYPE_AUDIO),
+                "video": pack(Testimony.TYPE_VIDEO),
+                "written": pack(Testimony.TYPE_WRITTEN),
+            },
+            status=status.HTTP_200_OK,
+        )
+        
+                
     # -------------------------------------------------
     # Helpers
     # -------------------------------------------------

@@ -1,6 +1,7 @@
 # apps/notifications/signals/friendship_signals.py
 
 import logging
+
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
@@ -10,105 +11,170 @@ from apps.notifications.services.services import create_and_dispatch_notificatio
 logger = logging.getLogger(__name__)
 
 
-@receiver(post_save, sender=Friendship, dispatch_uid="notif.friendship_v4")
+@receiver(post_save, sender=Friendship, dispatch_uid="notif.friendship_v5")
 def friendship_notifications(sender, instance, created, **kwargs):
     """
-    Unified signal for all Friendship events.
-    Handles WS + Push + Email through Notification Engine.
+    Unified signal for Friendship events.
+
+    Important:
+    - Boundary / Stillness policy is enforced centrally in
+      create_and_dispatch_notification().
+    - Symmetric accepted friendship rows are often created after accepting
+      a pending request. We skip created+accepted rows here to prevent
+      duplicate acceptance notifications.
     """
 
     try:
         from_user = instance.from_user
         to_user = instance.to_user
-        status = instance.status.lower()
+        status_value = (instance.status or "").strip().lower()
         friendship_id = instance.id
 
-        # unified payload for frontend
-        payload = {
-            "friendship_id": friendship_id,
-            "status": status,
-            "relation": "friend",
-        } 
+        if not from_user or not to_user:
+            return
 
         # ----------------------------------------------------
-        # 1️⃣ Request Sent
+        # Prevent duplicate notification from symmetric row.
+        # The real acceptance notification comes from updating
+        # the original pending row to accepted.
         # ----------------------------------------------------
-        if created and status == "pending":
+        if created and status_value == "accepted":
+            logger.debug(
+                "[Friendship] Created accepted symmetric row skipped → %s -> %s",
+                from_user.id,
+                to_user.id,
+            )
+            return
+
+        payload = {
+            "friendship_id": friendship_id,
+            "status": status_value,
+            "relation": "friend",
+        }
+
+        # ----------------------------------------------------
+        # 1) Request Sent
+        # ----------------------------------------------------
+        if created and status_value == "pending":
             create_and_dispatch_notification(
                 recipient=to_user,
                 actor=from_user,
                 notif_type="friend_request_received",
-                message=f"{from_user.username} has reached out to walk this journey together with you on TownLIT ✨",
+                message=(
+                    f"{from_user.username} has reached out to walk this journey "
+                    "together with you on TownLIT ✨"
+                ),
                 target_obj=instance,
                 action_obj=instance,
                 extra_payload=payload,
             )
-            logger.debug(f"[Friendship] Request sent → {to_user.username}")
+
+            logger.debug(
+                "[Friendship] Request sent → from=%s to=%s",
+                from_user.id,
+                to_user.id,
+            )
             return
 
         # ----------------------------------------------------
-        # 2️⃣ Request Accepted
+        # 2) Request Accepted
         # ----------------------------------------------------
-        if status == "accepted":
+        if status_value == "accepted":
             create_and_dispatch_notification(
                 recipient=from_user,
                 actor=to_user,
                 notif_type="friend_request_accepted",
-                message=f"{to_user.username} accepted your connection request — welcome to a new shared journey 🤍",
+                message=(
+                    f"{to_user.username} accepted your connection request — "
+                    "welcome to a new shared journey 🤍"
+                ),
                 target_obj=instance,
                 action_obj=instance,
                 extra_payload=payload,
             )
-            logger.debug(f"[Friendship] Accepted → {from_user.username}")
+
+            logger.debug(
+                "[Friendship] Accepted → notify=%s actor=%s",
+                from_user.id,
+                to_user.id,
+            )
             return
 
         # ----------------------------------------------------
-        # 3️⃣ Request Declined
+        # 3) Request Declined
         # ----------------------------------------------------
-        if status == "declined":
+        if status_value == "declined":
             create_and_dispatch_notification(
                 recipient=from_user,
                 actor=to_user,
                 notif_type="friend_request_declined",
-                message=f"{to_user.username} wasn’t able to accept your connection request right now.",
+                message=(
+                    f"{to_user.username} wasn’t able to accept your connection "
+                    "request right now."
+                ),
                 target_obj=instance,
                 action_obj=instance,
                 extra_payload=payload,
             )
-            logger.debug(f"[Friendship] Declined → {from_user.username}")
+
+            logger.debug(
+                "[Friendship] Declined → notify=%s actor=%s",
+                from_user.id,
+                to_user.id,
+            )
             return
 
         # ----------------------------------------------------
-        # 4️⃣ Request Cancelled
+        # 4) Request Cancelled
         # ----------------------------------------------------
-        if status == "cancelled":
+        if status_value == "cancelled":
             create_and_dispatch_notification(
                 recipient=to_user,
                 actor=from_user,
                 notif_type="friend_request_cancelled",
-                message=f"{from_user.username} decided not to continue the connection request.",
+                message=(
+                    f"{from_user.username} decided not to continue the connection "
+                    "request."
+                ),
                 target_obj=instance,
                 action_obj=instance,
                 extra_payload=payload,
             )
-            logger.debug(f"[Friendship] Cancelled → {to_user.username}")
+
+            logger.debug(
+                "[Friendship] Cancelled → notify=%s actor=%s",
+                to_user.id,
+                from_user.id,
+            )
             return
 
         # ----------------------------------------------------
-        # 5️⃣ Friendship Removed (Unfriend)
+        # 5) Friendship Removed
         # ----------------------------------------------------
-        if status == "deleted":
+        if status_value == "deleted":
             create_and_dispatch_notification(
                 recipient=to_user,
                 actor=from_user,
                 notif_type="friendship_deleted",
-                message=f"Paths sometimes change between you and {from_user.username}, but your journey continues — may new connections bring light and encouragement 🤍",
+                message=(
+                    f"Paths sometimes change between you and {from_user.username}, "
+                    "but your journey continues — may new connections bring light "
+                    "and encouragement 🤍"
+                ),
                 target_obj=instance,
                 action_obj=instance,
                 extra_payload=payload,
             )
-            logger.debug(f"[Friendship] Deleted → {to_user.username}")
+
+            logger.debug(
+                "[Friendship] Deleted → notify=%s actor=%s",
+                to_user.id,
+                from_user.id,
+            )
             return
 
-    except Exception as e:
-        logger.error(f"[Friendship] Notification signal failed: {e}", exc_info=True)
+    except Exception:
+        logger.error(
+            "[Friendship] Notification signal failed",
+            exc_info=True,
+        )

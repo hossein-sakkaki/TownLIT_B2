@@ -6,6 +6,7 @@ from apps.core.feed.ranking import FeedRankingEngine
 from apps.core.feed.trending import TrendingEngine
 from apps.core.feed.personalized_trending import PersonalizedTrendingEngine
 from apps.core.feed.hybrid import HybridFeedEngine
+from apps.core.boundaries.query import BoundaryVisibilityQuery
 
 
 class SquareEngine:
@@ -16,6 +17,14 @@ class SquareEngine:
     - This engine MUST NOT apply ordering.
     - CursorPagination owns ordering entirely.
     - Engines may ONLY annotate and filter.
+
+    Boundary policy:
+    - Main Boundary filtering is applied in SquareQuery.
+    - This engine keeps a second safety-net filter because some future caller
+      may call SquareEngine directly with an unfiltered queryset.
+
+    Stillness policy:
+    - Stillness does not affect visibility/ranking.
     """
 
     MODE_RECENT = "recent"
@@ -30,38 +39,46 @@ class SquareEngine:
         viewer=None,
     ) -> QuerySet:
         """
-        Apply ranking annotations based on Square mode.
+        Apply Square ranking annotations based on mode.
 
         Returns:
-          QuerySet with annotations ONLY (no ordering).
+            QuerySet with annotations/filtering only.
+            No ordering is applied here.
         """
 
         # -------------------------------------------------
-        # Recent (time-decayed feed score)
+        # Boundary safety-net
+        # -------------------------------------------------
+        qs = BoundaryVisibilityQuery.exclude_boundary_conflicts(
+            queryset,
+            viewer=viewer,
+        )
+
+        # -------------------------------------------------
+        # Recent: time-decayed engagement score
         # -------------------------------------------------
         if mode == SquareEngine.MODE_RECENT:
-            qs = FeedRankingEngine.apply(queryset)
-            return qs
+            return FeedRankingEngine.apply(qs)
 
         # -------------------------------------------------
-        # Trending (velocity-based)
+        # Trending: velocity-based score
         # -------------------------------------------------
         if mode == SquareEngine.MODE_TRENDING:
-            qs = TrendingEngine.apply(queryset)
-            return qs
+            return TrendingEngine.apply(qs)
 
         # -------------------------------------------------
-        # Personalized trending (viewer-aware)
+        # For You: personalized trending
         # -------------------------------------------------
         if mode == SquareEngine.MODE_FOR_YOU and viewer:
-            qs = PersonalizedTrendingEngine.apply(
-                queryset,
+            return PersonalizedTrendingEngine.apply(
+                qs,
                 viewer=viewer,
             )
-            return qs
 
         # -------------------------------------------------
-        # Default: Hybrid (balanced Square view)
+        # Default: balanced hybrid score
         # -------------------------------------------------
-        qs = HybridFeedEngine.apply(queryset)
-        return qs
+        return HybridFeedEngine.apply(
+            qs,
+            viewer=viewer,
+        )

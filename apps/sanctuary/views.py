@@ -559,6 +559,7 @@ class SanctuaryParticipationViewSet(viewsets.ViewSet):
             "policy_id": getattr(policy, "id", None) if policy else None,
             "policy_type": getattr(policy, "policy_type", "") if policy else "",
             "policy_title": getattr(policy, "title", "") if policy else "",
+            "policy_content": getattr(policy, "content", "") if policy else "",
             "policy_language": getattr(policy, "language", "") if policy else "",
             "policy_version_number": getattr(policy, "version_number", "") if policy else "",
             "policy_last_updated": getattr(policy, "last_updated", None) if policy else None,

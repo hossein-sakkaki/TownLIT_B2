@@ -69,6 +69,7 @@ class TermsAndPolicyAdmin(admin.ModelAdmin):
     readonly_fields = [
         "slug",
         "last_updated",
+        "internal_link_guide",
     ]
 
     # ------------------------------------------------------------------
@@ -114,6 +115,16 @@ class TermsAndPolicyAdmin(admin.ModelAdmin):
             },
         ),
         (
+            "Internal Link Guide",
+            {
+                "description": (
+                    "Use canonical TownLIT links inside policy content. "
+                    "Each platform resolves them to the correct destination."
+                ),
+                "fields": ("internal_link_guide",),
+            },
+        ),
+        (
             "Policy Content",
             {
                 "fields": ("content",),
@@ -128,26 +139,58 @@ class TermsAndPolicyAdmin(admin.ModelAdmin):
     )
 
     # ------------------------------------------------------------------
+    # ADMIN HELPERS
+    # ------------------------------------------------------------------
+    def internal_link_guide(self, obj):
+        return format_html(
+            """
+            <div style="line-height:1.7; max-width:900px;">
+                <strong>Use canonical internal links for TownLIT pages:</strong>
+                <ul style="margin-top:8px;">
+                    <li><code>/foundation/privacy-policy</code></li>
+                    <li><code>/foundation/terms-of-service</code></li>
+                    <li><code>/support</code></li>
+                    <li><code>/company</code></li>
+                </ul>
+
+                <strong>Example HTML:</strong>
+                <pre style="background:#f6f7f8; padding:10px; border-radius:6px; white-space:pre-wrap;">
+&lt;a href="/foundation/privacy-policy"&gt;Privacy Policy&lt;/a&gt;
+&lt;a href="/support"&gt;Support&lt;/a&gt;
+                </pre>
+
+                <p style="margin-top:8px;">
+                    External links can still use full URLs, such as
+                    <code>https://example.com</code>.
+                </p>
+
+                <p style="margin-top:8px; color:#666;">
+                    Do not use full TownLIT website URLs for internal app navigation.
+                    Web, iOS, and Android will resolve canonical links automatically.
+                </p>
+            </div>
+            """
+        )
+
+    internal_link_guide.short_description = "Canonical Link Format"
+
+    # ------------------------------------------------------------------
     # UX SAFETY GUARDS
     # ------------------------------------------------------------------
     def get_queryset(self, request):
         return super().get_queryset(request)
 
     def formfield_for_choice_field(self, db_field, request, **kwargs):
-        """
-        UX hint: if policy is not acceptance-required,
-        context still visible but clearly optional.
-        """
         return super().formfield_for_choice_field(db_field, request, **kwargs)
 
 
 # Policy Change History Admin Admin -----------------------------------------------------------------------------
 @admin.register(PolicyChangeHistory)
 class PolicyChangeHistoryAdmin(admin.ModelAdmin):
-    list_display = ['policy', 'changed_at']
-    list_filter = ['changed_at']
-    search_fields = ['policy__title']
-    readonly_fields = ['policy', 'old_content', 'changed_at']
+    list_display = ["policy", "changed_at"]
+    list_filter = ["changed_at"]
+    search_fields = ["policy__title"]
+    readonly_fields = ["policy", "old_content", "changed_at"]
 
 
 # FAQ Admin ------------------------------------------------------------------------------------------------------
@@ -155,13 +198,13 @@ class PolicyChangeHistoryAdmin(admin.ModelAdmin):
 class FAQAdmin(admin.ModelAdmin):
     class Media:
         css = {
-            'all': ('css/custom_admin.css',)
+            "all": ("css/custom_admin.css",)
         }
-        
-    list_display = ('question', 'last_updated', 'is_active')
-    search_fields = ('question',)
-    list_filter = ('is_active', 'last_updated')
-    ordering = ('-last_updated',)
+
+    list_display = ("question", "last_updated", "is_active")
+    search_fields = ("question",)
+    list_filter = ("is_active", "last_updated")
+    ordering = ("-last_updated",)
 
 
 # SITE ANNOUNCEMENT Admin -----------------------------------------------------------------------------------------
@@ -169,13 +212,13 @@ class FAQAdmin(admin.ModelAdmin):
 class SiteAnnouncementAdmin(admin.ModelAdmin):
     class Media:
         css = {
-            'all': ('css/custom_admin.css',)
+            "all": ("css/custom_admin.css",)
         }
-        
-    list_display = ('title', 'publish_date', 'is_active')
-    search_fields = ('title',)
-    list_filter = ('is_active', 'publish_date')
-    ordering = ('-publish_date',)
+
+    list_display = ("title", "publish_date", "is_active")
+    search_fields = ("title",)
+    list_filter = ("is_active", "publish_date")
+    ordering = ("-publish_date",)
 
 
 # USER FEEDBACK Admin ---------------------------------------------------------------------------------------------
@@ -183,21 +226,22 @@ class SiteAnnouncementAdmin(admin.ModelAdmin):
 class UserFeedbackAdmin(admin.ModelAdmin):
     class Media:
         css = {
-            'all': ('css/custom_admin.css',)
+            "all": ("css/custom_admin.css",)
         }
-        
-    list_display = ['id', 'user', 'title', 'status', 'created_at', 'has_screenshot']
-    list_filter = ['status', 'created_at']
-    search_fields = ['user__username', 'title', 'content']
-    readonly_fields = ['user', 'title', 'content', 'screenshot_preview', 'created_at']
+
+    list_display = ["id", "user", "title", "status", "created_at", "has_screenshot"]
+    list_filter = ["status", "created_at"]
+    search_fields = ["user__username", "title", "content"]
+    readonly_fields = ["user", "title", "content", "screenshot_preview", "created_at"]
     list_per_page = 25
-    ordering = ['-created_at']
-    actions = ['mark_as_reviewed', 'mark_as_resolved']
+    ordering = ["-created_at"]
+    actions = ["mark_as_reviewed", "mark_as_resolved"]
 
     def has_screenshot(self, obj):
         return bool(obj.screenshot)
+
     has_screenshot.boolean = True
-    has_screenshot.short_description = 'Screenshot?'
+    has_screenshot.short_description = "Screenshot?"
 
     def screenshot_preview(self, obj):
         if obj.screenshot:
@@ -208,27 +252,33 @@ class UserFeedbackAdmin(admin.ModelAdmin):
                 url=obj.screenshot.url
             )
         return "No screenshot"
+
     screenshot_preview.short_description = "Screenshot Preview"
 
     def mark_as_reviewed(self, request, queryset):
-        updated = queryset.update(status='reviewed')
+        updated = queryset.update(status="reviewed")
         self.message_user(request, f"{updated} feedback(s) marked as reviewed.")
+
     mark_as_reviewed.short_description = "Mark selected as Reviewed"
 
     def mark_as_resolved(self, request, queryset):
-        updated = queryset.update(status='resolved')
+        updated = queryset.update(status="resolved")
         self.message_user(request, f"{updated} feedback(s) marked as resolved.")
+
     mark_as_resolved.short_description = "Mark selected as Resolved"
 
 
-
-# USER ACTION LOG Admin --------------------------------------------------------------------------------------------    
+# USER ACTION LOG Admin --------------------------------------------------------------------------------------------
 @admin.register(UserActionLog)
 class UserActionLogAdmin(admin.ModelAdmin):
-    list_display = ('user', 'action_type', 'content_type', 'object_id', 'action_timestamp')
-    search_fields = ('user__username', 'action_type')
-    list_filter = ('action_type', 'action_timestamp')
-    ordering = ('-action_timestamp',)
+    list_display = ("user", "action_type", "content_type", "object_id", "action_timestamp")
+    search_fields = ("user__username", "action_type")
+    list_filter = ("action_type", "action_timestamp")
+    ordering = ("-action_timestamp",)
+    
+    
+    
+    
     
     
 # PRAYER Admin -----------------------------------------------------------------------------------------------

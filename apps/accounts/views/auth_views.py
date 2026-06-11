@@ -1,3 +1,5 @@
+# apps/accounts/views/auth_views.py
+
 from django.contrib.auth import update_session_auth_hash
 from django.utils import timezone
 from django.conf import settings
@@ -7,10 +9,18 @@ import traceback
 import re
 import base64
 import secrets
+from django.db.models import Q
 
 
 from datetime import timedelta
-from apps.accounts.constants.user_labels import BELIEVER, PREFER_NOT_TO_SAY, SEEKER
+from apps.accounts.constants.user_labels import (
+    BELIEVER,
+    SEEKER,
+    PREFER_NOT_TO_SAY,
+    YOUNG_PATH,
+    ACTIVE_USER_LABEL_KEYS,
+    YOUNG_PATH_COMING_SOON_MESSAGE,
+)
 from apps.accounts.models import user
 from apps.core.crypto import rsa as crsa
 
@@ -37,7 +47,6 @@ from apps.accounts.models.devices import UserDeviceKey, UserDeviceKeyBackup, Use
 
 from apps.main.services.policy_acceptance import accept_required_policies
 from utils.security.security_manager import SecurityStateManager
-
 # Auth serializers
 from apps.accounts.serializers.auth_serializers import (
     RegisterUserSerializer,
@@ -80,6 +89,59 @@ security_logger = logging.getLogger("security.identity")
 # Generate key for encryption ---------------------------------------------------
 cipher_suite = Fernet(settings.FERNET_KEY)
 
+
+# Encryption --------------------------------------------------------------------
+def encrypt_active_code_for_storage(active_code) -> str:
+    """
+    Fernet returns bytes. Store it as a clean string in DB/session.
+    """
+    return cipher_suite.encrypt(str(active_code).encode()).decode()
+
+
+def decrypt_active_code_from_storage(encrypted_value) -> str:
+    """
+    Accepts values from session or DB.
+
+    Handles:
+    - clean Fernet string: gAAAA...
+    - bytes
+    - legacy string accidentally saved like: b'gAAAA...'
+    """
+    if encrypted_value is None:
+        raise ValueError("Missing encrypted activation code.")
+
+    if isinstance(encrypted_value, bytes):
+        token = encrypted_value
+    else:
+        token_text = str(encrypted_value).strip()
+
+        # Legacy safety: CharField may have stored bytes as "b'...'"
+        if (
+            len(token_text) >= 3
+            and token_text.startswith("b'")
+            and token_text.endswith("'")
+        ):
+            token_text = token_text[2:-1]
+
+        if (
+            len(token_text) >= 3
+            and token_text.startswith('b"')
+            and token_text.endswith('"')
+        ):
+            token_text = token_text[2:-1]
+
+        token = token_text.encode()
+
+    return cipher_suite.decrypt(token).decode()
+
+
+def get_registration_id_from_request(request, serializer=None) -> str:
+    if serializer is not None:
+        value = serializer.validated_data.get("registration_id")
+        if value:
+            return str(value).strip()
+
+    return str(request.data.get("registration_id") or "").strip()
 
 # -------------------------------------------------------------------------------
 def _get_pop_ttl_minutes():
@@ -205,12 +267,14 @@ class AuthViewSet(viewsets.ViewSet):
                         existing_user.user_active_code = None
                         existing_user.user_active_code_expiry = None
                         existing_user.registration_started_at = timezone.now()
+                        existing_user.registration_id = secrets.token_urlsafe(32)
 
                         update_fields = [
                             "password",
                             "user_active_code",
                             "user_active_code_expiry",
                             "registration_started_at",
+                            "registration_id",
                         ]
 
                         if not existing_user.country:
@@ -235,10 +299,13 @@ class AuthViewSet(viewsets.ViewSet):
                         active_code = create_active_code(5)
                         expiration_minutes = settings.EMAIL_CODE_EXPIRATION_MINUTES
                         expiration_time = timezone.now() + datetime.timedelta(minutes=expiration_minutes)
-                        encrypted_active_code = cipher_suite.encrypt(str(active_code).encode())
+                        encrypted_active_code = encrypt_active_code_for_storage(active_code)
                         existing_user.user_active_code = encrypted_active_code
                         existing_user.user_active_code_expiry = expiration_time
-                        existing_user.save()
+                        existing_user.save(update_fields=[
+                            "user_active_code",
+                            "user_active_code_expiry",
+                        ])
                         
                         print('----------------------1----------------------')
                         print(active_code)
@@ -270,16 +337,18 @@ class AuthViewSet(viewsets.ViewSet):
                             )                            
 
                         request.session['user_session'] = {
-                            'active_code': encrypted_active_code.decode(),
+                            'active_code': encrypted_active_code,
                             'user_id': existing_user.id,
-                            'forget_password': False
+                            'registration_id': existing_user.registration_id,
+                            'forget_password': False,
                         }
                         request.session.modified = True
                         request.session.save()
 
                         return Response({
                             "message": "Existing account updated. Please verify the new code.",
-                            "redirect_to_verify": True
+                            "redirect_to_verify": True,
+                            "registration_id": existing_user.registration_id,
                         }, status=status.HTTP_200_OK)
                     else:
                         return Response({"message": extract_first_error_message(ser_data.errors)}, status=status.HTTP_400_BAD_REQUEST)
@@ -293,6 +362,9 @@ class AuthViewSet(viewsets.ViewSet):
                     password=ser_data.validated_data["password"],
                     country=inferred_country,
                 )
+
+                user.registration_id = secrets.token_urlsafe(32)
+                user.save(update_fields=["registration_id"])
 
                 # choose language
                 lang = (request.data.get("language") or "en").strip().lower()
@@ -308,10 +380,13 @@ class AuthViewSet(viewsets.ViewSet):
                 active_code = create_active_code(5)
                 expiration_minutes = settings.EMAIL_CODE_EXPIRATION_MINUTES
                 expiration_time = timezone.now() + datetime.timedelta(minutes=expiration_minutes)
-                encrypted_active_code = cipher_suite.encrypt(str(active_code).encode())
+                encrypted_active_code = encrypt_active_code_for_storage(active_code)
                 user.user_active_code = encrypted_active_code
                 user.user_active_code_expiry = expiration_time
-                user.save()
+                user.save(update_fields=[
+                    "user_active_code",
+                    "user_active_code_expiry",
+                ])
                 
                 print('----------------------2----------------------')
                 print(active_code)
@@ -344,18 +419,20 @@ class AuthViewSet(viewsets.ViewSet):
                     )
 
                 request.session['user_session'] = {
-                    'active_code': encrypted_active_code.decode(),
+                    'active_code': encrypted_active_code,
                     'user_id': user.id,
-                    'forget_password': False
+                    'registration_id': user.registration_id,
+                    'forget_password': False,
                 }
                 request.session.modified = True
                 request.session.save()
 
                 return Response({
                     "message": "User registered successfully and profile created.",
-                    "redirect_to_verify": True
+                    "redirect_to_verify": True,
+                    "registration_id": user.registration_id,
                 }, status=status.HTTP_200_OK)
-                
+                                
             return Response(
                 {"message": extract_first_error_message(ser_data.errors)},
                 status=status.HTTP_400_BAD_REQUEST
@@ -368,59 +445,165 @@ class AuthViewSet(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    # Verify --------------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], permission_classes=[AllowAny])
-    def verify(self, request):  # Verify
+    def verify(self, request):
         ser_data = VerifyNewBornSerializer(data=request.data)
-        if ser_data.is_valid():
-            user_session = request.session.get('user_session')
-            if not user_session:
-                return Response(
-                    {"error": "Session data not found. Please try registering again."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+
+        if not ser_data.is_valid():
+            return Response(
+                {"message": extract_first_error_message(ser_data.errors)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user_session = request.session.get('user_session')
+        registration_id = get_registration_id_from_request(
+            request,
+            serializer=ser_data,
+        )
+
+        user = None
+        encrypted_active_code = None
+
+        # ------------------------------------------------------------
+        # 1) Web/session flow
+        # ------------------------------------------------------------
+        if user_session:
             encrypted_active_code = user_session.get('active_code')
+
             if not encrypted_active_code:
                 return Response(
-                    {"error": "No activation code found in session. Please try registering again."},
+                    {
+                        "error": "No activation code found in session. Please try registering again.",
+                        "code": "activation_code_not_found",
+                    },
                     status=status.HTTP_400_BAD_REQUEST
-                )
-            try:
-                # Decrypt the activation code
-                decrypted_active_code = cipher_suite.decrypt(encrypted_active_code.encode()).decode()
-            except Exception as e:
-                logger.error(f"Decryption error: {str(e)}")
-                return Response(
-                    {"error": "An error occurred while processing your activation code. Please try again."},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
 
-            if decrypted_active_code != ser_data.validated_data['active_code']:
-                return Response(
-                    {"error": "Incorrect activation code. Please check and try again."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-                
             try:
                 user = CustomUser.objects.get(id=user_session['user_id'])
             except CustomUser.DoesNotExist:
-                return Response({"error": "User not found."}, status=status.HTTP_400_BAD_REQUEST)
-            if user.user_active_code_expiry and timezone.now() > user.user_active_code_expiry:
                 return Response(
-                    {"error": "Activation code has expired. Please register again."},
+                    {
+                        "error": "User not found.",
+                        "code": "user_not_found",
+                    },
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            user.user_active_code = None
-            user.user_active_code_expiry = None
-            user.is_active = False
-            user.save()
 
-            return Response({
-                "message": "User verified successfully. Please answer the category questions.",
-                "redirect_to_choose_path": True
-            }, status=status.HTTP_200_OK)
+        # ------------------------------------------------------------
+        # 2) Mobile fallback flow
+        # ------------------------------------------------------------
+        elif registration_id:
+            try:
+                user = CustomUser.objects.get(
+                    registration_id=registration_id,
+                    is_active=False,
+                    is_deleted=False,
+                )
+            except CustomUser.DoesNotExist:
+                return Response(
+                    {
+                        "error": "Registration session was not found or has expired. Please register again.",
+                        "code": "registration_session_not_found",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            encrypted_active_code = user.user_active_code
+
+            if not encrypted_active_code:
+                return Response(
+                    {
+                        "error": "No activation code found. Please register again.",
+                        "code": "activation_code_not_found",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        # ------------------------------------------------------------
+        # 3) No session and no registration_id
+        # ------------------------------------------------------------
+        else:
+            return Response(
+                {
+                    "error": "Session data not found. Please try registering again.",
+                    "code": "registration_session_missing",
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # ------------------------------------------------------------
+        # Expiry check before decrypt/compare
+        # ------------------------------------------------------------
+        if user.user_active_code_expiry and timezone.now() > user.user_active_code_expiry:
+            return Response(
+                {
+                    "error": "Activation code has expired. Please register again.",
+                    "code": "activation_code_expired",
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # ------------------------------------------------------------
+        # Decrypt activation code
+        # ------------------------------------------------------------
+        try:
+            decrypted_active_code = decrypt_active_code_from_storage(
+                encrypted_active_code
+            )
+        except Exception as e:
+            logger.exception(
+                "Activation code decrypt failed for user_id=%s registration_id_present=%s",
+                getattr(user, "id", None),
+                bool(registration_id),
+            )
+            return Response(
+                {
+                    "error": "An error occurred while processing your activation code. Please try registering again.",
+                    "code": "activation_code_decrypt_failed",
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if decrypted_active_code != ser_data.validated_data['active_code']:
+            return Response(
+                {
+                    "error": "Incorrect activation code. Please check and try again.",
+                    "code": "incorrect_activation_code",
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # ------------------------------------------------------------
+        # Mark email verified but keep user inactive until choose-path.
+        # Keep registration_id until choose-path completes for mobile.
+        # ------------------------------------------------------------
+        user.user_active_code = None
+        user.user_active_code_expiry = None
+        user.is_active = False
+        user.save(update_fields=[
+            "user_active_code",
+            "user_active_code_expiry",
+            "is_active",
+        ])
+
+        # Keep a lightweight session for web choose-path.
+        request.session['user_session'] = {
+            'user_id': user.id,
+            'registration_id': user.registration_id,
+            'verified': True,
+            'forget_password': False,
+        }
+        request.session.modified = True
+
         return Response(
-            {"message": extract_first_error_message(ser_data.errors)},
-            status=status.HTTP_400_BAD_REQUEST
+            {
+                "message": "User verified successfully. Please answer the category questions.",
+                "redirect_to_choose_path": True,
+                "registration_id": user.registration_id,
+            },
+            status=status.HTTP_200_OK
         )
     
     # Verify Password (for sensitive operations) ---------------------------------------------------
@@ -456,97 +639,272 @@ class AuthViewSet(viewsets.ViewSet):
             status=status.HTTP_400_BAD_REQUEST
         )
 
+    # Choose Path (for onboarding) ---------------------------------------------------
     @action(detail=False, methods=['post'], url_path='choose-path', permission_classes=[AllowAny])
-    def choose_path(self, request):  # Answer the category questions
+    def choose_path(self, request):
+        """
+        Complete onboarding after email verification.
+
+        Supports:
+        - Web flow: Django session user_session
+        - iOS/mobile flow: registration_id in request body
+
+        Important:
+        - registration_id must remain alive after verify and be cleared only after
+          choose-path succeeds.
+        - user stays inactive until choose-path completes.
+        """
+
         user_session = request.session.get('user_session')
-        if not user_session:
-            return Response({"error": "Session data not found"}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            user = CustomUser.objects.get(id=user_session['user_id'])
-        except CustomUser.DoesNotExist:
-            return Response({"error": "User not found."}, status=status.HTTP_400_BAD_REQUEST)
+        registration_id = get_registration_id_from_request(request)
 
-        # Get category and validate it
-        category = request.data.get('category')
-        if not category or category not in [BELIEVER, SEEKER, PREFER_NOT_TO_SAY]:
-            return Response({"error": "Invalid category"}, status=status.HTTP_400_BAD_REQUEST)
+        user = None
 
+        # ------------------------------------------------------------
+        # Resolve pending verified user
+        # ------------------------------------------------------------
+        if user_session:
+            try:
+                user = CustomUser.objects.get(id=user_session['user_id'])
+            except CustomUser.DoesNotExist:
+                return Response(
+                    {
+                        "error": "User not found.",
+                        "code": "user_not_found",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        elif registration_id:
+            try:
+                user = CustomUser.objects.get(
+                    registration_id=registration_id,
+                    is_active=False,
+                    is_deleted=False,
+                )
+            except CustomUser.DoesNotExist:
+                return Response(
+                    {
+                        "error": "Registration session not found. Please register again.",
+                        "code": "registration_session_not_found",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        else:
+            return Response(
+                {
+                    "error": "Session data not found",
+                    "code": "registration_session_missing",
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # ------------------------------------------------------------
+        # Must be verified before choosing path
+        # ------------------------------------------------------------
+        if user.user_active_code:
+            return Response(
+                {
+                    "error": "Please verify your email before choosing a profile path.",
+                    "code": "email_verification_required",
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # ------------------------------------------------------------
+        # Category validation
+        # ------------------------------------------------------------
+        category = (request.data.get('category') or "").strip().lower()
+
+        if category == YOUNG_PATH:
+            return Response(
+                {
+                    "error": YOUNG_PATH_COMING_SOON_MESSAGE,
+                    "code": "young_path_coming_soon",
+                    "profile_type": None,
+                    "can_create_profile": False,
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not category or category not in ACTIVE_USER_LABEL_KEYS:
+            return Response(
+                {
+                    "error": "Invalid category",
+                    "code": "invalid_profile_path",
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # ------------------------------------------------------------
         # Retrieve the appropriate label
+        # ------------------------------------------------------------
         try:
             label = CustomLabel.objects.get(name=category)
         except CustomLabel.DoesNotExist:
-            return Response({"error": "Label not found."}, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Assign the label and member status to the user
+            return Response(
+                {
+                    "error": "Label not found.",
+                    "code": "label_not_found",
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # ------------------------------------------------------------
+        # Assign label and profile type to user
+        # ------------------------------------------------------------
         user.label = label
         user.is_member = (category == BELIEVER)
-        
+
         try:
-            user.save()
-            external_contact = ExternalContact.objects.filter(email__iexact=user.email).first()
+            user.save(update_fields=["label", "is_member"])
+
+            external_contact = ExternalContact.objects.filter(
+                email__iexact=user.email
+            ).first()
+
             if external_contact:
                 external_contact.became_user = True
                 external_contact.became_user_at = timezone.now()
                 external_contact.deleted_after_signup = False
-                external_contact.save()
-            
-        except Exception as e:
-            return Response({
-                "error": "Unable to save user data. Please try again.",
-                "details": str(e)
-            }, status=status.HTTP_400_BAD_REQUEST)
+                external_contact.save(update_fields=[
+                    "became_user",
+                    "became_user_at",
+                    "deleted_after_signup",
+                ])
 
-        # Create or retrieve the profile based on the category
+        except Exception as e:
+            logger.exception("Unable to save user onboarding label/profile type")
+            return Response(
+                {
+                    "error": "Unable to save user data. Please try again.",
+                    "details": str(e),
+                    "code": "user_onboarding_save_failed",
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # ------------------------------------------------------------
+        # Create or activate profile based on category
+        # ------------------------------------------------------------
         if category == BELIEVER:
             try:
-                member_instance, created = Member.objects.get_or_create(user=user)
+                member_instance, created = Member.objects.get_or_create(
+                    user=user
+                )
+
+                member_instance.is_active = True
+                member_instance.is_migrated = False
+                member_instance.save(
+                    update_fields=["is_active", "is_migrated"]
+                )
+
+                # If a guest profile already exists, keep it inactive.
+                GuestUser.objects.filter(user=user).update(
+                    is_active=False,
+                    is_migrated=True,
+                )
+
             except Exception as e:
-                return Response({
-                    "error": "Unable to create member profile. Please try again later or contact support.",
-                    "details": str(e)
-                }, status=status.HTTP_400_BAD_REQUEST)
+                logger.exception("Unable to create/activate member profile")
+                return Response(
+                    {
+                        "error": "Unable to create member profile. Please try again later or contact support.",
+                        "details": str(e),
+                        "code": "member_profile_create_failed",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
         else:
             try:
-                guest_user_instance, created = GuestUser.objects.get_or_create(user=user)
-            except Exception as e:
-                return Response({
-                    "error": "Unable to create guest user profile. Please try again later or contact support.",
-                    "details": str(e)
-                }, status=status.HTTP_400_BAD_REQUEST)
-        user.last_login = timezone.now()        
-        user.is_active = True
-        user.save()
+                guest_user_instance, created = GuestUser.objects.get_or_create(
+                    user=user
+                )
 
-        # Fire async welcome email (non-blocking)
+                guest_user_instance.is_active = True
+                guest_user_instance.is_migrated = False
+                guest_user_instance.save(
+                    update_fields=["is_active", "is_migrated"]
+                )
+
+                # If a member profile already exists, keep it inactive.
+                Member.objects.filter(user=user).update(
+                    is_active=False,
+                    is_migrated=True,
+                )
+
+            except Exception as e:
+                logger.exception("Unable to create/activate guest profile")
+                return Response(
+                    {
+                        "error": "Unable to create guest user profile. Please try again later or contact support.",
+                        "details": str(e),
+                        "code": "guest_profile_create_failed",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        # ------------------------------------------------------------
+        # Activate user and clear one-time registration token
+        # ------------------------------------------------------------
+        user.last_login = timezone.now()
+        user.is_active = True
+        user.registration_id = None
+        user.save(update_fields=[
+            "last_login",
+            "is_active",
+            "registration_id",
+        ])
+
+        # Clean up Django session when present.
+        try:
+            request.session.pop("user_session", None)
+            request.session.modified = True
+        except Exception:
+            pass
+
+        # Fire async welcome email only for member/believer
         if user.is_member:
             try:
                 send_believer_welcome_email.delay(user.id)
             except Exception as e:
-                # Never break onboarding flow
                 logger.warning(f"Welcome email task failed to dispatch: {str(e)}")
-        
-        # Mark invite code as used, only now that everything is successful
+
+        # Mark invite code as used only after successful onboarding
         if getattr(settings, 'USE_INVITE_CODE', False):
             try:
-                invite = InviteCode.objects.filter(email__iexact=user.email, used_by__isnull=True).first()
+                invite = InviteCode.objects.filter(
+                    email__iexact=user.email,
+                    used_by__isnull=True
+                ).first()
+
                 if invite:
                     invite.mark_as_used(user)
+
             except Exception as e:
                 logger.warning(f"Failed to mark invite as used: {str(e)}")
 
-        
         refresh = RefreshToken.for_user(user)
         access = refresh.access_token
-        user_data = CustomUserSerializer(user, context={"request": request}).data
 
-        return Response({
-            'refresh': str(refresh),
-            'access': str(access),
-            'is_member': user.is_member,
-            'user': user_data,
-            "message": "Profile created successfully based on the provided category. Welcome to TownLIT!",
-            "note": "Feel free to complete your profile or start exploring."
-        }, status=status.HTTP_200_OK)
+        user_data = CustomUserSerializer(
+            user,
+            context={"request": request}
+        ).data
+
+        return Response(
+            {
+                "refresh": str(refresh),
+                "access": str(access),
+                "is_member": user.is_member,
+                "user": user_data,
+                "message": "Profile created successfully based on the provided category. Welcome to TownLIT!",
+                "note": "Feel free to complete your profile or start exploring.",
+            },
+            status=status.HTTP_200_OK
+        )
         
     # Login ----------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], permission_classes=[AllowAny])
@@ -559,28 +917,50 @@ class AuthViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # 1) find user by email (uniform messaging to avoid enumeration)
+        identifier = ser_data.validated_data["identifier"]
+
+        # 1) find user by email OR username
+        # Keep user-facing message uniform to avoid account enumeration.
         try:
-            user = CustomUser.objects.get(email=ser_data.validated_data['email'])
+            user = (
+                CustomUser.objects
+                .select_related("label")
+                .get(
+                    Q(email__iexact=identifier) |
+                    Q(username__iexact=identifier)
+                )
+            )
         except CustomUser.DoesNotExist:
             return Response({
-                "message": "We couldn't find an account with this email. If you're new, consider joining the family!"
+                "message": "We couldn't find an account with this email or username. If you're new, consider joining the family!"
             }, status=status.HTTP_401_UNAUTHORIZED)
+        except CustomUser.MultipleObjectsReturned:
+            logger.error(
+                "Multiple users matched login identifier=%s",
+                identifier,
+            )
+            return Response({
+                "message": "We could not process this login. Please contact support."
+            }, status=status.HTTP_400_BAD_REQUEST)
 
-        # 2) verify password first (avoid leaking suspension fact for wrong passwords)
+        # 2) verify password first
         if not user.check_password(ser_data.validated_data['password']):
             return Response({
                 "message": "Hmm... that password didn’t match. Please try again — and don’t worry, it happens!"
             }, status=status.HTTP_401_UNAUTHORIZED)
 
-        # 3) hard-deleted flow (kept as-is from your code)
+        # 3) hard-deleted flow
         if user.is_deleted:
             refresh = RefreshToken.for_user(user)
             access = refresh.access_token
-            react_user = ReactivationUserSerializer(user, context={"request": request}).data
+            react_user = ReactivationUserSerializer(
+                user,
+                context={"request": request}
+            ).data
+
             return Response({
                 "message": "Your account deletion request is in progress. You can reactivate your account within 1 year.",
-                "reactivation_required": True, 
+                "reactivation_required": True,
                 "is_deleted": True,
                 "deletion_requested_at": user.deletion_requested_at,
                 "email": user.email,
@@ -590,9 +970,8 @@ class AuthViewSet(viewsets.ViewSet):
                 "user": react_user,
             }, status=status.HTTP_202_ACCEPTED)
 
-        # 4) suspended -> block login (no tokens / no OTP)
+        # 4) suspended -> block login
         if getattr(user, "is_suspended", False):
-            # 423 Locked communicates temporary protective lock
             return Response({
                 "message": (
                     "Your account is temporarily suspended for a LITSanctuary review. "
@@ -609,7 +988,7 @@ class AuthViewSet(viewsets.ViewSet):
                 "message": "User account is not active. Please verify your email or contact support."
             }, status=status.HTTP_403_FORBIDDEN)
 
-        # 6) 2FA flow (only if not suspended)
+        # 6) 2FA flow
         if user.two_factor_enabled:
             otp_code = user.generate_two_factor_token()
             expiration_minutes = settings.EMAIL_CODE_EXPIRATION_MINUTES
@@ -641,16 +1020,21 @@ class AuthViewSet(viewsets.ViewSet):
             return Response({
                 "message": "Two-factor authentication required. Please check your email for the OTP code.",
                 "two_factor_enabled": user.two_factor_enabled,
+                # IMPORTANT:
+                # Return canonical email so mobile can complete 2FA even if login started with username.
                 "email": user.email,
             }, status=status.HTTP_202_ACCEPTED)
 
-        # 7) success (no 2FA)
+        # 7) success
         user.last_login = timezone.now()
         user.save(update_fields=['last_login'])
 
         refresh = RefreshToken.for_user(user)
         access = refresh.access_token
-        user_data = CustomUserSerializer(user, context={"request": request}).data
+        user_data = CustomUserSerializer(
+            user,
+            context={"request": request}
+        ).data
 
         return Response({
             'refresh': str(refresh),
@@ -658,29 +1042,48 @@ class AuthViewSet(viewsets.ViewSet):
             'is_member': user.is_member,
             'two_factor_enabled': user.two_factor_enabled,
             'user': user_data,
-            'user_id': user.id
+            'user_id': user.id,
+            'email': user.email,
         }, status=status.HTTP_200_OK)
 
     # Login with 2FA ----------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='login-with-2fa', permission_classes=[AllowAny])
     def login_with_2fa(self, request):
-        email = request.data.get('email')
-        otp_code = request.data.get('otp_code')
+        identifier = (
+            request.data.get('email')
+            or request.data.get('identifier')
+            or request.data.get('username')
+            or ""
+        ).strip()
+        otp_code = (request.data.get('otp_code') or "").strip()
 
-        # 0) basic validation
-        if not email or not otp_code:
+        if not identifier or not otp_code:
             return Response({
-                "message": "Email and OTP code are required."
+                "message": "Email or username and OTP code are required."
             }, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            user = CustomUser.objects.get(email=email)
+            user = (
+                CustomUser.objects
+                .select_related("label")
+                .get(
+                    Q(email__iexact=identifier) |
+                    Q(username__iexact=identifier)
+                )
+            )
         except CustomUser.DoesNotExist:
             return Response({
-                "message": "User with this email does not exist."
+                "message": "User with this email or username does not exist."
             }, status=status.HTTP_404_NOT_FOUND)
+        except CustomUser.MultipleObjectsReturned:
+            logger.error(
+                "Multiple users matched 2FA login identifier=%s",
+                identifier,
+            )
+            return Response({
+                "message": "We could not process this login. Please contact support."
+            }, status=status.HTTP_400_BAD_REQUEST)
 
-        # 1) if suspended, block even if an OTP exists
         if getattr(user, "is_suspended", False):
             return Response({
                 "message": (
@@ -692,13 +1095,11 @@ class AuthViewSet(viewsets.ViewSet):
                 "email": user.email,
             }, status=status.HTTP_423_LOCKED)
 
-        # 2) ensure 2FA is enabled
         if not user.two_factor_enabled:
             return Response({
                 "message": "Two-factor authentication is not enabled for this user."
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        # 3) validate token
         token_status = user.validate_two_factor_token(otp_code)
 
         if token_status == "valid":
@@ -708,9 +1109,12 @@ class AuthViewSet(viewsets.ViewSet):
             refresh = RefreshToken.for_user(user)
             access = refresh.access_token
 
-            # If deleted -> only minimal payload + 202 Accepted, not full profile
             if user.is_deleted:
-                react_user = ReactivationUserSerializer(user, context={"request": request}).data
+                react_user = ReactivationUserSerializer(
+                    user,
+                    context={"request": request}
+                ).data
+
                 return Response({
                     "message": "Account deactivated. You can reactivate within 1 year using the code sent to your email.",
                     "reactivation_required": True,
@@ -723,8 +1127,10 @@ class AuthViewSet(viewsets.ViewSet):
                     "user": react_user,
                 }, status=status.HTTP_202_ACCEPTED)
 
-            # else: normal success (active accounts)
-            user_data = CustomUserSerializer(user, context={"request": request}).data
+            user_data = CustomUserSerializer(
+                user,
+                context={"request": request}
+            ).data
 
             return Response({
                 'refresh': str(refresh),
@@ -732,58 +1138,67 @@ class AuthViewSet(viewsets.ViewSet):
                 'is_member': user.is_member,
                 'user': user_data,
                 'user_id': user.id,
+                'email': user.email,
             }, status=status.HTTP_200_OK)
 
-        elif token_status == "expired":
+        if token_status == "expired":
             return Response({
                 "message": "Your OTP code has expired. Please request a new one."
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        elif token_status == "no_token":
+        if token_status == "no_token":
             return Response({
                 "message": "No OTP code was generated. Please start the login process again."
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        else:
-            return Response({
-                "message": "Invalid OTP code. Please try again."
-            }, status=status.HTTP_400_BAD_REQUEST)
+        return Response({
+            "message": "Invalid OTP code. Please try again."
+        }, status=status.HTTP_400_BAD_REQUEST)
 
     # Logout ---------------------------------------------------------------------------------------------------------
     @action(detail=False, methods=["post"], url_path="logout", permission_classes=[IsAuthenticated])
     def logout(self, request):
         """
         Revoke refresh token and force WS logout for THIS device only.
+
+        Logout is intentionally idempotent:
+        even if the refresh token is missing, invalid, or already blacklisted,
+        the client should still be allowed to clear its local session.
         """
         refresh_token = request.data.get("refresh")
-        if not refresh_token:
-            return Response({"error": "Refresh token is required."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Read device_id (must match WS querystring device_id)
+        # Read device_id used by WS querystring.
         device_id = (request.data.get("device_id") or "").strip().lower()
 
-        # Try to blacklist refresh token
-        try:
-            token = RefreshToken(refresh_token)
-            try:
-                token.blacklist()
-            except Exception:
-                pass
-        except TokenError:
-            return Response(
-                {"error": "Invalid token or token has already been blacklisted."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        token_revoked = False
+        token_status = "missing"
 
-        # Best-effort WS force logout (device-scoped)
+        if refresh_token:
+            try:
+                token = RefreshToken(refresh_token)
+
+                try:
+                    token.blacklist()
+                    token_revoked = True
+                    token_status = "revoked"
+                except Exception:
+                    # Already blacklisted or blacklist app edge case.
+                    token_status = "already_revoked_or_unavailable"
+
+            except TokenError:
+                # Do not block logout because token is already invalid/expired.
+                token_status = "invalid_or_expired"
+
+        # Best-effort WS force logout.
         if device_id:
             try:
                 channel_layer = get_channel_layer()
+
                 if channel_layer is not None:
                     async_to_sync(channel_layer.group_send)(
                         f"device_{device_id}",
                         {
-                            "type": "dispatch_event",   # Central dispatcher entry
+                            "type": "dispatch_event",
                             "app": "conversation",
                             "event": "force_logout",
                             "data": {
@@ -793,9 +1208,17 @@ class AuthViewSet(viewsets.ViewSet):
                         },
                     )
             except Exception:
+                # Logout must not fail because realtime cleanup failed.
                 pass
 
-        return Response({"message": "User has been successfully logged out."}, status=status.HTTP_200_OK)
+        return Response(
+            {
+                "message": "User has been successfully logged out.",
+                "token_revoked": token_revoked,
+                "token_status": token_status,
+            },
+            status=status.HTTP_200_OK,
+        )
 
     # Forgot Password -------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='forget-password', permission_classes=[AllowAny])
@@ -1701,7 +2124,6 @@ class AuthViewSet(viewsets.ViewSet):
             # Dedup B: fingerprint_hint
             # =================================================================================
             if replace_same_fp and fingerprint_hint:
-                from django.db.models import Q
                 stale_fp_qs = (
                     UserDeviceKey.objects
                     .filter(user=user, fp_hint=fingerprint_hint)

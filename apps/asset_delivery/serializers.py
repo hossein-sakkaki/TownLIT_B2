@@ -65,3 +65,5 @@ class PlaybackURLSerializer(serializers.Serializer):
 
     # Optional extensible metadata
     meta = serializers.DictField(required=False)
+
+

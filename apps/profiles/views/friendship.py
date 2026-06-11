@@ -2,6 +2,7 @@
 
 import logging
 
+from django.db import transaction
 from django.db.models import Q, Case, When, Value, IntegerField
 from django.db.models.functions import Lower, Substr
 
@@ -26,10 +27,15 @@ from apps.profiles.services.symmetric_friendship import (
     add_symmetric_friendship,
     remove_symmetric_friendship,
 )
+from apps.profiles.services.friendship_covenant_cleanup import (
+    cleanup_hidden_confidant_fellowship_before_friendship_delete,
+)
 from apps.profiles.selectors.friends import get_friend_user_ids
 from apps.profiles.selectors.common_suggestions import suggest_friends_for_requests_tab
 from apps.profiles.selectors.friendship_suggestions import suggest_friends_for_friends_tab
 from apps.profiles.selectors.people_suggestions import get_people_suggestions_queryset
+from apps.core.boundaries.services.policy import BoundaryPolicy
+from apps.core.boundaries.constants import BOUNDARY_GENERIC_UNAVAILABLE_MESSAGE
 
 CustomUser = get_user_model()
 logger = logging.getLogger(__name__)
@@ -45,13 +51,43 @@ class FriendshipViewSet(viewsets.ModelViewSet):
     pagination_class = ConfigurablePagination
     pagination_page_size = 20
 
+    # ------------------------------------------------------------------
+    # Visibility helpers
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _visible_user_q():
+        return Q(is_active=True, is_deleted=False, is_suspended=False)
+
+    @staticmethod
+    def _visible_edge_q():
+        return (
+            Q(from_user__is_active=True) &
+            Q(from_user__is_deleted=False) &
+            Q(from_user__is_suspended=False) &
+            Q(to_user__is_active=True) &
+            Q(to_user__is_deleted=False) &
+            Q(to_user__is_suspended=False)
+        )
+
+    @staticmethod
+    def _filter_visible_user_list(users):
+        return [
+            user for user in users
+            if getattr(user, "is_active", False)
+            and not getattr(user, "is_deleted", False)
+            and not getattr(user, "is_suspended", False)
+        ]
+        
+    # ------------------------------------------------------------------    
+    # Actions
+    # ------------------------------------------------------------------
     def get_queryset(self):
         user = self.request.user
+
         return (
             Friendship.objects
             .filter(Q(to_user=user) | Q(from_user=user))
-            # exclude any edge where either endpoint is deleted
-            .filter(from_user__is_deleted=False, to_user__is_deleted=False)
+            .filter(self._visible_edge_q())
             .order_by('-created_at')
         )
             
@@ -63,7 +99,11 @@ class FriendshipViewSet(viewsets.ModelViewSet):
 
             to_user = serializer.validated_data['to_user_id']
 
-            if not to_user.is_active or getattr(to_user, "is_deleted", False):
+            if (
+                not to_user.is_active
+                or getattr(to_user, "is_deleted", False)
+                or getattr(to_user, "is_suspended", False)
+            ):
                 raise serializers.ValidationError(
                     "You cannot send a friend request to this account."
                 )
@@ -72,6 +112,15 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                 logger.warning(f"User {self.request.user.id} tried to send a friend request to themselves.")
                 raise serializers.ValidationError("You cannot send a friend request to yourself.")
 
+            if not BoundaryPolicy.can_send_friend_request(
+                sender=self.request.user,
+                recipient=to_user,
+            ):
+                raise serializers.ValidationError({
+                    "error": BOUNDARY_GENERIC_UNAVAILABLE_MESSAGE,
+                    "code": "interaction_unavailable",
+                })
+                
             # Check for existing active requests
             existing_request = Friendship.objects.filter(
                 from_user=self.request.user,
@@ -105,17 +154,64 @@ class FriendshipViewSet(viewsets.ModelViewSet):
             logger.error(f"Unexpected error while creating friend request: {e}")
             raise serializers.ValidationError("An unexpected error occurred.")
     
+    # Create friendship with boundary cleanup --------------------------------------------
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        self.perform_create(serializer)
+
+        try:
+            serializer.is_valid(raise_exception=True)
+            self.perform_create(serializer)
+
+        except serializers.ValidationError as exc:
+            detail = getattr(exc, "detail", exc)
+
+            if isinstance(detail, dict):
+                if "error" in detail:
+                    error = detail["error"]
+                    if isinstance(error, list) and error:
+                        error = str(error[0])
+                    return Response(
+                        {"error": str(error)},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                first_key = next(iter(detail), None)
+                if first_key:
+                    first_value = detail[first_key]
+                    if isinstance(first_value, list) and first_value:
+                        message = str(first_value[0])
+                    else:
+                        message = str(first_value)
+
+                    return Response(
+                        {
+                            "error": message,
+                            "field": first_key,
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+            if isinstance(detail, list) and detail:
+                return Response(
+                    {"error": str(detail[0])},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            return Response(
+                {"error": "Unable to process this friendship request."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         headers = self.get_success_headers(serializer.data)
 
-        # Response with custom message and data
-        return Response({
-            "message": "Friend request sent successfully!",
-            "data": serializer.data
-        }, status=status.HTTP_201_CREATED, headers=headers)
+        return Response(
+            {
+                "message": "Friend request sent successfully!",
+                "data": serializer.data,
+            },
+            status=status.HTTP_201_CREATED,
+            headers=headers,
+        )
     
     # ------------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['get'], url_path='search-users', permission_classes=[IsAuthenticated])
@@ -135,6 +231,8 @@ class FriendshipViewSet(viewsets.ModelViewSet):
             # ------------------------------------------------------------
             # Optimized user lookup
             # ------------------------------------------------------------
+            boundary_excluded_ids = BoundaryPolicy.user_ids_with_boundary_between(request.user)
+
             users = (
                 CustomUser.objects
                 .select_related("label", "member_profile")
@@ -151,17 +249,24 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                     Q(email__icontains=query)
                 )
                 .exclude(id=request.user.id)
-                .filter(is_active=True, is_deleted=False)
+                .exclude(id__in=boundary_excluded_ids)
+                .filter(is_active=True, is_deleted=False, is_suspended=False)
                 .distinct()
             )
 
             # ------------------------------------------------------------
             # Friendship + request state lookups
             # ------------------------------------------------------------
-            friend_edges = Friendship.objects.filter(
-                Q(from_user=request.user, status="accepted") |
-                Q(to_user=request.user, status="accepted")
-            ).values("from_user", "to_user")
+            friend_edges = (
+                Friendship.objects
+                .filter(
+                    Q(from_user=request.user, status="accepted") |
+                    Q(to_user=request.user, status="accepted")
+                )
+                .filter(is_active=True)
+                .filter(self._visible_edge_q())
+                .values("from_user", "to_user")
+            )
 
             uid = request.user.id
             friend_ids = {
@@ -179,10 +284,16 @@ class FriendshipViewSet(viewsets.ModelViewSet):
 
             received_request_map = {
                 r["from_user"]: r["id"]
-                for r in Friendship.objects.filter(
+                for r in Friendship.objects
+                .filter(
                     to_user=request.user,
-                    status="pending"
-                ).values("from_user", "id")
+                    status="pending",
+                    is_active=True,
+                    from_user__is_active=True,
+                    from_user__is_deleted=False,
+                    from_user__is_suspended=False,
+                )
+                .values("from_user", "id")
             }
 
             # ------------------------------------------------------------
@@ -215,29 +326,46 @@ class FriendshipViewSet(viewsets.ModelViewSet):
         try:
             qs = (
                 Friendship.objects
-                .filter(from_user=request.user, status='pending')
-                .filter(to_user__is_active=True, to_user__is_deleted=False)
+                .filter(from_user=request.user, status='pending', is_active=True)
+                .filter(
+                    to_user__is_active=True,
+                    to_user__is_deleted=False,
+                    to_user__is_suspended=False,
+                )
             )
+
             serializer = self.get_serializer(qs, many=True)
             return Response(serializer.data, status=status.HTTP_200_OK)
+
         except Exception as e:
             logger.error(f"Error during sent_requests: {e}")
-            return Response({'error': 'Unable to fetch sent requests'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response(
+                {'error': 'Unable to fetch sent requests'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     @action(detail=False, methods=['get'], url_path='received-requests', permission_classes=[IsAuthenticated])
     def received_requests(self, request):
         try:
             qs = (
                 Friendship.objects
-                .filter(to_user=request.user, status='pending')
-                .filter(from_user__is_deleted=False)
-                .filter(from_user__is_active=True, from_user__is_deleted=False)
+                .filter(to_user=request.user, status='pending', is_active=True)
+                .filter(
+                    from_user__is_active=True,
+                    from_user__is_deleted=False,
+                    from_user__is_suspended=False,
+                )
             )
+
             serializer = self.get_serializer(qs, many=True)
             return Response(serializer.data, status=status.HTTP_200_OK)
+
         except Exception as e:
             logger.error(f"Error during received_requests: {e}")
-            return Response({'error': 'Unable to fetch received requests'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response(
+                {'error': 'Unable to fetch received requests'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     # ------------------------------------------------------------------------------------------------------
     @action(
@@ -248,16 +376,14 @@ class FriendshipViewSet(viewsets.ModelViewSet):
     )
     def friends_list(self, request):
         """
-        Return optimized list of friends with:
-        - alphabetical ordering groups,
-        - full serializer context (friend_ids + friendship_ids),
-        - fast avatar URLs (via serializer),
-        - correct friendship_id for frontend compatibility.
+        Return optimized visible friends list.
+
+        Suspended, deleted, or inactive accounts are intentionally hidden
+        from the friends list without deleting the friendship relationship.
         """
         try:
             user = request.user
 
-            # --- Load friendship edges (accepted + active) ----------------------------
             edges = (
                 Friendship.objects
                 .filter(
@@ -265,60 +391,68 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                     status='accepted',
                     is_active=True,
                 )
-                .filter(from_user__is_deleted=False, to_user__is_deleted=False)
+                .filter(self._visible_edge_q())
                 .values('id', 'from_user_id', 'to_user_id')
             )
 
-            # --- Build counterpart IDs and friendship_id map -------------------------
             counterpart_ids = set()
-            friendship_ids_map = {}   # { user_id: friendship_row_id }
+            friendship_ids_map = {}
             uid = user.id
 
             for edge in edges:
                 fid = edge['from_user_id']
                 tid = edge['to_user_id']
 
-                # find the "other" user
                 counterpart = tid if fid == uid else fid
                 counterpart_ids.add(counterpart)
-
-                # map that user to the friendship row ID
                 friendship_ids_map[counterpart] = edge['id']
 
-            # friend_ids = just counterpart IDs
-            friend_ids = counterpart_ids
+            boundary_excluded_ids = set(
+                BoundaryPolicy.user_ids_with_boundary_between(user)
+            )
 
-            # --- Query users with full select_related used by serializer -------------
-            friends_qs = (
+            counterpart_ids = counterpart_ids.difference(boundary_excluded_ids)
+            friendship_ids_map = {
+                user_id: friendship_id
+                for user_id, friendship_id in friendship_ids_map.items()
+                if user_id not in boundary_excluded_ids
+            }
+
+            friends_base_qs = (
                 CustomUser.objects
-                .filter(id__in=counterpart_ids, is_active=True, is_deleted=False)
+                .filter(
+                    id__in=counterpart_ids,
+                    is_active=True,
+                    is_deleted=False,
+                    is_suspended=False,
+                )
                 .select_related(
-                    "label", 
-                    "member_profile" 
+                    "label",
+                    "member_profile"
                 )
             )
 
-            # --- Sorting annotations --------------------------------------------------
+            visible_count = friends_base_qs.count()
+
             first_char = Substr('username', 1, 1)
 
             group = Case(
-                When(username__startswith='_', then=Value(2)),       # group 2: starts with "_"
-                When(username__regex=r'^[A-Za-z]', then=Value(0)),  # group 0: A–Z
-                default=Value(1),                                   # group 1: others
+                When(username__startswith='_', then=Value(2)),
+                When(username__regex=r'^[A-Za-z]', then=Value(0)),
+                default=Value(1),
                 output_field=IntegerField(),
             )
 
             friends_qs = (
-                friends_qs
+                friends_base_qs
                 .annotate(
                     sort_group=group,
                     username_lower=Lower('username'),
-                    first_char_annot=first_char,  # for debugging if needed
+                    first_char_annot=first_char,
                 )
                 .order_by('sort_group', 'username_lower')
             )
 
-            # --- Optional limit ------------------------------------------------------
             limit = request.query_params.get('limit')
             if limit:
                 try:
@@ -326,20 +460,15 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                     if lim:
                         friends_qs = friends_qs[:lim]
                 except ValueError:
-                    pass  # ignore invalid input
+                    pass
 
-            # --- Serializer with ALL required context --------------------------------
             ser = SimpleCustomUserSerializer(
                 friends_qs,
                 many=True,
                 context={
                     "request": request,
-
-                    # required for serializer logic
-                    "friend_ids": friend_ids,
+                    "friend_ids": set(counterpart_ids),
                     "friendship_ids": friendship_ids_map,
-
-                    # optional (for compatibility with other endpoints)
                     "sent_request_map": {},
                     "received_request_map": {},
                     "fellowship_ids": {},
@@ -347,7 +476,12 @@ class FriendshipViewSet(viewsets.ModelViewSet):
             )
 
             return Response(
-                {"results": ser.data, "meta": {"count": len(counterpart_ids)}},
+                {
+                    "results": ser.data,
+                    "meta": {
+                        "count": visible_count
+                    }
+                },
                 status=status.HTTP_200_OK
             )
 
@@ -357,6 +491,7 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                 {"error": "Unable to retrieve friends list"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+            
 
     # ------------------------------------------------------------------------------------------------------
     @action(
@@ -366,28 +501,32 @@ class FriendshipViewSet(viewsets.ModelViewSet):
         permission_classes=[IsAuthenticated]
     )
     def friends_suggestions(self, request):
-        """Return suggestions for the Friends tab."""
         user = request.user
         limit = int(request.query_params.get('limit', 5))
 
-        # suggestions may be a list -> wrap into queryset when possible
         suggestions = suggest_friends_for_friends_tab(user, limit)
 
-        # If it's a QuerySet → annotate & optimize
+        excluded_ids = BoundaryPolicy.excluded_user_ids_for_suggestions(user)
+
         if hasattr(suggestions, "select_related"):
-            suggestions = suggestions.select_related(
-                "label",
-                "member_profile"
+            suggestions = (
+                suggestions
+                .filter(is_active=True, is_deleted=False, is_suspended=False)
+                .exclude(id__in=excluded_ids)
+                .select_related("label", "member_profile")
             )
         else:
-            # If it's a list → leave as-is
-            suggestions = list(suggestions)
+            suggestions = [
+                item for item in self._filter_visible_user_list(list(suggestions))
+                if item.id not in excluded_ids
+            ]
 
         serializer = SimpleCustomUserSerializer(
             suggestions,
             many=True,
             context={"request": request}
         )
+
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     # ------------------------------------------------------------------------------------------------------
@@ -398,26 +537,26 @@ class FriendshipViewSet(viewsets.ModelViewSet):
         permission_classes=[IsAuthenticated]
     )
     def requests_suggestions(self, request):
-        """Return suggestions for the Requests tab."""
         user = request.user
         limit = int(request.query_params.get('limit', 5))
 
         suggestions = suggest_friends_for_requests_tab(user, limit)
 
-        # Detect queryset vs list
         if hasattr(suggestions, "select_related"):
-            suggestions = suggestions.select_related(
-                "label",
-                "member_profile"
+            suggestions = (
+                suggestions
+                .filter(is_active=True, is_deleted=False, is_suspended=False)
+                .select_related("label", "member_profile")
             )
         else:
-            suggestions = list(suggestions)
+            suggestions = self._filter_visible_user_list(list(suggestions))
 
         serializer = SimpleCustomUserSerializer(
             suggestions,
             many=True,
             context={"request": request}
         )
+
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     # People suggestions --------------------------------------------
@@ -441,6 +580,14 @@ class FriendshipViewSet(viewsets.ModelViewSet):
 
             # 1) Ranked suggestions queryset (your selector)
             qs = get_people_suggestions_queryset(viewer)
+            qs = qs.filter(
+                is_active=True,
+                is_deleted=False,
+                is_suspended=False,
+            )
+            
+            excluded_ids = BoundaryPolicy.excluded_user_ids_for_suggestions(viewer)
+            qs = qs.exclude(id__in=excluded_ids)
 
             # 2) Pagination
             page = self.paginate_queryset(qs)
@@ -458,6 +605,7 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                 edges = (
                     Friendship.objects
                     .filter(status="accepted", is_active=True)
+                    .filter(self._visible_edge_q())
                     .filter(
                         Q(from_user_id__in=viewer_friend_ids, to_user_id__in=candidate_ids) |
                         Q(to_user_id__in=viewer_friend_ids, from_user_id__in=candidate_ids)
@@ -490,7 +638,12 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                 if all_mutual_ids:
                     mutual_users = (
                         type(viewer).objects
-                        .filter(id__in=all_mutual_ids, is_active=True, is_deleted=False)
+                        .filter(
+                            id__in=all_mutual_ids,
+                            is_active=True,
+                            is_deleted=False,
+                            is_suspended=False,
+                        )
                         .select_related("label", "member_profile")
                     )
                     mutual_by_id = {u.id: u for u in mutual_users}
@@ -545,15 +698,24 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                 logger.warning(f"User {request.user.id} tried to accept a friendship not directed to them.")
                 return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
 
-            # Cannot accept request from deleted account
-            if getattr(friendship.from_user, "is_deleted", False):
+            if not BoundaryPolicy.can_send_friend_request(
+                sender=friendship.from_user,
+                recipient=friendship.to_user,
+            ):
                 return Response(
-                    {'error': 'This request is no longer valid (sender deactivated).'},
-                    status=status.HTTP_400_BAD_REQUEST
+                    {
+                        "error": BOUNDARY_GENERIC_UNAVAILABLE_MESSAGE,
+                        "code": "interaction_unavailable",
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
                 )
-
-            # Cannot accept request from inactive account
-            if not friendship.from_user.is_active:
+                
+            # Cannot accept request from deleted account
+            if (
+                not friendship.from_user.is_active
+                or getattr(friendship.from_user, "is_deleted", False)
+                or getattr(friendship.from_user, "is_suspended", False)
+            ):
                 return Response(
                     {'error': 'This request is no longer valid.'},
                     status=status.HTTP_400_BAD_REQUEST
@@ -666,101 +828,136 @@ class FriendshipViewSet(viewsets.ModelViewSet):
     )
     def delete_friendship(self, request):
         """
-        Delete an accepted friendship (symmetric remove).
-        Supports both old 'friendshipId' and new 'friendship_id'.
+        Delete an accepted friendship.
+
+        Rules:
+        - Normal active LITCovenant relationships still block friendship deletion.
+        - Hidden Confidant/Entrusted relationships caused by inactive LITShield
+          are auto-cleaned first, then friendship deletion continues.
+        - This solves the deadlock where the user cannot see/remove the hidden
+          Confidant in LITCovenant but also cannot delete the friend.
         """
         try:
             initiator = request.user
 
-            # Support both old and new field names
             friendship_id = (
                 request.data.get("friendship_id") or
                 request.data.get("friendshipId")
             )
 
             if not friendship_id:
-                logger.warning(f"User {initiator.id} attempted deletion with no friendship_id.")
+                logger.warning(
+                    "User %s attempted deletion with no friendship_id.",
+                    initiator.id,
+                )
                 return Response(
                     {"error": "friendship_id is required."},
-                    status=status.HTTP_400_BAD_REQUEST
+                    status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            # Load the friendship row
-            friendship = (
-                Friendship.objects
-                .select_related(
-                    "from_user__label", "from_user__member_profile",
-                    "to_user__label",   "to_user__member_profile"
+            with transaction.atomic():
+                friendship = (
+                    Friendship.objects
+                    .select_for_update()
+                    .select_related(
+                        "from_user__label",
+                        "from_user__member_profile",
+                        "to_user__label",
+                        "to_user__member_profile",
+                    )
+                    .filter(
+                        id=friendship_id,
+                        status="accepted",
+                        is_active=True,
+                    )
+                    .first()
                 )
-                .filter(
-                    id=friendship_id,
-                    status="accepted",
-                    is_active=True
+
+                if not friendship:
+                    logger.warning("Friendship not found for delete: id=%s", friendship_id)
+                    return Response(
+                        {"error": "Friendship not found."},
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
+
+                if (
+                    friendship.from_user_id != initiator.id and
+                    friendship.to_user_id != initiator.id
+                ):
+                    logger.warning(
+                        "User %s tried to delete friendship not belonging to them.",
+                        initiator.id,
+                    )
+                    return Response(
+                        {"error": "You do not have permission to delete this friendship."},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+
+                counterpart = (
+                    friendship.to_user
+                    if friendship.from_user_id == initiator.id
+                    else friendship.from_user
                 )
-                .first()
+
+                cleanup_result = cleanup_hidden_confidant_fellowship_before_friendship_delete(
+                    initiator=initiator,
+                    counterpart=counterpart,
+                )
+
+                if not cleanup_result.allowed:
+                    return Response(
+                        {
+                            "error": cleanup_result.error or (
+                                "You cannot delete this friend while a LITCovenant "
+                                "relationship is active. Please remove the LITCovenant first."
+                            )
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                success = remove_symmetric_friendship(initiator, counterpart)
+
+                if not success:
+                    logger.error(
+                        "Symmetric friendship removal failed: %s <-> %s",
+                        initiator.id,
+                        counterpart.id,
+                    )
+                    raise RuntimeError("Failed to delete friendship.")
+
+            logger.info(
+                "Friendship deleted: %s <-> %s",
+                initiator.id,
+                counterpart.id,
             )
 
-            if not friendship:
-                logger.warning(f"Friendship not found for delete: id={friendship_id}")
-                return Response(
-                    {"error": "Friendship not found."},
-                    status=status.HTTP_404_NOT_FOUND
+            message = "Friendship successfully deleted."
+
+            if cleanup_result.cleaned:
+                message = (
+                    "Friendship successfully deleted. A hidden Confidant "
+                    "LITCovenant relationship was also removed."
                 )
-
-            # Ensure the current user is a participant
-            if friendship.from_user_id != initiator.id and friendship.to_user_id != initiator.id:
-                logger.warning(f"User {initiator.id} tried to delete friendship not belonging to them.")
-                return Response(
-                    {"error": "You do not have permission to delete this friendship."},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-
-            # Identify counterpart
-            counterpart = (
-                friendship.to_user
-                if friendship.from_user_id == initiator.id
-                else friendship.from_user
-            )
-
-            # LITCovenant prevention
-            existing_fellowship = Fellowship.objects.filter(
-                Q(from_user=initiator, to_user=counterpart) |
-                Q(from_user=counterpart, to_user=initiator),
-                status="Accepted"
-            ).exists()
-
-            if existing_fellowship:
-                return Response(
-                    {
-                        "error": (
-                            "You cannot delete this friend while a LITCovenant "
-                            "relationship is active. Please remove the LITCovenant first."
-                        )
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            # Symmetric remove
-            success = remove_symmetric_friendship(initiator, counterpart)
-
-            if not success:
-                logger.error(f"Symmetric friendship removal failed: {initiator.id} <-> {counterpart.id}")
-                return Response(
-                    {"error": "Failed to delete friendship."},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-
-            logger.info(f"Friendship deleted: {initiator.id} <-> {counterpart.id}")
 
             return Response(
-                {"message": "Friendship successfully deleted."},
-                status=status.HTTP_200_OK
+                {
+                    "message": message,
+                    "hidden_covenant_cleanup": cleanup_result.cleaned,
+                    "hidden_covenant_cleanup_count": cleanup_result.cleaned_count,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        except RuntimeError as e:
+            logger.exception("Friendship deletion failed: %s", e)
+            return Response(
+                {"error": "Failed to delete friendship."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
         except Exception as e:
-            logger.exception(f"Unexpected error in delete_friendship: {e}")
+            logger.exception("Unexpected error in delete_friendship: %s", e)
             return Response(
                 {"error": "An unexpected error occurred."},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-

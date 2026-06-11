@@ -5,6 +5,8 @@ import logging
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework import serializers
+from apps.accounts.models.social import SocialMediaLink
+from django.contrib.contenttypes.models import ContentType
 
 from apps.profiles.helpers.social_links import social_links_for_user
 from apps.profiles.helpers.fellowships import fellowships_visible
@@ -46,8 +48,8 @@ class FriendsBlockMixin:
         q = getattr(request, "query_params", {}) if request else {}
 
         random_flag = str(q.get("random", "1")) == "1"
-        daily_flag  = str(q.get("daily",  "0")) == "1"
-        seed        = q.get("seed")
+        daily_flag = str(q.get("daily", "0")) == "1"
+        seed = q.get("seed")
 
         try:
             limit = int(q.get("limit")) if q.get("limit") is not None else None
@@ -62,10 +64,18 @@ class FriendsBlockMixin:
                 seed=seed,
                 limit=limit,
             )
-            return SimpleCustomUserSerializer(friends, many=True, context=self.context).data
+
+            return SimpleCustomUserSerializer(
+                friends,
+                many=True,
+                context=self.context
+            ).data
+
         except Exception:
-            # Never break profile response
-            logger.exception("friends block failed for user_id=%s", getattr(member_obj.user, "id", None))
+            logger.exception(
+                "friends block failed for user_id=%s",
+                getattr(member_obj.user, "id", None)
+            )
             return []
 
 
@@ -76,6 +86,54 @@ def _titleize_slug(value: str) -> str:
         return value
     return value.replace("_", " ").title()
 
+# BUILD SOCIAL LINKS PAYLOAD --------------------------------------------------------------------
+def build_social_links_payload_for_user(user):
+    """
+    Build profile-safe social links payload for iOS/Web profile serializers.
+    Links are attached to CustomUser, not Member/Guest profile objects.
+    """
+    if not user:
+        return []
+
+    user_ct = ContentType.objects.get_for_model(user.__class__)
+
+    links = (
+        SocialMediaLink.objects
+        .select_related("social_media_type")
+        .filter(
+            content_type=user_ct,
+            object_id=user.id,
+            is_active=True,
+            social_media_type__is_active=True,
+        )
+        .order_by("social_media_type__name", "id")
+    )
+
+    payload = []
+
+    for link in links:
+        social_type = link.social_media_type
+
+        payload.append({
+            "id": link.id,
+
+            # iOS-friendly fields
+            "platform": social_type.name if social_type else None,
+            "url": link.link,
+            "username": None,
+
+            # Optional icon metadata for future UI
+            "icon_svg": getattr(social_type, "icon_svg", None),
+            "icon_class": getattr(social_type, "icon_class", None),
+
+            # Backward-compatible raw-ish fields if needed later
+            "social_media_type_id": getattr(social_type, "id", None),
+            "is_active": link.is_active,
+        })
+
+    return payload
+
+
 class MemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
     user = CustomUserSerializer(context=None)
     service_types = MemberServiceTypeSerializer(many=True, read_only=True)
@@ -84,6 +142,8 @@ class MemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
     spiritual_gifts = serializers.SerializerMethodField()
 
     friends = serializers.SerializerMethodField()
+    
+    social_links = serializers.SerializerMethodField()
 
     # Editable fields (kept as before)
     denomination_branch = serializers.ChoiceField(
@@ -113,7 +173,7 @@ class MemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
             'is_townlit_verified', 'townlit_verified_at',
             'is_privacy', 'is_migrated', 'is_active', 
             'litcovenant', 'spiritual_gifts',
-            'friends',
+            'friends', 'social_links',
         ]
         read_only_fields = [
             'register_date', 'is_migrated', 'is_active',
@@ -157,11 +217,19 @@ class MemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
     def update(self, instance, validated_data):
         custom_user_data = validated_data.pop('user', None)
         if custom_user_data:
-            custom_user_serializer = CustomUserSerializer(instance.user, data=custom_user_data, partial=True)
+            custom_user_serializer = CustomUserSerializer(
+                instance.user,
+                data=custom_user_data,
+                partial=True,
+                context=self.context,
+            )
+
             if custom_user_serializer.is_valid():
                 custom_user_serializer.save()
             else:
-                raise serializers.ValidationError({"error": "Custom user update failed. Please check the provided data."})
+                raise serializers.ValidationError({
+                    "user": custom_user_serializer.errors
+                })
 
         academic_record_data = validated_data.pop('academic_record', None)
         if academic_record_data:
@@ -268,7 +336,6 @@ class MemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
         ctx = {'request': request, 'fellowship_ids': fellowship_ids_map}
         return FellowshipSerializer(out, many=True, context=ctx).data
 
-
     # --- spiritual_gifts (unchanged) ---
     def get_spiritual_gifts(self, obj):
         if not getattr(obj, 'show_gifts_in_profile', False):
@@ -287,6 +354,12 @@ class MemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
     # --- friends (randomized, seedable, future-weighted) ---
     def get_friends(self, obj):  # one-liner
         return self._build_friends_payload(obj)
+
+    def get_social_links(self, obj: Member):
+        """
+        Return CustomUser social links for owner profile.
+        """
+        return build_social_links_payload_for_user(obj.user)
 
 
 # PUBLIC Member Serializer -----------------------------------------------------------
@@ -388,8 +461,10 @@ class PublicMemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
 
     # --- social links ---
     def get_social_links(self, obj: Member):
-        links_qs = social_links_for_user(obj.user)
-        return SocialMediaLinkReadOnlySerializer(links_qs, many=True, context=self.context).data
+        """
+        Return public-safe CustomUser social links.
+        """
+        return build_social_links_payload_for_user(obj.user)
 
     # --- friends (randomized, seedable, future-weighted) ---
     def get_friends(self, obj):  # one-liner

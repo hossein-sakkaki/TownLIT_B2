@@ -152,3 +152,6 @@ class Member(SlugMixin):
                         )
                     }
                 )
+                
+                
+

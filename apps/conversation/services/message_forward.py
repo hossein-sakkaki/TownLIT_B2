@@ -9,7 +9,7 @@ from django.db import transaction
 
 from apps.conversation.models import Dialogue, Message, MessageEncryption
 from apps.conversation.services.message_reply import build_reply_preview
-
+from apps.conversation.services.boundary_access import check_private_dialogue_boundary
 
 FORWARD_MODE_BACKEND_ASSISTED = "backend_assisted"
 FORWARD_MODE_CLIENT_REENCRYPT = "client_reencrypt"
@@ -132,6 +132,18 @@ def validate_forward_request(*, source_message_id, target_dialogue_slug, acting_
         )
     except Dialogue.DoesNotExist:
         return _error("TARGET_DIALOGUE_NOT_FOUND", "Target dialogue not found.", 404)
+
+    boundary_check = check_private_dialogue_boundary(
+        dialogue=target_dialogue,
+        acting_user=acting_user,
+    )
+
+    if not boundary_check.allowed:
+        return _error(
+            boundary_check.code,
+            boundary_check.message,
+            403,
+        )
 
     if not _is_message_visible_to_user(source_message, acting_user):
         return _error("FORBIDDEN", "Source message is not visible to you.", 403)

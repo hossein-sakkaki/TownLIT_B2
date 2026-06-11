@@ -10,6 +10,7 @@ import time
 import logging
 from urllib.parse import parse_qs
 
+from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from django.contrib.auth import get_user_model
 
@@ -24,6 +25,10 @@ from apps.conversation.realtime.mixins.typing import (
     cancel_all_typing_timeouts_for_user,
 )
 
+# Central account gate
+from apps.core.security.account_gate.constants import RESTRICTED_OWNER_CODE
+from apps.core.security.account_gate.service import is_restricted_owner_user
+
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
@@ -35,6 +40,11 @@ class CentralWebSocketConsumer(AsyncJsonWebsocketConsumer):
 
     HEARTBEAT_INTERVAL = 20
     HEARTBEAT_TIMEOUT = 70
+
+    # WebSocket close codes
+    CLOSE_INVALID_PATH = 4404
+    CLOSE_RESTRICTED_OWNER = 4409
+    CLOSE_HEARTBEAT_TIMEOUT = 4000
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -51,21 +61,30 @@ class CentralWebSocketConsumer(AsyncJsonWebsocketConsumer):
     # CONNECT
     # ---------------------------------------------------------------
     async def connect(self):
-        self.connected = True
+        self.connected = False
         self.user = self.scope.get("user")
 
         # Path guard
         path = self.scope.get("path", "")
         if path not in ("/ws", "/ws/"):
-            logger.warning(f"[WS BLOCKED] invalid path: {path}")
-            self.connected = False
-            await self.close(code=4404)
+            logger.warning("[WS BLOCKED] invalid path: %s", path)
+            await self.close(code=self.CLOSE_INVALID_PATH)
             return
 
         # Reject anonymous users
         if not self.user or self.user.is_anonymous:
-            self.connected = False
-            await self.close()
+            logger.warning("[WS BLOCKED] anonymous user")
+            await self.close(code=4401)
+            return
+
+        # Central restricted owner gate
+        if await self._is_restricted_owner():
+            logger.warning(
+                "[WS BLOCKED] restricted owner user_id=%s code=%s",
+                getattr(self.user, "id", None),
+                RESTRICTED_OWNER_CODE,
+            )
+            await self.close(code=self.CLOSE_RESTRICTED_OWNER)
             return
 
         # Parse optional device_id
@@ -73,10 +92,11 @@ class CentralWebSocketConsumer(AsyncJsonWebsocketConsumer):
         device_id = (qs.get("device_id", [""])[0] or "").strip().lower()
         self.device_id = device_id if device_id else None
 
-        # Register handlers
+        # Register handlers only after passing all gates
         self._register_handlers()
 
         # Accept socket
+        self.connected = True
         await self.accept()
 
         # Run handler connect hooks
@@ -86,7 +106,9 @@ class CentralWebSocketConsumer(AsyncJsonWebsocketConsumer):
                     await handler.on_connect()
                 except Exception as e:
                     logger.error(
-                        f"[CENTRAL] handler '{name}' on_connect error: {e}",
+                        "[CENTRAL] handler '%s' on_connect error: %s",
+                        name,
+                        e,
                         exc_info=True,
                     )
 
@@ -100,6 +122,37 @@ class CentralWebSocketConsumer(AsyncJsonWebsocketConsumer):
             status="ok",
             user_id=self.user.id,
         )
+
+    # ---------------------------------------------------------------
+    # RESTRICTED OWNER GATE
+    # ---------------------------------------------------------------
+    async def _is_restricted_owner(self) -> bool:
+        """
+        Block WebSocket access for owner accounts whose own Member profile
+        is temporarily unavailable.
+
+        This prevents restricted users from joining:
+        - presence
+        - conversation
+        - notifications
+        - comments
+        - reactions
+        - sanctuary realtime groups
+        """
+        try:
+            return await database_sync_to_async(is_restricted_owner_user)(
+                self.user
+            )
+        except Exception as e:
+            logger.error(
+                "[CENTRAL] restricted owner check failed user_id=%s error=%s",
+                getattr(self.user, "id", None),
+                e,
+                exc_info=True,
+            )
+            # Fail open to avoid accidental total lockout from transient DB errors.
+            # HTTP middleware/view-level gates still protect API access.
+            return False
 
     # ---------------------------------------------------------------
     # SAFE SEND
@@ -185,7 +238,7 @@ class CentralWebSocketConsumer(AsyncJsonWebsocketConsumer):
                 if (time.time() - self._last_pong_ts) > self.HEARTBEAT_TIMEOUT:
                     logger.warning("[CENTRAL] pong timeout -> closing socket")
                     try:
-                        await self.close(code=4000)
+                        await self.close(code=self.CLOSE_HEARTBEAT_TIMEOUT)
                     except Exception:
                         pass
                     return
@@ -219,16 +272,17 @@ class CentralWebSocketConsumer(AsyncJsonWebsocketConsumer):
             try:
                 await self.channel_layer.group_discard(group_name, self.channel_name)
             except Exception as e:
-                logger.error(f"[CENTRAL] failed to leave {group_name}: {e}")
+                logger.error("[CENTRAL] failed to leave %s: %s", group_name, e)
 
         self.feature_groups.clear()
 
         # Leave global user group
         try:
-            await self.channel_layer.group_discard(
-                f"user_{self.user.id}",
-                self.channel_name,
-            )
+            if getattr(self, "user", None) and not self.user.is_anonymous:
+                await self.channel_layer.group_discard(
+                    f"user_{self.user.id}",
+                    self.channel_name,
+                )
         except Exception:
             pass
 
@@ -238,7 +292,7 @@ class CentralWebSocketConsumer(AsyncJsonWebsocketConsumer):
                 try:
                     await handler.on_disconnect()
                 except Exception as e:
-                    logger.error(f"[CENTRAL] handler cleanup error: {e}")
+                    logger.error("[CENTRAL] handler cleanup error: %s", e)
 
     # ---------------------------------------------------------------
     # INBOUND NORMALIZATION
@@ -259,11 +313,6 @@ class CentralWebSocketConsumer(AsyncJsonWebsocketConsumer):
                 "data": dict,
                 ...flattened data fields
             }
-
-        Rules:
-        - ONLY 'data' is accepted as nested client payload
-        - 'payload' is NOT supported anymore
-        - data is flattened for current handlers during migration
         """
         app = raw.get("app")
         msg_type = raw.get("type")
@@ -300,7 +349,7 @@ class CentralWebSocketConsumer(AsyncJsonWebsocketConsumer):
                 await refresh_user_connection(self.user.id, self.channel_name)
 
         except Exception as e:
-            logger.error(f"[CENTRAL] refresh_user_connection failed: {e}")
+            logger.error("[CENTRAL] refresh_user_connection failed: %s", e)
 
     # ---------------------------------------------------------------
     # RECEIVE -> ROUTE TO HANDLER
@@ -359,7 +408,7 @@ class CentralWebSocketConsumer(AsyncJsonWebsocketConsumer):
         try:
             await handler.handle(normalized)
         except Exception as e:
-            logger.error(f"[CENTRAL] Handler '{app}' error: {e}", exc_info=True)
+            logger.error("[CENTRAL] Handler '%s' error: %s", app, e, exc_info=True)
             await self.send_app_error(
                 app=app,
                 code="HANDLER_FAILED",
@@ -406,12 +455,12 @@ class CentralWebSocketConsumer(AsyncJsonWebsocketConsumer):
             evt = event.get("event")
 
             if not app or not evt:
-                logger.error(f"[CENTRAL] dispatch_event missing app/event: {event}")
+                logger.error("[CENTRAL] dispatch_event missing app/event: %s", event)
                 return
 
             handler = self.handlers.get(app)
             if not handler or not hasattr(handler, "handle_backend_event"):
-                logger.error(f"[CENTRAL] No valid handler for app '{app}'")
+                logger.error("[CENTRAL] No valid handler for app '%s'", app)
                 return
 
             base = {
@@ -439,7 +488,8 @@ class CentralWebSocketConsumer(AsyncJsonWebsocketConsumer):
 
         except Exception as e:
             logger.error(
-                f"[CENTRAL] dispatch_event processing error: {e}",
+                "[CENTRAL] dispatch_event processing error: %s",
+                e,
                 exc_info=True,
             )
 

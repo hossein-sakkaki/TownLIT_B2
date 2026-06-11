@@ -301,6 +301,7 @@ class SanctuaryParticipationStatusSerializer(serializers.Serializer):
     policy_id = serializers.IntegerField(allow_null=True, required=False)
     policy_type = serializers.CharField(allow_blank=True)
     policy_title = serializers.CharField(allow_blank=True)
+    policy_content = serializers.CharField(allow_blank=True, required=False)
     policy_language = serializers.CharField(allow_blank=True)
     policy_version_number = serializers.CharField(allow_blank=True)
     policy_last_updated = serializers.DateTimeField(allow_null=True)

@@ -12,9 +12,37 @@ CustomUser = get_user_model()
 
 # LOGIN Serializer
 class LoginSerializer(serializers.Serializer):
-    email = serializers.EmailField(validators=[validate_email_field])
-    password = serializers.CharField(write_only=True, validators=[validate_password_field])
+    # Backward-compatible:
+    # Existing clients may still send "email", but its value can now be email OR username.
+    email = serializers.CharField(
+        required=False,
+        allow_blank=False,
+        trim_whitespace=True,
+    )
+    identifier = serializers.CharField(
+        required=False,
+        allow_blank=False,
+        trim_whitespace=True,
+    )
+    password = serializers.CharField(
+        write_only=True,
+        validators=[validate_password_field],
+    )
 
+    def validate(self, attrs):
+        identifier = (
+            attrs.get("identifier")
+            or attrs.get("email")
+            or ""
+        ).strip()
+
+        if not identifier:
+            raise serializers.ValidationError({
+                "email": "Email or username is required."
+            })
+
+        attrs["identifier"] = identifier
+        return attrs
 
 # REGISTER USER Serializer
 class RegisterUserSerializer(serializers.ModelSerializer):
@@ -69,6 +97,7 @@ class RegisterUserSerializer(serializers.ModelSerializer):
 
 class VerifyNewBornSerializer(serializers.Serializer):
     active_code = serializers.CharField(max_length=5)
+    registration_id = serializers.CharField(required=False, allow_blank=True)
 
     def validate_active_code(self, value):
         if not value.isdigit() or len(value) != 5:

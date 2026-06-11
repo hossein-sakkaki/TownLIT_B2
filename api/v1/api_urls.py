@@ -35,6 +35,12 @@ urlpatterns = [
     # Subtitles (STT, translation, on-demand tracks)
     path('subtitles/', include('apps.subtitles.urls')),
 
+    # Streams
+    path("streams/", include("apps.core.streams.urls")),
+    
+    # Boundaries & Stillness
+    path("peace/", include("apps.core.boundaries.urls")),
+    
     # Square (central explore feed)
     path("square/", include("apps.core.square.urls")),
 
@@ -43,5 +49,4 @@ urlpatterns = [
 
     # Accounting
     path("accounting/", include("apps.accounting.urls.index")),
-
 ]

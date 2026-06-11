@@ -52,3 +52,47 @@ def build_content_link(
         params["focus"] = focus
 
     return f"/content/{slug}?{urlencode(params)}"
+
+
+
+# ------------------------------------------------------------
+# Profile / action links
+# ------------------------------------------------------------
+
+def build_member_profile_link(
+    *,
+    username: str | None = None,
+) -> str:
+    """
+    Safe frontend profile link.
+
+    Website/iOS can route this to the authenticated user's profile.
+    """
+    if username:
+        return f"/profiles/members/profile?u={username}"
+
+    return "/profiles/members/profile"
+
+
+def build_testimony_create_link(
+    *,
+    username: str | None = None,
+    kind: str = "video",
+    source: str = "notification",
+) -> str:
+    """
+    Best-effort creation intent link.
+
+    If frontend/iOS supports query intent, it can open testimony creation.
+    If not, this still lands on profile safely.
+    """
+    params = {
+        "create": "testimony",
+        "kind": kind,
+        "source": source,
+    }
+
+    if username:
+        params["u"] = username
+
+    return f"/profiles/members/profile?{urlencode(params)}"

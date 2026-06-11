@@ -6,7 +6,7 @@ from django.contrib.contenttypes.models import ContentType
 
 
 from apps.accounts.models.address import Address
-from apps.posts.constants import LITERARY_CATEGORY_CHOICES, COPYRIGHT_CHOICES
+from apps.posts.constants.constants import LITERARY_CATEGORY_CHOICES, COPYRIGHT_CHOICES
 from apps.profilesOrg.constants import PRICE_TYPE_CHOICES
 from utils.common.utils import FileUpload
 from utils.mixins.slug_mixin import SlugMixin

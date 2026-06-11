@@ -4,7 +4,7 @@ from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from uuid import uuid4
 
-from apps.posts.constants import MEDIA_CONTENT_CHOICES
+from apps.posts.constants.constants import MEDIA_CONTENT_CHOICES
 from utils.common.utils import FileUpload
 from utils.mixins.slug_mixin import SlugMixin
 from validators.mediaValidators.pdf_validators import validate_pdf_file

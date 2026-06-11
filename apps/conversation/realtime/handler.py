@@ -75,6 +75,9 @@ class ConversationHandler(
         self.group_names = set()
         self.dialogue_map = {}
         self.user_device_group = None
+        
+        # Group state
+        self.user_group = None
 
     # --------------------------------------------------------------
     # Helpers
@@ -220,6 +223,19 @@ class ConversationHandler(
                     f"[Conversation] user_device group join failed ({self.user_device_group}): {e}"
                 )
 
+        # Join user-scoped group for targeted conversation events:
+        # - group_added
+        # - group_removed
+        # - group_left cleanup
+        # - role/ownership sync
+        self.user_group = f"user_{self.user.id}"
+        try:
+            await self.consumer.join_feature_group(self.user_group)
+        except Exception as e:
+            logger.error(
+                f"[Conversation] user group join failed ({self.user_group}): {e}"
+            )
+    
         # Replay undelivered messages
         await self._push_undelivered_messages(dialogues)
 
@@ -395,52 +411,79 @@ class ConversationHandler(
 
         if event_type == "chat_message":
             await self.ws_chat_message(data)
+            
         elif event_type == "edit_message":
             await self.ws_edit_message(data)
+            
         elif event_type == "file_message":
             await self.ws_file_message(data)
+            
         elif event_type == "file_upload_status":
             await self.ws_file_upload_status(data)
+            
         elif event_type == "upload_canceled":
             await self.ws_upload_canceled(data)
+            
         elif event_type == "recording_status":
             await self.ws_recording_status(data)
+            
         elif event_type == "message_soft_deleted":
             await self.ws_soft_delete_message(data)
+            
         elif event_type == "message_hard_deleted":
             await self.ws_hard_delete_message(data)
+            
         elif event_type == "typing_status":
             await self.ws_typing_status(data)
+            
         elif event_type == "mark_as_read":
             await self.ws_mark_as_read(data)
+            
         elif event_type == "mark_as_delivered":
             await self.ws_mark_as_delivered(data)
+            
         elif event_type == "unread_count_update":
             await self.ws_unread_count_update(data)
+            
         elif event_type == "trigger_unread_count_update":
             await self.ws_trigger_unread_count_update(data)
+            
         elif event_type == "dialogue_pinned":
             await self.ws_dialogue_pinned(data)
+            
         elif event_type == "dialogue_unpinned":
             await self.ws_dialogue_unpinned(data)
+            
         elif event_type == "message_pinned":
             await self.ws_message_pinned(data)
+            
         elif event_type == "message_unpinned":
             await self.ws_message_unpinned(data)
+            
         elif event_type == "message_reaction_toggled":
             await self.ws_message_reaction_toggled(data)
+            
         elif event_type == "message_reaction_summary":
             await self.ws_message_reaction_summary(data)
+            
         elif event_type == "group_added":
             await self.group_added(data)
+            
         elif event_type == "group_removed":
             await self.group_removed(data)
+            
         elif event_type == "group_left":
             await self.group_left(data)
+            
         elif event_type == "founder_transferred":
             await self.founder_transferred(data)
+
+        elif event_type == "group_updated":
+            await self.group_updated(data)
+            
         elif event_type == "force_logout":
             await self.force_logout(data)
+            
         else:
             logger.warning(f"[ConversationHandler] Unknown backend event: {event_type}")
 

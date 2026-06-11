@@ -18,6 +18,7 @@ from apps.accounts.serializers.user_serializers import CustomUserSerializer
 from apps.posts.models.moment import Moment
 from apps.posts.serializers.moments import MomentSerializer
 from apps.posts.services.feed_access import get_visible_posts
+from utils.api.error_response import build_validation_error_response
 
 CustomUser = get_user_model()
 
@@ -115,13 +116,7 @@ class GuestUserViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(guest, data=request.data, partial=True)
 
         if not serializer.is_valid():
-            return Response(
-                {
-                    "error": "Invalid data. Please check the provided fields.",
-                    "details": serializer.errors,
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return build_validation_error_response(serializer.errors)
 
         updated_guest = serializer.save()
 

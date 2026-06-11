@@ -12,6 +12,11 @@ from apps.conversation.constants import (
     MSG_HEART,
     MSG_ENCOURAGEMENT,
 )
+from apps.conversation.services.boundary_access import (
+    CONVERSATION_INTERACTION_UNAVAILABLE_CODE,
+)
+from apps.core.boundaries.constants import BOUNDARY_GENERIC_UNAVAILABLE_MESSAGE
+from apps.core.boundaries.services.policy import BoundaryPolicy
 
 
 ALLOWED_MESSAGE_REACTIONS = {
@@ -56,6 +61,26 @@ def _validate_reaction_type(reaction_type: str):
     if normalized not in ALLOWED_MESSAGE_REACTIONS:
         return None
     return normalized
+
+
+def _can_interact_with_message_sender(*, message, acting_user) -> bool:
+    """
+    Boundary policy for message-level direct interaction.
+
+    Existing group membership/history remains visible.
+    But reacting to another user's message is a direct interaction,
+    so it is blocked when Boundary exists in either direction.
+    """
+    if not acting_user or not getattr(acting_user, "is_authenticated", False):
+        return False
+
+    if message.sender_id == acting_user.id:
+        return True
+
+    return not BoundaryPolicy.has_boundary_between(
+        acting_user,
+        message.sender,
+    )
 
 
 def build_message_reaction_summary(*, message, acting_user=None):
@@ -133,6 +158,7 @@ def toggle_message_reaction(*, message_id, acting_user, reaction_type):
     - one active reaction per user per message
     - same reaction => remove
     - different reaction => replace
+    - Boundary blocks direct reaction to another user's message
     """
     normalized_type = _validate_reaction_type(reaction_type)
     if not normalized_type:
@@ -148,6 +174,16 @@ def toggle_message_reaction(*, message_id, acting_user, reaction_type):
 
     if message.is_system:
         return _error("INVALID_TARGET", "System messages cannot receive reactions.", 400)
+
+    if not _can_interact_with_message_sender(
+        message=message,
+        acting_user=acting_user,
+    ):
+        return _error(
+            CONVERSATION_INTERACTION_UNAVAILABLE_CODE,
+            BOUNDARY_GENERIC_UNAVAILABLE_MESSAGE,
+            403,
+        )
 
     with transaction.atomic():
         existing = MessageReaction.objects.filter(
@@ -188,7 +224,7 @@ def toggle_message_reaction(*, message_id, acting_user, reaction_type):
 def get_message_reaction_summary_for_user(*, message_id, acting_user):
     """Return reaction summary for one visible message."""
     try:
-        message = Message.objects.select_related("dialogue").get(id=message_id)
+        message = Message.objects.select_related("dialogue", "sender").get(id=message_id)
     except Message.DoesNotExist:
         return _error("MESSAGE_NOT_FOUND", "Message not found.", 404)
 
@@ -210,7 +246,10 @@ def list_message_reactors(*, message_id, acting_user):
     """
     Return detailed reactor list for one message.
 
-    Can be useful for future modal/details UI.
+    Boundary policy:
+    - If the acting user can see the message, they may see aggregate/details
+      according to existing message visibility.
+    - Direct reaction creation is what Boundary blocks.
     """
     try:
         message = Message.objects.select_related("dialogue").get(id=message_id)

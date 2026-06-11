@@ -20,6 +20,11 @@ from apps.posts.serializers.comments import (
     RootCommentReadSerializer,
     SimpleCommentReadSerializer
 )
+from apps.posts.services.boundary_interactions import (
+    check_comment_create_boundary,
+    check_comment_update_boundary,
+    content_interaction_error_payload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -102,50 +107,122 @@ class CommentViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         logger.info("POST /posts/comments/ incoming", extra={"data": request.data})
         serializer = self.get_serializer(data=request.data)
+
         try:
             serializer.is_valid(raise_exception=True)
-        except Exception as ex:
-            # validation errors → 400 with details
-            logger.warning("Comment validation failed", exc_info=True, extra={"data": request.data})
+        except Exception:
+            logger.warning(
+                "Comment validation failed",
+                exc_info=True,
+                extra={"data": request.data},
+            )
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        # ------------------------------------------------------------
+        # Boundary enforcement
+        # ------------------------------------------------------------
+        content_type = serializer.validated_data.get("content_type")
+        object_id = serializer.validated_data.get("object_id")
+        parent_comment = serializer.validated_data.get("recomment")
+
+        boundary_check = check_comment_create_boundary(
+            actor=request.user,
+            content_type=content_type,
+            object_id=object_id,
+            parent_comment=parent_comment,
+        )
+
+        if not boundary_check.allowed:
+            return Response(
+                content_interaction_error_payload(
+                    message=boundary_check.message,
+                    code=boundary_check.code,
+                ),
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         try:
             self.perform_create(serializer)
+
         except PermissionDenied as pd:
             logger.warning("Permission denied on create", exc_info=True)
             return Response({"detail": str(pd)}, status=status.HTTP_403_FORBIDDEN)
-        except Exception as ex:
-            # real 500, but log with context
+
+        except Exception:
             logger.exception("Comment create crashed", extra={"data": request.data})
             return Response(
                 {"detail": "Internal server error while creating comment."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        # respond with read-serializer (unified)
-        read_data = CommentReadSerializer(serializer.instance, context=self.get_serializer_context()).data
+        read_data = CommentReadSerializer(
+            serializer.instance,
+            context=self.get_serializer_context(),
+        ).data
+
         return Response(read_data, status=status.HTTP_201_CREATED)
     
     # Override update -----------------------------------------------------------
     def update(self, request, *args, **kwargs):
-        partial = kwargs.pop('partial', False)
+        partial = kwargs.pop("partial", False)
         instance = self.get_object()
-        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+
+        serializer = self.get_serializer(
+            instance,
+            data=request.data,
+            partial=partial,
+        )
+
         try:
             serializer.is_valid(raise_exception=True)
         except Exception:
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+        # ------------------------------------------------------------
+        # Owner check first
+        # ------------------------------------------------------------
         try:
-            self.perform_update(serializer)
+            self._check_owner(instance, self.request.user)
         except PermissionDenied as pd:
             return Response({"detail": str(pd)}, status=status.HTTP_403_FORBIDDEN)
+
+        # ------------------------------------------------------------
+        # Boundary enforcement
+        # Editing an old comment is treated as renewed interaction.
+        # Deleting remains allowed in perform_destroy.
+        # ------------------------------------------------------------
+        boundary_check = check_comment_update_boundary(
+            actor=request.user,
+            comment=instance,
+        )
+
+        if not boundary_check.allowed:
+            return Response(
+                content_interaction_error_payload(
+                    message=boundary_check.message,
+                    code=boundary_check.code,
+                ),
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            self.perform_update(serializer)
+
+        except PermissionDenied as pd:
+            return Response({"detail": str(pd)}, status=status.HTTP_403_FORBIDDEN)
+
         except Exception:
             logger.exception("Comment update crashed", extra={"data": request.data})
-            return Response({"detail": "Internal server error while updating comment."},
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response(
+                {"detail": "Internal server error while updating comment."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
-        read_data = CommentReadSerializer(serializer.instance, context=self.get_serializer_context()).data
+        read_data = CommentReadSerializer(
+            serializer.instance,
+            context=self.get_serializer_context(),
+        ).data
+
         return Response(read_data, status=status.HTTP_200_OK)
     
     # -----------------------------------------------------------------
@@ -193,16 +270,18 @@ class CommentViewSet(viewsets.ModelViewSet):
     # -----------------------------------------------------------------
     # Update with WS broadcast (safe)
     def perform_update(self, serializer):
-        inst: Comment = serializer.instance
-        self._check_owner(inst, self.request.user)
         inst = serializer.save()
 
         data = CommentReadSerializer(
-            inst, context=self.get_serializer_context()
+            inst,
+            context=self.get_serializer_context(),
         ).data
 
         transaction.on_commit(lambda: _safe_broadcast(
-            "updated", data, inst.content_type_id, inst.object_id
+            "updated",
+            data,
+            inst.content_type_id,
+            inst.object_id,
         ))
 
     # -----------------------------------------------------------------

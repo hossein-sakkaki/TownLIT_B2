@@ -1,3 +1,4 @@
+# apps/profiles/serializers/fellowships.py
 
 from django.db.models import Q
 from django.contrib.auth import get_user_model
@@ -29,7 +30,7 @@ class FellowshipSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'from_user', 'to_user', 'to_user_id', 'fellowship_type', 'reciprocal_fellowship_type', 'status', 'created_at',
         ]
-        read_only_fields = ['from_user', 'to_user', 'created_at', 'reciprocal_fellowship_type']
+        read_only_fields = ['from_user', 'to_user', 'created_at']
 
     def validate_to_user_id(self, value):
         if self.context['request'].user == value:
@@ -53,7 +54,8 @@ class FellowshipSerializer(serializers.ModelSerializer):
         from_user = self.context['request'].user
         to_user = data.get('to_user_id')
         fellowship_type = data.get('fellowship_type')
-        reciprocal_fellowship_type = RECIPROCAL_FELLOWSHIP_MAP.get(fellowship_type)
+        submitted_reciprocal = data.get("reciprocal_fellowship_type")
+        reciprocal_fellowship_type = submitted_reciprocal or RECIPROCAL_FELLOWSHIP_MAP.get(fellowship_type)
 
         # self-checks
         if from_user == to_user:
@@ -65,46 +67,73 @@ class FellowshipSerializer(serializers.ModelSerializer):
         if getattr(to_user, "is_deleted", False):
             raise serializers.ValidationError({"error": "You cannot send a fellowship request to a deactivated account."})
 
-        # پایه‌ی کوئری: فقط لبه‌هایی که هیچ‌کدام حذف‌شده نیستند
+        # ⛔️ duplicate guards
         base_qs = Fellowship.objects.filter(from_user__is_deleted=False, to_user__is_deleted=False)
 
         existing_fellowship = base_qs.filter(
-            Q(from_user=from_user, to_user=to_user, fellowship_type=fellowship_type, status='Accepted') |
-            Q(from_user=to_user, to_user=from_user, fellowship_type=reciprocal_fellowship_type, status='Accepted')
+            Q(
+                from_user=from_user,
+                to_user=to_user,
+                fellowship_type=fellowship_type,
+                status="Accepted",
+            )
+            |
+            Q(
+                from_user=to_user,
+                to_user=from_user,
+                fellowship_type=reciprocal_fellowship_type,
+                status="Accepted",
+            )
         ).exists()
+
         if existing_fellowship:
             raise serializers.ValidationError({
-                "error": f"A fellowship of type '{fellowship_type}' or its reciprocal already exists."
+                "error": f"You already have this covenant relationship as '{fellowship_type}'."
             })
 
         existing_reciprocal_fellowship = base_qs.filter(
-            Q(from_user=from_user, to_user=to_user, fellowship_type=reciprocal_fellowship_type, status='Accepted') |
-            Q(from_user=to_user, to_user=from_user, fellowship_type=fellowship_type, status='Accepted')
+            Q(
+                from_user=from_user,
+                to_user=to_user,
+                fellowship_type=reciprocal_fellowship_type,
+                status="Accepted",
+            )
+            |
+            Q(
+                from_user=to_user,
+                to_user=from_user,
+                fellowship_type=fellowship_type,
+                status="Accepted",
+            )
         ).exists()
+
         if existing_reciprocal_fellowship:
             raise serializers.ValidationError({
-                "error": f"A reciprocal fellowship of type '{reciprocal_fellowship_type}' already exists."
+                "error": f"A reciprocal covenant relationship already exists as '{reciprocal_fellowship_type}'."
             })
 
         duplicate_fellowship = base_qs.filter(
             from_user=from_user,
             to_user=to_user,
             fellowship_type=fellowship_type,
-            status='Pending'
+            status="Pending",
         ).exists()
+
         if duplicate_fellowship:
             raise serializers.ValidationError({
-                "error": f"A pending fellowship request as '{fellowship_type}' already exists."
+                "error": f"You have already sent a pending request as '{fellowship_type}'."
             })
 
         reciprocal_pending_fellowship = base_qs.filter(
-            Q(from_user=from_user, to_user=to_user, status='Pending') |
-            Q(from_user=to_user, to_user=from_user, status='Pending'),
-            fellowship_type=reciprocal_fellowship_type
+            Q(from_user=from_user, to_user=to_user, status="Pending")
+            |
+            Q(from_user=to_user, to_user=from_user, status="Pending"),
+            fellowship_type__in=[fellowship_type, reciprocal_fellowship_type],
         ).exists()
+
         if reciprocal_pending_fellowship:
             raise serializers.ValidationError({
-                "error": f"You cannot send a fellowship request as '{fellowship_type}' because a pending request already exists as '{reciprocal_fellowship_type}'."
+                "error": "A pending covenant request already exists between you and this user."
             })
 
         return data

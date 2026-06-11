@@ -16,7 +16,7 @@ from apps.profilesOrg.constants import LANGUAGE_CHOICES, ENGLISH, COUNTRY_CHOICE
 from validators.user_validators import validate_phone_number
 from validators.mediaValidators.image_validators import validate_image_file, validate_image_size
 from validators.security_validators import validate_no_executable_file
-
+from validators.usernameValidators.username_normalizer import normalize_username
 from utils.common.utils import FileUpload, create_active_code
 
 
@@ -275,10 +275,15 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
         if self.family is not None:
             self.family = normalize_person_name(self.family)
 
+        if self.username:
+            self.username = normalize_username(self.username)
+
         if not self.username:
             self.username = generate_unique_username_from_email(
                 email=self.email,
                 model_cls=CustomUser,
+                is_member=bool(self.is_member),
+                user=self if self.pk else None,
             )
 
         super().save(*args, **kwargs)
@@ -378,3 +383,5 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
 
     def get_absolute_url(self):
         return f"/{self.username}"
+    
+    

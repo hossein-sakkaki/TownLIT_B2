@@ -17,3 +17,4 @@ def resolve_field_alias(app_label: str, model: str, field_name: str) -> str:
         (field_name or "").strip().lower(),
     )
     return FIELD_ALIAS_MAP.get(key, field_name)
+

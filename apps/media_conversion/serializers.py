@@ -17,6 +17,9 @@ class MediaConversionJobSerializer(serializers.ModelSerializer):
     can_retry = serializers.SerializerMethodField()
     eta_ms = serializers.SerializerMethodField()
 
+    can_cancel = serializers.SerializerMethodField()
+    action_hint = serializers.SerializerMethodField()
+    
     class Meta:
         model = MediaConversionJob
         fields = [
@@ -72,6 +75,10 @@ class MediaConversionJobSerializer(serializers.ModelSerializer):
             "stage_plan",
             "stage_total_weight",
             "stage_completed_weight",
+            
+            "can_cancel",
+            "action_hint",
+            
         ]
         read_only_fields = fields
 
@@ -128,3 +135,24 @@ class MediaConversionJobSerializer(serializers.ModelSerializer):
         remaining_ms = max(0, total_estimated_ms - elapsed_ms)
 
         return remaining_ms
+
+    def get_can_cancel(self, obj) -> bool:
+        return obj.status in {
+            MediaJobStatus.QUEUED,
+            MediaJobStatus.PROCESSING,
+        }
+
+    def get_action_hint(self, obj) -> str:
+        if obj.status == MediaJobStatus.QUEUED:
+            return "Waiting to start."
+        if obj.status == MediaJobStatus.PROCESSING:
+            if self.get_is_stale(obj):
+                return "Processing appears stalled."
+            return "Processing media."
+        if obj.status == MediaJobStatus.DONE:
+            return "Media is ready."
+        if obj.status == MediaJobStatus.FAILED:
+            return "Conversion failed. Retry may be available."
+        if obj.status == MediaJobStatus.CANCELED:
+            return "Conversion was canceled."
+        return ""

@@ -14,3 +14,6 @@ def exclude_unready_media(
     return qs.exclude(
         Q(**{ready_field: False})
     )
+
+
+

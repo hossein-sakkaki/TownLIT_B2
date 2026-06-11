@@ -14,6 +14,12 @@ from common.aws.s3_utils import get_file_url
 from apps.conversation.services.message_reply import build_reply_preview
 from apps.conversation.services.message_forward import build_forward_preview
 from apps.conversation.services.message_reactions import build_message_reaction_summary
+from django.core.exceptions import ValidationError as DjangoValidationError
+from validators.groupNames.group_name_validator import validate_group_name
+from apps.conversation.services.boundary_access import check_private_dialogue_boundary
+from apps.core.boundaries.serializers import boundary_unavailable_reason_to_text
+
+
 
 # Dialogue Participant Serializer ------------------------------------------------------
 class DialogueParticipantSerializer(serializers.ModelSerializer):
@@ -56,6 +62,9 @@ class DialogueSerializer(GroupAvatarURLMixin, serializers.ModelSerializer):
     is_pinned = serializers.SerializerMethodField()
     pinned_position = serializers.IntegerField(read_only=True, allow_null=True)
 
+    direct_interaction_available = serializers.SerializerMethodField()
+    direct_interaction_unavailable_reason = serializers.SerializerMethodField()
+    
     class Meta:
         model = Dialogue
         fields = [
@@ -77,6 +86,9 @@ class DialogueSerializer(GroupAvatarURLMixin, serializers.ModelSerializer):
             "group_avatar_url", "group_avatar_cdn_url", "group_avatar_version",
             
             "is_pinned", "pinned_position",
+            
+            "direct_interaction_available",
+            "direct_interaction_unavailable_reason",
         ]
 
     # -------------------------------------------------------------------
@@ -143,6 +155,48 @@ class DialogueSerializer(GroupAvatarURLMixin, serializers.ModelSerializer):
 
         return user_data
 
+    # -------------------------------------------------------------------
+    # Direct interaction availability
+    # -------------------------------------------------------------------
+    def _direct_interaction_check(self, obj):
+        request = self.context.get("request")
+
+        if not request or not hasattr(request, "user"):
+            return None
+
+        # Group membership/history stays available.
+        # Boundary only blocks direct/private interaction.
+        if obj.is_group:
+            return None
+
+        return check_private_dialogue_boundary(
+            dialogue=obj,
+            acting_user=request.user,
+        )
+
+    def get_direct_interaction_available(self, obj):
+        check = self._direct_interaction_check(obj)
+
+        if check is None:
+            return True
+
+        return bool(check.allowed)
+
+    def get_direct_interaction_unavailable_reason(self, obj):
+        check = self._direct_interaction_check(obj)
+
+        if check is None or check.allowed:
+            return None
+
+        return boundary_unavailable_reason_to_text(
+            {
+                "code": getattr(check, "code", None),
+                "message": getattr(check, "message", None),
+                "counterpart_id": getattr(check, "counterpart_id", None),
+            },
+            fallback=getattr(check, "message", None),
+        )
+        
     # -------------------------------------------------------------------
     # Last message
     # -------------------------------------------------------------------
@@ -218,11 +272,40 @@ class DialogueSerializer(GroupAvatarURLMixin, serializers.ModelSerializer):
         ).exists()
 
 
+# Create Group Serializer ---------------------------------------------------------------
+class CreateGroupSerializer(serializers.Serializer):
+    group_name = serializers.CharField(
+        required=True,
+        allow_blank=False,
+        max_length=60,
+        trim_whitespace=True,
+    )
+    group_image = serializers.ImageField(
+        required=False,
+        allow_null=True,
+    )
+
+    def validate_group_name(self, value):
+        try:
+            return validate_group_name(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.messages[0])
+        
+        
 # Update Group Info Serializer --------------------------------------------------------
 class UpdateGroupInfoSerializer(serializers.Serializer):
-    group_name = serializers.CharField(required=False, allow_blank=False, max_length=64, trim_whitespace=True)
-    # info = serializers.CharField(required=False, allow_blank=True, max_length=512, trim_whitespace=True)
-    # bio = serializers.CharField(required=False, allow_blank=True, max_length=2048, trim_whitespace=True)
+    group_name = serializers.CharField(
+        required=False,
+        allow_blank=False,
+        max_length=60,
+        trim_whitespace=True,
+    )
+
+    def validate_group_name(self, value):
+        try:
+            return validate_group_name(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.messages[0])
 
     def validate(self, attrs):
         if not attrs:

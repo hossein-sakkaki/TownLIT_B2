@@ -1,64 +1,84 @@
 # apps/notifications/views.py
 
 import logging
+
 from django.utils import timezone
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from .models import UserNotificationPreference, Notification
-from .serializers import (
+from apps.core.pagination import ConfigurablePagination
+from apps.notifications.constants import (
+    CHANNEL_EMAIL,
+    CHANNEL_PUSH,
+    CHANNEL_DEFAULT,
+    NOTIFICATION_PREF_METADATA,
+    NOTIFICATION_TYPES_EXCLUDED_FROM_GENERAL_UNREAD,
+    NOTIFICATION_TYPES_EXCLUDED_FROM_NOTIFICATION_CENTER,
+    NOTIFICATION_TYPES_FORCE_ENABLED,
+)
+from apps.notifications.models import (
+    UserNotificationPreference,
+    Notification,
+)
+from apps.notifications.serializers import (
     UserNotificationPreferenceSerializer,
     NotificationSerializer,
     NotificationMarkReadSerializer,
 )
-from apps.core.pagination import ConfigurablePagination  # ✅ your shared pagination
-from .utils import get_allowed_notification_types_for_user
-from .constants import (
-    CHANNEL_EMAIL, CHANNEL_PUSH, CHANNEL_DEFAULT,
-    NOTIFICATION_PREF_METADATA, NOTIFICATION_TYPES,
-    NOTIFICATION_TYPES_PUSH_EMAIL_ONLY
-)
+from apps.notifications.utils import get_allowed_notification_types_for_user
+
 logger = logging.getLogger(__name__)
 
 
-# -------------------------------------------------------------------س
-# Pagination for notifications: 20 per page, up to last 200 records
+# -------------------------------------------------------------------
+# Pagination for notifications
 # -------------------------------------------------------------------
 class NotificationPagination(ConfigurablePagination):
     """
-    Pagination for notifications:
+    Pagination for notifications.
+
+    Rules:
     - default page size: 20
-    - max page size: 20 (no huge pages)
+    - max page size: 20
     """
     page_size = 20
-    max_page_size = 20  # keep small and predictable
+    max_page_size = 20
 
 
 # -------------------------------------------------------------------
-# Notification ViewSet  (read-only + mark_read helpers)
+# Notification ViewSet
 # -------------------------------------------------------------------
 class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     """
     List and read user notifications.
-    - Uses pagination (20 per page).
-    - Only the last ~200 notifications are exposed.
-    - Auto-prunes stale notifications whose targets are gone/hidden.
+
+    Messenger notifications are intentionally excluded from this center.
+    Messenger has its own inbox, unread counter, realtime flow, and push flow.
     """
     serializer_class = NotificationSerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = ConfigurablePagination
-    pagination_page_size = 20   # 🔑 only source of truth
-    page_size = 20              # backward safety
+    pagination_class = NotificationPagination
+
+    pagination_page_size = 20
+    page_size = 20
     max_page_size = 20
 
     # -----------------------------------------------------------------
     def get_queryset(self):
+        """
+        Return visible general notifications for the current user.
+
+        Message notification records are excluded even if old records exist
+        in the database from previous versions.
+        """
         qs = (
             Notification.objects
             .filter(user=self.request.user)
-            .exclude(notification_type__in=NOTIFICATION_TYPES_PUSH_EMAIL_ONLY)
+            .exclude(
+                notification_type__in=NOTIFICATION_TYPES_EXCLUDED_FROM_NOTIFICATION_CENTER
+            )
             .select_related(
                 "actor",
                 "actor__member_profile",
@@ -67,7 +87,6 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
             .order_by("-created_at")
         )
 
-        # ⚠️ prune safely (bounded + no cascade)
         self._auto_prune_stale_notifications(qs)
 
         return qs
@@ -76,13 +95,15 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     def _auto_prune_stale_notifications(self, qs):
         """
         Bounded safety-net cleanup.
-        Does NOT affect pagination logic.
+
+        This only checks visible notification-center records.
+        It does not touch push-only messenger behavior.
         """
-        SAMPLE_LIMIT = 200
+        sample_limit = 200
 
         stale_ids = [
             notif.id
-            for notif in qs[:SAMPLE_LIMIT]
+            for notif in qs[:sample_limit]
             if notif.is_target_unavailable()
         ]
 
@@ -94,11 +115,14 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
             )
             Notification.objects.filter(id__in=stale_ids).delete()
 
-    # Mark read action ------------------------------------------------
+    # -----------------------------------------------------------------
     @action(detail=True, methods=["patch"])
     def mark_read(self, request, pk=None):
         """
-        Mark a single notification as read.
+        Mark a single visible notification as read.
+
+        Because get_queryset excludes messenger notification records,
+        old messenger notification rows cannot be marked through this endpoint.
         """
         notif = self.get_object()
 
@@ -111,7 +135,6 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
         serializer.is_valid(raise_exception=True)
         serializer.save()
 
-        # Ensure read_at and computed fields are fresh
         notif.refresh_from_db()
 
         return Response(
@@ -121,12 +144,14 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
             ).data
         )
 
-    # Mark all read action ---------------------------------------------
+    # -----------------------------------------------------------------
     @action(detail=False, methods=["post"])
     def mark_all_read(self, request):
         """
-        Mark all unread notifications of current user as read.
-        (Scoped to the same visibility rules as list view.)
+        Mark all visible general notifications as read.
+
+        Messenger messages are not included here because Messenger read state
+        is controlled by the conversation read/delivery system.
         """
         qs = self.get_queryset().filter(is_read=False)
 
@@ -138,11 +163,14 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
 
         return Response({"updated": updated})
 
-    # Unread count action ---------------------------------------------
+    # -----------------------------------------------------------------
     @action(detail=False, methods=["get"])
     def unread_count(self, request):
         """
-        Return unread notification count for current user.
+        Return unread general notification count for current user.
+
+        Messenger notifications are excluded because Messenger has its own
+        unread source from Dialogue unread messages.
         """
         count = (
             Notification.objects
@@ -150,7 +178,9 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
                 user=request.user,
                 is_read=False,
             )
-            .exclude(notification_type__in=NOTIFICATION_TYPES_PUSH_EMAIL_ONLY)
+            .exclude(
+                notification_type__in=NOTIFICATION_TYPES_EXCLUDED_FROM_GENERAL_UNREAD
+            )
             .count()
         )
 
@@ -158,35 +188,52 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 # -------------------------------------------------------------------
-# User Notification Preference ViewSet  (Final Auto-Sync Version)
+# User Notification Preference ViewSet
 # -------------------------------------------------------------------
 class UserNotificationPreferenceViewSet(viewsets.ModelViewSet):
+    """
+    Manage general notification preferences.
+
+    Messenger notification types are intentionally excluded from this endpoint.
+    Messenger should later use conversation-level mute/silence settings instead.
+    """
     serializer_class = UserNotificationPreferenceSerializer
     permission_classes = [IsAuthenticated]
 
-    def get_queryset(self):
+    def _allowed_preference_types_for_user(self, user) -> set[str]:
         """
-        Return only the valid preferences for the current user's active profile.
+        Return notification types that are actually user-configurable.
 
-        Rules:
-        - Member users can have all notification preference types.
-        - Guest users can only have guest-safe notification types.
-        - Missing valid preferences are auto-created.
-        - Old invalid preferences are auto-pruned.
+        Message notification types are force-enabled/push-only and should not
+        appear in general preference settings.
         """
-        user = self.request.user
         allowed_types = get_allowed_notification_types_for_user(user)
 
-        # Only valid prefs for the current active profile
+        return set(allowed_types) - set(NOTIFICATION_TYPES_FORCE_ENABLED)
+
+    def get_queryset(self):
+        """
+        Return only valid general notification preferences for current user.
+
+        Rules:
+        - Member users can have general notification preference types.
+        - Guest users can only have guest-safe general types.
+        - Messenger preference rows are excluded and pruned.
+        - Missing valid preferences are auto-created.
+        """
+        user = self.request.user
+        allowed_types = self._allowed_preference_types_for_user(user)
+
         qs = UserNotificationPreference.objects.filter(
             user=user,
             notification_type__in=allowed_types,
         )
 
-        existing_types = set(qs.values_list("notification_type", flat=True))
+        existing_types = set(
+            qs.values_list("notification_type", flat=True)
+        )
         missing_types = allowed_types - existing_types
 
-        # Auto-create missing valid prefs
         if missing_types:
             objs = [
                 UserNotificationPreference(
@@ -204,7 +251,8 @@ class UserNotificationPreferenceViewSet(viewsets.ModelViewSet):
                 notification_type__in=allowed_types,
             )
 
-        # Auto-prune invalid prefs left from older profile mode / older system state
+        # Prune invalid or no-longer-user-configurable preference rows.
+        # This removes old message preference rows too.
         UserNotificationPreference.objects.filter(user=user).exclude(
             notification_type__in=allowed_types
         ).delete()
@@ -217,34 +265,51 @@ class UserNotificationPreferenceViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
 
+    # -----------------------------------------------------------------
     @action(detail=True, methods=["patch"])
     def enable_email(self, request, pk=None):
         pref = self.get_object()
         pref.channels_mask |= CHANNEL_EMAIL
         pref.save(update_fields=["channels_mask"])
-        return Response(UserNotificationPreferenceSerializer(pref).data)
 
+        return Response(
+            UserNotificationPreferenceSerializer(pref).data
+        )
+
+    # -----------------------------------------------------------------
     @action(detail=True, methods=["patch"])
     def disable_email(self, request, pk=None):
         pref = self.get_object()
         pref.channels_mask &= ~CHANNEL_EMAIL
         pref.save(update_fields=["channels_mask"])
-        return Response(UserNotificationPreferenceSerializer(pref).data)
 
+        return Response(
+            UserNotificationPreferenceSerializer(pref).data
+        )
+
+    # -----------------------------------------------------------------
     @action(detail=True, methods=["patch"])
     def enable_push(self, request, pk=None):
         pref = self.get_object()
         pref.channels_mask |= CHANNEL_PUSH
         pref.save(update_fields=["channels_mask"])
-        return Response(UserNotificationPreferenceSerializer(pref).data)
 
+        return Response(
+            UserNotificationPreferenceSerializer(pref).data
+        )
+
+    # -----------------------------------------------------------------
     @action(detail=True, methods=["patch"])
     def disable_push(self, request, pk=None):
         pref = self.get_object()
         pref.channels_mask &= ~CHANNEL_PUSH
         pref.save(update_fields=["channels_mask"])
-        return Response(UserNotificationPreferenceSerializer(pref).data)
 
+        return Response(
+            UserNotificationPreferenceSerializer(pref).data
+        )
+
+    # -----------------------------------------------------------------
     @action(detail=False, methods=["post"])
     def reset_defaults(self, request):
         prefs = self.get_queryset()
@@ -252,19 +317,29 @@ class UserNotificationPreferenceViewSet(viewsets.ModelViewSet):
             enabled=True,
             channels_mask=CHANNEL_DEFAULT,
         )
+
         return Response(
-            UserNotificationPreferenceSerializer(prefs, many=True).data
+            UserNotificationPreferenceSerializer(
+                prefs,
+                many=True,
+            ).data
         )
 
+    # -----------------------------------------------------------------
     @action(detail=False, methods=["get"])
     def metadata(self, request):
         """
-        Return only metadata relevant to the current user's active profile.
+        Return metadata for user-configurable general notification preferences.
+
+        Messenger is excluded because it is controlled by Messenger-specific
+        read/unread and future mute settings.
         """
-        allowed_types = get_allowed_notification_types_for_user(request.user)
+        allowed_types = self._allowed_preference_types_for_user(request.user)
+
         filtered = {
             notif_type: meta
             for notif_type, meta in NOTIFICATION_PREF_METADATA.items()
             if notif_type in allowed_types
         }
+
         return Response(filtered)

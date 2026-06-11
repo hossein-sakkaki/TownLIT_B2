@@ -3,7 +3,7 @@ from django.apps import apps
 from apps.posts.models.witness import Witness
             
 
-from apps.posts.constants import REACTION_TYPE_CHOICES
+from apps.posts.constants.constants import REACTION_TYPE_CHOICES
 import logging
 logger = logging.getLogger(__name__)
 from django.contrib.auth import get_user_model

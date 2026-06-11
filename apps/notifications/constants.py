@@ -7,6 +7,7 @@ class NotificationVerb(str, Enum):
     COMMENT = "comment"
     REPLY = "reply"
 
+
 # Flat, stable types (good for analytics & prefs)
 NOTIFICATION_TYPES = [
     # --- Content Interactions ---
@@ -45,6 +46,7 @@ NOTIFICATION_TYPES = [
     ("new_testimony_written", "New Written Testimony"),
     ("new_testimony_audio", "New Audio Testimony"),
     ("new_testimony_video", "New Video Testimony"),
+    ("testimony_video_rejected", "Video Testimony Not Accepted"),
 
     # --- Sanctuary ---
     ("sanctuary_admin_assignment", "Sanctuary: Admin Assignment"),
@@ -105,8 +107,45 @@ GUEST_ALLOWED_NOTIFICATION_TYPES = {
 }
 
 
-# Types that should only send Push and Email notifications (no WebSocket) ---------
+# Types that should only send Push and Email notifications (no WebSocket).
+# Keep messenger out of this set because messenger must never send email.
 NOTIFICATION_TYPES_PUSH_EMAIL_ONLY = {
+    "testimony_video_rejected",
+}
+
+
+# Types that must never send email.
+# Messenger notifications should stay realtime/push only.
+NOTIFICATION_TYPES_NO_EMAIL = {
+    "new_message_direct",
+    "new_message_group",
+}
+
+# Notification types that are not controlled by general notification preferences.
+# Messenger should be controlled later by conversation-level mute settings.
+NOTIFICATION_TYPES_FORCE_ENABLED = {
+    "new_message_direct",
+    "new_message_group",
+}
+
+# Types that should not be counted in the general notification unread badge.
+# Messenger has its own unread source from Dialogue unread messages.
+NOTIFICATION_TYPES_EXCLUDED_FROM_GENERAL_UNREAD = {
+    "new_message_direct",
+    "new_message_group",
+}
+
+# Types that should not be persisted in the general Notification table.
+# Messenger has its own inbox, unread count, and realtime channel.
+NOTIFICATION_TYPES_PUSH_ONLY = {
+    "new_message_direct",
+    "new_message_group",
+}
+
+
+# Types that should not appear in the Notification Center list.
+# This also hides old message notification records if they already exist.
+NOTIFICATION_TYPES_EXCLUDED_FROM_NOTIFICATION_CENTER = {
     "new_message_direct",
     "new_message_group",
 }
@@ -234,20 +273,6 @@ NOTIFICATION_PREF_METADATA = {
         "category": "LITCovenant",
         "label": "LITCovenant cancelled",
         "description": "You will be notified when a LITCovenant relationship is cancelled.",
-    },
-
-    # ------------------------
-    # MESSAGES
-    # ------------------------
-    "new_message_direct": {
-        "category": "Messages",
-        "label": "New direct message",
-        "description": "You will be notified when someone sends you a direct message.",
-    },
-    "new_message_group": {
-        "category": "Messages",
-        "label": "New group message",
-        "description": "You will be notified when someone sends a new message in a group you are part of.",
     },
 
     # ------------------------

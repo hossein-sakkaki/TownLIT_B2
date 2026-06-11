@@ -6,7 +6,7 @@ from django_cryptography.fields import encrypt
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 
-from apps.posts.constants import REACTION_TYPE_CHOICES
+from apps.posts.constants.constants import REACTION_TYPE_CHOICES
 from apps.posts.utils.content_router import resolve_content_path
 import logging
 logger = logging.getLogger(__name__)

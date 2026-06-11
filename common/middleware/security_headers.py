@@ -1,4 +1,5 @@
 # common/middleware/security_headers.py
+
 from django.utils.deprecation import MiddlewareMixin
 
 class ContentSecurityPolicyMiddleware(MiddlewareMixin):

@@ -48,6 +48,18 @@ custom_paths = [
         name="unified-profile-moments",
     ),
 
+    path(
+        "profile/<str:username>/prayers/",
+        VisitorProfileViewSet.as_view({"get": "unified_prayers"}),
+        name="unified-profile-prayers",
+    ),
+
+    path(
+        "profile/<str:username>/friends/",
+        VisitorProfileViewSet.as_view({"get": "unified_friends"}),
+        name="unified-profile-friends",
+    ),
+
     # Member public profile
     path(
         "members/profile/<str:username>/",

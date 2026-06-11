@@ -19,6 +19,7 @@ from apps.subtitles.serializers import (
     SubtitleTrackMiniSerializer,
     VoiceTrackMiniSerializer,
 )
+from apps.subtitles.services.testimony_review import assert_transcript_ai_allowed
 from apps.subtitles.services.ensure import ensure_subtitle_track
 from apps.subtitles.services.ensure_voice import ensure_voice_track
 from apps.subtitles.selectors import get_tracks_for_transcript
@@ -71,6 +72,14 @@ class SubtitleTrackViewSet(viewsets.ReadOnlyModelViewSet):
                 status=drf_status.HTTP_404_NOT_FOUND,
             )
 
+        try:
+            assert_transcript_ai_allowed(transcript)
+        except Exception as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=drf_status.HTTP_403_FORBIDDEN,
+            )
+            
         try:
             track = ensure_subtitle_track(
                 transcript=transcript,
@@ -167,6 +176,14 @@ class VoiceTrackViewSet(viewsets.ReadOnlyModelViewSet):
                 status=drf_status.HTTP_404_NOT_FOUND,
             )
 
+        try:
+            assert_transcript_ai_allowed(subtitle.transcript)
+        except Exception as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=drf_status.HTTP_403_FORBIDDEN,
+            )
+            
         # Best-effort gender resolution (your helper)
         from apps.subtitles.services.ownership import resolve_owner_gender_from_transcript
         owner_gender = resolve_owner_gender_from_transcript(subtitle.transcript)  # "Male"/"Female"/None

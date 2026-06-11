@@ -1,3 +1,5 @@
+# validators/mediaValidators/video_validators.py
+
 import os
 import ffmpeg
 import mimetypes
@@ -12,6 +14,7 @@ from validators.mime_type_validator import validate_file_type
 from validators.mediaValidators.ugc_policies import (
     MOMENT_VIDEO_POLICY,
     TESTIMONY_VIDEO_POLICY,
+    PRAYER_VIDEO_POLICY,
     VideoPolicy,
     compute_max_allowed_mb,
 )
@@ -161,6 +164,8 @@ def validate_video_file(value, policy: VideoPolicy = MOMENT_VIDEO_POLICY):
 def validate_moment_video_file(value):
     return validate_video_file(value, policy=MOMENT_VIDEO_POLICY)
 
-
 def validate_testimony_video_file(value):
     return validate_video_file(value, policy=TESTIMONY_VIDEO_POLICY)
+
+def validate_prayer_video_file(value):
+    return validate_video_file(value, policy=PRAYER_VIDEO_POLICY)

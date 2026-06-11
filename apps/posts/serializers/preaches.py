@@ -6,7 +6,7 @@ from apps.posts.models.preach import Preach
 from apps.accounts.serializers.user_serializers import SimpleCustomUserSerializer 
 from apps.profilesOrg.serializers_min import SimpleOrganizationSerializer
 
-from apps.posts.constants import REACTION_TYPE_CHOICES
+from apps.posts.constants.constants import REACTION_TYPE_CHOICES
 import logging
 logger = logging.getLogger(__name__)
 from django.contrib.auth import get_user_model

@@ -58,14 +58,20 @@ class FriendshipSerializer(serializers.ModelSerializer):
         )
 
     def to_representation(self, instance):
-        rep = super().to_representation(instance)
-        # hard guard: if any side is deleted, suppress this record
         try:
-            if instance.from_user.is_deleted or instance.to_user.is_deleted:
+            if (
+                instance.from_user.is_deleted
+                or instance.to_user.is_deleted
+                or instance.from_user.is_suspended
+                or instance.to_user.is_suspended
+                or not instance.from_user.is_active
+                or not instance.to_user.is_active
+            ):
                 return None
         except Exception:
-            pass
-        return rep
+            return None
+
+        return super().to_representation(instance)
 
 
 # PEOPLE SUGGESTION Serializer ------------------------------------------------------------------------

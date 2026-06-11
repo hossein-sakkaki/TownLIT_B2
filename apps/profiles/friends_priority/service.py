@@ -74,7 +74,16 @@ def get_friends_for_profile(
         return qs[:limit] if isinstance(limit, int) and limit > 0 else qs
 
     # ✅ Fetch ONCE
-    friends_list = list(base_qs.only("id", "username", "image_name"))
+    friends_list = list(
+        base_qs.only(
+            "id",
+            "username",
+            "image_name",
+            "is_active",
+            "is_deleted",
+            "is_suspended",
+        )
+    )
 
     # ✅ HARD RULE: deterministic grouping
     with_custom, with_default = _split_by_profile_image(friends_list)

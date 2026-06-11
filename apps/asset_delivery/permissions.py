@@ -178,3 +178,6 @@ def safe_can_view_target(request, target_obj) -> bool:
         pass
 
     return False
+
+
+

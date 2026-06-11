@@ -7,3 +7,6 @@ router = DefaultRouter()
 router.register(r"playback", AssetPlaybackViewSet, basename="asset-playback")
 
 urlpatterns = router.urls
+
+
+
