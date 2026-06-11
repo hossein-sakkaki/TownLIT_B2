@@ -203,7 +203,7 @@ INSTALLED_APPS = [
     
     # "apps.core.streams.apps.StreamsConfig",
     "apps.core.interactions",
-    "apps.core.boundaries.apps.BoundariesConfig",
+    # "apps.core.boundaries.apps.BoundariesConfig",
     
     'apps.asset_delivery.apps.AssetDeliveryConfig',
     "apps.subtitles.apps.SubtitlesConfig",
