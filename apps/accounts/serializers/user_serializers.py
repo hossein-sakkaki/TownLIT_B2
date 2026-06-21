@@ -488,6 +488,10 @@ class SimpleCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
     avatar_cdn_url = serializers.SerializerMethodField()
     avatar_version = serializers.IntegerField(read_only=True)
 
+    # --- Mutual friends preview ---
+    mutual_friends_count = serializers.SerializerMethodField()
+    mutual_friends = serializers.SerializerMethodField()
+    
     class Meta:
         model = CustomUser
         fields = [
@@ -518,6 +522,10 @@ class SimpleCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
             "avatar_url",
             "avatar_cdn_url",
             "avatar_version",
+            
+            # mutual friends
+            "mutual_friends_count",
+            "mutual_friends",
         ]
         read_only_fields = ["id"]
 
@@ -580,6 +588,36 @@ class SimpleCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
         """
         return self.context.get("fellowship_ids", {}).get(obj.id)
 
+    # ---------------------------------------------------------------
+    # Mutual friends preview
+    # ---------------------------------------------------------------
+
+    def get_mutual_friends_count(self, obj):
+        """
+        Count of mutual friends between request.user and this suggested user.
+
+        Expected context:
+          mutual_count_map: { suggested_user_id: count }
+        """
+        mutual_count_map = self.context.get("mutual_count_map", {})
+        return int(mutual_count_map.get(obj.id, 0) or 0)
+
+    def get_mutual_friends(self, obj):
+        """
+        Preview list of mutual friends.
+
+        Expected context:
+          mutual_preview_map: { suggested_user_id: [CustomUser, ...] }
+        """
+        mutual_preview_map = self.context.get("mutual_preview_map", {})
+        mutual_users = mutual_preview_map.get(obj.id, [])
+
+        return SimpleMutualFriendSerializer(
+            mutual_users,
+            many=True,
+            context=self.context,
+        ).data
+        
     # ---------------------------------------------------------------
     # Profile URL
     # ---------------------------------------------------------------
@@ -660,7 +698,44 @@ class UserMiniSerializer(AvatarURLMixin, serializers.ModelSerializer):
         mp = getattr(obj, "member_profile", None)
         return bool(mp and mp.is_townlit_verified)
 
+# Compact serializer for mutual friends preview -----------------------------------------------
+class SimpleMutualFriendSerializer(AvatarURLMixin, serializers.ModelSerializer):
+    label_color = serializers.CharField(source="label.color", read_only=True)
+    profile_url = serializers.SerializerMethodField()
+    avatar_url = serializers.SerializerMethodField()
+    avatar_cdn_url = serializers.SerializerMethodField()
+    is_townlit_verified = serializers.SerializerMethodField()
 
+    class Meta:
+        model = CustomUser
+        fields = [
+            "id",
+            "username",
+            "label_color",
+            "profile_url",
+            "is_verified_identity",
+            "is_townlit_verified",
+            "avatar_url",
+            "avatar_cdn_url",
+        ]
+        read_only_fields = ["id"]
+
+    def get_profile_url(self, obj):
+        try:
+            return obj.get_absolute_url()
+        except Exception:
+            return None
+
+    def get_avatar_url(self, obj):
+        return self.build_avatar_url(obj)
+
+    def get_avatar_cdn_url(self, obj):
+        return self.build_avatar_cdn_url(obj)
+
+    def get_is_townlit_verified(self, obj):
+        mp = getattr(obj, "member_profile", None)
+        return bool(mp and mp.is_townlit_verified)
+    
 # Reactivation User Serializers -----------------------------------------------------------------------
 class ReactivationUserSerializer(serializers.ModelSerializer):
     """

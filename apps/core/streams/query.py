@@ -12,6 +12,7 @@ from apps.core.streams.constants import (
     STREAM_SCOPE_PROFILE,
     STREAM_SCOPE_OWNER,
     STREAM_SCOPE_GLOBAL,
+    STREAM_SCOPE_MESSENGER,
 )
 
 
@@ -191,6 +192,9 @@ class StreamQuery:
                 qs,
                 viewer,
             )
+
+        if scope == STREAM_SCOPE_MESSENGER:
+            return qs
 
         if scope == STREAM_SCOPE_GLOBAL:
             return qs

@@ -10,7 +10,10 @@ from apps.core.streams.constants import (
     STREAM_KINDS,
     STREAM_SCOPES,
     STREAM_MODES,
-    STREAM_MAX_EXTENSIONS,
+    STREAM_SCOPE_SQUARE,
+    STREAM_SQUARE_MAX_EXTENSIONS,
+    STREAM_SQUARE_PAGE_SIZE,
+    STREAM_LIMITED_EXTENSION_SCOPES,
 )
 from apps.core.streams.context import parse_stream_context
 from apps.core.streams.engine import StreamEngine
@@ -23,6 +26,10 @@ from apps.core.streams.serializers import StreamItemSerializer
 class StreamViewSet(viewsets.ViewSet):
     """
     Universal content stream endpoint.
+
+    Important policy:
+    - Square streams are intentionally limited.
+    - Profile/owner/global streams are not blocked by the Square anti-addiction limit.
     """
 
     permission_classes = [AllowAny]
@@ -34,7 +41,7 @@ class StreamViewSet(viewsets.ViewSet):
         if validation_error:
             return validation_error
 
-        if context.extension >= STREAM_MAX_EXTENSIONS:
+        if self._is_square_limit_reached(context):
             return Response(
                 {
                     "next": None,
@@ -46,6 +53,7 @@ class StreamViewSet(viewsets.ViewSet):
                     "extension": context.extension,
                     "can_continue": False,
                     "limit_reached": True,
+                    "policy": self._policy_payload(context),
                 },
                 status=status.HTTP_200_OK,
             )
@@ -102,15 +110,19 @@ class StreamViewSet(viewsets.ViewSet):
 
         return Response(
             {
-                "next": page.next_cursor,
+                "next": self._resolved_next_cursor(
+                    context=context,
+                    next_cursor=page.next_cursor,
+                ),
                 "results": results,
                 "kind": page.kind,
                 "subtype": page.subtype,
                 "scope": page.scope,
                 "mode": page.mode,
                 "extension": page.extension,
-                "can_continue": context.extension + 1 < STREAM_MAX_EXTENSIONS,
+                "can_continue": self._can_continue(context),
                 "limit_reached": False,
+                "policy": self._policy_payload(context),
             },
             status=status.HTTP_200_OK,
         )
@@ -145,5 +157,79 @@ class StreamViewSet(viewsets.ViewSet):
             )
 
         return None
+
+    def _is_limited_extension_scope(self, context) -> bool:
+        return context.scope in STREAM_LIMITED_EXTENSION_SCOPES
+
+    def _is_square_limit_reached(self, context) -> bool:
+        if not self._is_limited_extension_scope(context):
+            return False
+
+        current_extension = max(
+            int(context.extension or 0),
+            0,
+        )
+
+        return current_extension >= STREAM_SQUARE_MAX_EXTENSIONS
+
+    def _can_continue(self, context) -> bool:
+        """
+        Limited extension scopes allow exactly STREAM_SQUARE_MAX_EXTENSIONS batches.
+
+        With STREAM_SQUARE_MAX_EXTENSIONS = 3:
+        extension=0 -> can continue to extension=1
+        extension=1 -> can continue to extension=2
+        extension=2 -> stop after this batch
+        """
+
+        if not self._is_limited_extension_scope(context):
+            return False
+
+        current_extension = max(
+            int(context.extension or 0),
+            0,
+        )
+
+        last_allowed_extension = STREAM_SQUARE_MAX_EXTENSIONS - 1
+
+        return current_extension < last_allowed_extension
+
+    def _resolved_next_cursor(
+        self,
+        *,
+        context,
+        next_cursor,
+    ):
+        """
+        Limited extension scopes advance by explicit extensions, not automatic
+        cursor pagination.
+
+        Non-limited scopes can keep cursor pagination.
+        """
+
+        if self._is_limited_extension_scope(context):
+            return None
+
+        return next_cursor
     
-    
+    def _policy_payload(self, context) -> dict:
+        """
+        Expose stream policy to clients so UI does not hard-code limits.
+        """
+
+        if self._is_limited_extension_scope(context):
+            return {
+                "scope": context.scope,
+                "is_limited": True,
+                "batch_size": STREAM_SQUARE_PAGE_SIZE,
+                "batch_count": STREAM_SQUARE_MAX_EXTENSIONS,
+                "max_items": STREAM_SQUARE_PAGE_SIZE * STREAM_SQUARE_MAX_EXTENSIONS,
+            }
+
+        return {
+            "scope": context.scope,
+            "is_limited": False,
+            "batch_size": None,
+            "batch_count": None,
+            "max_items": None,
+        }

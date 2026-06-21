@@ -1,6 +1,7 @@
 # apps/core/streams/context.py
 
 from dataclasses import dataclass
+from urllib.parse import unquote_plus
 
 from django.utils.dateparse import parse_datetime
 
@@ -37,8 +38,14 @@ class StreamContext:
 
     @property
     def is_first_page(self) -> bool:
-        
-        return self.cursor is None
+        """
+        A true first page has no cursor and extension=0.
+
+        This is important because profile streams use cursor pagination while
+        keeping extension=0.
+        """
+
+        return self.extension == 0 and self.cursor is None
 
 
 def parse_stream_context(request) -> StreamContext:
@@ -48,16 +55,30 @@ def parse_stream_context(request) -> StreamContext:
 
     viewer = request.user if request.user.is_authenticated else None
 
-    kind = (request.query_params.get("kind") or "").strip()
-    seed_id_raw = (request.query_params.get("seed_id") or "").strip()
-    scope = (request.query_params.get("scope") or STREAM_SCOPE_SQUARE).strip()
-    mode = (request.query_params.get("mode") or STREAM_MODE_RELATED).strip()
-    username = (request.query_params.get("username") or "").strip() or None
+    kind = clean_query_value(
+        request.query_params.get("kind")
+    ) or ""
 
-    try:
-        seed_id = int(seed_id_raw)
-    except Exception:
-        seed_id = 0
+    seed_id_raw = clean_query_value(
+        request.query_params.get("seed_id")
+    ) or ""
+
+    scope = clean_query_value(
+        request.query_params.get("scope")
+    ) or STREAM_SCOPE_SQUARE
+
+    mode = clean_query_value(
+        request.query_params.get("mode")
+    ) or STREAM_MODE_RELATED
+
+    username = clean_query_value(
+        request.query_params.get("username")
+    )
+
+    seed_id = parse_int(
+        seed_id_raw,
+        fallback=0,
+    )
 
     extension_raw = (
         request.query_params.get("ext")
@@ -65,10 +86,13 @@ def parse_stream_context(request) -> StreamContext:
         or 0
     )
 
-    try:
-        extension = max(int(extension_raw), 0)
-    except Exception:
-        extension = 0
+    extension = max(
+        parse_int(
+            extension_raw,
+            fallback=0,
+        ),
+        0,
+    )
 
     cursor = parse_stream_cursor(
         request.query_params.get("cursor")
@@ -89,17 +113,40 @@ def parse_stream_context(request) -> StreamContext:
 def parse_stream_cursor(raw: str | None) -> StreamCursor | None:
     """
     Parse cursor format: published_at|id
+
+    Defensive note:
+    Cursor timestamps contain timezone offsets like +00:00. In query strings,
+    '+' may arrive as a space depending on client/proxy decoding. We normalize
+    that back before calling parse_datetime.
     """
 
-    if not raw:
+    cleaned = clean_query_value(raw)
+
+    if not cleaned:
         return None
 
     try:
-        published_at_raw, id_raw = raw.split("|")
-        published_at = parse_datetime(published_at_raw)
-        object_id = int(id_raw)
+        cleaned = unquote_plus(cleaned)
+        cleaned = cleaned.replace(" ", "+")
 
-        if not published_at:
+        if "|" not in cleaned:
+            return None
+
+        published_at_raw, id_raw = cleaned.rsplit("|", 1)
+
+        published_at_raw = clean_query_value(published_at_raw)
+        id_raw = clean_query_value(id_raw)
+
+        if not published_at_raw or not id_raw:
+            return None
+
+        published_at = parse_datetime(published_at_raw)
+        object_id = parse_int(
+            id_raw,
+            fallback=0,
+        )
+
+        if not published_at or object_id <= 0:
             return None
 
         return StreamCursor(
@@ -109,3 +156,28 @@ def parse_stream_cursor(raw: str | None) -> StreamCursor | None:
 
     except Exception:
         return None
+
+
+def parse_int(
+    value,
+    *,
+    fallback: int,
+) -> int:
+    try:
+        cleaned = clean_query_value(value)
+
+        if not cleaned:
+            return fallback
+
+        return int(cleaned)
+    except Exception:
+        return fallback
+
+
+def clean_query_value(value) -> str | None:
+    if value is None:
+        return None
+
+    cleaned = str(value).strip()
+
+    return cleaned or None

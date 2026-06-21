@@ -349,7 +349,7 @@ class StreamItemSerializer(serializers.Serializer):
 
     def _attach_prayer_response_preview(self, *, data: dict, prayer) -> dict:
         """
-        Add response preview for prayer.
+        Add response metadata and preview for prayer.
         """
 
         response = getattr(prayer, "response", None)
@@ -360,26 +360,18 @@ class StreamItemSerializer(serializers.Serializer):
 
         response_subtype = "video" if getattr(response, "video", None) else "image"
 
-        response_data = data.get("response") or {}
+        existing_response_data = data.get("response")
+        response_data = dict(existing_response_data) if isinstance(existing_response_data, dict) else {}
 
-        if isinstance(response_data, dict):
-            response_data["preview"] = self._safe_preview_for(
-                response,
-                subtype=response_subtype,
-            )
-            data["response"] = response_data
-            return data
+        response_data["id"] = getattr(response, "id", None)
+        response_data["result_status"] = getattr(response, "result_status", None)
+        response_data["response_text"] = getattr(response, "response_text", None)
+        response_data["preview"] = self._safe_preview_for(
+            response,
+            subtype=response_subtype,
+        )
 
-        data["response"] = {
-            "id": getattr(response, "id", None),
-            "result_status": getattr(response, "result_status", None),
-            "response_text": getattr(response, "response_text", None),
-            "preview": self._safe_preview_for(
-                response,
-                subtype=response_subtype,
-            ),
-        }
-
+        data["response"] = response_data
         return data
 
     # ------------------------------------------------------------------

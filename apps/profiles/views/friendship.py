@@ -77,7 +77,109 @@ class FriendshipViewSet(viewsets.ModelViewSet):
             and not getattr(user, "is_deleted", False)
             and not getattr(user, "is_suspended", False)
         ]
-        
+
+    # ------------------------------------------------------------------
+    # Mutual preview helpers
+    # ------------------------------------------------------------------
+    def _build_mutual_preview_context(
+        self,
+        viewer,
+        candidates,
+        preview_limit=5,
+    ):
+        candidate_ids = [candidate.id for candidate in candidates]
+
+        if not candidate_ids:
+            return {}, {}
+
+        viewer_friend_edges = Friendship.objects.filter(
+            Q(from_user=viewer) | Q(to_user=viewer),
+            status="accepted",
+        ).values_list(
+            "from_user_id",
+            "to_user_id",
+        )
+
+        viewer_friend_ids = set()
+
+        for from_user_id, to_user_id in viewer_friend_edges:
+            if from_user_id == viewer.id:
+                viewer_friend_ids.add(to_user_id)
+            else:
+                viewer_friend_ids.add(from_user_id)
+
+        if not viewer_friend_ids:
+            return {}, {}
+
+        candidate_friend_edges = Friendship.objects.filter(
+            (
+                Q(from_user_id__in=candidate_ids, to_user_id__in=viewer_friend_ids)
+                | Q(to_user_id__in=candidate_ids, from_user_id__in=viewer_friend_ids)
+            ),
+            status="accepted",
+        ).values_list(
+            "from_user_id",
+            "to_user_id",
+        )
+
+        mutual_ids_by_candidate = {
+            candidate_id: []
+            for candidate_id in candidate_ids
+        }
+
+        for from_user_id, to_user_id in candidate_friend_edges:
+            if from_user_id in candidate_ids and to_user_id in viewer_friend_ids:
+                mutual_ids_by_candidate[from_user_id].append(to_user_id)
+
+            elif to_user_id in candidate_ids and from_user_id in viewer_friend_ids:
+                mutual_ids_by_candidate[to_user_id].append(from_user_id)
+
+        all_mutual_ids = {
+            mutual_id
+            for mutual_ids in mutual_ids_by_candidate.values()
+            for mutual_id in mutual_ids
+        }
+
+        if not all_mutual_ids:
+            return {}, {}
+
+        mutual_users = (
+            CustomUser.objects
+            .filter(
+                id__in=all_mutual_ids,
+                is_active=True,
+                is_deleted=False,
+                is_suspended=False,
+            )
+            .select_related(
+                "label",
+                "member_profile",
+            )
+        )
+
+        mutual_user_map = {
+            mutual_user.id: mutual_user
+            for mutual_user in mutual_users
+        }
+
+        mutual_count_map = {}
+        mutual_preview_map = {}
+
+        for candidate_id, mutual_ids in mutual_ids_by_candidate.items():
+            unique_ids = list(dict.fromkeys(mutual_ids))
+
+            mutual_count_map[candidate_id] = len(unique_ids)
+
+            preview_users = [
+                mutual_user_map[mutual_id]
+                for mutual_id in unique_ids[:preview_limit]
+                if mutual_id in mutual_user_map
+            ]
+
+            mutual_preview_map[candidate_id] = preview_users
+
+        return mutual_count_map, mutual_preview_map
+
     # ------------------------------------------------------------------    
     # Actions
     # ------------------------------------------------------------------
@@ -496,35 +598,44 @@ class FriendshipViewSet(viewsets.ModelViewSet):
     # ------------------------------------------------------------------------------------------------------
     @action(
         detail=False,
-        methods=['get'],
-        url_path='friends-suggestions',
-        permission_classes=[IsAuthenticated]
+        methods=["get"],
+        url_path="friends-suggestions",
+        permission_classes=[IsAuthenticated],
     )
     def friends_suggestions(self, request):
         user = request.user
-        limit = int(request.query_params.get('limit', 5))
 
-        suggestions = suggest_friends_for_friends_tab(user, limit)
+        try:
+            limit = int(request.query_params.get("limit", 5))
+        except (TypeError, ValueError):
+            limit = 5
+
+        limit = max(1, min(limit, 20))
 
         excluded_ids = BoundaryPolicy.excluded_user_ids_for_suggestions(user)
 
-        if hasattr(suggestions, "select_related"):
-            suggestions = (
-                suggestions
-                .filter(is_active=True, is_deleted=False, is_suspended=False)
-                .exclude(id__in=excluded_ids)
-                .select_related("label", "member_profile")
-            )
-        else:
-            suggestions = [
-                item for item in self._filter_visible_user_list(list(suggestions))
-                if item.id not in excluded_ids
-            ]
+        suggestions = suggest_friends_for_friends_tab(
+            user=user,
+            limit=limit,
+            extra_exclude_ids=excluded_ids,
+        )
+
+        suggestions = self._filter_visible_user_list(list(suggestions))
+
+        mutual_count_map, mutual_preview_map = self._build_mutual_preview_context(
+            viewer=user,
+            candidates=suggestions,
+            preview_limit=5,
+        )
 
         serializer = SimpleCustomUserSerializer(
             suggestions,
             many=True,
-            context={"request": request}
+            context={
+                "request": request,
+                "mutual_count_map": mutual_count_map,
+                "mutual_preview_map": mutual_preview_map,
+            },
         )
 
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -532,29 +643,42 @@ class FriendshipViewSet(viewsets.ModelViewSet):
     # ------------------------------------------------------------------------------------------------------
     @action(
         detail=False,
-        methods=['get'],
-        url_path='requests-suggestions',
-        permission_classes=[IsAuthenticated]
+        methods=["get"],
+        url_path="requests-suggestions",
+        permission_classes=[IsAuthenticated],
     )
     def requests_suggestions(self, request):
         user = request.user
-        limit = int(request.query_params.get('limit', 5))
 
-        suggestions = suggest_friends_for_requests_tab(user, limit)
+        try:
+            limit = int(request.query_params.get("limit", 5))
+        except (TypeError, ValueError):
+            limit = 5
 
-        if hasattr(suggestions, "select_related"):
-            suggestions = (
-                suggestions
-                .filter(is_active=True, is_deleted=False, is_suspended=False)
-                .select_related("label", "member_profile")
-            )
-        else:
-            suggestions = self._filter_visible_user_list(list(suggestions))
+        limit = max(1, min(limit, 20))
+
+        excluded_ids = BoundaryPolicy.excluded_user_ids_for_suggestions(user)
+
+        suggestions = suggest_friends_for_requests_tab(
+            user=user,
+            limit=limit,
+            extra_exclude_ids=excluded_ids,
+        )
+
+        suggestions = self._filter_visible_user_list(list(suggestions))
 
         serializer = SimpleCustomUserSerializer(
             suggestions,
             many=True,
-            context={"request": request}
+            context={
+                "request": request,
+
+                # Important:
+                # Requests suggestions should not provide mutual friends.
+                # Friend-of-friend suggestions belong to friends-suggestions.
+                "mutual_count_map": {},
+                "mutual_preview_map": {},
+            },
         )
 
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -568,98 +692,131 @@ class FriendshipViewSet(viewsets.ModelViewSet):
     )
     def people_suggestions(self, request):
         """
-        Square → People tab (paged).
+        Discover tab / Square → Discover tab (paged).
 
         Returns:
-          - ranked users (20/page)
-          - mutual_friends_count (annotated in selector)
-          - mutual_friends preview (list of mini users: username + profile_url clickable)
+        - ranked users
+        - mutual_friends_count
+        - mutual_friends preview
+        - shared signals such as same_country, same_language, same_branch, same_family
         """
         try:
             viewer = request.user
 
-            # 1) Ranked suggestions queryset (your selector)
             qs = get_people_suggestions_queryset(viewer)
+
             qs = qs.filter(
                 is_active=True,
                 is_deleted=False,
                 is_suspended=False,
             )
-            
+
             excluded_ids = BoundaryPolicy.excluded_user_ids_for_suggestions(viewer)
-            qs = qs.exclude(id__in=excluded_ids)
 
-            # 2) Pagination
+            if excluded_ids:
+                qs = qs.exclude(id__in=excluded_ids)
+
             page = self.paginate_queryset(qs)
-            if page is None:
-                page = list(qs[: getattr(self, "pagination_page_size", 20)])
 
-            candidate_ids = [u.id for u in page]
+            if page is not None:
+                page_items = list(page)
+            else:
+                page_items = list(qs[:20])
 
-            # 3) Build mutual friends preview map (bulk, for only this page)
+            candidate_ids = [user.id for user in page_items]
+            candidate_ids_set = set(candidate_ids)
+
             viewer_friend_ids = set(get_friend_user_ids(viewer))
-            mutual_preview_map = {cid: [] for cid in candidate_ids}
+            mutual_preview_map = {
+                candidate_id: []
+                for candidate_id in candidate_ids
+            }
 
-            if viewer_friend_ids and candidate_ids:
-                # edges connecting (viewer friends) <-> (candidates)
+            if viewer_friend_ids and candidate_ids_set:
                 edges = (
                     Friendship.objects
-                    .filter(status="accepted", is_active=True)
+                    .filter(
+                        status="accepted",
+                        is_active=True,
+                    )
                     .filter(self._visible_edge_q())
                     .filter(
-                        Q(from_user_id__in=viewer_friend_ids, to_user_id__in=candidate_ids) |
-                        Q(to_user_id__in=viewer_friend_ids, from_user_id__in=candidate_ids)
+                        Q(
+                            from_user_id__in=viewer_friend_ids,
+                            to_user_id__in=candidate_ids_set,
+                        )
+                        | Q(
+                            to_user_id__in=viewer_friend_ids,
+                            from_user_id__in=candidate_ids_set,
+                        )
                     )
-                    .values("from_user_id", "to_user_id")
+                    .values(
+                        "from_user_id",
+                        "to_user_id",
+                    )
                 )
 
-                # candidate_id -> set(mutual_friend_id)
-                mutual_ids_map = {cid: set() for cid in candidate_ids}
+                mutual_ids_map = {
+                    candidate_id: set()
+                    for candidate_id in candidate_ids
+                }
 
-                for e in edges:
-                    a = e["from_user_id"]
-                    b = e["to_user_id"]
+                for edge in edges:
+                    from_user_id = edge["from_user_id"]
+                    to_user_id = edge["to_user_id"]
 
-                    if a in candidate_ids and b in viewer_friend_ids:
-                        mutual_ids_map[a].add(b)
-                    elif b in candidate_ids and a in viewer_friend_ids:
-                        mutual_ids_map[b].add(a)
+                    if from_user_id in candidate_ids_set and to_user_id in viewer_friend_ids:
+                        mutual_ids_map[from_user_id].add(to_user_id)
 
-                # Keep preview small (UI-friendly)
-                PREVIEW_LIMIT = 3
+                    elif to_user_id in candidate_ids_set and from_user_id in viewer_friend_ids:
+                        mutual_ids_map[to_user_id].add(from_user_id)
 
-                # flatten ids (one fetch)
+                preview_limit = 5
+
                 all_mutual_ids = set()
-                for cid, mids in mutual_ids_map.items():
-                    mids_list = list(mids)[:PREVIEW_LIMIT]
-                    mutual_ids_map[cid] = mids_list
-                    all_mutual_ids.update(mids_list)
+
+                for candidate_id, mutual_ids in mutual_ids_map.items():
+                    preview_ids = list(mutual_ids)[:preview_limit]
+                    mutual_ids_map[candidate_id] = preview_ids
+                    all_mutual_ids.update(preview_ids)
 
                 if all_mutual_ids:
                     mutual_users = (
-                        type(viewer).objects
+                        CustomUser.objects
                         .filter(
                             id__in=all_mutual_ids,
                             is_active=True,
                             is_deleted=False,
                             is_suspended=False,
                         )
-                        .select_related("label", "member_profile")
+                        .select_related(
+                            "label",
+                            "member_profile",
+                        )
                     )
-                    mutual_by_id = {u.id: u for u in mutual_users}
 
-                    # serialize per candidate
-                    for cid, mids in mutual_ids_map.items():
-                        objs = [mutual_by_id[mid] for mid in mids if mid in mutual_by_id]
-                        mutual_preview_map[cid] = UserMiniSerializer(
-                            objs,
+                    mutual_by_id = {
+                        mutual_user.id: mutual_user
+                        for mutual_user in mutual_users
+                    }
+
+                    for candidate_id, mutual_ids in mutual_ids_map.items():
+                        mutual_objects = [
+                            mutual_by_id[mutual_id]
+                            for mutual_id in mutual_ids
+                            if mutual_id in mutual_by_id
+                        ]
+
+                        mutual_preview_map[candidate_id] = UserMiniSerializer(
+                            mutual_objects,
                             many=True,
-                            context={"request": request},
+                            context={
+                                "request": request,
+                            },
                         ).data
 
-            # 4) Serialize candidates (includes mutual preview via context)
             serializer = PeopleSuggestionSerializer(
-                page,
+                page_items,
                 many=True,
                 context={
                     "request": request,
@@ -667,12 +824,20 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                 },
             )
 
-            return self.get_paginated_response(serializer.data)
+            if page is not None:
+                return self.get_paginated_response(serializer.data)
+
+            return Response(
+                serializer.data,
+                status=status.HTTP_200_OK,
+            )
 
         except Exception:
             logger.exception("Error in people_suggestions")
             return Response(
-                {"error": "Unable to retrieve people suggestions"},
+                {
+                    "error": "Unable to retrieve people suggestions",
+                },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
         
