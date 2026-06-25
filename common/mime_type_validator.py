@@ -1,3 +1,5 @@
+# apps/common/mime_type_validator.py
+
 import os
 import mimetypes
 

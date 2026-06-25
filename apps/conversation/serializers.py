@@ -18,7 +18,9 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from validators.groupNames.group_name_validator import validate_group_name
 from apps.conversation.services.boundary_access import check_private_dialogue_boundary
 from apps.core.boundaries.serializers import boundary_unavailable_reason_to_text
-
+from apps.conversation.services.message_media_descriptors import (
+    build_message_media_descriptor,
+)
 
 
 # Dialogue Participant Serializer ------------------------------------------------------
@@ -333,6 +335,11 @@ class MessageSerializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
     file_download_url = serializers.SerializerMethodField()
     
+    image_media = serializers.SerializerMethodField()
+    video_media = serializers.SerializerMethodField()
+    audio_media = serializers.SerializerMethodField()
+    file_media = serializers.SerializerMethodField()
+    
     is_pinned = serializers.SerializerMethodField()
     pinned_position = serializers.SerializerMethodField()
 
@@ -359,6 +366,7 @@ class MessageSerializer(serializers.ModelSerializer):
             'video_url','video_download_url',
             'file_url','file_download_url',
             'audio_url','audio_download_url',
+             'image_media', 'video_media', 'audio_media', 'file_media',
             'is_system', 'system_event',
             'self_destruct_at', 'is_encrypted', 'is_encrypted_file',
             'is_pinned', 'pinned_position',
@@ -444,7 +452,7 @@ class MessageSerializer(serializers.ModelSerializer):
             return None
         return get_file_url(getattr(field, 'name', None), force_download=True)
 
-    # ---- getters (فقط برای غیررمز)
+    # ---- getters for file URLs
     def _maybe(self, obj, field_name, download=False):
         if obj.is_encrypted_file:  # DM/E2EE → URL نده
             return None
@@ -460,6 +468,19 @@ class MessageSerializer(serializers.ModelSerializer):
     def get_file_url(self, obj):             return self._maybe(obj, 'file', download=False)
     def get_file_download_url(self, obj):    return self._maybe(obj, 'file', download=True)
 
+    # ---- media descriptors
+    def get_image_media(self, obj):
+        return build_message_media_descriptor(obj, "image", "image")
+
+    def get_video_media(self, obj):
+        return build_message_media_descriptor(obj, "video", "video")
+
+    def get_audio_media(self, obj):
+        return build_message_media_descriptor(obj, "audio", "audio")
+
+    def get_file_media(self, obj):
+        return build_message_media_descriptor(obj, "file", "file")
+    
     #  Seen counters ----------------------------------
     def get_seen_count(self, obj):
         """Number of viewers excluding the sender."""
@@ -500,6 +521,7 @@ class MessageSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         acting_user = request.user if request and hasattr(request, "user") else None
         return build_message_reaction_summary(message=obj, acting_user=acting_user)
+    
     
 # User Dialogue Marker Serializer -----------------------------------------------------
 class UserDialogueMarkerSerializer(serializers.ModelSerializer):

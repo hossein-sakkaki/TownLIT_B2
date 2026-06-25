@@ -22,6 +22,9 @@ from apps.conversation.realtime.mixins.edits import EditDeleteMixin
 from apps.conversation.realtime.mixins.message import MessageMixin
 from apps.conversation.realtime.mixins.read import ReadMixin
 from apps.conversation.realtime.mixins.group_events import ConversationGroupMixin
+from apps.conversation.services.message_media_descriptors import (
+    build_message_media_descriptors,
+)
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -149,6 +152,8 @@ class ConversationHandler(
             "forwarded_from_message_id": getattr(msg, "forwarded_from_id", None),
             "forward_preview": forward_preview,
         }
+
+        payload.update(build_message_media_descriptors(msg))
 
         if has_encryptions:
             device_id = getattr(self, "device_id", None)

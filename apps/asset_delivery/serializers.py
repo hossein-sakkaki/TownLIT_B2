@@ -67,3 +67,87 @@ class PlaybackURLSerializer(serializers.Serializer):
     meta = serializers.DictField(required=False)
 
 
+
+class PlaybackBatchItemSerializer(serializers.Serializer):
+    """
+    One item in a playback batch request.
+
+    Supports both nested target:
+    {
+        "target": {
+            "type": "object",
+            "app_label": "conversation",
+            "model": "message",
+            "object_id": 123
+        },
+        "field_name": "image",
+        "kind": "image",
+        "intent": "view"
+    }
+
+    and flat target fields for compatibility:
+    {
+        "app_label": "conversation",
+        "model": "message",
+        "object_id": 123,
+        "field_name": "image",
+        "kind": "image",
+        "intent": "view"
+    }
+    """
+
+    target = serializers.DictField(required=False)
+
+    app_label = serializers.CharField(required=False, allow_blank=True)
+    model = serializers.CharField(required=False, allow_blank=True)
+    object_id = serializers.IntegerField(required=False)
+    slug = serializers.CharField(required=False, allow_blank=True)
+    content_type_id = serializers.IntegerField(required=False)
+
+    field_name = serializers.CharField()
+    kind = serializers.ChoiceField(
+        choices=["video", "audio", "image", "thumbnail", "file"]
+    )
+    intent = serializers.ChoiceField(
+        choices=PlaybackIntentChoices.CHOICES,
+        required=False,
+        default=PlaybackIntentChoices.PRELOAD,
+    )
+
+
+class PlaybackBatchRequestSerializer(serializers.Serializer):
+    """
+    Batch playback request.
+
+    Keep the limit conservative to protect backend, signing, and permission checks.
+    """
+
+    items = serializers.ListField(
+        child=PlaybackBatchItemSerializer(),
+        min_length=1,
+        max_length=20,
+    )
+
+
+class PlaybackBatchResultSerializer(serializers.Serializer):
+    """
+    One result in a batch response.
+    """
+
+    index = serializers.IntegerField()
+    ok = serializers.BooleanField()
+
+    asset = PlaybackURLSerializer(required=False)
+
+    error = serializers.CharField(required=False, allow_blank=True)
+    status_code = serializers.IntegerField(required=False)
+
+
+class PlaybackBatchResponseSerializer(serializers.Serializer):
+    """
+    Stable batch playback response.
+    """
+
+    results = serializers.ListField(
+        child=PlaybackBatchResultSerializer()
+    )

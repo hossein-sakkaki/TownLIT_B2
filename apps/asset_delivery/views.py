@@ -14,7 +14,11 @@ from rest_framework.response import Response
 
 from apps.asset_delivery.constants import PlaybackAuthMode, PlaybackIntent
 from apps.asset_delivery.permissions import safe_can_view_target
-from apps.asset_delivery.serializers import PlaybackURLSerializer
+from apps.asset_delivery.serializers import (
+    PlaybackBatchRequestSerializer,
+    PlaybackBatchResponseSerializer,
+    PlaybackURLSerializer,
+)
 from apps.asset_delivery.services.job_resolver import get_latest_done_output_path
 from apps.asset_delivery.services.playback_resolver import resolve_fallback_filefield_key
 from apps.asset_delivery.services.request_parser import parse_target_lookup
@@ -260,6 +264,172 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
             PlaybackIntent.DETAIL,
         }
 
+    def _public_payload(self, payload: dict) -> dict:
+        """
+        Remove internal signing fields before returning response.
+        """
+
+        return {
+            k: v
+            for k, v in payload.items()
+            if not k.startswith("_")
+        }
+
+    def _normalize_batch_item_data(self, item: dict) -> dict:
+        """
+        Normalize nested batch item target into the flat shape used by
+        parse_target_lookup().
+        """
+
+        raw = dict(item or {})
+        target = raw.pop("target", None)
+
+        if isinstance(target, dict):
+            target_type = (target.get("type") or "").strip().lower()
+
+            if target_type in {"object", "app_model_object"}:
+                raw["app_label"] = target.get("app_label")
+                raw["model"] = target.get("model")
+                raw["object_id"] = target.get("object_id")
+
+            elif target_type in {"slug", "app_model_slug"}:
+                raw["app_label"] = target.get("app_label")
+                raw["model"] = target.get("model")
+                raw["slug"] = target.get("slug")
+
+            elif target_type in {"content_type", "content_type_object"}:
+                raw["content_type_id"] = target.get("content_type_id")
+                raw["object_id"] = target.get("object_id")
+
+            else:
+                # Also allow clients to omit type and send direct target fields.
+                for key in (
+                    "app_label",
+                    "model",
+                    "object_id",
+                    "slug",
+                    "content_type_id",
+                ):
+                    if key in target and key not in raw:
+                        raw[key] = target.get(key)
+
+        return raw
+
+    def _build_batch_item_payload(self, *, request, index: int, item: dict) -> dict:
+        """
+        Resolve one batch item.
+
+        Returns an internal result dict. Internal asset fields are stripped later.
+        """
+
+        raw = self._normalize_batch_item_data(item)
+
+        field_name = (raw.get("field_name") or "").strip()
+        kind = (raw.get("kind") or "").strip().lower()
+        intent = self._validate_intent(raw.get("intent"))
+
+        raw_app_label = raw.get("app_label")
+        raw_model = raw.get("model")
+        field_name = resolve_field_alias(raw_app_label, raw_model, field_name)
+
+        if not field_name:
+            raise ValueError("Missing 'field_name'.")
+
+        if kind not in {"video", "audio", "image", "thumbnail", "file"}:
+            raise ValueError("Invalid 'kind'.")
+
+        target = self._resolve_target(raw)
+
+        if not safe_can_view_target(request, target):
+            return {
+                "index": index,
+                "ok": False,
+                "error": "Access restricted.",
+                "status_code": status.HTTP_403_FORBIDDEN,
+            }
+
+        payload = self._build_playback(
+            target=target,
+            kind=kind,
+            field_name=field_name,
+            intent=intent,
+        )
+
+        return {
+            "index": index,
+            "ok": True,
+            "_payload": payload,
+        }
+
+    def _is_batch_hls_result(self, result: dict) -> bool:
+        """
+        Check if a successful internal batch result is HLS.
+        """
+
+        if not result.get("ok"):
+            return False
+
+        payload = result.get("_payload") or {}
+        key = payload.get("_source_key") or ""
+
+        return bool(key and _is_hls_path(key))
+
+    def _make_public_batch_result(
+        self,
+        result: dict,
+        *,
+        hls_cookie_enabled: bool,
+    ) -> dict:
+        """
+        Convert one internal batch result into public response shape.
+
+        Non-HLS batch assets use signed_url mode because one HTTP response
+        cannot safely set many different CloudFront cookie policies with the
+        same cookie names.
+
+        HLS requires cookies because the playlist and segments need a wildcard
+        cookie policy. We only enable it when there is one HLS item in the batch.
+        """
+
+        if not result.get("ok"):
+            return {
+                "index": result.get("index", 0),
+                "ok": False,
+                "error": result.get("error") or "Playback item failed.",
+                "status_code": int(
+                    result.get("status_code") or status.HTTP_400_BAD_REQUEST
+                ),
+            }
+
+        payload = dict(result.get("_payload") or {})
+        key = payload.get("_source_key") or ""
+        is_hls = bool(key and _is_hls_path(key))
+
+        if is_hls and not hls_cookie_enabled:
+            return {
+                "index": result.get("index", 0),
+                "ok": False,
+                "error": "Multiple HLS cookie-scoped assets are not supported in one batch. Resolve this item individually.",
+                "status_code": status.HTTP_409_CONFLICT,
+            }
+
+        public_payload = self._public_payload(payload)
+
+        if not is_hls:
+            # Non-HLS payloads already include signed query params in the URL.
+            # Returning signed_url avoids depending on response-level cookies.
+            public_payload["auth_mode"] = getattr(
+                PlaybackAuthMode,
+                "SIGNED_URL",
+                "signed_url",
+            )
+
+        return {
+            "index": result.get("index", 0),
+            "ok": True,
+            "asset": public_payload,
+        }
+        
     def _handle_get(self, request, kind: str, default_field: str):
         """
         Handle playback GET requests.
@@ -420,46 +590,98 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-    @action(detail=False, methods=["post"], url_path="refresh-url")
-    def refresh_url(self, request):
+    @action(detail=False, methods=["post"], url_path="batch")
+    def batch(self, request):
         """
-        Legacy key-based refresh.
-        Keep for backward compatibility.
+        Resolve multiple playback assets in one request.
+
+        Important cookie rule:
+        - Non-HLS assets are returned as signed URLs.
+        - One HLS asset can be returned with response-level CloudFront cookies.
+        - Multiple HLS assets in one batch are rejected per item so clients can
+          fall back to individual resolve calls.
         """
 
-        key = (request.data.get("key") or "").strip()
-        kind = (request.data.get("kind") or "video").strip().lower()
-        field_name = (request.data.get("field_name") or "key").strip()
-        intent = self._validate_intent(request.data.get("intent"))
+        serializer = PlaybackBatchRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
 
-        if not key:
-            return Response(
-                {"detail": "Missing 'key'."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        items = serializer.validated_data["items"]
 
-        try:
-            payload = self._sign_key(
-                key=key,
-                kind=kind,
-                field_name=field_name,
-                intent=intent,
-            )
+        internal_results = []
 
-            resp_payload = {k: v for k, v in payload.items() if not k.startswith("_")}
-            resp = Response(resp_payload, status=status.HTTP_200_OK)
-
-            raw_signed_url = payload.get("_signed_url_raw") or ""
-            source_key = payload.get("_source_key") or key
-
-            if raw_signed_url and self._should_set_cookies(key=source_key, intent=intent):
-                cookie_path = (
-                    _hls_cookie_scope_from_key(source_key)
-                    if _is_hls_path(source_key)
-                    else _cookie_scope_from_key(source_key)
+        for index, item in enumerate(items):
+            try:
+                internal_results.append(
+                    self._build_batch_item_payload(
+                        request=request,
+                        index=index,
+                        item=item,
+                    )
+                )
+            except ValueError as e:
+                internal_results.append(
+                    {
+                        "index": index,
+                        "ok": False,
+                        "error": str(e),
+                        "status_code": status.HTTP_400_BAD_REQUEST,
+                    }
+                )
+            except Exception:
+                logger.exception(
+                    "asset_delivery.playback.batch item failed",
+                    extra={
+                        "batch_index": index,
+                    },
+                )
+                internal_results.append(
+                    {
+                        "index": index,
+                        "ok": False,
+                        "error": "Internal error.",
+                        "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    }
                 )
 
+        hls_results = [
+            result
+            for result in internal_results
+            if self._is_batch_hls_result(result)
+        ]
+
+        hls_cookie_enabled = len(hls_results) == 1
+
+        public_results = [
+            self._make_public_batch_result(
+                result,
+                hls_cookie_enabled=hls_cookie_enabled,
+            )
+            for result in internal_results
+        ]
+
+        response_payload = {
+            "results": public_results,
+        }
+
+        response_serializer = PlaybackBatchResponseSerializer(
+            data=response_payload
+        )
+        response_serializer.is_valid(raise_exception=True)
+
+        resp = Response(
+            response_serializer.validated_data,
+            status=status.HTTP_200_OK,
+        )
+
+        if hls_cookie_enabled:
+            payload = hls_results[0].get("_payload") or {}
+            key = payload.get("_source_key") or ""
+            raw_signed_url = payload.get("_signed_url_raw") or ""
+
+            if key and raw_signed_url:
                 ttl = int(payload["expires_in"])
+                cookie_path = _hls_cookie_scope_from_key(key)
+
                 self._set_cloudfront_signed_cookies(
                     resp,
                     signed_url=raw_signed_url,
@@ -467,16 +689,4 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
                     cookie_path=cookie_path,
                 )
 
-            return resp
-
-        except ValueError as e:
-            return Response(
-                {"detail": str(e)},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        except Exception:
-            logger.exception("asset_delivery.playback.refresh_url failed")
-            return Response(
-                {"detail": "Internal error."},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+        return resp

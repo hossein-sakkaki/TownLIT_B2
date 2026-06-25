@@ -10,6 +10,10 @@ from apps.conversation.services.event_contracts import (
 )
 from apps.conversation.services.message_reply import build_reply_preview
 from apps.conversation.services.message_forward import build_forward_preview
+from apps.conversation.services.message_media_descriptors import (
+    build_message_media_descriptors,
+)
+
 
 def build_file_message_payload(message, dialogue_slug, file_type, file_url=None):
     """
@@ -29,7 +33,7 @@ def build_file_message_payload(message, dialogue_slug, file_type, file_url=None)
         reply_preview=reply_preview,
         forward_preview=forward_preview,
     )
-
+    
 
 def get_hidden_recipient_ids_for_message(message):
     """

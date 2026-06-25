@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from apps.conversation.services.message_media_descriptors import (
+    build_message_media_descriptors,
+)
 
 def build_sender_data(user) -> dict:
     """
@@ -287,6 +290,9 @@ def build_file_message_event_data(
 ) -> dict:
     """
     Canonical realtime payload for file_message.
+
+    Keeps legacy file_url for backward compatibility and adds Asset Delivery
+    descriptors for new clients.
     """
     is_group = bool(message.dialogue.is_group)
     is_encrypted_file = bool(getattr(message, "is_encrypted_file", False))
@@ -309,6 +315,8 @@ def build_file_message_event_data(
 
     if file_url and not is_encrypted_file:
         data["file_url"] = file_url
+
+    data.update(build_message_media_descriptors(message))
 
     return data
 
