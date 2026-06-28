@@ -263,6 +263,8 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
                 "image",
                 "video",
                 "thumbnail",
+                
+                "media_assets",
 
                 # Multi-photo metadata
                 "media_kind",

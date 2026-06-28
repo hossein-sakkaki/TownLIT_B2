@@ -229,16 +229,6 @@ class MediaConversionMixin:
                     continue
 
                 if kind == KIND_IMAGE:
-                    if ext in (".jpg", ".jpeg", ".png"):
-                        logger.info(
-                            "⏭️ skip image: already final (%s) – %s.%s",
-                            ext,
-                            self.__class__.__name__,
-                            field_name,
-                        )
-                        # Do NOT mark object as converted here.
-                        # A final image/thumbnail does not mean video conversion is done.
-                        continue
 
                     job = upsert_job(
                         instance=self,

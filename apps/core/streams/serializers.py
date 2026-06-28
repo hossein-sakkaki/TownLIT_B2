@@ -105,6 +105,10 @@ class StreamItemSerializer(serializers.Serializer):
 
         data["owner_user_id"] = getattr(owner, "id", None)
         data["owner_username"] = getattr(owner, "username", None)
+        data["owner"] = self._compact_owner_payload(
+            owner,
+            fallback=data.get("owner"),
+        )
 
         data["in_stillness"] = state["in_stillness"]
         data["has_boundary"] = state["has_boundary"]
@@ -211,6 +215,15 @@ class StreamItemSerializer(serializers.Serializer):
         - iOS hides the quality button when there is only Auto.
         """
 
+        video_asset = (
+            getattr(obj, "media_assets", None) or {}
+        ).get("video")
+
+        if isinstance(video_asset, dict):
+            qualities = video_asset.get("qualities")
+            if isinstance(qualities, list) and qualities:
+                return self._normalize_quality_payload(qualities)
+            
         if kind != STREAM_KIND_TESTIMONY:
             return []
 
@@ -446,6 +459,81 @@ class StreamItemSerializer(serializers.Serializer):
 
         return None
 
+    def _compact_owner_payload(self, owner, *, fallback=None):
+        """
+        Build compact owner payload for stream headers.
+
+        Existing serializer owner data wins, but missing fields are filled
+        from the resolved CustomUser.
+        """
+
+        base = dict(fallback) if isinstance(fallback, dict) else {}
+
+        if not owner:
+            return base or None
+
+        def first_value(*values):
+            for value in values:
+                if value is None:
+                    continue
+
+                cleaned = str(value).strip()
+                if cleaned:
+                    return cleaned
+
+            return None
+
+        avatar_cdn_url = first_value(
+            base.get("avatar_cdn_url"),
+            base.get("avatarCDNURL"),
+            getattr(owner, "avatar_cdn_url", None),
+        )
+
+        avatar_url = first_value(
+            base.get("avatar_url"),
+            base.get("avatarURL"),
+            getattr(owner, "avatar_url", None),
+            getattr(owner, "avatar", None),
+        )
+
+        base["id"] = base.get("id") or getattr(owner, "id", None)
+        base["username"] = first_value(
+            base.get("username"),
+            getattr(owner, "username", None),
+        )
+        base["name"] = first_value(
+            base.get("name"),
+            getattr(owner, "name", None),
+            getattr(owner, "first_name", None),
+        )
+        base["family"] = first_value(
+            base.get("family"),
+            getattr(owner, "family", None),
+            getattr(owner, "last_name", None),
+        )
+
+        if avatar_cdn_url:
+            base["avatar_cdn_url"] = avatar_cdn_url
+
+        if avatar_url:
+            base["avatar_url"] = avatar_url
+
+        # Keep verification/label fields if they exist.
+        if "label_color" not in base and hasattr(owner, "label_color"):
+            base["label_color"] = getattr(owner, "label_color", None)
+
+        if "is_verified_identity" not in base and hasattr(owner, "is_verified_identity"):
+            base["is_verified_identity"] = bool(
+                getattr(owner, "is_verified_identity", False)
+            )
+
+        if "is_townlit_verified" not in base and hasattr(owner, "is_townlit_verified"):
+            base["is_townlit_verified"] = bool(
+                getattr(owner, "is_townlit_verified", False)
+            )
+
+        return base
+    
     # ------------------------------------------------------------------
     # Boundary state
     # ------------------------------------------------------------------

@@ -11,6 +11,7 @@ from apps.posts.models.reaction import Reaction
 from apps.core.interactions.serializers import (
     ReactionSummarySerializer,
     ReactionToggleSerializer,
+    ReactionActorSerializer,
 )
 
 
@@ -278,5 +279,123 @@ class InteractionReactionViewSet(viewsets.ModelViewSet):
 
         return Response(
             ReactionSummarySerializer(payload).data,
+            status=status.HTTP_200_OK,
+        )
+        
+
+    # ------------------------------------------------------------------
+    # 👥 Reaction actors
+    # ------------------------------------------------------------------
+    @action(detail=False, methods=["get"])
+    def actors(self, request):
+        """
+        Public lightweight list of users who reacted to a target.
+
+        Query:
+        - content_type
+        - object_id
+        - reaction_type optional
+        """
+        content_type_param = request.query_params.get("content_type")
+        object_id = request.query_params.get("object_id")
+        reaction_type = request.query_params.get("reaction_type")
+
+        if not content_type_param or not object_id:
+            return Response(
+                {"detail": "content_type and object_id are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            object_id = int(object_id)
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "Invalid object_id."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            ct = _resolve_content_type(content_type_param)
+        except ContentType.DoesNotExist:
+            return Response(
+                {"detail": "Invalid content_type."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        queryset = (
+            Reaction.objects
+            .filter(
+                content_type=ct,
+                object_id=object_id,
+            )
+            .select_related("name")
+            .order_by("-timestamp", "-id")
+        )
+
+        if reaction_type:
+            queryset = queryset.filter(reaction_type=reaction_type)
+
+        payload = []
+
+        for reaction in queryset[:120]:
+            user = reaction.name
+
+            full_name = " ".join(
+                part for part in [
+                    getattr(user, "name", None),
+                    getattr(user, "family", None),
+                ]
+                if part
+            ).strip()
+
+            avatar_url = (
+                getattr(user, "avatar_url", None)
+                or getattr(user, "image_url", None)
+                or getattr(user, "imageURL", None)
+            )
+
+            avatar_cdn_url = (
+                getattr(user, "avatar_cdn_url", None)
+                or getattr(user, "avatarCDNURL", None)
+            )
+
+            label = getattr(user, "label", None)
+            label_color = getattr(user, "label_color", None)
+
+            payload.append(
+                {
+                    "id": reaction.id,
+                    "reaction_type": reaction.reaction_type,
+                    "timestamp": reaction.timestamp.isoformat()
+                    if reaction.timestamp
+                    else "",
+                    "user": {
+                        "id": user.id,
+                        "username": getattr(user, "username", None),
+                        "name": getattr(user, "name", None),
+                        "family": getattr(user, "family", None),
+                        "full_name": full_name or getattr(user, "username", None),
+                        "avatar_url": avatar_url,
+                        "avatar_cdn_url": avatar_cdn_url,
+                        "is_verified_identity": getattr(
+                            user,
+                            "is_verified_identity",
+                            False,
+                        ),
+                        "is_townlit_verified": getattr(
+                            user,
+                            "is_townlit_verified",
+                            False,
+                        ),
+                        "label": {
+                            "color": label_color
+                            or getattr(label, "color", None)
+                        },
+                    },
+                }
+            )
+
+        return Response(
+            ReactionActorSerializer(payload, many=True).data,
             status=status.HTTP_200_OK,
         )

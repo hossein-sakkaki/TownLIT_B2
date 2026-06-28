@@ -530,6 +530,9 @@ def bind_converted_file(
             update_fields,
         )
 
+        # Prevent worker-bound output from re-enqueueing conversion.
+        setattr(instance, "_skip_media_autoconvert_once", True)
+        
         instance.save(update_fields=update_fields)
 
         logger.info(

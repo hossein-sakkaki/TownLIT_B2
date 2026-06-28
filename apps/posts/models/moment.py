@@ -11,6 +11,7 @@ import uuid
 from utils.mixins.slug_mixin import SlugMixin
 from utils.mixins.media_conversion import MediaConversionMixin
 from utils.mixins.media_autoconvert import MediaAutoConvertMixin
+from utils.mixins.media_assets import MediaAssetsMixin
 
 from apps.media_conversion.models import MediaJobStatus
 from apps.media_conversion.services.jobs import upsert_job
@@ -41,6 +42,7 @@ class Moment(
     VisibilityModelMixin,         # 👁️ user-defined visibility
     InteractionCounterMixin,      # 🧮 counters
     ReactionBreakdownMixin,       # ❤️ reaction types
+    MediaAssetsMixin,             # 🖼️ Media metadata
     MediaAutoConvertMixin,        # 🎞️ RAW → converted detection
     MediaConversionMixin,         # 🔄 async conversion
     SlugMixin,
@@ -242,20 +244,39 @@ class Moment(
         
     def _image_item_requires_conversion(self, item: dict) -> bool:
         """
-        Return True when image item is not web-safe yet.
+        Return True when image item still needs processing.
         """
+
         key = str(item.get("key") or "").strip().lower()
+
         if not key:
             return False
 
         final_exts = (".jpg", ".jpeg", ".png")
-        return not key.endswith(final_exts)
+        is_web_safe = key.endswith(final_exts)
+
+        has_dimensions = bool(
+            item.get("width")
+            and item.get("height")
+            and item.get("aspect_ratio")
+        )
+
+        variants = item.get("variants")
+        has_variants = isinstance(variants, dict) and bool(
+            variants.get("thumb")
+            and variants.get("grid")
+            and variants.get("feed")
+        )
+
+        return (not is_web_safe) or (not has_dimensions) or (not has_variants)
 
     def _all_image_items_final(self) -> bool:
         """
-        Return True when all JSON-backed photos are web-safe.
+        Return True when all JSON-backed photos are processed.
         """
+
         items = self.normalized_image_items()
+
         if not items:
             return False
 

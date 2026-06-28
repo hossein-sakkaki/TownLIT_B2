@@ -8,6 +8,7 @@ from django.contrib.contenttypes.models import ContentType
 from django.db import transaction
 
 from utils.common.utils import FileUpload
+from utils.mixins.media_assets import MediaAssetsMixin
 from utils.mixins.media_conversion import MediaConversionMixin
 from utils.mixins.media_autoconvert import MediaAutoConvertMixin
 from utils.mixins.slug_mixin import SlugMixin
@@ -38,6 +39,7 @@ class Testimony(
     VisibilityModelMixin,         # 👁️ visibility + is_hidden
     InteractionCounterMixin,      # 💬 comments / recomments / reactions_count
     ReactionBreakdownMixin,       # ❤️ per-reaction-type counters
+    MediaAssetsMixin,             # 🖼️ Media metadata
     MediaAutoConvertMixin,
     MediaConversionMixin,
     SlugMixin,

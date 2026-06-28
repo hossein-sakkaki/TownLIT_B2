@@ -212,6 +212,7 @@ class TestimonyViewSet(OwnerGateMixin ,viewsets.ModelViewSet):
                 "audio",
                 "video",
                 "thumbnail",
+                "media_assets",
 
                 # Visibility / UI
                 "visibility",
@@ -317,6 +318,7 @@ class TestimonyViewSet(OwnerGateMixin ,viewsets.ModelViewSet):
                 "audio",
                 "video",
                 "thumbnail",
+                "media_assets",
 
                 # Visibility / UI
                 "visibility",
@@ -351,6 +353,7 @@ class TestimonyViewSet(OwnerGateMixin ,viewsets.ModelViewSet):
                 "audio": None,
                 "video": None,
                 "thumbnail": None,
+                "thumbnail_asset": None,
                 "is_converted": False,
                 "converting": False,
                 "ready_status": None,

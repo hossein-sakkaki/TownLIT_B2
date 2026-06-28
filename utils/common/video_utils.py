@@ -5,6 +5,7 @@ import subprocess
 import logging
 import time
 from tempfile import NamedTemporaryFile
+from dataclasses import dataclass
 
 from django.conf import settings
 from django.core.files import File
@@ -15,10 +16,20 @@ from apps.media_conversion.services.video_policy import (
 )
 from utils.common.utils import FileUpload, get_hls_output_dir
 from apps.media_conversion.services.progress import touch_job
+from apps.media_conversion.services.video_preview import build_video_preview_mp4
 
 logger = logging.getLogger(__name__)
 
-
+@dataclass(frozen=True)
+class VideoConversionResult:
+    master_path: str
+    width: int | None
+    height: int | None
+    aspect_ratio: float | None
+    duration_ms: int | None
+    variants: list[dict]
+    preview: dict | None = None
+    
 # -------------------------------------------------
 # Low-level helpers
 # -------------------------------------------------
@@ -218,7 +229,7 @@ def convert_video_to_multi_hls(
     *,
     job=None,
     field_name: str = "video",
-) -> str:
+) -> VideoConversionResult:
     """
     HLS conversion with policy-based renditions.
 
@@ -409,6 +420,21 @@ def convert_video_to_multi_hls(
         output_dir, relative_dir = get_hls_output_dir(instance, fileupload)
         os.makedirs(output_dir, exist_ok=True)
 
+        preview_payload = None
+
+        try:
+            preview_payload = build_video_preview_mp4(
+                local_source_path=temp_input,
+                output_key=os.path.join(relative_dir, "preview.mp4"),
+                seconds=3.5,
+                width=360,
+            )
+        except Exception:
+            logger.warning(
+                "Video preview generation skipped",
+                exc_info=True,
+            )
+            
         variants = []
         completed_weight = PREPARE_WEIGHT
 
@@ -668,7 +694,15 @@ def convert_video_to_multi_hls(
             master_storage_path,
         )
 
-        return master_storage_path
+        return VideoConversionResult(
+            master_path=master_storage_path,
+            width=main_w,
+            height=main_h,
+            aspect_ratio=(main_w / main_h) if main_w and main_h else None,
+            duration_ms=total_ms,
+            variants=variants,
+            preview=preview_payload,
+        )
 
     finally:
         if temp_input and os.path.exists(temp_input):

@@ -10,6 +10,7 @@ from django.db import transaction
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 import logging
+from django.core.exceptions import ObjectDoesNotExist
 
 from django.db.models import Prefetch, Count
 from apps.core.pagination import ConfigurablePagination
@@ -97,6 +98,61 @@ class CommentViewSet(viewsets.ModelViewSet):
     )
     permission_classes = [IsAuthenticated]
     pagination_class = ConfigurablePagination
+
+    # ---------------------------------------------------------------------
+    # Permissions
+    # ---------------------------------------------------------------------
+    def _is_content_owner(self, instance: Comment, user) -> bool:
+        user_id = getattr(user, "id", None)
+        if not user_id:
+            return False
+
+        try:
+            target = instance.content_type.get_object_for_this_type(
+                pk=instance.object_id
+            )
+        except ObjectDoesNotExist:
+            return False
+        except Exception:
+            logger.exception("Failed to resolve comment target for ownership check")
+            return False
+
+        owner_field_candidates = [
+            "name_id",
+            "user_id",
+            "owner_id",
+            "author_id",
+            "created_by_id",
+        ]
+
+        for field_name in owner_field_candidates:
+            if getattr(target, field_name, None) == user_id:
+                return True
+
+        nested_owner_candidates = [
+            "name",
+            "user",
+            "owner",
+            "author",
+            "created_by",
+        ]
+
+        for field_name in nested_owner_candidates:
+            owner = getattr(target, field_name, None)
+            if getattr(owner, "id", None) == user_id:
+                return True
+
+        return False
+
+
+    def _check_delete_permission(self, instance: Comment, user):
+        if instance.name_id == getattr(user, "id", None):
+            return
+
+        if self._is_content_owner(instance, user):
+            return
+
+        raise PermissionDenied("You are not allowed to delete this comment.")
 
     def get_serializer_class(self):
         if self.action in ["create", "update", "partial_update"]:
@@ -287,7 +343,8 @@ class CommentViewSet(viewsets.ModelViewSet):
     # -----------------------------------------------------------------
     # Delete with WS broadcast (safe)
     def perform_destroy(self, instance: Comment):
-        self._check_owner(instance, self.request.user)
+        self._check_delete_permission(instance, self.request.user)
+
         ct_id, oid, cid = instance.content_type_id, instance.object_id, instance.id
         instance.delete()
 
@@ -351,38 +408,56 @@ class CommentViewSet(viewsets.ModelViewSet):
         permission_classes=[AllowAny],
     )
     def summary(self, request):
-        """Return total counts of comments and replies for an object."""
+        """
+        Return root comment count, reply count, and total interaction count
+        for an object.
+
+        comments = root comments only
+        replies = one-level replies only
+        total = comments + replies
+        """
         ct = request.query_params.get("content_type")
         oid = request.query_params.get("object_id")
+
         if not ct or not oid:
             return Response(
-                {"detail": "content_type and object_id required"}, status=400
+                {"detail": "content_type and object_id required"},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         try:
             cto = _resolve_content_type(ct)
         except ContentType.DoesNotExist:
-            return Response({"detail": "Invalid content type"}, status=400)
+            return Response(
+                {"detail": "Invalid content type"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             oid_int = int(oid)
         except (TypeError, ValueError):
             oid_int = oid
 
-        total_comments = Comment.objects.filter(
-            content_type=cto, object_id=oid_int
+        base_qs = Comment.objects.filter(
+            content_type=cto,
+            object_id=oid_int,
+        )
+
+        root_comments = base_qs.filter(
+            recomment__isnull=True,
         ).count()
-        total_replies = Comment.objects.filter(
-            content_type=cto, object_id=oid_int, recomment__isnull=False
+
+        replies = base_qs.filter(
+            recomment__isnull=False,
         ).count()
 
         return Response(
             {
-                "comments": total_comments,
-                "replies": total_replies,
-                "total": total_comments + total_replies,
+                "comments": root_comments,
+                "replies": replies,
+                "total": root_comments + replies,
             },
-            status=200,
+            status=status.HTTP_200_OK,
         )
 
 

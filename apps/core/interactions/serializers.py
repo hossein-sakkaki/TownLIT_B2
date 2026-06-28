@@ -37,3 +37,16 @@ class ReactionToggleSerializer(serializers.Serializer):
     content_type = serializers.CharField()
     object_id = serializers.IntegerField()
     reaction_type = serializers.ChoiceField(choices=REACTION_TYPE_CHOICES)
+
+
+# Reaction Actor Serializer -------------------------------------------------------------------------------
+class ReactionActorSerializer(serializers.Serializer):
+    """
+    Public lightweight list of users who reacted to a target.
+    Does not expose private reaction messages.
+    """
+
+    id = serializers.IntegerField()
+    reaction_type = serializers.CharField()
+    timestamp = serializers.CharField()
+    user = serializers.DictField()

@@ -1,7 +1,8 @@
 # apps/posts/serializers/testimonies.py
 
-from rest_framework import serializers
+from django.conf import settings
 from django.contrib.contenttypes.models import ContentType
+from rest_framework import serializers
 import logging
 
 from apps.profiles.models.member import Member
@@ -22,7 +23,118 @@ from .serializers_owner_min import build_owner_dto_from_content_object
 logger = logging.getLogger(__name__)
 
 
-class TestimonySerializer( 
+# -------------------------------------------------
+# Asset helpers
+# -------------------------------------------------
+def _build_asset_cdn_url(key: str | None) -> str | None:
+    """
+    Build lightweight CDN URL for stored media keys.
+    """
+    if not key:
+        return None
+
+    base = (getattr(settings, "ASSET_CDN_BASE_URL", "") or "").rstrip("/")
+    if not base:
+        return None
+
+    return f"{base}/{str(key).lstrip('/')}"
+
+
+def _clean_asset_key(value) -> str | None:
+    if not value:
+        return None
+
+    raw = getattr(value, "name", value)
+
+    if not raw:
+        return None
+
+    cleaned = str(raw).strip().lstrip("/")
+    return cleaned or None
+
+
+def _media_asset(obj, field_name: str) -> dict:
+    assets = getattr(obj, "media_assets", None) or {}
+
+    if not isinstance(assets, dict):
+        return {}
+
+    value = assets.get(field_name)
+    return value if isinstance(value, dict) else {}
+
+
+def _media_dimensions(payload: dict | None) -> dict:
+    if not isinstance(payload, dict):
+        return {
+            "width": None,
+            "height": None,
+            "aspect_ratio": None,
+        }
+
+    return {
+        "width": payload.get("width"),
+        "height": payload.get("height"),
+        "aspect_ratio": payload.get("aspect_ratio"),
+    }
+
+
+def _variants_payload(variants: dict | None) -> dict:
+    if not isinstance(variants, dict):
+        return {}
+
+    output = {}
+
+    for name, payload in variants.items():
+        if not isinstance(payload, dict):
+            continue
+
+        key = _clean_asset_key(payload.get("key"))
+        url = _build_asset_cdn_url(key)
+
+        output[name] = {
+            **payload,
+            "key": key,
+            "cdn_url": url,
+            "image_url": url,
+            "url": url,
+        }
+
+    return output
+
+
+def _image_asset_payload(
+    *,
+    obj,
+    field_name: str,
+    fallback_key: str | None = None,
+) -> dict | None:
+    """
+    Return thumbnail/image-like asset metadata.
+
+    For Testimony we intentionally keep this minimal:
+    - thumbnail_asset is the only profile/media preview asset needed.
+    - old testimonies fall back to obj.thumbnail.name.
+    """
+    asset = _media_asset(obj, field_name)
+    key = _clean_asset_key(asset.get("key")) or _clean_asset_key(fallback_key)
+
+    if not key:
+        return None
+
+    url = _build_asset_cdn_url(key)
+
+    return {
+        **asset,
+        "key": key,
+        "cdn_url": url,
+        "image_url": url,
+        "url": url,
+        "variants": _variants_payload(asset.get("variants")),
+        **_media_dimensions(asset),
+    }
+
+
+class TestimonySerializer(
     InstanceTargetMixin,
     AudioFileMixin,
     VideoFileMixin,
@@ -30,21 +142,22 @@ class TestimonySerializer(
     serializers.ModelSerializer,
 ):
     """
-    Final Testimony serializer (Moment-compatible)
+    Final Testimony serializer.
 
     - Visibility aware
     - Interaction counters exposed
     - Owner-write rules enforced
-    - Frontend-safe (no breaking response shape)
+    - Conversion-safe
+    - Thumbnail asset exposed for fast grid/profile rendering
     """
 
     owner = serializers.SerializerMethodField(read_only=True)
 
-    # GFK (read-only)
+    # GFK read-only.
     content_type = serializers.PrimaryKeyRelatedField(read_only=True)
     object_id = serializers.IntegerField(read_only=True)
 
-    # Moderation flags (read-only)
+    # Moderation flags read-only.
     is_active = serializers.BooleanField(read_only=True)
     is_suspended = serializers.BooleanField(read_only=True)
     reports_count = serializers.IntegerField(read_only=True)
@@ -53,14 +166,16 @@ class TestimonySerializer(
     transcript_language = serializers.SerializerMethodField(read_only=True)
     has_transcript = serializers.SerializerMethodField(read_only=True)
 
+    thumbnail_asset = serializers.SerializerMethodField(read_only=True)
+
     class Meta:
         model = Testimony
         fields = [
-            # identity
+            # Identity.
             "id",
             "slug",
 
-            # core
+            # Core.
             "type",
             "title",
             "content",
@@ -68,36 +183,39 @@ class TestimonySerializer(
             "video",
             "thumbnail",
 
-            # visibility / moderation
+            # Lightweight media metadata.
+            "thumbnail_asset",
+
+            # Visibility / moderation.
             "visibility",
             "is_hidden",
             "is_active",
             "is_suspended",
             "reports_count",
 
-            # interactions (🔥 NEW but backward-safe)
+            # Interactions.
             "comments_count",
             "recomments_count",
             "reactions_count",
             "reactions_breakdown",
 
-            # timestamps
+            # Timestamps.
             "published_at",
             "updated_at",
 
-            # media
+            # Media.
             "is_converted",
 
-            # transcript
+            # Transcript.
             "has_transcript",
             "transcript_id",
             "transcript_language",
 
-            # targets
+            # Targets.
             "comment_target",
             "reaction_target",
 
-            # ownership
+            # Ownership.
             "content_type",
             "object_id",
             "owner",
@@ -116,20 +234,39 @@ class TestimonySerializer(
             "owner",
             "view_count_internal",
 
-            # moderation
+            # Moderation.
             "is_active",
             "is_suspended",
             "reports_count",
+
+            # Lightweight media metadata.
+            "thumbnail_asset",
         ]
 
     # -------------------------------------------------
-    # OWNER DTO
+    # Asset helpers
+    # -------------------------------------------------
+    def get_thumbnail_asset(self, obj):
+        try:
+            return _image_asset_payload(
+                obj=obj,
+                field_name="thumbnail",
+                fallback_key=getattr(getattr(obj, "thumbnail", None), "name", None),
+            )
+        except Exception:
+            logger.exception(
+                "get_thumbnail_asset failed for testimony id=%s",
+                getattr(obj, "id", None),
+            )
+            return None
+
+    # -------------------------------------------------
+    # Owner DTO
     # -------------------------------------------------
     def get_owner(self, obj):
         try:
             request = self.context.get("request")
 
-            # Optional: like Moment, lighter POST response
             if request and request.method == "POST":
                 return None
 
@@ -139,12 +276,11 @@ class TestimonySerializer(
             )
         except Exception:
             logger.exception(
-                "🔥🔥🔥🔥get_owner failed for testimony id=%s",
-                getattr(obj, "id", None)
+                "get_owner failed for testimony id=%s",
+                getattr(obj, "id", None),
             )
             return None
 
-    
     # -------------------------------------------------
     # Ownership helpers
     # -------------------------------------------------
@@ -153,22 +289,25 @@ class TestimonySerializer(
         Testimony is Member-only.
         """
         request = self.context.get("request")
+
         if not request or not request.user.is_authenticated:
             return None
 
         return getattr(request.user, "member_profile", None)
 
-
     def _assert_owner(self, instance):
         request = self.context.get("request")
+
         if not request or not request.user.is_authenticated:
             raise serializers.ValidationError("Authentication required.")
 
         owner = resolve_owner_from_request(request)
+
         if not owner:
             raise serializers.ValidationError("Invalid owner context.")
 
         owner_ct = ContentType.objects.get_for_model(owner.__class__)
+
         if (
             instance.content_type_id != owner_ct.id
             or instance.object_id != owner.id
@@ -177,19 +316,13 @@ class TestimonySerializer(
                 "You do not have permission to modify this Testimony."
             )
 
-
     # -------------------------------------------------
-    # CREATE
+    # Create
     # -------------------------------------------------
     def create(self, validated_data):
-        """
-        - visibility defaults if missing
-        - owner is injected by ViewSet
-        """
         if "visibility" not in validated_data:
             validated_data["visibility"] = VISIBILITY_GLOBAL
 
-        # safety
         validated_data.pop("is_active", None)
         validated_data.pop("is_suspended", None)
         validated_data.pop("reports_count", None)
@@ -197,20 +330,9 @@ class TestimonySerializer(
         return super().create(validated_data)
 
     # -------------------------------------------------
-    # UPDATE (owner-write rules)
+    # Update
     # -------------------------------------------------
     def update(self, instance, validated_data):
-        """
-        Owner may update:
-        - content fields
-        - visibility
-        - is_hidden
-
-        Forbidden:
-        - moderation flags
-        - counters
-        - owner
-        """
         self._assert_owner(instance)
 
         forbidden_fields = {
@@ -234,16 +356,17 @@ class TestimonySerializer(
         return super().update(instance, validated_data)
 
     # -------------------------------------------------
-    # Cross-field validation (business rules)
+    # Cross-field validation
     # -------------------------------------------------
     def validate(self, attrs):
-        
-        # ✅ forbid ownership injection (same as Moment)
         forbidden = {"content_type", "object_id"}
+
         for key in forbidden:
             if key in self.initial_data:
-                raise serializers.ValidationError({key: "This field is not allowed."})
-        
+                raise serializers.ValidationError({
+                    key: "This field is not allowed."
+                })
+
         instance = self.instance
 
         ttype = attrs.get("type") or (
@@ -260,14 +383,16 @@ class TestimonySerializer(
                 raise serializers.ValidationError(
                     "Written testimony requires content only."
                 )
+
             if not title or not title.strip():
-                raise serializers.ValidationError(
-                    {"title": "Title is required."}
-                )
+                raise serializers.ValidationError({
+                    "title": "Title is required."
+                })
+
             if len(title) > 50:
-                raise serializers.ValidationError(
-                    {"title": "Max 50 characters."}
-                )
+                raise serializers.ValidationError({
+                    "title": "Max 50 characters."
+                })
 
         elif ttype == Testimony.TYPE_AUDIO:
             if not audio or content or video:
@@ -288,29 +413,30 @@ class TestimonySerializer(
         return attrs
 
     # -------------------------------------------------
-    # MEDIA READINESS GATE (serializer-level)
+    # Media readiness gate
     # -------------------------------------------------
     def to_representation(self, obj):
         request = self.context.get("request")
         viewer = request.user if request and request.user.is_authenticated else None
 
-        # 🔐 HARD VISIBILITY GATE
         if obj.type in (Testimony.TYPE_VIDEO, Testimony.TYPE_AUDIO):
-            # If NOT converted → object must be invisible to non-owner
             if not obj.is_converted:
-                # Allow ONLY owner to see conversion state
-                owner = getattr(request.user, "member_profile", None) if request and request.user.is_authenticated else None
+                owner = (
+                    getattr(request.user, "member_profile", None)
+                    if request and request.user.is_authenticated
+                    else None
+                )
 
                 if not owner or (
-                    obj.content_type_id != ContentType.objects.get_for_model(owner.__class__).id
+                    obj.content_type_id
+                    != ContentType.objects.get_for_model(owner.__class__).id
                     or obj.object_id != owner.id
                 ):
-                    # 🚫 viewer should NOT see this testimony at all
                     return None
 
         data = super().to_representation(obj)
 
-        # OWNER ONLY: show conversion panel data
+        # Owner-only conversion payload for audio/video.
         if obj.type in (Testimony.TYPE_VIDEO, Testimony.TYPE_AUDIO):
             data = gate_media_payload(
                 obj=obj,
@@ -329,30 +455,29 @@ class TestimonySerializer(
     def _get_transcript(self, obj):
         """
         Return VideoTranscript if exists and DONE.
-        Cached per serializer instance to avoid N+1.
+        Cached per serializer instance to avoid N+1 for single-object usage.
         """
         if not hasattr(self, "_transcript_cache"):
             ct = ContentType.objects.get_for_model(obj.__class__)
+
             self._transcript_cache = VideoTranscript.objects.filter(
                 content_type=ct,
                 object_id=obj.id,
                 status=TranscriptJobStatus.DONE,
             ).first()
-        return self._transcript_cache
 
+        return self._transcript_cache
 
     def get_has_transcript(self, obj):
         return self._get_transcript(obj) is not None
 
-
     def get_transcript_id(self, obj):
-        tr = self._get_transcript(obj)
-        return tr.id if tr else None
-
+        transcript = self._get_transcript(obj)
+        return transcript.id if transcript else None
 
     def get_transcript_language(self, obj):
-        tr = self._get_transcript(obj)
-        return tr.source_language if tr else None
+        transcript = self._get_transcript(obj)
+        return transcript.source_language if transcript else None
 
 
 # -------------------------------------------------
@@ -364,11 +489,14 @@ class TestimonyProfileHeaderSerializer(serializers.ModelSerializer):
 
     Used by /posts/testimonies/me/ and /posts/testimonies/summary/.
 
-    Testimony is Member-only, so owner detection is based directly on
-    request.user.member_profile.
+    Testimony cover/thumbnail is already square-cropped on iOS, so the
+    profile contract remains intentionally simple:
+    - thumbnail
+    - thumbnail_asset
     """
 
     owner = serializers.SerializerMethodField(read_only=True)
+    thumbnail_asset = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Testimony
@@ -376,29 +504,47 @@ class TestimonyProfileHeaderSerializer(serializers.ModelSerializer):
             "id",
             "slug",
 
-            # Core
+            # Core.
             "type",
             "title",
             "content",
 
-            # Media
+            # Media.
             "audio",
             "video",
             "thumbnail",
+            "thumbnail_asset",
 
-            # Visibility / UI
+            # Visibility / UI.
             "visibility",
             "is_hidden",
 
-            # Timestamps / pipeline
+            # Timestamps / pipeline.
             "published_at",
             "updated_at",
             "is_converted",
 
-            # Owner action menu support
+            # Owner action menu support.
             "owner",
         ]
         read_only_fields = fields
+
+    # -------------------------------------------------
+    # Asset helpers
+    # -------------------------------------------------
+    def get_thumbnail_asset(self, obj):
+        try:
+            return _image_asset_payload(
+                obj=obj,
+                field_name="thumbnail",
+                fallback_key=getattr(getattr(obj, "thumbnail", None), "name", None),
+            )
+        except Exception:
+            logger.exception(
+                "get_thumbnail_asset failed for profile header testimony id=%s",
+                getattr(obj, "id", None),
+            )
+            return None
 
     # -------------------------------------------------
     # Owner DTO
@@ -453,7 +599,10 @@ class TestimonyProfileHeaderSerializer(serializers.ModelSerializer):
 
         # Owner can see converting audio/video for progress UI.
         # Non-owner should never receive unconverted media.
-        if obj.type in (Testimony.TYPE_VIDEO, Testimony.TYPE_AUDIO) and not obj.is_converted:
+        if (
+            obj.type in (Testimony.TYPE_VIDEO, Testimony.TYPE_AUDIO)
+            and not obj.is_converted
+        ):
             member = (
                 getattr(request.user, "member_profile", None)
                 if request and request.user.is_authenticated
@@ -477,7 +626,10 @@ class TestimonyProfileHeaderSerializer(serializers.ModelSerializer):
         data = super().to_representation(obj)
 
         # Include conversion panel payload only while processing.
-        if obj.type in (Testimony.TYPE_VIDEO, Testimony.TYPE_AUDIO) and not obj.is_converted:
+        if (
+            obj.type in (Testimony.TYPE_VIDEO, Testimony.TYPE_AUDIO)
+            and not obj.is_converted
+        ):
             data = gate_media_payload(
                 obj=obj,
                 data=data,

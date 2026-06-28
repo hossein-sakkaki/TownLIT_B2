@@ -86,17 +86,43 @@ class MediaAutoConvertMixin:
 
     def _raw_media_changed(self) -> bool:
         """
-        True if any configured media field changed AND new name is not a final artifact.
+        True if any configured media field changed.
+
+        Images are always processed on change because even jpg/png uploads
+        still need metadata and variants. Worker output binding uses a skip flag
+        to prevent conversion loops.
         """
+
         cur = self._collect_current_media_names()
         orig = getattr(self, "_media_orig_names", {}) or {}
+
         for fname, kind in self._iter_media_fields():
-            old = (orig.get(fname) or None)
-            new = (cur.get(fname) or None)
-            if new != old and not self._is_final_name(kind, new):
+            old = orig.get(fname) or None
+            new = cur.get(fname) or None
+
+            if new == old:
+                continue
+
+            if kind == "image":
                 return True
+
+            if not self._is_final_name(kind, new):
+                return True
+
         return False
 
+    def _should_skip_media_autoconvert_once(self) -> bool:
+        """
+        Skip conversion when a worker is binding converted output.
+        """
+
+        return bool(
+            getattr(
+                self,
+                "_skip_media_autoconvert_once",
+                False,
+            )
+        )
     
     # -----------------------------------------------
     # Optional hooks
@@ -122,6 +148,24 @@ class MediaAutoConvertMixin:
     def save(self, *args, **kwargs):
         is_new = getattr(self, "_state", None) and self._state.adding or kwargs.get("force_insert", False)
 
+        if self._should_skip_media_autoconvert_once():
+            try:
+                delattr(self, "_skip_media_autoconvert_once")
+            except Exception:
+                pass
+
+            super().save(*args, **kwargs)
+            self._media_orig_names = self._collect_current_media_names()
+
+            try:
+                self.after_autoconvert_save(
+                    is_new=is_new,
+                    raw_changed=False,
+                )
+            except Exception:
+                pass
+
+            return
         hook = getattr(self, "before_autoconvert_save", None)
         if callable(hook):
             try:

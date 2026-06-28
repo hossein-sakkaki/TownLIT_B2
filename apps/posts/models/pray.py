@@ -14,6 +14,7 @@ from django.db.models import Q
 from utils.mixins.slug_mixin import SlugMixin
 from utils.mixins.media_conversion import MediaConversionMixin
 from utils.mixins.media_autoconvert import MediaAutoConvertMixin
+from utils.mixins.media_assets import MediaAssetsMixin
 
 from apps.core.visibility.mixins import VisibilityModelMixin
 from apps.core.moderation.mixins import ModerationTargetMixin
@@ -62,6 +63,7 @@ class Prayer(
     VisibilityModelMixin,         # 👁️ visibility
     InteractionCounterMixin,      # 🧮 counters
     ReactionBreakdownMixin,       # ❤️ reactions
+     MediaAssetsMixin,             # 🖼️ Media metadata
     MediaAutoConvertMixin,        # 🎞 raw → converted detection
     MediaConversionMixin,         # 🔄 async conversion
     SlugMixin,
@@ -153,21 +155,16 @@ class Prayer(
     # --- availability --- 
     def is_available(self) -> bool:
         """
-        Availability policy (Prayer):
-        - image-only -> available immediately
-        - image + video -> available only after conversion
-        - no media / video-only -> not available (image required)
+        PrayerResponse is available when media processing is complete.
+        Text-only response is available immediately.
         """
 
-        # Image required (clean enforces this)
+        if not self.image and not self.video:
+            return True
+
         if not self.image:
             return False
 
-        # Image-only
-        if not self.video:
-            return True
-
-        # Image + video
         return bool(self.is_converted)
 
     def on_available(self):
@@ -181,19 +178,6 @@ class Prayer(
 
         # Let MediaAutoConvertMixin run first
         super().save(*args, **kwargs)
-
-        # ----------------------------------------
-        # FIX: Image-only should always be converted
-        # ----------------------------------------
-        if image_only and not self.is_converted:
-            type(self).objects.filter(pk=self.pk).update(is_converted=True)
-            self.is_converted = True
-
-        # ----------------------------------------
-        # Availability trigger (image-only create)
-        # ----------------------------------------
-        if is_new and image_only:
-            transaction.on_commit(lambda: self.on_available())
             
     # --- slug ---
     def get_slug_source(self):
@@ -218,6 +202,7 @@ class Prayer(
 # Model: PrayerResponse (OneToOne)
 # -----------------------------------------------------------------------------
 class PrayerResponse(
+     MediaAssetsMixin,            # 🖼️ Media metadata
     MediaAutoConvertMixin,        # 🎞 raw → converted detection
     MediaConversionMixin,         # 🔄 async conversion
     AvailabilityAware,
@@ -344,10 +329,6 @@ class PrayerResponse(
 
         # Defer parent sync until outer transaction commits
         transaction.on_commit(self._sync_parent_prayer)
-
-        # Manual availability trigger for image-only create
-        if is_new and image_only:
-            transaction.on_commit(lambda: self.on_available())
 
     def delete(self, *args, **kwargs):
         """

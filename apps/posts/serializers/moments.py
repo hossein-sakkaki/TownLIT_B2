@@ -51,6 +51,123 @@ def _build_asset_cdn_url(key: str | None) -> str | None:
 
     return f"{base}/{str(key).lstrip('/')}"
 
+def _clean_asset_key(value) -> str | None:
+    if not value:
+        return None
+
+    raw = getattr(value, "name", value)
+
+    if not raw:
+        return None
+
+    cleaned = str(raw).strip().lstrip("/")
+    return cleaned or None
+
+
+def _media_asset(obj, field_name: str) -> dict:
+    assets = getattr(obj, "media_assets", None) or {}
+
+    if not isinstance(assets, dict):
+        return {}
+
+    value = assets.get(field_name)
+    return value if isinstance(value, dict) else {}
+
+
+def _media_dimensions(payload: dict | None) -> dict:
+    if not isinstance(payload, dict):
+        return {
+            "width": None,
+            "height": None,
+            "aspect_ratio": None,
+        }
+
+    return {
+        "width": payload.get("width"),
+        "height": payload.get("height"),
+        "aspect_ratio": payload.get("aspect_ratio"),
+    }
+
+
+def _variants_payload(variants: dict | None) -> dict:
+    if not isinstance(variants, dict):
+        return {}
+
+    output = {}
+
+    for name, payload in variants.items():
+        if not isinstance(payload, dict):
+            continue
+
+        key = _clean_asset_key(payload.get("key"))
+        url = _build_asset_cdn_url(key)
+
+        output[name] = {
+            **payload,
+            "key": key,
+            "cdn_url": url,
+            "image_url": url,
+            "url": url,
+        }
+
+    return output
+
+
+def _image_asset_payload(
+    *,
+    obj,
+    field_name: str,
+    fallback_key: str | None = None,
+) -> dict | None:
+    asset = _media_asset(obj, field_name)
+    key = _clean_asset_key(asset.get("key")) or _clean_asset_key(fallback_key)
+
+    if not key:
+        return None
+
+    url = _build_asset_cdn_url(key)
+
+    return {
+        **asset,
+        "key": key,
+        "cdn_url": url,
+        "image_url": url,
+        "url": url,
+        "variants": _variants_payload(asset.get("variants")),
+        **_media_dimensions(asset),
+    }
+
+
+def _image_item_payload(
+    *,
+    item: dict,
+    item_id: str,
+    key: str,
+    order: int,
+    is_cover: bool,
+) -> dict:
+    item_url = _build_asset_cdn_url(key)
+
+    return {
+        "id": item_id,
+        "key": key,
+        "order": int(item.get("order", order) or order),
+        "file_name": item.get("file_name") or key.split("/")[-1],
+        "mime_type": item.get("mime_type") or "",
+        "size": int(item.get("size") or 0),
+        "is_cover": is_cover,
+        "field_name": f"image_items:{item_id}",
+
+        "width": item.get("width"),
+        "height": item.get("height"),
+        "aspect_ratio": item.get("aspect_ratio"),
+        "variants": _variants_payload(item.get("variants")),
+
+        "cdn_url": item_url,
+        "image_url": item_url,
+        "url": item_url,
+    }
+
 # -------------------------------------------------
 # Serializers
 # -------------------------------------------------
@@ -95,6 +212,9 @@ class MomentSerializer(
     image_items = serializers.SerializerMethodField(read_only=True)
     cover_image = serializers.SerializerMethodField(read_only=True)
     max_images = serializers.SerializerMethodField(read_only=True)
+    
+    image_asset = serializers.SerializerMethodField(read_only=True)
+    thumbnail_asset = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Moment
@@ -109,6 +229,9 @@ class MomentSerializer(
             "images",
             "video",
             "thumbnail",
+            
+            "image_asset",
+            "thumbnail_asset",
 
             # media metadata
             "media_kind",
@@ -162,6 +285,9 @@ class MomentSerializer(
             "recomments_count",
             "reactions_count",
             "reactions_breakdown",
+            
+            "image_asset",
+            "thumbnail_asset",
         ]
 
     # -------------------------------------------------
@@ -234,20 +360,15 @@ class MomentSerializer(
                 if not item_id or not key:
                     continue
 
-                output.append({
-                    "id": item_id,
-                    "key": key,
-                    "order": int(item.get("order", index) or index),
-                    "file_name": item.get("file_name") or key.split("/")[-1],
-                    "mime_type": item.get("mime_type") or "",
-                    "size": int(item.get("size") or 0),
-                    "is_cover": item_id == cover_id or bool(item.get("is_cover")),
-                    "field_name": f"image_items:{item_id}",
-
-                    # Web display helpers.
-                    "cdn_url": _build_asset_cdn_url(key),
-                    "image_url": _build_asset_cdn_url(key),
-                })
+                output.append(
+                    _image_item_payload(
+                        item=item,
+                        item_id=item_id,
+                        key=key,
+                        order=index,
+                        is_cover=item_id == cover_id or bool(item.get("is_cover")),
+                    )
+                )
 
             output.sort(key=lambda value: value.get("order", 0))
             return output
@@ -259,6 +380,7 @@ class MomentSerializer(
     def get_cover_image(self, obj):
         """
         Return lightweight cover descriptor for grid/feed/detail clients.
+        Includes dimensions and variants when available.
         """
         try:
             item = obj.cover_image_item()
@@ -269,19 +391,37 @@ class MomentSerializer(
 
                 return {
                     "id": item_id,
+                    "key": key,
                     "field_name": f"image_items:{item_id}",
                     "source": "image_items",
                     "cdn_url": _build_asset_cdn_url(key),
                     "image_url": _build_asset_cdn_url(key),
+                    "url": _build_asset_cdn_url(key),
+                    "width": item.get("width"),
+                    "height": item.get("height"),
+                    "aspect_ratio": item.get("aspect_ratio"),
+                    "variants": _variants_payload(item.get("variants")),
                 }
 
             if obj.image:
+                image_asset = _image_asset_payload(
+                    obj=obj,
+                    field_name="image",
+                    fallback_key=getattr(obj.image, "name", None),
+                )
+
                 return {
                     "id": None,
+                    "key": image_asset.get("key") if image_asset else None,
                     "field_name": "image",
                     "source": "image",
-                    "cdn_url": _build_asset_cdn_url(getattr(obj.image, "name", None)),
-                    "image_url": _build_asset_cdn_url(getattr(obj.image, "name", None)),
+                    "cdn_url": image_asset.get("cdn_url") if image_asset else None,
+                    "image_url": image_asset.get("image_url") if image_asset else None,
+                    "url": image_asset.get("url") if image_asset else None,
+                    "width": image_asset.get("width") if image_asset else None,
+                    "height": image_asset.get("height") if image_asset else None,
+                    "aspect_ratio": image_asset.get("aspect_ratio") if image_asset else None,
+                    "variants": image_asset.get("variants") if image_asset else {},
                 }
 
             return None
@@ -290,6 +430,37 @@ class MomentSerializer(
             logger.exception("get_cover_image failed for moment id=%s", obj.id)
             return None
 
+    # -------------------------------------------------
+    # Legacy helpers
+    # -------------------------------------------------
+    def get_image_asset(self, obj):
+        """
+        Lightweight image metadata/variants for legacy single-image Moments.
+        """
+        try:
+            return _image_asset_payload(
+                obj=obj,
+                field_name="image",
+                fallback_key=getattr(getattr(obj, "image", None), "name", None),
+            )
+        except Exception:
+            logger.exception("get_image_asset failed for moment id=%s", obj.id)
+            return None
+
+    def get_thumbnail_asset(self, obj):
+        """
+        Lightweight thumbnail metadata/variants for video Moments.
+        """
+        try:
+            return _image_asset_payload(
+                obj=obj,
+                field_name="thumbnail",
+                fallback_key=getattr(getattr(obj, "thumbnail", None), "name", None),
+            )
+        except Exception:
+            logger.exception("get_thumbnail_asset failed for moment id=%s", obj.id)
+            return None
+        
     # -------------------------------------------------
     # Ownership helpers
     # -------------------------------------------------
@@ -720,7 +891,10 @@ class MomentProfileGridSerializer(serializers.ModelSerializer):
         allow_null=True,
         use_url=True,
     )
-
+    
+    image_asset = serializers.SerializerMethodField(read_only=True)
+    thumbnail_asset = serializers.SerializerMethodField(read_only=True)
+    
     image_items = serializers.SerializerMethodField(read_only=True)
     cover_image = serializers.SerializerMethodField(read_only=True)
     max_images = serializers.SerializerMethodField(read_only=True)
@@ -739,6 +913,8 @@ class MomentProfileGridSerializer(serializers.ModelSerializer):
             "image",
             "video",
             "thumbnail",
+            "image_asset",
+            "thumbnail_asset",
 
             # Multi-photo metadata
             "media_kind",
@@ -801,20 +977,15 @@ class MomentProfileGridSerializer(serializers.ModelSerializer):
                 if not item_id or not key:
                     continue
 
-                payload.append({
-                    "id": item_id,
-                    "key": key,
-                    "order": int(item.get("order", index) or index),
-                    "file_name": item.get("file_name") or key.split("/")[-1],
-                    "mime_type": item.get("mime_type") or "",
-                    "size": int(item.get("size") or 0),
-                    "is_cover": item_id == cover_id or bool(item.get("is_cover")),
-                    "field_name": f"image_items:{item_id}",
-
-                    # Web display source.
-                    "cdn_url": _build_asset_cdn_url(key),
-                    "image_url": _build_asset_cdn_url(key),
-                })
+                payload.append(
+                    _image_item_payload(
+                        item=item,
+                        item_id=item_id,
+                        key=key,
+                        order=index,
+                        is_cover=item_id == cover_id or bool(item.get("is_cover")),
+                    )
+                )
 
             return payload
 
@@ -824,7 +995,7 @@ class MomentProfileGridSerializer(serializers.ModelSerializer):
 
     def get_cover_image(self, obj):
         """
-        Return lightweight cover descriptor.
+        Return lightweight cover descriptor with dimensions and variants.
         """
         try:
             item = obj.cover_image_item()
@@ -836,17 +1007,37 @@ class MomentProfileGridSerializer(serializers.ModelSerializer):
                 if item_id:
                     return {
                         "id": item_id,
+                        "key": key,
                         "field_name": f"image_items:{item_id}",
                         "source": "image_items",
                         "cdn_url": _build_asset_cdn_url(key),
                         "image_url": _build_asset_cdn_url(key),
+                        "url": _build_asset_cdn_url(key),
+                        "width": item.get("width"),
+                        "height": item.get("height"),
+                        "aspect_ratio": item.get("aspect_ratio"),
+                        "variants": _variants_payload(item.get("variants")),
                     }
 
             if getattr(obj, "image", None):
+                image_asset = _image_asset_payload(
+                    obj=obj,
+                    field_name="image",
+                    fallback_key=getattr(obj.image, "name", None),
+                )
+
                 return {
                     "id": None,
+                    "key": image_asset.get("key") if image_asset else None,
                     "field_name": "image",
                     "source": "image",
+                    "cdn_url": image_asset.get("cdn_url") if image_asset else None,
+                    "image_url": image_asset.get("image_url") if image_asset else None,
+                    "url": image_asset.get("url") if image_asset else None,
+                    "width": image_asset.get("width") if image_asset else None,
+                    "height": image_asset.get("height") if image_asset else None,
+                    "aspect_ratio": image_asset.get("aspect_ratio") if image_asset else None,
+                    "variants": image_asset.get("variants") if image_asset else {},
                 }
 
             return None
@@ -854,7 +1045,7 @@ class MomentProfileGridSerializer(serializers.ModelSerializer):
         except Exception:
             logger.exception("get_cover_image failed for moment id=%s", obj.id)
             return None
-
+        
     def get_max_images(self, obj):
         """
         Return current backend limit for client display.
@@ -865,6 +1056,37 @@ class MomentProfileGridSerializer(serializers.ModelSerializer):
         except Exception:
             return None
 
+    # -------------------------------------------------
+    # Legacy media helpers
+    # -------------------------------------------------
+    def get_image_asset(self, obj):
+        """
+        Lightweight image metadata/variants for profile grid.
+        """
+        try:
+            return _image_asset_payload(
+                obj=obj,
+                field_name="image",
+                fallback_key=getattr(getattr(obj, "image", None), "name", None),
+            )
+        except Exception:
+            logger.exception("get_image_asset failed for profile grid moment id=%s", obj.id)
+            return None
+
+    def get_thumbnail_asset(self, obj):
+        """
+        Lightweight thumbnail metadata/variants for video Moment profile grid.
+        """
+        try:
+            return _image_asset_payload(
+                obj=obj,
+                field_name="thumbnail",
+                fallback_key=getattr(getattr(obj, "thumbnail", None), "name", None),
+            )
+        except Exception:
+            logger.exception("get_thumbnail_asset failed for profile grid moment id=%s", obj.id)
+            return None
+        
     # -------------------------------------------------
     # Owner DTO
     # -------------------------------------------------

@@ -188,34 +188,38 @@ class PrayViewSet(OwnerGateMixin, viewsets.ModelViewSet):
             )
             .select_related("response")
             .only(
-                # Prayer fields needed by profile grid
+                # Prayer fields needed by profile grid.
                 "id",
                 "slug",
                 "image",
                 "video",
                 "thumbnail",
+                "media_assets",
+
+                # Lifecycle.
                 "status",
                 "answered_at",
 
-                # Visibility / UI
+                # Visibility / UI.
                 "visibility",
                 "is_hidden",
 
-                # Pipeline / timestamps
+                # Pipeline / timestamps.
                 "is_converted",
                 "published_at",
                 "updated_at",
 
-                # Ownership for owner action detection
+                # Ownership for owner action detection.
                 "content_type_id",
                 "object_id",
 
-                # Response fields needed by profile grid
+                # Response fields needed by profile grid.
                 "response__id",
                 "response__result_status",
                 "response__image",
                 "response__video",
                 "response__thumbnail",
+                "response__media_assets",
                 "response__is_converted",
                 "response__created_at",
                 "response__updated_at",

@@ -2,22 +2,21 @@
 
 from .base import SquareProjection
 from .registry import register_projection
-from .media import safe_preview_key, cdn_url
+from .media import (
+    safe_preview_key,
+    cdn_url,
+    media_asset,
+    media_dimensions,
+    variants_payload,
+    video_preview_payload,
+    video_qualities_payload,
+)
 
 
 @register_projection("moment")
 class MomentSquareProjection(SquareProjection):
     """
     Lightweight Square projection for Moments.
-
-    Supports:
-    - legacy single-photo Moments
-    - video Moments with thumbnail
-    - JSON-backed multi-photo Moments
-
-    Important:
-    - iOS can resolve image_items through field_name.
-    - Web Square grid needs cdn_url/image_url for each image item.
     """
 
     def get_preview(self):
@@ -29,6 +28,13 @@ class MomentSquareProjection(SquareProjection):
             thumb_key = safe_preview_key(obj, "thumbnail")
             thumb_url = cdn_url(thumb_key)
 
+            video_asset = media_asset(obj, "video")
+            thumbnail_asset = media_asset(obj, "thumbnail")
+
+            dimensions = media_dimensions(video_asset)
+            if not dimensions.get("aspect_ratio"):
+                dimensions = media_dimensions(thumbnail_asset)
+
             return {
                 "thumbnail_url": thumb_url,
                 "image_url": None,
@@ -37,7 +43,15 @@ class MomentSquareProjection(SquareProjection):
                 "type": "video",
                 "media_kind": "video",
 
-                # Photo metadata is intentionally empty for video Moments.
+                "width": dimensions.get("width"),
+                "height": dimensions.get("height"),
+                "aspect_ratio": dimensions.get("aspect_ratio"),
+                "duration_ms": video_asset.get("duration_ms"),
+
+                "preview_video": video_preview_payload(obj, "video"),
+                "video_qualities": video_qualities_payload(obj, "video"),
+                "variants": variants_payload(thumbnail_asset.get("variants")),
+
                 "image_items": [],
                 "cover_image_id": None,
                 "cover_image": None,
@@ -46,13 +60,10 @@ class MomentSquareProjection(SquareProjection):
         image_items = self._get_image_items_payload(obj)
         cover_image = self._get_cover_image_payload(obj, image_items)
 
-        # Backward-compatible preview URL.
-        # For multi-photo Moments, this points to the pinned/cover image.
         cover_key = self._get_cover_key(obj)
         image_key = cover_key or safe_preview_key(obj, "image")
         image_url = cdn_url(image_key)
 
-        # If cover image payload has URL, prefer it for Square preview.
         cover_url = None
         if isinstance(cover_image, dict):
             cover_url = (
@@ -63,6 +74,19 @@ class MomentSquareProjection(SquareProjection):
 
         final_image_url = cover_url or image_url
 
+        dimensions = {
+            "width": None,
+            "height": None,
+            "aspect_ratio": None,
+        }
+
+        if isinstance(cover_image, dict):
+            dimensions = {
+                "width": cover_image.get("width"),
+                "height": cover_image.get("height"),
+                "aspect_ratio": cover_image.get("aspect_ratio"),
+            }
+
         return {
             "thumbnail_url": None,
             "image_url": final_image_url,
@@ -71,28 +95,25 @@ class MomentSquareProjection(SquareProjection):
             "type": "image",
             "media_kind": "image",
 
-            # New multi-photo metadata for iOS/web Square grid.
+            "width": dimensions.get("width"),
+            "height": dimensions.get("height"),
+            "aspect_ratio": dimensions.get("aspect_ratio"),
+
+            "variants": cover_image.get("variants", {}) if isinstance(cover_image, dict) else {},
+
             "image_items": image_items,
             "cover_image_id": getattr(obj, "cover_image_id", None),
             "cover_image": cover_image,
         }
 
     def get_meta(self):
-        """
-        Moment has no title field.
-        """
         return {
             "excerpt": (getattr(self.obj, "caption", "") or "")[:160],
         }
 
-    # ---------------------------------------------------------
-    # Multi-photo helpers
-    # ---------------------------------------------------------
+    # MARK: - Multi-photo helpers
 
     def _get_ordered_items(self, obj):
-        """
-        Return normalized ordered image items.
-        """
         try:
             if hasattr(obj, "normalized_image_items"):
                 items = obj.normalized_image_items()
@@ -119,9 +140,6 @@ class MomentSquareProjection(SquareProjection):
             return []
 
     def _get_cover_key(self, obj):
-        """
-        Resolve pinned cover key without media signing.
-        """
         try:
             if hasattr(obj, "cover_image_key"):
                 return obj.cover_image_key()
@@ -143,12 +161,6 @@ class MomentSquareProjection(SquareProjection):
             return None
 
     def _get_image_items_payload(self, obj):
-        """
-        Return lightweight image item metadata for Square clients.
-
-        Web needs cdn_url/image_url.
-        iOS needs field_name.
-        """
         items = self._get_ordered_items(obj)
         cover_id = str(getattr(obj, "cover_image_id", "") or "")
 
@@ -162,6 +174,7 @@ class MomentSquareProjection(SquareProjection):
                 continue
 
             item_url = cdn_url(key)
+            variants = variants_payload(item.get("variants"))
 
             payload.append({
                 "id": item_id,
@@ -171,11 +184,13 @@ class MomentSquareProjection(SquareProjection):
                 "mime_type": item.get("mime_type") or "",
                 "size": int(item.get("size") or 0),
                 "is_cover": item_id == cover_id or bool(item.get("is_cover")),
-
-                # iOS / asset resolver.
                 "field_name": f"image_items:{item_id}",
 
-                # Web Square grid.
+                "width": item.get("width"),
+                "height": item.get("height"),
+                "aspect_ratio": item.get("aspect_ratio"),
+                "variants": variants,
+
                 "cdn_url": item_url,
                 "image_url": item_url,
                 "url": item_url,
@@ -184,21 +199,24 @@ class MomentSquareProjection(SquareProjection):
         return payload
 
     def _get_cover_image_payload(self, obj, image_items):
-        """
-        Return cover descriptor for Square clients.
-        """
         if not image_items:
             if getattr(obj, "image", None):
                 image_key = safe_preview_key(obj, "image")
                 image_url = cdn_url(image_key)
+                image_asset = media_asset(obj, "image")
 
                 return {
                     "id": None,
+                    "key": image_key,
                     "field_name": "image",
                     "source": "image",
                     "cdn_url": image_url,
                     "image_url": image_url,
                     "url": image_url,
+                    "width": image_asset.get("width"),
+                    "height": image_asset.get("height"),
+                    "aspect_ratio": image_asset.get("aspect_ratio"),
+                    "variants": variants_payload(image_asset.get("variants")),
                 }
 
             return None
@@ -210,20 +228,30 @@ class MomentSquareProjection(SquareProjection):
                 if str(item.get("id")) == cover_id:
                     return {
                         "id": item["id"],
+                        "key": item.get("key"),
                         "field_name": item["field_name"],
                         "source": "image_items",
                         "cdn_url": item.get("cdn_url"),
                         "image_url": item.get("image_url"),
                         "url": item.get("url"),
+                        "width": item.get("width"),
+                        "height": item.get("height"),
+                        "aspect_ratio": item.get("aspect_ratio"),
+                        "variants": item.get("variants") or {},
                     }
 
         first = image_items[0]
 
         return {
             "id": first["id"],
+            "key": first.get("key"),
             "field_name": first["field_name"],
             "source": "image_items",
             "cdn_url": first.get("cdn_url"),
             "image_url": first.get("image_url"),
             "url": first.get("url"),
+            "width": first.get("width"),
+            "height": first.get("height"),
+            "aspect_ratio": first.get("aspect_ratio"),
+            "variants": first.get("variants") or {},
         }

@@ -12,6 +12,12 @@ from apps.media_conversion.models import MediaJobStatus
 
 from utils.common.utils import FileUpload
 from utils.common.image_utils import convert_image_to_jpg
+from apps.media_conversion.services.media_metadata import image_metadata_from_storage
+from apps.media_conversion.services.image_variants import build_image_variants
+from apps.media_conversion.services.media_manifest import (
+    build_asset_payload,
+    update_instance_media_asset,
+)
 
 from .base import (
     get_instance,
@@ -129,6 +135,26 @@ def convert_image_to_jpg_task(
             upload,
         )
 
+        image_meta = image_metadata_from_storage(relative_output_path)
+
+        variant_dir = os.path.dirname(relative_output_path)
+        basename = os.path.splitext(os.path.basename(relative_output_path))[0]
+
+        variants = build_image_variants(
+            source_key=relative_output_path,
+            base_output_dir=f"{variant_dir}/variants",
+            basename=basename,
+        )
+
+        image_asset = build_asset_payload(
+            key=relative_output_path,
+            metadata=image_meta,
+            variants=variants,
+            extra={
+                "mime_type": "image/jpeg",
+            },
+        )
+        
         raise_if_job_canceled(job)
 
         job_update(
@@ -145,6 +171,18 @@ def convert_image_to_jpg_task(
             relative_path=relative_output_path,
         )
 
+        refreshed_instance = get_instance(
+            app_label,
+            model_name,
+            instance_id,
+        )
+
+        update_instance_media_asset(
+            instance=refreshed_instance,
+            field_name=field_name,
+            payload=image_asset,
+        )
+        
         raise_if_job_canceled(job)
 
         job_update(
@@ -280,6 +318,17 @@ def convert_moment_image_item_to_jpg_task(
             upload,
         )
 
+        image_meta = image_metadata_from_storage(relative_output_path)
+
+        variant_dir = os.path.dirname(relative_output_path)
+        basename = os.path.splitext(os.path.basename(relative_output_path))[0]
+
+        variants = build_image_variants(
+            source_key=relative_output_path,
+            base_output_dir=f"{variant_dir}/variants",
+            basename=basename,
+        )
+        
         raise_if_job_canceled(job)
 
         job_update(
@@ -314,6 +363,10 @@ def convert_moment_image_item_to_jpg_task(
                     "file_name": os.path.basename(relative_output_path),
                     "mime_type": "image/jpeg",
                     "size": int(output_size or item.get("size") or 0),
+                    "width": image_meta.get("width"),
+                    "height": image_meta.get("height"),
+                    "aspect_ratio": image_meta.get("aspect_ratio"),
+                    "variants": variants,
                 }
 
             updated_items.append(item)

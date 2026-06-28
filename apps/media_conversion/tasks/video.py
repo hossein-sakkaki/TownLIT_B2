@@ -10,6 +10,10 @@ from django.db import close_old_connections
 from apps.media_conversion.models import MediaJobStatus
 from apps.media_conversion.services.progress import touch_job
 from apps.media_conversion.services.cancellation import cleanup_canceled_media_job
+from apps.media_conversion.services.media_manifest import (
+    build_asset_payload,
+    update_instance_media_asset,
+)
 
 from apps.subtitles.services.transcript_builder import get_or_create_transcript_for_object
 from apps.subtitles.services.audio_asset import build_stt_audio_from_source_video
@@ -188,12 +192,30 @@ def convert_video_to_multi_hls_task(
 
         touch_job(job, message="Starting video encoding…")
 
-        relative_output_path = convert_video_to_multi_hls(
+        conversion_result = convert_video_to_multi_hls(
             source_path=source_path,
             instance=instance,
             fileupload=upload,
             job=job,
             field_name=field_name,
+        )
+
+        relative_output_path = conversion_result.master_path
+
+        video_asset = build_asset_payload(
+            key=relative_output_path,
+            metadata={
+                "width": conversion_result.width,
+                "height": conversion_result.height,
+                "aspect_ratio": conversion_result.aspect_ratio,
+                "duration_ms": conversion_result.duration_ms,
+                "mime_type": "application/vnd.apple.mpegurl",
+                "size": 0,
+            },
+            extra={
+                "qualities": conversion_result.variants,
+                "preview": conversion_result.preview,
+            },
         )
 
         raise_if_job_canceled(job)
@@ -218,6 +240,18 @@ def convert_video_to_multi_hls_task(
             mark_converted=False,
         )
 
+        refreshed_instance = get_instance(
+            app_label,
+            model_name,
+            instance_id,
+        )
+
+        update_instance_media_asset(
+            instance=refreshed_instance,
+            field_name=field_name,
+            payload=video_asset,
+        )
+        
         raise_if_job_canceled(job)
 
         # -------------------------------------------------
