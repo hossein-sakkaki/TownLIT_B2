@@ -1,6 +1,7 @@
 # apps/core/interactions/services/reaction_realtime.py
 
 import logging
+from django.apps import apps
 
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
@@ -10,6 +11,39 @@ from apps.posts.models.reaction import Reaction
 
 logger = logging.getLogger(__name__)
 
+
+def _resolve_model_class(ct: ContentType):
+    """
+    Resolve a stable model class even if ct.model_class() is None.
+    Supports stale/legacy content-type aliases like posts.pray -> posts.Prayer.
+    """
+    model_class = ct.model_class()
+    if model_class is not None:
+        return model_class
+
+    try:
+        model_class = apps.get_model(ct.app_label, ct.model)
+        if model_class is not None:
+            return model_class
+    except Exception:
+        pass
+
+    alias_map = {
+        ("posts", "pray"): "Prayer",
+        ("posts", "prayerresponse"): "Prayer",
+        ("posts", "prayer_response"): "Prayer",
+    }
+
+    alias_target = alias_map.get((ct.app_label, ct.model))
+    if alias_target:
+        try:
+            model_class = apps.get_model(ct.app_label, alias_target)
+            if model_class is not None:
+                return model_class
+        except Exception:
+            pass
+
+    return None
 
 def _content_type_key(ct: ContentType) -> str:
     """
@@ -29,7 +63,8 @@ def _inbox_group_name(ct_id: int, object_id: int, user_id: int) -> str:
 
 
 def build_reaction_summary_payload(*, content_type, object_id):
-    model_class = content_type.model_class()
+    model_class = _resolve_model_class(content_type)
+
     if not model_class:
         return None
 
@@ -39,6 +74,7 @@ def build_reaction_summary_payload(*, content_type, object_id):
         .values("reactions_count", "reactions_breakdown")
         .first()
     )
+
     if not target:
         return None
 
@@ -48,7 +84,6 @@ def build_reaction_summary_payload(*, content_type, object_id):
         "object_id": int(object_id),
         "reactions_count": int(target.get("reactions_count") or 0),
         "reactions_breakdown": target.get("reactions_breakdown") or {},
-        # Realtime summary is object-level, not per-user.
         "my_reaction": None,
     }
 

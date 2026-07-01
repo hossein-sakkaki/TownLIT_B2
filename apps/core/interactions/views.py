@@ -17,25 +17,79 @@ from apps.core.interactions.serializers import (
 
 def _resolve_content_type(raw_value):
     """
+    Resolve public interaction content_type values safely.
+
     Accepts:
       - numeric id: "23"
       - dotted key: "posts.testimony"
-      - plain model: "testimony"
-    Returns:
-      - ContentType instance
-    Raises:
-      - ContentType.DoesNotExist
+      - public aliases: "moment", "testimony", "prayer", "pray"
+
+    Important:
+      Avoid ContentType.objects.get(model=raw) because model names are not
+      globally unique across apps and can raise MultipleObjectsReturned.
     """
-    raw = str(raw_value).strip()
+    raw = str(raw_value or "").strip().lower()
+
+    if not raw:
+        raise ContentType.DoesNotExist
 
     if raw.isdigit():
         return ContentType.objects.get(pk=int(raw))
 
+    alias_map = {
+        # Canonical public interaction targets
+        "moment": ("posts", "moment"),
+        "testimony": ("posts", "testimony"),
+
+        # Prayer and PrayerResponse share interactions on the parent Prayer.
+        "prayer": ("posts", "prayer"),
+        "pray": ("posts", "prayer"),
+
+        # Defensive aliases: never target PrayerResponse for shared interactions.
+        "prayerresponse": ("posts", "prayer"),
+        "prayer_response": ("posts", "prayer"),
+        "prayer-response": ("posts", "prayer"),
+    }
+
     if "." in raw:
         app_label, model = raw.split(".", 1)
-        return ContentType.objects.get(app_label=app_label, model=model)
+        app_label = app_label.strip()
+        model = model.strip()
 
-    return ContentType.objects.get(model=raw)
+        alias_target = alias_map.get(model)
+        if app_label == "posts" and alias_target:
+            return ContentType.objects.get(
+                app_label=alias_target[0],
+                model=alias_target[1],
+            )
+
+        return ContentType.objects.get(
+            app_label=app_label,
+            model=model,
+        )
+
+    alias_target = alias_map.get(raw)
+    if alias_target:
+        return ContentType.objects.get(
+            app_label=alias_target[0],
+            model=alias_target[1],
+        )
+
+    # Last-resort fallback:
+    # only allow plain model lookup if it is globally unique.
+    matches = ContentType.objects.filter(model=raw)
+
+    count = matches.count()
+
+    if count == 1:
+        return matches.first()
+
+    if count > 1:
+        raise ContentType.MultipleObjectsReturned(
+            f"Ambiguous content_type '{raw}'. Use 'app_label.model'."
+        )
+
+    raise ContentType.DoesNotExist
 
 
 def _resolve_model_class(ct: ContentType):
