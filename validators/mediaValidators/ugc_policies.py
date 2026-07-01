@@ -8,6 +8,37 @@ from typing import List, Optional
 UGC_MB_PER_MINUTE = 120
 
 
+# -------------------------------------------------
+# Images
+# -------------------------------------------------
+MOMENT_MAX_IMAGES = 7
+MOMENT_IMAGE_MAX_MB = 14
+MOMENT_IMAGE_TOTAL_MAX_MB = MOMENT_MAX_IMAGES * MOMENT_IMAGE_MAX_MB
+
+
+@dataclass(frozen=True)
+class ImagePolicy:
+    min_files: int
+    max_files: int
+    max_file_mb: int
+
+    def max_total_mb(self, file_count: int) -> int:
+        if file_count <= 0:
+            return 0
+
+        return min(file_count, self.max_files) * self.max_file_mb
+
+
+MOMENT_IMAGE_POLICY = ImagePolicy(
+    min_files=1,
+    max_files=MOMENT_MAX_IMAGES,
+    max_file_mb=MOMENT_IMAGE_MAX_MB,
+)
+
+
+# -------------------------------------------------
+# Videos
+# -------------------------------------------------
 @dataclass(frozen=True)
 class VideoTier:
     """
@@ -26,11 +57,11 @@ class VideoPolicy:
     min_duration_sec: int
     max_duration_sec: int
 
-    # FPS guardrails (soft limits)
+    # FPS guardrails
     min_fps: Optional[int] = None
     max_fps: Optional[int] = None
 
-    # Tiered size rules (not used anymore, but kept for compatibility)
+    # Tiered size rules kept for compatibility
     tiers: Optional[List["VideoTier"]] = None
 
     # Fallback size rules
@@ -53,7 +84,7 @@ def compute_max_allowed_mb(duration_sec: float, policy: VideoPolicy) -> float:
 
     minutes = float(duration_sec) / 60.0
 
-    # Tiered policy (kept for backward compatibility)
+    # Tiered policy kept for backward compatibility
     if policy.tiers:
         for tier in policy.tiers:
             if duration_sec <= tier.max_duration_sec:
@@ -80,7 +111,7 @@ MOMENT_VIDEO_POLICY = VideoPolicy(
     min_fps=24,
     max_fps=120,
 
-    cap_mb=360,  # 3 × 120
+    cap_mb=360,
     mb_per_minute=UGC_MB_PER_MINUTE,
 )
 
@@ -96,7 +127,7 @@ PRAYER_VIDEO_POLICY = VideoPolicy(
     min_fps=24,
     max_fps=120,
 
-    cap_mb=600,  # 5 × 120
+    cap_mb=600,
     mb_per_minute=UGC_MB_PER_MINUTE,
 )
 
@@ -112,6 +143,6 @@ TESTIMONY_VIDEO_POLICY = VideoPolicy(
     min_fps=24,
     max_fps=120,
 
-    cap_mb=1200,  # 10 × 120
+    cap_mb=1200,
     mb_per_minute=UGC_MB_PER_MINUTE,
 )

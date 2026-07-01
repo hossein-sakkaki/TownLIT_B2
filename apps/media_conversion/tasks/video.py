@@ -18,6 +18,7 @@ from apps.media_conversion.services.media_manifest import (
 from apps.subtitles.services.transcript_builder import get_or_create_transcript_for_object
 from apps.subtitles.services.audio_asset import build_stt_audio_from_source_video
 from apps.subtitles.tasks import build_transcript_for_video
+from apps.media_conversion.services.media_metadata import image_metadata_from_storage
 
 from utils.common.utils import FileUpload
 from utils.common.video_utils import convert_video_to_multi_hls
@@ -169,6 +170,36 @@ def convert_video_to_multi_hls_task(
                         mark_converted=False,
                     )
 
+                    try:
+                        refreshed_for_thumbnail = get_instance(
+                            app_label,
+                            model_name,
+                            instance_id,
+                        )
+
+                        thumbnail_meta = image_metadata_from_storage(
+                            thumbnail_path,
+                        )
+
+                        thumbnail_asset = build_asset_payload(
+                            key=thumbnail_path,
+                            metadata=thumbnail_meta,
+                        )
+
+                        update_instance_media_asset(
+                            instance=refreshed_for_thumbnail,
+                            field_name="thumbnail",
+                            payload=thumbnail_asset,
+                        )
+
+                    except Exception:
+                        logger.warning(
+                            "Thumbnail metadata update skipped for %s[%s]",
+                            model_name,
+                            instance_id,
+                            exc_info=True,
+                        )
+    
                     logger.info(
                         "🖼️ Thumbnail generated: %s",
                         thumbnail_path,

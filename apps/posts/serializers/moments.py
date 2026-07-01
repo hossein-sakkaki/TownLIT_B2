@@ -26,7 +26,8 @@ from apps.core.ownership.utils import resolve_owner_from_request
 
 from validators.mediaValidators.image_validators import (
     validate_image_file,
-    validate_image_size,
+    validate_moment_image_size,
+    validate_moment_image_upload_batch,
 )
 from validators.security_validators import validate_no_executable_file
 
@@ -521,20 +522,56 @@ class MomentSerializer(
 
     def _validate_uploaded_images(self, images):
         """
-        Validate uploaded photo files.
+        Validate Moment multi-photo uploads.
+
+        Moment photo policy:
+        - 1..MOMENT_MAX_IMAGES images
+        - each image <= 14MB
+        - total raw size <= image_count * 14MB
         """
         if not images:
             return
 
-        if len(images) > MOMENT_MAX_IMAGES:
+        from django.core.exceptions import ValidationError as DjangoValidationError
+
+        try:
+            validate_moment_image_upload_batch(images)
+
+            for image in images:
+                validate_no_executable_file(image)
+
+        except DjangoValidationError as exc:
             raise serializers.ValidationError({
-                "images": f"Photo Moment can contain up to {MOMENT_MAX_IMAGES} images."
+                "images": exc.messages if hasattr(exc, "messages") else str(exc)
             })
 
-        for image in images:
+        except serializers.ValidationError:
+            raise
+        
+    def _validate_legacy_image(self, image):
+        """
+        Validate backward-compatible single Moment image upload.
+
+        This is still a Moment photo, so it uses the Moment photo policy:
+        - single image <= 14MB
+        """
+        if not image:
+            return
+
+        from django.core.exceptions import ValidationError as DjangoValidationError
+
+        try:
             validate_no_executable_file(image)
             validate_image_file(image)
-            validate_image_size(image)
+            validate_moment_image_size(image)
+
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({
+                "image": exc.messages if hasattr(exc, "messages") else str(exc)
+            })
+
+        except serializers.ValidationError:
+            raise
 
     def _save_extra_image(self, instance: Moment, uploaded_file):
         """
@@ -563,7 +600,7 @@ class MomentSerializer(
                     key=instance.image.name,
                     file_name=getattr(first, "name", None) or instance.image.name.split("/")[-1],
                     mime_type=getattr(first, "content_type", "") or "",
-                    size=getattr(first, "size", 0) or 0,
+                    size=int(getattr(first, "size", 0) or 0),
                     order=0,
                     is_cover=True,
                 )
@@ -578,7 +615,7 @@ class MomentSerializer(
                     key=key,
                     file_name=getattr(uploaded, "name", "") or "",
                     mime_type=getattr(uploaded, "content_type", "") or "",
-                    size=getattr(uploaded, "size", 0) or 0,
+                    size=int(getattr(uploaded, "size", 0) or 0),
                     order=index,
                     is_cover=False,
                 )
@@ -637,9 +674,10 @@ class MomentSerializer(
         validated_data.pop("images", None)
 
         uploaded_images = self._get_uploaded_images()
-        self._validate_uploaded_images(uploaded_images)
 
         if uploaded_images:
+            self._validate_uploaded_images(uploaded_images)
+
             # Store first image through the legacy ImageField for compatibility.
             validated_data["image"] = uploaded_images[0]
             validated_data["media_kind"] = MOMENT_MEDIA_KIND_IMAGE
@@ -647,6 +685,7 @@ class MomentSerializer(
             validated_data.pop("thumbnail", None)
 
         elif validated_data.get("image"):
+            self._validate_legacy_image(validated_data["image"])
             validated_data["media_kind"] = MOMENT_MEDIA_KIND_IMAGE
 
         elif validated_data.get("video"):
@@ -786,6 +825,9 @@ class MomentSerializer(
 
             if uploaded_images:
                 self._validate_uploaded_images(uploaded_images)
+
+            if legacy_image:
+                self._validate_legacy_image(legacy_image)
 
             if has_new_photo and has_video:
                 raise serializers.ValidationError(

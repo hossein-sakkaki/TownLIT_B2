@@ -21,18 +21,24 @@ LEGACY_ENTRY_ALIASES = {
     "/posts/me/moments": "/posts/moments",
 }
 
+
 def normalize_entry_section(section: str) -> str:
     """Normalize old/alias entry paths to valid API roots."""
     if not section:
         return "/posts"
+
     s = section.strip()
+
     if not s.startswith("/"):
         s = f"/{s}"
+
     return LEGACY_ENTRY_ALIASES.get(s, s)
 
+
 def guess_entry_section(ct_key: str) -> str:
-    """Return entry section for 'e' param (safe fallback)."""
+    """Return entry section for 'e' param."""
     return ENTRY_BY_CT.get(ct_key, "/posts")
+
 
 def build_content_link(
     *,
@@ -40,20 +46,41 @@ def build_content_link(
     section: str,
     focus: str | None = None,
     mode: str = "read",
+    owner_username: str | None = None,
+    key_path: str | None = None,
+    extra_params: dict | None = None,
 ) -> str:
     """
     Build frontend-safe deep-link for universal content pages.
+
+    Notes:
+    - Web uses /content/<slug> directly.
+    - iOS uses extra query hints to open the same content through the
+      profile-scoped stream viewer.
+    - Extra params are non-breaking for web.
     """
     params = {
         "type": mode,
         "e": normalize_entry_section(section),
     }
+
     if focus:
         params["focus"] = focus
 
+    if owner_username:
+        params["u"] = owner_username
+
+    if key_path:
+        params["k"] = key_path
+
+    if isinstance(extra_params, dict):
+        for key, value in extra_params.items():
+            if value is None:
+                continue
+
+            params[str(key)] = str(value)
+
     return f"/content/{slug}?{urlencode(params)}"
-
-
 
 # ------------------------------------------------------------
 # Profile / action links

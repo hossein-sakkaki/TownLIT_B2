@@ -21,6 +21,8 @@ from apps.notifications.constants import (
     NOTIFICATION_TYPES_FORCE_ENABLED,
     NOTIFICATION_TYPES_EXCLUDED_FROM_GENERAL_UNREAD,
     NOTIFICATION_TYPES_PUSH_ONLY,
+    sanitize_notification_channels,
+    notification_default_channels,
 )
 from apps.notifications.services.ui_link_resolver import (
     build_content_link,
@@ -46,18 +48,38 @@ def _is_enabled(user, notif_type):
     Messenger notification types are intentionally not controlled by
     general notification preferences. They should later be controlled by
     conversation-level mute/silence settings.
+
+    Channel masks are always sanitized so old DB rows or old clients cannot
+    re-enable unsupported email delivery.
     """
     if notif_type in NOTIFICATION_TYPES_FORCE_ENABLED:
-        return True, CHANNEL_DEFAULT
+        return True, sanitize_notification_channels(
+            notif_type,
+            notification_default_channels(notif_type),
+        )
 
     try:
         pref = UserNotificationPreference.objects.get(
             user=user,
             notification_type=notif_type,
         )
-        return pref.enabled, (pref.channels_mask if pref.enabled else 0)
+
+        channels_mask = sanitize_notification_channels(
+            notif_type,
+            pref.channels_mask if pref.enabled else 0,
+        )
+
+        if pref.channels_mask != channels_mask:
+            pref.channels_mask = channels_mask
+            pref.save(update_fields=["channels_mask"])
+
+        return pref.enabled, channels_mask
+
     except UserNotificationPreference.DoesNotExist:
-        return True, CHANNEL_DEFAULT
+        return True, sanitize_notification_channels(
+            notif_type,
+            notification_default_channels(notif_type),
+        )
     
 
 # -------------------------------------------------------------------------
@@ -167,49 +189,190 @@ def _guess_mode_for_obj(obj) -> str:
     return "read"
 
 
+def _owner_user_for_content_obj(obj):
+    """
+    Resolve the user who owns a content object.
+
+    This is intentionally generic because notifications work with Moment,
+    Prayer, Testimony, and future content models without direct imports.
+    """
+    if not obj:
+        return None
+
+    for attr in (
+        "user",
+        "owner",
+        "author",
+        "created_by",
+        "name",
+        "member_user",
+        "org_owner_user",
+    ):
+        val = getattr(obj, attr, None)
+
+        if val is not None and hasattr(val, "id"):
+            return val
+
+    try:
+        inner = getattr(obj, "content_object", None)
+
+        if inner:
+            for attr in (
+                "user",
+                "owner",
+                "author",
+                "created_by",
+                "member_user",
+                "org_owner_user",
+            ):
+                val = getattr(inner, attr, None)
+
+                if val is not None and hasattr(val, "id"):
+                    return val
+
+    except Exception:
+        return None
+
+    return None
+
+
+def _owner_username_for_content_obj(obj) -> str | None:
+    """
+    Return the content owner's username for iOS profile-scoped routing.
+
+    Web continues to use /content/<slug>; iOS can use this hint to open the
+    same content through VisitorProfileContainerView.
+    """
+    user = _owner_user_for_content_obj(obj)
+    username = getattr(user, "username", None)
+
+    if isinstance(username, str) and username.strip():
+        return username.strip()
+
+    return None
+
+
+def _profile_key_path_for_content_obj(obj, ct_key: str) -> str | None:
+    """
+    Return the profile viewer key path used by iOS.
+
+    Examples:
+    - moments.image
+    - moments.video
+    - prayers.image
+    - prayers.video
+    - testimonies.written
+    - testimonies.audio
+    - testimonies.video
+    """
+    if not obj:
+        return None
+
+    if ct_key == "posts.moment":
+        return "moments.video" if getattr(obj, "video", None) else "moments.image"
+
+    if ct_key == "posts.prayer":
+        return "prayers.video" if getattr(obj, "video", None) else "prayers.image"
+
+    if ct_key == "posts.testimony":
+        raw_type = (getattr(obj, "type", "") or "").strip().lower()
+
+        if raw_type in {"audio", "voice"}:
+            return "testimonies.audio"
+
+        if raw_type == "video":
+            return "testimonies.video"
+
+        return "testimonies.written"
+
+    return None
+
+
 def _smart_ui_link(target_obj, action_obj, extra_payload: dict | None) -> str | None:
     """
-    Build /content deep-link ONLY for registered content types in ENTRY_BY_CT.
-    For non-content models (Friendship/Fellowship), return None to allow fallback.
+    Build a universal /content deep-link for supported content types.
+
+    Important:
+    - Web uses /content/<slug> directly.
+    - iOS currently opens content through profile-scoped routing, so we also
+      include non-breaking hints:
+        u = owner username
+        k = profile key path
+    - For comment/reply/reaction notifications, focus remains the interaction
+      target, for example:
+        comment-123
+        reply-456:parent-123
+        reaction-789
     """
 
-    # 0) Resolve root (for comment/reply/reaction)
+    # 0) Resolve root content from action when the action is Comment/Reaction.
     root = _resolve_root_content_from_action(action_obj) or target_obj
+
     if not root:
         return None
 
-    # 1) Only content types we explicitly support
+    # 1) Only build /content links for explicitly registered content models.
     ct_key = _ct_key_for_obj(root) or ""
-    if ct_key not in ENTRY_BY_CT:
-        return None  # ✅ prevents /content/<pk> for Friendship/Fellowship
 
-    # 2) Focus (reply > comment > reaction)
+    if ct_key not in ENTRY_BY_CT:
+        return None
+
+    # 2) Build interaction focus.
     comment_id = parent_id = reaction_id = None
+
     if isinstance(extra_payload, dict):
         comment_id = extra_payload.get("comment_id")
         parent_id = extra_payload.get("parent_id")
         reaction_id = extra_payload.get("reaction_id")
 
     focus = None
+
     if comment_id:
-        focus = f"reply-{comment_id}:parent-{parent_id}" if parent_id else f"comment-{comment_id}"
+        focus = (
+            f"reply-{comment_id}:parent-{parent_id}"
+            if parent_id
+            else f"comment-{comment_id}"
+        )
     elif reaction_id:
         focus = f"reaction-{reaction_id}"
 
-    # 3) Slug (content objects should have slug)
+    # 3) Content slug is required. Do not fallback to pk here.
     slug = getattr(root, "slug", None)
-    if not slug:
-        return None  # ✅ no pk fallback here
 
-    # 4) Mode + section
+    if not slug:
+        return None
+
+    # 4) Mode + section for web.
     mode = _guess_mode_for_obj(root)
     section = guess_entry_section(ct_key)
+
+    # 5) Extra iOS-safe hints. Web can ignore these.
+    owner_username = _owner_username_for_content_obj(root)
+    key_path = _profile_key_path_for_content_obj(root, ct_key)
+
+    extra_link_params = {}
+
+    if isinstance(extra_payload, dict):
+        if extra_payload.get("comment_id"):
+            extra_link_params["comment_id"] = extra_payload.get("comment_id")
+
+        if extra_payload.get("parent_id"):
+            extra_link_params["parent_id"] = extra_payload.get("parent_id")
+
+        if extra_payload.get("reaction_id"):
+            extra_link_params["reaction_id"] = extra_payload.get("reaction_id")
+
+        if extra_payload.get("reaction_type"):
+            extra_link_params["reaction_type"] = extra_payload.get("reaction_type")
 
     return build_content_link(
         slug=str(slug),
         section=section,
         focus=focus,
         mode=mode,
+        owner_username=owner_username,
+        key_path=key_path,
+        extra_params=extra_link_params,
     )
 
 def _email_subject_for_notification(

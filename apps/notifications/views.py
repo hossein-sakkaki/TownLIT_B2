@@ -12,11 +12,14 @@ from apps.core.pagination import ConfigurablePagination
 from apps.notifications.constants import (
     CHANNEL_EMAIL,
     CHANNEL_PUSH,
-    CHANNEL_DEFAULT,
     NOTIFICATION_PREF_METADATA,
     NOTIFICATION_TYPES_EXCLUDED_FROM_GENERAL_UNREAD,
     NOTIFICATION_TYPES_EXCLUDED_FROM_NOTIFICATION_CENTER,
     NOTIFICATION_TYPES_FORCE_ENABLED,
+    notification_default_channels,
+    notification_supports_email,
+    notification_supports_push,
+    sanitize_notification_channels,
 )
 from apps.notifications.models import (
     UserNotificationPreference,
@@ -65,7 +68,6 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     page_size = 20
     max_page_size = 20
 
-    # -----------------------------------------------------------------
     def get_queryset(self):
         """
         Return visible general notifications for the current user.
@@ -91,7 +93,6 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
 
         return qs
 
-    # -----------------------------------------------------------------
     def _auto_prune_stale_notifications(self, qs):
         """
         Bounded safety-net cleanup.
@@ -115,7 +116,6 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
             )
             Notification.objects.filter(id__in=stale_ids).delete()
 
-    # -----------------------------------------------------------------
     @action(detail=True, methods=["patch"])
     def mark_read(self, request, pk=None):
         """
@@ -144,7 +144,6 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
             ).data
         )
 
-    # -----------------------------------------------------------------
     @action(detail=False, methods=["post"])
     def mark_all_read(self, request):
         """
@@ -163,7 +162,6 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
 
         return Response({"updated": updated})
 
-    # -----------------------------------------------------------------
     @action(detail=False, methods=["get"])
     def unread_count(self, request):
         """
@@ -196,6 +194,12 @@ class UserNotificationPreferenceViewSet(viewsets.ModelViewSet):
 
     Messenger notification types are intentionally excluded from this endpoint.
     Messenger should later use conversation-level mute/silence settings instead.
+
+    Email policy:
+    - Frequent interaction/feed/friendship notifications still appear as
+      configurable notification types.
+    - Their email channel is unsupported and stripped.
+    - Frontend should hide email toggles when email_supported=false.
     """
     serializer_class = UserNotificationPreferenceSerializer
     permission_classes = [IsAuthenticated]
@@ -220,6 +224,7 @@ class UserNotificationPreferenceViewSet(viewsets.ModelViewSet):
         - Guest users can only have guest-safe general types.
         - Messenger preference rows are excluded and pruned.
         - Missing valid preferences are auto-created.
+        - Unsupported email bits are stripped from existing rows.
         """
         user = self.request.user
         allowed_types = self._allowed_preference_types_for_user(user)
@@ -240,16 +245,11 @@ class UserNotificationPreferenceViewSet(viewsets.ModelViewSet):
                     user=user,
                     notification_type=notif_type,
                     enabled=True,
-                    channels_mask=CHANNEL_DEFAULT,
+                    channels_mask=notification_default_channels(notif_type),
                 )
                 for notif_type in missing_types
             ]
             UserNotificationPreference.objects.bulk_create(objs)
-
-            qs = UserNotificationPreference.objects.filter(
-                user=user,
-                notification_type__in=allowed_types,
-            )
 
         # Prune invalid or no-longer-user-configurable preference rows.
         # This removes old message preference rows too.
@@ -257,7 +257,36 @@ class UserNotificationPreferenceViewSet(viewsets.ModelViewSet):
             notification_type__in=allowed_types
         ).delete()
 
-        return qs
+        # Strip unsupported channels from old rows.
+        valid_qs = UserNotificationPreference.objects.filter(
+            user=user,
+            notification_type__in=allowed_types,
+        )
+
+        dirty_ids = []
+
+        for pref in valid_qs:
+            sanitized = sanitize_notification_channels(
+                pref.notification_type,
+                pref.channels_mask,
+            )
+
+            if sanitized != pref.channels_mask:
+                pref.channels_mask = sanitized
+                dirty_ids.append(pref.id)
+                pref.save(update_fields=["channels_mask"])
+
+        if dirty_ids:
+            logger.info(
+                "[Notifications] Sanitized unsupported channels user=%s preference_ids=%s",
+                getattr(user, "id", None),
+                dirty_ids,
+            )
+
+        return UserNotificationPreference.objects.filter(
+            user=user,
+            notification_type__in=allowed_types,
+        ).order_by("notification_type")
 
     def perform_update(self, serializer):
         serializer.save(user=self.request.user)
@@ -265,18 +294,28 @@ class UserNotificationPreferenceViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
 
-    # -----------------------------------------------------------------
     @action(detail=True, methods=["patch"])
     def enable_email(self, request, pk=None):
         pref = self.get_object()
-        pref.channels_mask |= CHANNEL_EMAIL
+
+        if notification_supports_email(pref.notification_type):
+            pref.channels_mask |= CHANNEL_EMAIL
+        else:
+            pref.channels_mask &= ~CHANNEL_EMAIL
+
+        pref.channels_mask = sanitize_notification_channels(
+            pref.notification_type,
+            pref.channels_mask,
+        )
         pref.save(update_fields=["channels_mask"])
 
         return Response(
-            UserNotificationPreferenceSerializer(pref).data
+            UserNotificationPreferenceSerializer(
+                pref,
+                context={"request": request},
+            ).data
         )
 
-    # -----------------------------------------------------------------
     @action(detail=True, methods=["patch"])
     def disable_email(self, request, pk=None):
         pref = self.get_object()
@@ -284,48 +323,71 @@ class UserNotificationPreferenceViewSet(viewsets.ModelViewSet):
         pref.save(update_fields=["channels_mask"])
 
         return Response(
-            UserNotificationPreferenceSerializer(pref).data
+            UserNotificationPreferenceSerializer(
+                pref,
+                context={"request": request},
+            ).data
         )
 
-    # -----------------------------------------------------------------
     @action(detail=True, methods=["patch"])
     def enable_push(self, request, pk=None):
         pref = self.get_object()
-        pref.channels_mask |= CHANNEL_PUSH
+
+        if notification_supports_push(pref.notification_type):
+            pref.channels_mask |= CHANNEL_PUSH
+
+        pref.channels_mask = sanitize_notification_channels(
+            pref.notification_type,
+            pref.channels_mask,
+        )
         pref.save(update_fields=["channels_mask"])
 
         return Response(
-            UserNotificationPreferenceSerializer(pref).data
+            UserNotificationPreferenceSerializer(
+                pref,
+                context={"request": request},
+            ).data
         )
 
-    # -----------------------------------------------------------------
     @action(detail=True, methods=["patch"])
     def disable_push(self, request, pk=None):
         pref = self.get_object()
         pref.channels_mask &= ~CHANNEL_PUSH
+
+        pref.channels_mask = sanitize_notification_channels(
+            pref.notification_type,
+            pref.channels_mask,
+        )
         pref.save(update_fields=["channels_mask"])
 
         return Response(
-            UserNotificationPreferenceSerializer(pref).data
-        )
-
-    # -----------------------------------------------------------------
-    @action(detail=False, methods=["post"])
-    def reset_defaults(self, request):
-        prefs = self.get_queryset()
-        prefs.update(
-            enabled=True,
-            channels_mask=CHANNEL_DEFAULT,
-        )
-
-        return Response(
             UserNotificationPreferenceSerializer(
-                prefs,
-                many=True,
+                pref,
+                context={"request": request},
             ).data
         )
 
-    # -----------------------------------------------------------------
+    @action(detail=False, methods=["post"])
+    def reset_defaults(self, request):
+        prefs = self.get_queryset()
+
+        for pref in prefs:
+            pref.enabled = True
+            pref.channels_mask = notification_default_channels(
+                pref.notification_type
+            )
+            pref.save(update_fields=["enabled", "channels_mask"])
+
+        refreshed = self.get_queryset()
+
+        return Response(
+            UserNotificationPreferenceSerializer(
+                refreshed,
+                many=True,
+                context={"request": request},
+            ).data
+        )
+
     @action(detail=False, methods=["get"])
     def metadata(self, request):
         """
@@ -333,13 +395,35 @@ class UserNotificationPreferenceViewSet(viewsets.ModelViewSet):
 
         Messenger is excluded because it is controlled by Messenger-specific
         read/unread and future mute settings.
+
+        Email support is exposed per notification type so frontend can hide
+        email toggles where email is no longer a supported channel.
         """
         allowed_types = self._allowed_preference_types_for_user(request.user)
 
-        filtered = {
-            notif_type: meta
-            for notif_type, meta in NOTIFICATION_PREF_METADATA.items()
-            if notif_type in allowed_types
-        }
+        filtered = {}
+
+        for notif_type, meta in NOTIFICATION_PREF_METADATA.items():
+            if notif_type not in allowed_types:
+                continue
+
+            supports_email = notification_supports_email(notif_type)
+            supports_push = notification_supports_push(notif_type)
+
+            supported_channels = []
+
+            if supports_push:
+                supported_channels.append("push")
+
+            if supports_email:
+                supported_channels.append("email")
+
+            filtered[notif_type] = {
+                **meta,
+                "email_supported": supports_email,
+                "push_supported": supports_push,
+                "supported_channels": supported_channels,
+                "default_channels_mask": notification_default_channels(notif_type),
+            }
 
         return Response(filtered)

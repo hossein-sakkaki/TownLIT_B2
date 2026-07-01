@@ -2598,6 +2598,7 @@ class MessageViewSet(viewsets.ModelViewSet):
         result = list_message_reactors(
             message_id=pk,
             acting_user=request.user,
+            request=request,
         )
 
         if not result.get("ok"):

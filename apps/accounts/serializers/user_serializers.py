@@ -704,6 +704,7 @@ class SimpleMutualFriendSerializer(AvatarURLMixin, serializers.ModelSerializer):
     profile_url = serializers.SerializerMethodField()
     avatar_url = serializers.SerializerMethodField()
     avatar_cdn_url = serializers.SerializerMethodField()
+    avatar_version = serializers.IntegerField(read_only=True)
     is_townlit_verified = serializers.SerializerMethodField()
 
     class Meta:
@@ -717,8 +718,9 @@ class SimpleMutualFriendSerializer(AvatarURLMixin, serializers.ModelSerializer):
             "is_townlit_verified",
             "avatar_url",
             "avatar_cdn_url",
+            "avatar_version",
         ]
-        read_only_fields = ["id"]
+        read_only_fields = fields
 
     def get_profile_url(self, obj):
         try:

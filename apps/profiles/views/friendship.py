@@ -339,10 +339,20 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                 CustomUser.objects
                 .select_related("label", "member_profile")
                 .only(
-                    "id", "username", "name", "family", "email",
-                    "label__id", "label__name",
-                    "member_profile__id",
+                    "id",
+                    "username",
+                    "name",
+                    "family",
+                    "email",
                     "image_name",
+                    "avatar_version",
+
+                    "label__id",
+                    "label__name",
+                    "label__color",
+
+                    "member_profile__id",
+                    "member_profile__is_townlit_verified",
                 )
                 .filter(
                     Q(username__icontains=query) |

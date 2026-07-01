@@ -17,6 +17,9 @@ from apps.media_conversion.services.video_policy import (
 from utils.common.utils import FileUpload, get_hls_output_dir
 from apps.media_conversion.services.progress import touch_job
 from apps.media_conversion.services.video_preview import build_video_preview_mp4
+from apps.media_conversion.services.media_metadata import (
+    display_dimensions_from_stream,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -155,26 +158,24 @@ def _extract_rotation_with_source(meta: dict) -> tuple[int, str]:
 
 
 def _probe_video_size(path: str) -> tuple[int, int]:
-    out = subprocess.check_output(
-        [
-            "ffprobe", "-v", "error",
-            "-select_streams", "v:0",
-            "-show_entries", "stream=width,height",
-            "-of", "csv=p=0:s=x",
-            path,
-        ]
-    ).decode().strip()
+    """
+    Probe display dimensions from an encoded video/segment.
 
-    # ffprobe may return multiple lines → take the first valid one
-    for line in out.splitlines():
-        if "x" in line:
-            try:
-                w, h = line.split("x", 1)
-                return int(w), int(h)
-            except ValueError:
-                continue
+    Uses rotation/SAR/DAR when available so stored metadata matches frontend
+    display aspect ratio.
+    """
 
-    raise RuntimeError(f"Could not probe video size from: {path} | output={out!r}")
+    data = _probe_json(path)
+    stream = (data.get("streams") or [{}])[0]
+
+    width, height = display_dimensions_from_stream(stream)
+
+    if width and height:
+        return int(width), int(height)
+
+    raise RuntimeError(
+        f"Could not probe video display size from: {path}"
+    )
 
 
 def _has_side_rotation(meta: dict) -> bool:
@@ -601,6 +602,7 @@ def convert_video_to_multi_hls(
                 "path": f"{key}/playlist.m3u8",
                 "width": real_w,
                 "height": real_h,
+                "aspect_ratio": (real_w / real_h) if real_w and real_h else None,
             })
 
         # -------------------------------------------------
@@ -694,16 +696,33 @@ def convert_video_to_multi_hls(
             master_storage_path,
         )
 
+        source_variant = next(
+            (
+                variant
+                for variant in variants
+                if variant.get("key") == "source"
+            ),
+            variants[0] if variants else {},
+        )
+
+        asset_width = source_variant.get("width") or main_w
+        asset_height = source_variant.get("height") or main_h
+        asset_aspect_ratio = (
+            asset_width / asset_height
+            if asset_width and asset_height
+            else None
+        )
+
         return VideoConversionResult(
             master_path=master_storage_path,
-            width=main_w,
-            height=main_h,
-            aspect_ratio=(main_w / main_h) if main_w and main_h else None,
+            width=asset_width,
+            height=asset_height,
+            aspect_ratio=asset_aspect_ratio,
             duration_ms=total_ms,
             variants=variants,
             preview=preview_payload,
         )
-
+        
     finally:
         if temp_input and os.path.exists(temp_input):
             os.remove(temp_input)

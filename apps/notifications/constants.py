@@ -2,10 +2,20 @@
 
 from enum import Enum
 
+
 class NotificationVerb(str, Enum):
     REACT = "react"
     COMMENT = "comment"
     REPLY = "reply"
+
+
+# Notification Channels -----------------------------------------------------------
+CHANNEL_PUSH = 1     # FCM / Native Push
+CHANNEL_WS = 2       # WebSocket
+CHANNEL_EMAIL = 4    # Email
+
+CHANNEL_DEFAULT = CHANNEL_PUSH | CHANNEL_WS | CHANNEL_EMAIL
+CHANNEL_DEFAULT_NO_EMAIL = CHANNEL_PUSH | CHANNEL_WS
 
 
 # Flat, stable types (good for analytics & prefs)
@@ -17,20 +27,23 @@ NOTIFICATION_TYPES = [
 
     # --- Reactions ---
     ("new_reaction", "New Reaction"),
+    ("new_reaction_like", "Like Reaction"),
     ("new_reaction_bless", "Bless Reaction"),
     ("new_reaction_gratitude", "Gratitude Reaction"),
     ("new_reaction_amen", "Amen Reaction"),
     ("new_reaction_encouragement", "Encouragement Reaction"),
     ("new_reaction_empathy", "Empathy Reaction"),
+    ("new_reaction_faithfire", "FaithFire Reaction"),
+    ("new_reaction_support", "Support Reaction"),
 
     # --- Friendships ---
     ("friend_request_received", "Friend Request Received"),
     ("friend_request_accepted", "Friend Request Accepted"),
     ("friend_request_declined", "Friend Request Declined"),
     ("friend_request_cancelled", "Friend Request Cancelled"),
-    ("friendship_deleted", "Friendship Deleted"),  
+    ("friendship_deleted", "Friendship Deleted"),
 
-    # --- Fellowships ---
+    # --- Fellowships / LITCovenant ---
     ("fellowship_request_received", "Fellowship Request Received"),
     ("fellowship_request_accepted", "Fellowship Request Accepted"),
     ("fellowship_request_confirmed", "Fellowship Relationship Confirmed"),
@@ -58,9 +71,7 @@ NOTIFICATION_TYPES = [
     ("new_moment_image", "New Image Moment"),
     ("new_moment_video", "New Video Moment"),
 
-    # ------------------------
-    # PRAYERS
-    # ------------------------
+    # --- Prayers ---
     ("new_prayer_image", "New Image Prayer"),
     ("new_prayer_video", "New Video Prayer"),
     ("prayer_result_answered", "Prayer Answered Update"),
@@ -84,11 +95,14 @@ GUEST_ALLOWED_NOTIFICATION_TYPES = {
 
     # --- Reactions ---
     "new_reaction",
+    "new_reaction_like",
     "new_reaction_bless",
     "new_reaction_gratitude",
     "new_reaction_amen",
     "new_reaction_encouragement",
     "new_reaction_empathy",
+    "new_reaction_faithfire",
+    "new_reaction_support",
 
     # --- Friendships ---
     "friend_request_received",
@@ -108,18 +122,58 @@ GUEST_ALLOWED_NOTIFICATION_TYPES = {
 
 
 # Types that should only send Push and Email notifications (no WebSocket).
-# Keep messenger out of this set because messenger must never send email.
+# These are important system-ish notifications where realtime UI delivery is not required.
 NOTIFICATION_TYPES_PUSH_EMAIL_ONLY = {
     "testimony_video_rejected",
 }
 
 
 # Types that must never send email.
-# Messenger notifications should stay realtime/push only.
+#
+# Product policy:
+# - Frequent interaction notifications should not create email fatigue.
+# - Mobile push + in-app notification center are the primary channels.
+# - Email should remain meaningful for account/system/safety/LITCovenant-critical flows.
 NOTIFICATION_TYPES_NO_EMAIL = {
+    # Messenger is push-only and should never use general notification email.
     "new_message_direct",
     "new_message_group",
+
+    # Comments and replies.
+    "new_comment",
+    "new_reply",
+    "new_reply_post_owner",
+
+    # Reactions.
+    "new_reaction",
+    "new_reaction_like",
+    "new_reaction_bless",
+    "new_reaction_gratitude",
+    "new_reaction_amen",
+    "new_reaction_encouragement",
+    "new_reaction_empathy",
+    "new_reaction_faithfire",
+    "new_reaction_support",
+
+    # Standard friendships.
+    "friend_request_received",
+    "friend_request_accepted",
+    "friend_request_declined",
+    "friend_request_cancelled",
+    "friendship_deleted",
+
+    # Feed content from friends/circle.
+    "new_moment_image",
+    "new_moment_video",
+    "new_prayer_image",
+    "new_prayer_video",
+    "prayer_result_answered",
+    "prayer_result_not_answered",
+    "new_testimony_written",
+    "new_testimony_audio",
+    "new_testimony_video",
 }
+
 
 # Notification types that are not controlled by general notification preferences.
 # Messenger should be controlled later by conversation-level mute settings.
@@ -128,12 +182,14 @@ NOTIFICATION_TYPES_FORCE_ENABLED = {
     "new_message_group",
 }
 
+
 # Types that should not be counted in the general notification unread badge.
 # Messenger has its own unread source from Dialogue unread messages.
 NOTIFICATION_TYPES_EXCLUDED_FROM_GENERAL_UNREAD = {
     "new_message_direct",
     "new_message_group",
 }
+
 
 # Types that should not be persisted in the general Notification table.
 # Messenger has its own inbox, unread count, and realtime channel.
@@ -150,11 +206,61 @@ NOTIFICATION_TYPES_EXCLUDED_FROM_NOTIFICATION_CENTER = {
     "new_message_group",
 }
 
-# Notification Channels -----------------------------------------------------------
-CHANNEL_PUSH = 1     # FCM
-CHANNEL_WS = 2       # WebSocket
-CHANNEL_EMAIL = 4    # Email
-CHANNEL_DEFAULT = CHANNEL_PUSH | CHANNEL_WS | CHANNEL_EMAIL
+
+def notification_supports_email(notification_type: str) -> bool:
+    """
+    Whether this notification type supports user-facing email delivery.
+
+    Used by:
+    - delivery policy
+    - preference defaults
+    - serializers
+    - metadata endpoint
+    """
+    return notification_type not in NOTIFICATION_TYPES_NO_EMAIL
+
+
+def notification_supports_push(notification_type: str) -> bool:
+    """
+    Whether this notification type supports user-facing push preference.
+
+    Messenger is force-enabled/push-only and excluded from general preferences,
+    but the helper remains true because delivery still uses push.
+    """
+    return True
+
+
+def notification_default_channels(notification_type: str) -> int:
+    """
+    Default channels for a notification type.
+
+    For no-email types, default is Push + WebSocket.
+    For email-supported types, default is Push + WebSocket + Email.
+    """
+    if not notification_supports_email(notification_type):
+        return CHANNEL_DEFAULT_NO_EMAIL
+
+    return CHANNEL_DEFAULT
+
+
+def sanitize_notification_channels(
+    notification_type: str,
+    channels_mask: int,
+) -> int:
+    """
+    Remove unsupported channels from a preference/delivery mask.
+
+    This protects against:
+    - old DB preference rows that still have CHANNEL_EMAIL
+    - old app versions PATCHing email_enabled=true
+    - future mistakes in creation defaults
+    """
+    mask = int(channels_mask or 0)
+
+    if not notification_supports_email(notification_type):
+        mask &= ~CHANNEL_EMAIL
+
+    return mask
 
 
 # Notification Preferences Metadata ----------------------------------------
@@ -186,30 +292,45 @@ NOTIFICATION_PREF_METADATA = {
         "label": "New reaction on your post",
         "description": "You will receive a notification when someone reacts to your post.",
     },
+    "new_reaction_like": {
+        "category": "Reactions",
+        "label": "Like reaction",
+        "description": "Notifies you when someone reacts with Like to your post.",
+    },
     "new_reaction_bless": {
         "category": "Reactions",
         "label": "Bless reaction",
-        "description": "Notifies you when someone reacts with 'Bless' to your post.",
+        "description": "Notifies you when someone reacts with Bless to your post.",
     },
     "new_reaction_gratitude": {
         "category": "Reactions",
         "label": "Gratitude reaction",
-        "description": "Notifies you when someone reacts with 'Gratitude' to your post.",
+        "description": "Notifies you when someone reacts with Gratitude to your post.",
     },
     "new_reaction_amen": {
         "category": "Reactions",
         "label": "Amen reaction",
-        "description": "Notifies you when someone reacts with 'Amen' to your post.",
+        "description": "Notifies you when someone reacts with Amen to your post.",
     },
     "new_reaction_encouragement": {
         "category": "Reactions",
         "label": "Encouragement reaction",
-        "description": "Notifies you when someone reacts with 'Encouragement' to your post.",
+        "description": "Notifies you when someone reacts with Encouragement to your post.",
     },
     "new_reaction_empathy": {
         "category": "Reactions",
         "label": "Empathy reaction",
-        "description": "Notifies you when someone reacts with 'Empathy' to your post.",
+        "description": "Notifies you when someone reacts with Empathy to your post.",
+    },
+    "new_reaction_faithfire": {
+        "category": "Reactions",
+        "label": "FaithFire reaction",
+        "description": "Notifies you when someone reacts with FaithFire to your post.",
+    },
+    "new_reaction_support": {
+        "category": "Reactions",
+        "label": "Support reaction",
+        "description": "Notifies you when someone reacts with Support to your post.",
     },
 
     # ------------------------
@@ -242,7 +363,7 @@ NOTIFICATION_PREF_METADATA = {
     },
 
     # ------------------------
-    # LITCovenant (Fellowships)
+    # LITCovenant / Fellowships
     # ------------------------
     "fellowship_request_received": {
         "category": "LITCovenant",
@@ -293,6 +414,11 @@ NOTIFICATION_PREF_METADATA = {
         "label": "New video testimony from a friend",
         "description": "You will be notified when a friend publishes a new video testimony.",
     },
+    "testimony_video_rejected": {
+        "category": "Testimonies",
+        "label": "Video testimony not accepted",
+        "description": "You will be notified if your video testimony cannot be accepted and needs to be replaced.",
+    },
 
     # ------------------------
     # SANCTUARY
@@ -310,7 +436,7 @@ NOTIFICATION_PREF_METADATA = {
     "sanctuary_outcome_finalized": {
         "category": "LITSanctuary",
         "label": "Sanctuary outcome finalized",
-        "description": "You will be notified when a Sanctuary case outcome is finalized (confirmed or rejected).",
+        "description": "You will be notified when a Sanctuary case outcome is finalized.",
     },
     "sanctuary_appeal_assignment": {
         "category": "LITSanctuary",

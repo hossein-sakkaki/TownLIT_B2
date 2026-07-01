@@ -25,7 +25,12 @@ from apps.core.availability.interfaces import AvailabilityAware
 
 from utils.common.utils import FileUpload
 
-from validators.mediaValidators.image_validators import validate_image_file, validate_image_size
+from validators.mediaValidators.image_validators import (
+    validate_image_file,
+    validate_image_size,
+    validate_moment_image_size,
+    validate_moment_image_items_metadata,
+)
 from validators.mediaValidators.video_validators import validate_moment_video_file
 from validators.security_validators import validate_no_executable_file
 from apps.posts.constants.moments import (
@@ -77,7 +82,7 @@ class Moment(
         blank=True,
         validators=[
             validate_image_file,
-            validate_image_size,
+            validate_moment_image_size,
             validate_no_executable_file,
         ],
         verbose_name="Image",
@@ -426,6 +431,9 @@ class Moment(
                     f"Photo Moment can contain up to {MOMENT_MAX_IMAGES} images."
                 )
 
+            if image_items:
+                validate_moment_image_items_metadata(image_items)
+            
     # -------------------------------------------------
     # Save override for availability and notifications
     # -------------------------------------------------

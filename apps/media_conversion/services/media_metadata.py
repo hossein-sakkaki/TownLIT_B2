@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
-import tempfile
+from fractions import Fraction
 
 from PIL import Image, ImageOps
 from django.core.files.storage import default_storage
@@ -51,8 +50,9 @@ def aspect_payload(
 
 def storage_size(key: str | None) -> int:
     try:
-        if key and default_storage.exists(key):
-            return int(default_storage.size(key) or 0)
+        normalized_key = str(key).lstrip("/") if key else ""
+        if normalized_key and default_storage.exists(normalized_key):
+            return int(default_storage.size(normalized_key) or 0)
     except Exception:
         pass
 
@@ -61,7 +61,10 @@ def storage_size(key: str | None) -> int:
 
 def image_metadata_from_storage(key: str) -> dict:
     """
-    Read image dimensions once during conversion/backfill.
+    Read normalized image dimensions from storage.
+
+    The converter already applies EXIF transpose. We still apply it here as
+    a safety net for legacy/non-normalized images.
     """
 
     normalized_key = str(key).lstrip("/")
@@ -87,81 +90,9 @@ def image_metadata_from_storage(key: str) -> dict:
     return payload
 
 
-def video_metadata_from_storage(key: str) -> dict:
-    """
-    Read video dimensions and duration from storage-backed media.
-
-    ffprobe works with local file paths, so remote/default storage files are
-    copied to a temporary local file first.
-    """
-
-    normalized_key = str(key).lstrip("/")
-
-    suffix = os.path.splitext(normalized_key)[1] or ".mp4"
-    temp_path = None
-
-    try:
-        with default_storage.open(normalized_key, "rb") as source:
-            with tempfile.NamedTemporaryFile(
-                mode="wb",
-                suffix=suffix,
-                delete=False,
-            ) as temp_file:
-                for chunk in iter(lambda: source.read(1024 * 1024), b""):
-                    if not chunk:
-                        break
-
-                    temp_file.write(chunk)
-
-                temp_path = temp_file.name
-
-        payload = video_metadata_from_local(temp_path)
-
-        payload.update(
-            {
-                "key": normalized_key,
-                "mime_type": video_mime_type_from_key(normalized_key),
-                "size": storage_size(normalized_key),
-            }
-        )
-
-        return payload
-
-    finally:
-        if temp_path:
-            try:
-                os.remove(temp_path)
-            except OSError:
-                pass
-
-
-def video_mime_type_from_key(key: str) -> str:
-    """
-    Best-effort mime type from extension.
-
-    This avoids adding a new dependency just for legacy metadata backfill.
-    """
-
-    ext = os.path.splitext(str(key).lower())[1]
-
-    if ext in {".mov", ".qt"}:
-        return "video/quicktime"
-
-    if ext in {".m4v"}:
-        return "video/x-m4v"
-
-    if ext in {".webm"}:
-        return "video/webm"
-
-    if ext in {".m3u8"}:
-        return "application/vnd.apple.mpegurl"
-
-    return "video/mp4"
-
-
 def video_metadata_from_local(path: str) -> dict:
     """
-    Probe display dimensions and duration from local video file.
+    Probe display dimensions and duration from a local video file.
     """
 
     stream_cmd = [
@@ -171,7 +102,11 @@ def video_metadata_from_local(path: str) -> dict:
         "-select_streams",
         "v:0",
         "-show_entries",
-        "stream=width,height:stream_tags=rotate:stream_side_data_list",
+        (
+            "stream=width,height,sample_aspect_ratio,display_aspect_ratio:"
+            "stream_tags=rotate:"
+            "stream_side_data_list"
+        ),
         "-of",
         "json",
         path,
@@ -198,12 +133,7 @@ def video_metadata_from_local(path: str) -> dict:
 
     stream = (stream_data.get("streams") or [{}])[0]
 
-    width = positive_int(stream.get("width"))
-    height = positive_int(stream.get("height"))
-    rotation = normalized_rotation(stream)
-
-    if rotation in {90, 270} and width and height:
-        width, height = height, width
+    width, height = display_dimensions_from_stream(stream)
 
     duration_ms = None
 
@@ -220,10 +150,66 @@ def video_metadata_from_local(path: str) -> dict:
 
     payload["duration_ms"] = duration_ms
 
-    if duration_ms:
-        payload["duration_seconds"] = round(duration_ms / 1000, 3)
-
     return payload
+
+
+def display_dimensions_from_stream(stream: dict) -> tuple[int | None, int | None]:
+    """
+    Resolve display dimensions from coded size + rotation + SAR/DAR.
+
+    Returns dimensions that the frontend should use for aspect-ratio layout.
+    """
+
+    coded_width = positive_int(stream.get("width"))
+    coded_height = positive_int(stream.get("height"))
+
+    if not coded_width or not coded_height:
+        return None, None
+
+    width = coded_width
+    height = coded_height
+
+    rotation = normalized_rotation(stream)
+
+    if rotation in {90, 270}:
+        width, height = height, width
+
+    dar = ratio_string_to_float(stream.get("display_aspect_ratio"))
+    sar = ratio_string_to_float(stream.get("sample_aspect_ratio"))
+
+    # If display_aspect_ratio exists and is meaningful, adjust display width.
+    if dar and height:
+        adjusted_width = int(round(height * dar))
+
+        if adjusted_width > 0:
+            width = adjusted_width
+
+    # If there is no DAR but SAR is non-square, adjust width.
+    elif sar and sar > 0 and abs(sar - 1.0) > 0.001:
+        adjusted_width = int(round(width * sar))
+
+        if adjusted_width > 0:
+            width = adjusted_width
+
+    return positive_int(width), positive_int(height)
+
+
+def ratio_string_to_float(value) -> float | None:
+    if not value:
+        return None
+
+    text = str(value).strip()
+
+    if not text or text in {"0:1", "N/A"}:
+        return None
+
+    try:
+        if ":" in text:
+            return float(Fraction(text))
+
+        return float(text)
+    except Exception:
+        return None
 
 
 def normalized_rotation(stream: dict) -> int:
@@ -238,6 +224,13 @@ def normalized_rotation(stream: dict) -> int:
         rotate = (stream.get("tags") or {}).get("rotate")
         if rotate is not None:
             return int(round(float(rotate))) % 360
+    except Exception:
+        pass
+
+    try:
+        rotation = stream.get("rotation")
+        if rotation is not None:
+            return int(round(float(rotation))) % 360
     except Exception:
         pass
 

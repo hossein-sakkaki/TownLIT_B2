@@ -17,6 +17,7 @@ from apps.conversation.services.boundary_access import (
 )
 from apps.core.boundaries.constants import BOUNDARY_GENERIC_UNAVAILABLE_MESSAGE
 from apps.core.boundaries.services.policy import BoundaryPolicy
+from apps.accounts.serializers.user_serializers import SimpleCustomUserSerializer
 
 
 ALLOWED_MESSAGE_REACTIONS = {
@@ -242,7 +243,7 @@ def get_message_reaction_summary_for_user(*, message_id, acting_user):
     })
 
 
-def list_message_reactors(*, message_id, acting_user):
+def list_message_reactors(*, message_id, acting_user, request=None):
     """
     Return detailed reactor list for one message.
 
@@ -261,15 +262,20 @@ def list_message_reactors(*, message_id, acting_user):
 
     rows = list(
         message.message_reactions
-        .select_related("user")
+        .select_related(
+            "user",
+            "user__label",
+            "user__member_profile",
+        )
         .order_by("reaction_type", "created_at")
     )
 
     reactors = [
         {
-            "user_id": row.user_id,
-            "username": row.user.username,
-            "email": row.user.email,
+            "user": SimpleCustomUserSerializer(
+                row.user,
+                context={"request": request},
+            ).data,
             "reaction_type": row.reaction_type,
             "created_at": row.created_at.isoformat(),
         }
