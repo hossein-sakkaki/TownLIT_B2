@@ -120,7 +120,6 @@ class FirebasePushEngine:
         data: Optional[Dict[str, Any]] = None,
     ):
         if not tokens:
-            logger.info("[FCM] No tokens to send.")
             return
 
         for t in tokens:
@@ -139,14 +138,7 @@ class FirebasePushEngine:
         tokens = self.get_tokens_for_user(user)
 
         if not tokens:
-            logger.info("[FCM] User %s has no active push tokens.", user.id)
             return None
-
-        logger.info(
-            "[FCM] Sending push to user %s (%s devices)",
-            user.id,
-            len(tokens),
-        )
 
         return self.send_to_tokens(tokens, title, body, data or {})
 

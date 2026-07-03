@@ -2,6 +2,8 @@
 from __future__ import annotations
 from django.db import transaction, IntegrityError
 from django.utils import timezone
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 
 from rest_framework import viewsets, status, mixins
 from rest_framework.decorators import action
@@ -25,6 +27,10 @@ from apps.sanctuary.serializers import (
     SanctuaryOptInSerializer,
     SanctuaryCounterSerializer
 )
+from apps.sanctuary.realtime.utils import (
+    normalize_content_type,
+    sanitize_group_part,
+)
 
 from apps.sanctuary.constants.states import NO_OPINION
 from apps.main.constants import SANCTUARY_COUNCIL_RULES
@@ -41,6 +47,187 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+# -----------------------------------------------------------------------------
+# Sanctuary Realtime helpers
+# -----------------------------------------------------------------------------
+def _sanctuary_request_group_name(request_id: int) -> str:
+    return f"sanctuary.request.{int(request_id)}"
+
+
+def _sanctuary_target_group_name(
+    request_type: str,
+    content_type: str,
+    object_id: int,
+) -> str:
+    rt = sanitize_group_part(request_type)
+    ct = sanitize_group_part(normalize_content_type(content_type))
+    return f"sanctuary.target.{rt}.{ct}.{int(object_id)}"
+
+
+def _safe_sanctuary_broadcast(
+    group_name: str,
+    event_name: str,
+    payload: dict,
+):
+    """
+    Safe WS send for Sanctuary.
+    Never breaks HTTP flow if Redis / Channels is unavailable.
+    """
+    try:
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            logger.warning("Channel layer not configured; skip sanctuary WS send.")
+            return
+
+        async_to_sync(channel_layer.group_send)(
+            group_name,
+            {
+                "type": "dispatch_event",
+                "app": "sanctuary",
+                "event": event_name,
+                "data": payload,
+            },
+        )
+    except Exception:
+        logger.exception("Sanctuary WS broadcast failed ignored.")
+
+
+def _safe_sanctuary_global_broadcast(
+    event_name: str,
+    payload: dict,
+):
+    _safe_sanctuary_broadcast(
+        "sanctuary_global",
+        event_name,
+        payload,
+    )
+
+
+def _content_type_key(content_type) -> str:
+    if not content_type:
+        return ""
+
+    app_label = getattr(content_type, "app_label", None)
+    model = getattr(content_type, "model", None)
+
+    if app_label and model:
+        return f"{app_label}.{model}"
+
+    return str(content_type)
+
+
+def _counter_payload_for_request(
+    *,
+    request_obj: SanctuaryRequest,
+    user,
+) -> dict:
+    content_type_key = _content_type_key(request_obj.content_type)
+
+    try:
+        counter = get_sanctuary_counter(
+            user=user,
+            request_type=request_obj.request_type,
+            content_type_str=content_type_key,
+            object_id=int(request_obj.object_id),
+        )
+
+        return {
+            "request_type": counter.get("request_type", request_obj.request_type),
+            "content_type": counter.get("content_type", content_type_key),
+            "object_id": int(counter.get("object_id", request_obj.object_id)),
+            "count": int(counter.get("count", 0)),
+            "threshold": int(counter.get("threshold", 0)),
+            "has_reported": bool(counter.get("has_reported", False)),
+            "request_id": counter.get("request_id"),
+        }
+    except Exception:
+        logger.exception("Failed to build Sanctuary counter payload.")
+
+        return {
+            "request_type": request_obj.request_type,
+            "content_type": content_type_key,
+            "object_id": int(request_obj.object_id),
+            "count": int(getattr(request_obj, "report_count_snapshot", 0) or 0),
+            "threshold": 0,
+            "has_reported": False,
+            "request_id": request_obj.id,
+        }
+
+
+def _broadcast_sanctuary_counter_updated(
+    *,
+    request_obj: SanctuaryRequest,
+    user,
+):
+    content_type_key = _content_type_key(request_obj.content_type)
+    payload = _counter_payload_for_request(
+        request_obj=request_obj,
+        user=user,
+    )
+
+    _safe_sanctuary_broadcast(
+        _sanctuary_target_group_name(
+            request_obj.request_type,
+            content_type_key,
+            request_obj.object_id,
+        ),
+        "counter_updated",
+        payload,
+    )
+
+
+def _request_event_payload(
+    request_obj: SanctuaryRequest,
+    event_name: str,
+    extra: dict | None = None,
+) -> dict:
+    content_type_key = _content_type_key(request_obj.content_type)
+
+    payload = {
+        "event": event_name,
+        "request_id": request_obj.id,
+        "request_type": request_obj.request_type,
+        "status": request_obj.status,
+        "resolution_mode": request_obj.resolution_mode,
+        "content_type": content_type_key,
+        "object_id": int(request_obj.object_id),
+        "report_count_snapshot": int(request_obj.report_count_snapshot or 0),
+        "updated_at": request_obj.updated_at.isoformat() if request_obj.updated_at else None,
+    }
+
+    if extra:
+        payload.update(extra)
+
+    return payload
+
+
+def _broadcast_sanctuary_request_event(
+    *,
+    request_obj: SanctuaryRequest,
+    event_name: str,
+    extra: dict | None = None,
+    include_request_group: bool = True,
+    include_global: bool = True,
+):
+    payload = _request_event_payload(
+        request_obj,
+        event_name,
+        extra=extra,
+    )
+
+    if include_request_group:
+        _safe_sanctuary_broadcast(
+            _sanctuary_request_group_name(request_obj.id),
+            event_name,
+            payload,
+        )
+
+    if include_global:
+        _safe_sanctuary_global_broadcast(
+            event_name,
+            payload,
+        )
+        
 # Sanctuary Request ViewSet ----------------------------------------------------------------
 class SanctuaryRequestViewSet(
     mixins.CreateModelMixin,
@@ -65,8 +252,23 @@ class SanctuaryRequestViewSet(
         return qs.filter(requester=user)
 
     def perform_create(self, serializer):
-        # NOTE: Keep ViewSet thin; orchestration happens in signals (after_commit).
-        serializer.save(requester=self.request.user)
+        request_obj = serializer.save(requester=self.request.user)
+
+        transaction.on_commit(lambda: _broadcast_sanctuary_counter_updated(
+            request_obj=request_obj,
+            user=self.request.user,
+        ))
+
+        transaction.on_commit(lambda: _broadcast_sanctuary_request_event(
+            request_obj=request_obj,
+            event_name="request_created",
+            extra={
+                "requester_id": self.request.user.id,
+                "created_at": request_obj.created_at.isoformat() if request_obj.created_at else None,
+            },
+            include_request_group=True,
+            include_global=True,
+        ))
 
     @action(detail=False, methods=["get"], url_path="counter", permission_classes=[IsAuthenticated])
     def counter(self, request):
@@ -170,13 +372,18 @@ class SanctuaryReviewViewSet(
 
         # Atomic vote submission to prevent race conditions
         with transaction.atomic():
-            locked = SanctuaryReview.objects.select_for_update().get(pk=serializer.instance.pk)
+            locked = (
+                SanctuaryReview.objects
+                .select_for_update()
+                .select_related("sanctuary_request")
+                .get(pk=serializer.instance.pk)
+            )
 
             # Slot might be replaced/inactive
             if hasattr(locked, "is_active") and locked.is_active is False:
                 raise PermissionDenied("This review slot is no longer active.")
 
-            # Reviewer-only (no staff override)
+            # Reviewer-only no staff override
             if locked.reviewer_id != user.id:
                 raise PermissionDenied("You can only vote on your own review.")
 
@@ -186,8 +393,24 @@ class SanctuaryReviewViewSet(
 
             # Ensure serializer saves the locked instance
             serializer.instance = locked
-            serializer.save()
+            updated_review = serializer.save()
 
+            request_obj = updated_review.sanctuary_request
+
+            transaction.on_commit(lambda: _broadcast_sanctuary_request_event(
+                request_obj=request_obj,
+                event_name="review_updated",
+                extra={
+                    "review_id": updated_review.id,
+                    "reviewer_id": user.id,
+                    "review_status": updated_review.review_status,
+                    "reviewed_at": updated_review.reviewed_at.isoformat()
+                    if updated_review.reviewed_at
+                    else None,
+                },
+                include_request_group=True,
+                include_global=True,
+            ))
             
 # Sanctuary Outcome ViewSet ----------------------------------------------------------------
 class SanctuaryOutcomeViewSet(
@@ -239,6 +462,20 @@ class SanctuaryOutcomeViewSet(
         outcome.appeal_message = (request.data.get("appeal_message") or "").strip()
         outcome.save(update_fields=["is_appealed", "appeal_message"])
 
+        linked_requests = list(outcome.sanctuary_requests.all())
+
+        for request_obj in linked_requests:
+            transaction.on_commit(lambda request_obj=request_obj: _broadcast_sanctuary_request_event(
+                request_obj=request_obj,
+                event_name="outcome_appealed",
+                extra={
+                    "outcome_id": outcome.id,
+                    "is_appealed": True,
+                },
+                include_request_group=True,
+                include_global=True,
+            ))
+            
         # NOTE: admin assignment is done by SanctuaryOutcome post_save signal.
         return Response({"detail": "Appeal submitted."}, status=status.HTTP_200_OK)
     

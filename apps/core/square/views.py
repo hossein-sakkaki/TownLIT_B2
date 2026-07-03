@@ -222,27 +222,12 @@ class SquareViewSet(viewsets.ViewSet):
         mode = request.query_params.get("mode")  # recent | trending | for_you | None
         cursor = request.query_params.get("cursor")
 
-        logger.info(
-            "[Square] request kind=%s mode=%s auth=%s user_id=%s",
-            kind,
-            mode or "hybrid",
-            bool(viewer),
-            getattr(viewer, "id", None),
-        )
-
         # -------------------------------------------------
         # 1) Build source querysets
         # -------------------------------------------------
         querysets = SquareQuery.build(viewer=viewer, kind=kind)
 
-        logger.info(
-            "[Square] built querysets kind=%s sources=%s",
-            kind,
-            len(querysets),
-        )
-
         if not querysets:
-            logger.info("[Square] empty querysets -> return empty")
             return Response({"next": None, "results": []})
 
         # -------------------------------------------------
@@ -264,12 +249,6 @@ class SquareViewSet(viewsets.ViewSet):
                         "UnknownModel",
                     )
 
-                    logger.info(
-                        "[Square] merge source=%s pre_engine_count=%s",
-                        model_name,
-                        src_qs.count(),
-                    )
-
                     qs = SquareEngine.apply(
                         queryset=src_qs,
                         mode=mode,
@@ -280,12 +259,6 @@ class SquareViewSet(viewsets.ViewSet):
                         qs,
                         mode=mode,
                         viewer=viewer,
-                    )
-
-                    logger.info(
-                        "[Square] source=%s ordered_by=%s",
-                        model_name,
-                        score_field,
                     )
 
                     merged_objs.extend(list(qs[:per_source_limit]))
@@ -307,23 +280,6 @@ class SquareViewSet(viewsets.ViewSet):
                     mode=mode,
                     viewer=viewer,
                 )
-
-                logger.info(
-                    "[Square] MERGE kind=%s merged=%s mode=%s viewer=%s",
-                    kind,
-                    len(merged_objs),
-                    mode or "hybrid",
-                    bool(viewer),
-                )
-
-                for obj in merged_objs[:10]:
-                    logger.info(
-                        "[SquareDebug] top obj id=%s kind=%s score=%s pub=%s",
-                        getattr(obj, "id", None),
-                        getattr(obj, "square_kind", None),
-                        self._score_of(obj, mode=mode, viewer=viewer),
-                        getattr(obj, "published_at", None),
-                    )
 
             except Exception:
                 logger.exception("[Square] MERGE failed")
@@ -359,13 +315,6 @@ class SquareViewSet(viewsets.ViewSet):
                     mode=mode,
                     viewer=viewer,
                 )
-
-            logger.info(
-                "[Square] final merged results=%s next=%s",
-                len(results),
-                bool(next_link),
-            )
-
             return Response({"next": next_link, "results": results})
 
         # -------------------------------------------------
@@ -385,15 +334,6 @@ class SquareViewSet(viewsets.ViewSet):
                 mode=mode,
                 viewer=viewer,
             )
-
-            logger.info(
-                "[Square] kind=%s mode=%s viewer=%s score=%s",
-                kind,
-                mode or "hybrid",
-                bool(viewer),
-                score_field,
-            )
-
         except Exception:
             logger.exception("[Square] engine failed")
             raise
@@ -415,13 +355,5 @@ class SquareViewSet(viewsets.ViewSet):
         gated_none_count = (
             len(serializer.data) - len(data)
         ) if serializer.data else 0
-
-        logger.info(
-            "[Square] page=%s returned=%s gated=%s next=%s",
-            len(page or []),
-            len(data or []),
-            gated_none_count,
-            bool(paginator.get_next_link()),
-        )
 
         return paginator.get_paginated_response(data)

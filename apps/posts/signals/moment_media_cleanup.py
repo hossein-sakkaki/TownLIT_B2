@@ -27,7 +27,6 @@ def _safe_delete_storage_key(key: str, label: str):
 
         if default_storage.exists(key):
             default_storage.delete(key)
-            logger.info("✅ Deleted storage key (%s): %s", label, key)
 
     except Exception:
         logger.exception("❌ Failed deleting storage key (%s): %s", label, key)
@@ -54,7 +53,6 @@ def _safe_delete_prefix(storage, prefix: str, label: str):
             return  # Not S3 or no bucket handle.
 
         bucket.objects.filter(Prefix=prefix).delete()
-        logger.info("✅ Deleted S3 prefix (%s): %s", label, prefix)
 
     except Exception:
         logger.exception("❌ Failed deleting S3 prefix (%s): %s", label, prefix)
@@ -77,7 +75,6 @@ def _safe_delete_filefield(field, label: str):
 
         # Delete the file itself.
         field.delete(save=False)
-        logger.info("✅ Moment media deleted (%s): %s", label, key)
 
         # If this is HLS master, delete the whole folder too.
         if label == "video" and key.lower().endswith(".m3u8") and storage:
@@ -165,7 +162,6 @@ def _delete_media_conversion_paths(instance: Moment):
                     )
 
         jobs_qs.delete()
-        logger.info("✅ Deleted MediaConversionJob rows for moment %s", instance.pk)
 
     except Exception:
         logger.exception(

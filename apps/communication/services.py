@@ -151,11 +151,9 @@ def send_campaign_email_batch(campaign_id):
     try:
         campaign = EmailCampaign.objects.get(id=campaign_id)
     except EmailCampaign.DoesNotExist:
-        print("❌ Campaign not found.")
         return
 
     if campaign.status == 'sent':
-        print("⏩ Already sent.")
         return
 
     # --- Validate email template variables ---
@@ -259,7 +257,6 @@ def send_external_email_campaign(campaign):
         raise Exception(f"Failed to read CSV or JSON file: {e}")
 
     if not rows:
-        print("⚠️ No valid data found in the uploaded file.")
         return 0
     
     # Fetch all CustomUser Registred

@@ -195,8 +195,6 @@ def notify_moment_ready(moment: Moment):
     link = _build_moment_link(moment)
     message = _build_message(owner_user, kind)
 
-    print("[Notif][Moment] recipients=%s kind=%s", recipients_qs.count(), kind)
-
     for recipient in recipients_qs:
         if recipient.id == owner_user.id:
             continue

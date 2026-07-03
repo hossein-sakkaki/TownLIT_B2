@@ -100,7 +100,6 @@ def on_reaction_created(sender, instance: Reaction, created, **kwargs):
 
     actor = getattr(instance, "name", None)
     if not actor:
-        logger.debug("[Notif] Reaction skipped: no actor.")
         return
 
     # optional reaction message
@@ -113,7 +112,6 @@ def on_reaction_created(sender, instance: Reaction, created, **kwargs):
 
     # skip invalid/self
     if not to_user or to_user.id == actor.id:
-        logger.debug("[Notif] Reaction skipped: invalid/self target.")
         return
 
     # message + type
@@ -145,7 +143,6 @@ def on_reaction_created(sender, instance: Reaction, created, **kwargs):
             action_obj=instance,     # lets service resolve root via content_type/object_id if present
             extra_payload=payload,
         )
-        logger.debug("[Notif] Reaction delivered: to=%s type=%s", to_user.id, notif_type)
 
     except Exception as e:
         logger.exception("[Notif] Reaction dispatch failed: %s", e)

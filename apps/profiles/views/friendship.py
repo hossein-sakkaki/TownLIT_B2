@@ -247,7 +247,6 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                 )
 
             serializer.save(from_user=self.request.user, to_user=to_user, status='pending')
-            logger.info(f"Friend request created: {self.request.user.id} -> {to_user.id}")
 
         except serializers.ValidationError as e:
             logger.error(f"Validation error while creating friend request: {e}")
@@ -928,7 +927,6 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                 )
 
             # Already processed
-            logger.info(f"Friendship {friendship.id} already processed or invalid status.")
             return Response(
                 {'error': 'Invalid request or already processed'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -958,10 +956,8 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                 friendship.status = 'declined'
                 friendship.is_active = False
                 friendship.save()
-                logger.info(f"Friendship {friendship.id} declined by user {request.user.id}.")
                 return Response({'message': 'Friendship declined'}, status=status.HTTP_200_OK)
 
-            logger.info(f"Friendship {friendship.id} already processed or invalid status.")
             return Response({'error': 'Invalid request or already processed'}, status=status.HTTP_400_BAD_REQUEST)
         except Friendship.DoesNotExist:
             logger.error(f"Friendship with id {pk} not found.")
@@ -979,13 +975,11 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                 return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
 
             if friendship.status != 'pending':
-                logger.info(f"Friendship {friendship.id} cannot be canceled because it is not pending.")
                 return Response({'error': 'Only pending requests can be canceled'}, status=status.HTTP_400_BAD_REQUEST)
 
             friendship.is_active = False
             friendship.status = 'cancelled'
             friendship.save()
-            logger.info(f"Friendship {friendship.id} canceled by user {request.user.id}.")
             return Response({'message': 'Friend request canceled.'}, status=status.HTTP_200_OK)
         except Friendship.DoesNotExist:
             logger.error(f"Friendship with id {pk} not found.")
@@ -1099,12 +1093,6 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                         counterpart.id,
                     )
                     raise RuntimeError("Failed to delete friendship.")
-
-            logger.info(
-                "Friendship deleted: %s <-> %s",
-                initiator.id,
-                counterpart.id,
-            )
 
             message = "Friendship successfully deleted."
 

@@ -32,7 +32,6 @@ def _safe_delete_fieldfile(field, label: str):
 
         # 1) delete the file itself (playlist/mp3/jpg/etc.)
         field.delete(save=False)
-        logger.info("✅ Testimony media deleted (%s): %s", label, key)
 
         # 2) if this is HLS master, also delete its folder (segments + variants)
         if label == "video" and key.lower().endswith(".m3u8") and storage:
@@ -66,7 +65,6 @@ def _safe_delete_prefix(storage, prefix: str, label: str):
 
         # delete everything under that prefix
         bucket.objects.filter(Prefix=prefix).delete()
-        logger.info("✅ Deleted S3 prefix (%s): %s", label, prefix)
 
     except Exception:
         logger.exception("❌ Failed deleting S3 prefix (%s): %s", label, prefix)
@@ -82,7 +80,6 @@ def _safe_delete_storage_key(key: str, label: str):
         key = str(key).lstrip("/")
         if default_storage.exists(key):
             default_storage.delete(key)
-            logger.info("✅ Deleted storage key (%s): %s", label, key)
     except Exception:
         logger.exception("❌ Failed deleting storage key (%s): %s", label, key)
 
@@ -123,8 +120,6 @@ def _cleanup_subtitles_for_testimony(testimony):
         # 4) Delete transcript (segments + tracks cascade)
         # -------------------------------------------------
         transcript.delete()
-
-        logger.info("✅ Deleted transcript + subtitles + voices for testimony %s", testimony.pk)
 
     except Exception:
         logger.exception("❌ Failed cleaning subtitles/voices for testimony %s", testimony.pk)
@@ -212,7 +207,6 @@ def testimony_cleanup_media_on_delete(sender, instance: Testimony, **kwargs):
 
             # ✅ finally: cleanup DB rows
             jobs_qs.delete()
-            logger.info("✅ Deleted MediaConversionJob rows for testimony %s", instance.pk)
 
         except Exception:
             logger.exception("❌ Failed deleting MediaConversionJob paths for testimony %s", instance.pk)

@@ -104,7 +104,6 @@ def _safe_get_absolute_url(obj) -> Optional[str]:
         url = obj.get_absolute_url()
         return url or None
     except Exception as e:
-        logger.debug(f"[Notif] get_absolute_url failed for {obj}: {e}")
         return None
 
 
@@ -401,6 +400,18 @@ def _push_title_for_notification(
     if notification_type == "new_message_group":
         return "New group message"
 
+    if notification_type == "messenger_group_created":
+        return "New group"
+
+    if notification_type == "messenger_message_pinned":
+        return "Pinned message"
+
+    if notification_type in {
+        "messenger_reaction_direct",
+        "messenger_reaction_group",
+    }:
+        return "New reaction"
+
     return "TownLIT Notification"
 
 def _push_body_for_notification(
@@ -422,6 +433,7 @@ def _push_body_for_notification(
 
     return clean
 
+
 def _push_sound_for_notification(
     notification_type: str,
 ) -> str:
@@ -436,6 +448,138 @@ def _push_sound_for_notification(
 
     return "townlit_notify.caf"
 
+
+def _should_retry_push_without_sound(error: Exception) -> bool:
+    """
+    Some push providers reject payloads with invalid custom sound names.
+
+    If this happens, retry once without a custom sound so push delivery does
+    not fully break because of a missing .caf file in the iOS bundle.
+    """
+    raw = str(error or "").lower()
+
+    sound_error_markers = {
+        "sound",
+        "badsound",
+        "bad sound",
+        "invalid sound",
+        "invalid payload",
+        "badpayload",
+        "bad payload",
+    }
+
+    return any(marker in raw for marker in sound_error_markers)
+
+
+def _safe_push_data(data: Dict[str, Any]) -> Dict[str, str]:
+    """
+    APNs/FCM data payload values must be strings.
+    """
+    safe_data = {}
+
+    for key, value in (data or {}).items():
+        safe_data[str(key)] = "" if value is None else str(value)
+
+    return safe_data
+
+
+def _send_firebase_push_safely(
+    *,
+    recipient,
+    title: str,
+    body: str,
+    data: Dict[str, str],
+    context: str,
+    notif_type: str,
+) -> bool:
+    """
+    Send Firebase/Web push and log the real result.
+    """
+    try:
+        result = push_engine.send_to_user(
+            recipient,
+            title=title,
+            body=body,
+            data=data,
+        )
+
+        # Some engines return None on success.
+        return True
+
+    except Exception as e:
+        logger.warning(
+            "[Notif][Push][Firebase] failed context=%s user=%s type=%s error=%s",
+            context,
+            getattr(recipient, "id", None),
+            notif_type,
+            e,
+            exc_info=True,
+        )
+        return False
+
+
+def _send_apns_push_safely(
+    *,
+    recipient,
+    title: str,
+    body: str,
+    data: Dict[str, str],
+    badge: int,
+    sound: str | None,
+    context: str,
+    notif_type: str,
+) -> bool:
+    """
+    Send APNs push and retry once without custom sound if sound payload fails.
+    """
+    try:
+        result = apns_engine.send_to_user(
+            recipient,
+            title=title,
+            body=body,
+            data=data,
+            badge=badge,
+            sound=sound,
+        )
+
+        return True
+
+    except Exception as first_error:
+        logger.warning(
+            "[Notif][Push][APNs] failed context=%s user=%s type=%s sound=%s error=%s",
+            context,
+            getattr(recipient, "id", None),
+            notif_type,
+            sound,
+            first_error,
+            exc_info=True,
+        )
+
+        if sound and _should_retry_push_without_sound(first_error):
+            try:
+                result = apns_engine.send_to_user(
+                    recipient,
+                    title=title,
+                    body=body,
+                    data=data,
+                    badge=badge,
+                    sound=None,
+                )
+
+                return True
+
+            except Exception as retry_error:
+                logger.warning(
+                    "[Notif][Push][APNs] retry without sound failed context=%s user=%s type=%s error=%s",
+                    context,
+                    getattr(recipient, "id", None),
+                    notif_type,
+                    retry_error,
+                    exc_info=True,
+                )
+
+        return False
+    
 def _general_unread_notification_count_for_user(user) -> int:
     """
     Count unread non-messenger notifications.
@@ -514,14 +658,6 @@ def _badge_count_for_user(user) -> int:
 
     total = general_count + messenger_count
 
-    logger.debug(
-        "[Notif] Badge count calculated user=%s general=%s messenger=%s total=%s",
-        getattr(user, "id", None),
-        general_count,
-        messenger_count,
-        total,
-    )
-
     return max(int(total), 0)
 
 
@@ -551,25 +687,24 @@ def dispatch_push_only_notification(
         return False
 
     if actor and getattr(actor, "id", None) == getattr(recipient, "id", None):
-        logger.debug(
-            "[Notif][PushOnly] Self notification skipped actor=%s type=%s",
-            getattr(actor, "id", None),
-            notif_type,
-        )
         return False
 
     enabled, channels_mask = _is_enabled(recipient, notif_type)
 
     if not enabled:
-        logger.info(
-            "[Notif][PushOnly] Disabled by preference user=%s type=%s",
-            getattr(recipient, "id", None),
-            notif_type,
-        )
         return False
 
     # Push-only means no DB, no WS, no Email.
-    channels_mask = channels_mask & CHANNEL_PUSH
+    channels_mask = int(channels_mask or 0) & CHANNEL_PUSH
+
+    if not (channels_mask & CHANNEL_PUSH):
+        logger.warning(
+            "[Notif][PushOnly] CHANNEL_PUSH missing after mask user=%s type=%s mask=%s",
+            getattr(recipient, "id", None),
+            notif_type,
+            channels_mask,
+        )
+        return False
 
     delivery_decision = apply_relationship_delivery_policy(
         recipient=recipient,
@@ -578,25 +713,11 @@ def dispatch_push_only_notification(
     )
 
     if not delivery_decision.persist:
-        logger.info(
-            "[Notif][PushOnly] Suppressed by relationship policy user=%s actor=%s type=%s reason=%s",
-            getattr(recipient, "id", None),
-            getattr(actor, "id", None),
-            notif_type,
-            delivery_decision.reason,
-        )
         return False
 
-    channels_mask = delivery_decision.channels_mask & CHANNEL_PUSH
+    channels_mask = int(delivery_decision.channels_mask or 0) & CHANNEL_PUSH
 
     if not (channels_mask & CHANNEL_PUSH):
-        logger.info(
-            "[Notif][PushOnly] Push channel suppressed user=%s actor=%s type=%s reason=%s",
-            getattr(recipient, "id", None),
-            getattr(actor, "id", None),
-            notif_type,
-            delivery_decision.reason,
-        )
         return False
 
     resolved_link = link or ""
@@ -620,79 +741,36 @@ def dispatch_push_only_notification(
                 exc_info=True,
             )
 
-    safe_data = {
-        str(key): "" if value is None else str(value)
-        for key, value in base_data.items()
-    }
+    safe_data = _safe_push_data(base_data)
 
     push_title = _push_title_for_notification(notif_type)
     push_body = _push_body_for_notification(notif_type, message)
+    push_sound = _push_sound_for_notification(notif_type)
+    badge_count = _badge_count_for_user(recipient)
 
-    sent_any = False
-
-    try:
-        push_engine.send_to_user(
-            recipient,
-            title=push_title,
-            body=push_body,
-            data=safe_data,
-        )
-
-        sent_any = True
-
-        logger.debug(
-            "[Notif][PushOnly] Firebase push dispatched user=%s type=%s",
-            getattr(recipient, "id", None),
-            notif_type,
-        )
-
-    except Exception as e:
-        logger.warning(
-            "[Notif][PushOnly] Firebase push failed user=%s type=%s error=%s",
-            getattr(recipient, "id", None),
-            notif_type,
-            e,
-            exc_info=True,
-        )
-
-    try:
-        apns_engine.send_to_user(
-            recipient,
-            title=push_title,
-            body=push_body,
-            data=safe_data,
-            badge=_badge_count_for_user(recipient),
-            sound=_push_sound_for_notification(notif_type),
-        )
-
-        sent_any = True
-
-        logger.debug(
-            "[Notif][PushOnly] APNs push dispatched user=%s type=%s",
-            getattr(recipient, "id", None),
-            notif_type,
-        )
-
-    except Exception as e:
-        logger.warning(
-            "[Notif][PushOnly] APNs push failed user=%s type=%s error=%s",
-            getattr(recipient, "id", None),
-            notif_type,
-            e,
-            exc_info=True,
-        )
-
-    logger.info(
-        "[Notif][PushOnly] Done user=%s actor=%s type=%s sent_any=%s link=%s",
-        getattr(recipient, "id", None),
-        getattr(actor, "id", None),
-        notif_type,
-        sent_any,
-        resolved_link,
+    firebase_sent = _send_firebase_push_safely(
+        recipient=recipient,
+        title=push_title,
+        body=push_body,
+        data=safe_data,
+        context="push_only",
+        notif_type=notif_type,
     )
 
-    return sent_any
+    apns_sent = _send_apns_push_safely(
+        recipient=recipient,
+        title=push_title,
+        body=push_body,
+        data=safe_data,
+        badge=badge_count,
+        sound=push_sound,
+        context="push_only",
+        notif_type=notif_type,
+    )
 
+    sent_any = firebase_sent or apns_sent
+
+    return sent_any
 
 # -------------------------------------------------------------------------
 # Main entry point
@@ -723,11 +801,6 @@ def create_and_dispatch_notification(
         return None
 
     if actor and getattr(actor, "id", None) == getattr(recipient, "id", None):
-        logger.debug(
-            "[Notif] Self notification skipped actor=%s type=%s",
-            getattr(actor, "id", None),
-            notif_type,
-        )
         return None
 
     # Resolve user preference + channel mask
@@ -803,15 +876,6 @@ def create_and_dispatch_notification(
                 )
 
                 if created:
-                    logger.info(
-                        "[Notif] Created → notif_id=%s user=%s actor=%s type=%s policy=%s mask=%s",
-                        notif.id,
-                        recipient.id,
-                        getattr(actor, "id", None),
-                        notif_type,
-                        delivery_decision.reason,
-                        channels_mask,
-                    )
                     _deliver_notification(notif, channels_mask, extra_payload)
                 else:
                     logger.info(
@@ -833,17 +897,6 @@ def create_and_dispatch_notification(
                 action_object_id=action_id,
                 link=link,
             )
-
-            logger.info(
-                "[Notif] Created no-dedupe → notif_id=%s user=%s actor=%s type=%s policy=%s mask=%s",
-                notif.id,
-                recipient.id,
-                getattr(actor, "id", None),
-                notif_type,
-                delivery_decision.reason,
-                channels_mask,
-            )
-
             _deliver_notification(notif, channels_mask, extra_payload)
             return notif
 
@@ -858,11 +911,6 @@ def create_and_dispatch_notification(
             return None
 
     if transaction.get_connection().in_atomic_block:
-        logger.debug(
-            "[Notif] in_atomic → scheduling on_commit type=%s user=%s",
-            notif_type,
-            recipient.id,
-        )
         transaction.on_commit(lambda: _persist())
         return None
 
@@ -904,11 +952,6 @@ def _deliver_notification(
                     payload["extra"] = extra_payload
 
                 group_name = f"notif_user_{notif.user_id}"
-                logger.info(
-                    "[Notif] WS about to send → group=%s payload=%s",
-                    group_name,
-                    payload,
-                )
 
                 async_to_sync(layer.group_send)(
                     group_name,
@@ -918,11 +961,6 @@ def _deliver_notification(
                         "event": "notification",
                         "data": payload,
                     },
-                )
-
-                logger.info(
-                    "[Notif] WS sent to group %s OK",
-                    group_name,
                 )
 
     except Exception as e:
@@ -938,7 +976,6 @@ def _deliver_notification(
     # ------------------------------------------------------------------
     try:
         if channels_mask & CHANNEL_PUSH:
-
             resolved_link = notif.link or ""
 
             base_data = {
@@ -954,72 +991,47 @@ def _deliver_notification(
                     base_data.update(extra_payload)
                 except Exception as e:
                     logger.warning(
-                        "[Notif] extra_payload merge failed for notif %s: %s",
+                        "[Notif][Push] extra_payload merge failed notif=%s error=%s",
                         notif.id,
                         e,
                         exc_info=True,
                     )
 
-            safe_data = {}
-            for key, value in base_data.items():
-                safe_data[key] = "" if value is None else str(value)
+            safe_data = _safe_push_data(base_data)
 
             push_title = _push_title_for_notification(notif.notification_type)
             push_body = _push_body_for_notification(
                 notif.notification_type,
                 notif.message,
             )
+            push_sound = _push_sound_for_notification(notif.notification_type)
+            badge_count = _badge_count_for_user(notif.user)
 
-            # Web / Firebase push
-            try:
-                push_engine.send_to_user(
-                    notif.user,
-                    title=push_title,
-                    body=push_body,
-                    data=safe_data,
-                )
+            firebase_sent = _send_firebase_push_safely(
+                recipient=notif.user,
+                title=push_title,
+                body=push_body,
+                data=safe_data,
+                context="stored_notification",
+                notif_type=notif.notification_type,
+            )
 
-                logger.debug(
-                    "[Notif] Push dispatched via Firebase REST for user %s",
-                    notif.user_id,
-                )
-
-            except Exception as e:
-                logger.warning(
-                    "[Notif] Firebase push delivery failed for user %s: %s",
-                    notif.user_id,
-                    e,
-                    exc_info=True,
-                )
-
-            # Native iOS / APNs push
-            try:
-                apns_engine.send_to_user(
-                    notif.user,
-                    title=push_title,
-                    body=push_body,
-                    data=safe_data,
-                    badge=_badge_count_for_user(notif.user),
-                    sound=_push_sound_for_notification(notif.notification_type),
-                )
-
-                logger.debug(
-                    "[Notif] Push dispatched via APNs for user %s",
-                    notif.user_id,
-                )
-
-            except Exception as e:
-                logger.warning(
-                    "[Notif] APNs push delivery failed for user %s: %s",
-                    notif.user_id,
-                    e,
-                    exc_info=True,
-                )
+            apns_sent = _send_apns_push_safely(
+                recipient=notif.user,
+                title=push_title,
+                body=push_body,
+                data=safe_data,
+                badge=badge_count,
+                sound=push_sound,
+                context="stored_notification",
+                notif_type=notif.notification_type,
+            )
 
     except Exception as e:
         logger.warning(
-            "[Notif] Push delivery failed for user %s: %s",
-            notif.user_id,
+            "[Notif][Push] delivery wrapper failed user=%s notif=%s error=%s",
+            getattr(notif, "user_id", None),
+            getattr(notif, "id", None),
             e,
             exc_info=True,
         )
@@ -1028,18 +1040,9 @@ def _deliver_notification(
     # 3) Email Delivery
     # ------------------------------------------------------------------
     try:
-        logger.info(
-            "[Notif] EMAIL DECISION → notif_id=%s type=%s mask=%s email=%s",
-            notif.id,
-            notif.notification_type,
-            channels_mask,
-            getattr(notif.user, "email", None),
-        )
-
         if channels_mask & CHANNEL_EMAIL:
             email = getattr(notif.user, "email", None)
             if not email:
-                logger.info("[Notif] No email for user %s (notif %s)", notif.user_id, notif.id)
                 return
 
             subject = _email_subject_for_notification(notif.notification_type)
@@ -1058,13 +1061,6 @@ def _deliver_notification(
                 email_link,
             )
 
-            logger.info(
-                "[Notif] Email task queued → notif_id=%s task_id=%s to=%s",
-                notif.id,
-                getattr(res, "id", None),
-                email,
-            )
-
     except Exception as e:
         logger.warning(
             "[Notif] Email delivery failed for user %s notif %s: %s",
@@ -1073,3 +1069,4 @@ def _deliver_notification(
             e,
             exc_info=True,
         )
+

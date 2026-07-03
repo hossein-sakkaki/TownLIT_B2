@@ -47,10 +47,4 @@ def privatize_member_covenant_moments_before_guest_migration(member) -> int:
         )
     )
 
-    logger.info(
-        "Profile migration safety: privatized %s covenant moment(s) for member_id=%s before guest migration",
-        updated,
-        member.id,
-    )
-
     return updated

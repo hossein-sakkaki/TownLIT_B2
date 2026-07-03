@@ -3,6 +3,8 @@
 from typing import Optional
 
 from django.conf import settings
+import boto3
+from botocore.config import Config
 
 from apps.asset_delivery.services.job_resolver import get_latest_done_output_path
 from apps.asset_delivery.services.playback_resolver import resolve_fallback_filefield_key
@@ -22,6 +24,93 @@ def _cdn_url(key: str | None) -> str | None:
 
     return f"{base}/{str(key).lstrip('/')}"
 
+
+def _s3_presigned_url(
+    key: str | None,
+    *,
+    content_type: str | None = None,
+) -> str | None:
+    """
+    Return a presigned S3 URL for private media objects.
+    """
+
+    key = _clean_key(key)
+
+    if not key:
+        return None
+
+    bucket_name = (
+        getattr(settings, "AWS_STORAGE_BUCKET_NAME", None)
+        or getattr(settings, "AWS_S3_BUCKET_NAME", None)
+    )
+
+    if not bucket_name:
+        return None
+
+    region_name = (
+        getattr(settings, "AWS_S3_REGION_NAME", None)
+        or getattr(settings, "AWS_REGION", None)
+        or "us-east-1"
+    )
+
+    expires_in = int(
+        getattr(settings, "STREAM_VIDEO_PREVIEW_URL_TTL_SECONDS", 21600)
+    )
+
+    client_kwargs = {
+        "region_name": region_name,
+        "config": Config(signature_version="s3v4"),
+    }
+
+    access_key = getattr(settings, "AWS_ACCESS_KEY_ID", None)
+    secret_key = getattr(settings, "AWS_SECRET_ACCESS_KEY", None)
+    session_token = getattr(settings, "AWS_SESSION_TOKEN", None)
+
+    if access_key and secret_key:
+        client_kwargs["aws_access_key_id"] = access_key
+        client_kwargs["aws_secret_access_key"] = secret_key
+
+    if session_token:
+        client_kwargs["aws_session_token"] = session_token
+
+    params = {
+        "Bucket": bucket_name,
+        "Key": key,
+    }
+
+    if content_type:
+        params["ResponseContentType"] = content_type
+
+    try:
+        client = boto3.client(
+            "s3",
+            **client_kwargs,
+        )
+
+        return client.generate_presigned_url(
+            ClientMethod="get_object",
+            Params=params,
+            ExpiresIn=expires_in,
+        )
+
+    except Exception:
+        return None
+
+
+def _signed_video_preview_url(key: str | None) -> str | None:
+    """
+    Return playable URL for private short preview MP4.
+    """
+
+    key = _clean_key(key)
+
+    if not key:
+        return None
+
+    return _s3_presigned_url(
+        key,
+        content_type="video/mp4",
+    )
 
 def _clean_key(value) -> str | None:
     """
@@ -322,14 +411,21 @@ def _variant_url_payload(variants: dict | None) -> dict:
 
 def _video_preview_payload(payload: dict | None) -> dict | None:
     """
-    Add CDN URL to stored short video preview.
+    Add playable URL to stored short video preview.
     """
 
     if not isinstance(payload, dict):
         return None
 
     key = _clean_key(payload.get("key"))
-    url = _cdn_url(key)
+
+    if not key:
+        return None
+
+    url = _signed_video_preview_url(key)
+
+    if not url:
+        return None
 
     return {
         **payload,
@@ -533,24 +629,91 @@ def _apply_image_variants(
     out["variants"] = _variant_url_payload(variants)
 
 
+def _quality_dimensions_payload(qualities: list | None) -> dict:
+    """
+    Resolve video dimensions from stored HLS quality metadata.
+
+    Important:
+    This is video metadata, unlike thumbnail/poster metadata.
+    """
+
+    if not isinstance(qualities, list):
+        return _aspect_ratio_payload()
+
+    for quality in qualities:
+        if not isinstance(quality, dict):
+            continue
+
+        if quality.get("key") == "source":
+            dimensions = _aspect_ratio_payload(
+                width=quality.get("width"),
+                height=quality.get("height"),
+                aspect_ratio=quality.get("aspect_ratio"),
+            )
+
+            if dimensions.get("aspect_ratio"):
+                return dimensions
+
+    for quality in qualities:
+        if not isinstance(quality, dict):
+            continue
+
+        dimensions = _aspect_ratio_payload(
+            width=quality.get("width"),
+            height=quality.get("height"),
+            aspect_ratio=quality.get("aspect_ratio"),
+        )
+
+        if dimensions.get("aspect_ratio"):
+            return dimensions
+
+    return _aspect_ratio_payload()
+
+
+def _safe_video_layout_fallback() -> dict:
+    """
+    Safe fallback for old video rows that are not backfilled yet.
+
+    Do not use thumbnail dimensions for video layout. A thumbnail can be very
+    wide and create a short collapsed card.
+    """
+
+    return {
+        "width": None,
+        "height": None,
+        "aspect_ratio": 9 / 16,
+    }
+
+
 def _apply_video_asset_metadata(
     out: dict,
     obj,
 ) -> None:
     """
     Attach stored video metadata and short preview.
+
+    Critical rule:
+    Video layout dimensions must come from video metadata only:
+    - media_assets.video.width/height/aspect_ratio
+    - media_assets.video.qualities[*].width/height/aspect_ratio
+
+    Never use thumbnail/poster dimensions for video layout.
     """
 
     video_asset = _media_asset(obj, "video")
-    thumbnail_asset = _media_asset(obj, "thumbnail")
+    qualities = (
+        video_asset.get("qualities")
+        if isinstance(video_asset.get("qualities"), list)
+        else []
+    )
 
     dimensions = _asset_dimensions(video_asset)
 
     if not dimensions.get("aspect_ratio"):
-        dimensions = _asset_dimensions(thumbnail_asset)
+        dimensions = _quality_dimensions_payload(qualities)
 
     if not dimensions.get("aspect_ratio"):
-        dimensions = _model_dimension_payload(obj, "thumbnail")
+        dimensions = _safe_video_layout_fallback()
 
     _apply_dimensions(out, dimensions)
 
@@ -558,11 +721,7 @@ def _apply_video_asset_metadata(
     out["preview_video"] = _video_preview_payload(
         video_asset.get("preview")
     )
-    out["video_qualities"] = (
-        video_asset.get("qualities")
-        if isinstance(video_asset.get("qualities"), list)
-        else []
-    )
+    out["video_qualities"] = qualities
 
 
 def _build_empty_preview() -> dict:

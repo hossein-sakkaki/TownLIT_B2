@@ -35,10 +35,4 @@ def assign_codes_to_access_requests():
         email__in=InviteCode.objects.values_list('email', flat=True)
     ).count()
 
-    print("\n📌 Summary:")
-    print(f"  ✅ New invite codes created: {created_count}")
-    print(f"  ⏩ Skipped (already in InviteCode): {skipped_count}")
-
-
-
 # python manage.py assign_invite_codes 

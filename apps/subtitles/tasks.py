@@ -243,12 +243,7 @@ def build_transcript_for_video(self, transcript_id: int) -> int:
             return transcript_id
 
         if outcome == "needs_review":
-            logger.info(
-                "🟡 Testimony needs admin review transcript=%s type=%s confidence=%s",
-                transcript.id,
-                transcript.detected_content_type,
-                transcript.content_review_confidence,
-            )
+
             return transcript.id
 
         if not transcript.ai_processing_allowed:

@@ -51,12 +51,7 @@ def fellowship_notifications(sender, instance, created, **kwargs):
         # the canonical notification pair.
         # ----------------------------------------------------
         if created and status_normalized == "accepted":
-            logger.debug(
-                "[LITCovenant] Created accepted symmetric row skipped → %s -> %s (%s)",
-                from_user.id,
-                to_user.id,
-                relation,
-            )
+
             return
 
         payload = {
@@ -84,11 +79,6 @@ def fellowship_notifications(sender, instance, created, **kwargs):
                 extra_payload=payload,
             )
 
-            logger.debug(
-                "[LITCovenant] Pending → from=%s to=%s",
-                from_user.id,
-                to_user.id,
-            )
             return
 
         # ----------------------------------------------------
@@ -123,11 +113,6 @@ def fellowship_notifications(sender, instance, created, **kwargs):
                 extra_payload=payload,
             )
 
-            logger.debug(
-                "[LITCovenant] Accepted → %s & %s",
-                from_user.id,
-                to_user.id,
-            )
             return
 
         # ----------------------------------------------------
@@ -162,11 +147,6 @@ def fellowship_notifications(sender, instance, created, **kwargs):
                 extra_payload=payload,
             )
 
-            logger.debug(
-                "[LITCovenant] Declined → %s & %s",
-                from_user.id,
-                to_user.id,
-            )
             return
 
         # ----------------------------------------------------
@@ -191,11 +171,6 @@ def fellowship_notifications(sender, instance, created, **kwargs):
                     extra_payload=payload,
                 )
 
-            logger.debug(
-                "[LITCovenant] Cancelled → %s & %s",
-                from_user.id,
-                to_user.id,
-            )
             return
 
     except Exception:

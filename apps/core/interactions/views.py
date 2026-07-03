@@ -1,7 +1,10 @@
 # apps/core/interactions/views.py
+
 from django.apps import apps
 from django.contrib.contenttypes.models import ContentType
 from django.db import transaction
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
@@ -13,7 +16,9 @@ from apps.core.interactions.serializers import (
     ReactionToggleSerializer,
     ReactionActorSerializer,
 )
+import logging
 
+logger = logging.getLogger(__name__)
 
 def _resolve_content_type(raw_value):
     """
@@ -137,6 +142,67 @@ def _fetch_target_reaction_counters(model_class, object_id):
         .filter(pk=object_id)
         .values("reactions_count", "reactions_breakdown")
         .first()
+    )
+    
+# -----------------------------------------------------------------------------
+# Realtime helpers
+# -----------------------------------------------------------------------------
+def _reaction_target_group_name(ct_id: int, obj_id: int) -> str:
+    return f"reactions.target.{ct_id}.{obj_id}"
+
+
+def _safe_reaction_broadcast(group_name: str, event_name: str, payload: dict):
+    """
+    Safe WS send for reaction interactions.
+    Never breaks HTTP flow if Redis / Channels is unavailable.
+    """
+    try:
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            logger.warning("Channel layer not configured; skip reaction WS send.")
+            return
+
+        async_to_sync(channel_layer.group_send)(
+            group_name,
+            {
+                "type": "dispatch_event",
+                "app": "reactions",
+                "event": event_name,
+                "data": payload,
+            },
+        )
+    except Exception:
+        logger.exception("Reaction interaction WS broadcast failed (ignored)")
+
+
+def _broadcast_reaction_summary_changed(
+    *,
+    ct: ContentType,
+    object_id: int,
+    action_name: str,
+    actor_user_id: int | None = None,
+):
+    model_class = _resolve_model_class(ct)
+    target = _fetch_target_reaction_counters(model_class, object_id) if model_class else None
+
+    payload = {
+        "content_type_id": ct.id,
+        "content_type": f"{ct.app_label}.{ct.model}",
+        "object_id": int(object_id),
+        "action": action_name,
+        "actor_user_id": actor_user_id,
+        "reactions_count": 0,
+        "reactions_breakdown": {},
+    }
+
+    if target:
+        payload["reactions_count"] = target.get("reactions_count") or 0
+        payload["reactions_breakdown"] = target.get("reactions_breakdown") or {}
+
+    _safe_reaction_broadcast(
+        _reaction_target_group_name(ct.id, int(object_id)),
+        "summary_changed",
+        payload,
     )
 
 
@@ -330,6 +396,13 @@ class InteractionReactionViewSet(viewsets.ModelViewSet):
             "reactions_breakdown": target.get("reactions_breakdown") or {},
             "my_reaction": my_reaction,
         }
+
+        transaction.on_commit(lambda: _broadcast_reaction_summary_changed(
+            ct=ct,
+            object_id=object_id,
+            action_name=action_name,
+            actor_user_id=request.user.id,
+        ))
 
         return Response(
             ReactionSummarySerializer(payload).data,

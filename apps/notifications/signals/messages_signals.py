@@ -45,14 +45,6 @@ def _classify_message_kind(msg: Message) -> str:
     Classify message kind without decrypting content.
     E2EE content must never be included in notification text.
     """
-    logger.debug(
-        "[Notif][MessageKind] msg_id=%s image=%s video=%s file=%s audio=%s",
-        getattr(msg, "id", None),
-        bool(getattr(msg, "image", None)),
-        bool(getattr(msg, "video", None)),
-        bool(getattr(msg, "file", None)),
-        bool(getattr(msg, "audio", None)),
-    )
 
     if getattr(msg, "audio", None):
         return "voice"
@@ -120,7 +112,7 @@ def _build_notification_message(
     if not is_group:
         return base
 
-    group_name = getattr(dialogue, "name", None)
+    group_name = getattr(dialogue, "group_name", None)
     if group_name:
         return f"{base} in {group_name}"
 
@@ -185,29 +177,17 @@ def on_message_created(sender, instance: Message, created, **kwargs):
         return
 
     if _should_skip_message_notification(instance):
-        logger.debug(
-            "[Notif][Message] Skipped invisible/system message id=%s",
-            getattr(instance, "id", None),
-        )
         return
 
     actor = getattr(instance, "sender", None)
     dialogue = getattr(instance, "dialogue", None)
 
     if not actor or not dialogue:
-        logger.debug(
-            "[Notif][Message] Missing actor/dialogue for message id=%s",
-            getattr(instance, "id", None),
-        )
         return
 
     recipients_qs = dialogue.participants.exclude(id=actor.id)
 
     if not recipients_qs.exists():
-        logger.debug(
-            "[Notif][Message] No recipients for message id=%s",
-            instance.id,
-        )
         return
 
     is_group = bool(getattr(dialogue, "is_group", False))
@@ -225,14 +205,6 @@ def on_message_created(sender, instance: Message, created, **kwargs):
             recipient=recipient,
             actor=actor,
         ):
-            logger.info(
-                "[Notif][Message] Suppressed by conversation policy "
-                "recipient=%s actor=%s dialogue=%s message=%s",
-                getattr(recipient, "id", None),
-                getattr(actor, "id", None),
-                getattr(dialogue, "id", None),
-                getattr(instance, "id", None),
-            )
             continue
 
         msg_text = _build_notification_message(
@@ -260,13 +232,5 @@ def on_message_created(sender, instance: Message, created, **kwargs):
             extra_payload=extra_payload,
         )
 
-        logger.debug(
-            "[Notif][Message] Dispatched %s kind=%s recipient=%s "
-            "dialogue=%s message=%s link=%s",
-            notif_type,
-            msg_kind,
-            getattr(recipient, "username", None),
-            getattr(dialogue, "id", None),
-            getattr(instance, "id", None),
-            link,
-        )
+        
+       

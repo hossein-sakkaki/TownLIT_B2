@@ -191,20 +191,28 @@ class APNsEngine:
                 reason = response.text
 
             logger.warning(
-                "[APNs] Push failed status=%s reason=%s token_prefix=%s sandbox=%s sound=%s",
+                "[APNs] Push failed status=%s reason=%s token_prefix=%s "
+                "sandbox=%s host=%s topic=%s sound=%s apns_id=%s response=%s",
                 response.status_code,
                 reason,
                 token[:12],
                 config.use_sandbox,
+                config.host,
+                config.topic,
                 sound,
+                response.headers.get("apns-id"),
+                response.text,
             )
 
             return False
 
         except Exception as exc:
             logger.warning(
-                "[APNs] Exception while sending push token_prefix=%s error=%s",
+                "[APNs] Exception while sending push token_prefix=%s sandbox=%s host=%s topic=%s error=%s",
                 token[:12],
+                config.use_sandbox,
+                config.host,
+                config.topic,
                 exc,
                 exc_info=True,
             )
@@ -246,14 +254,6 @@ class APNsEngine:
 
             if ok:
                 sent += 1
-
-        logger.info(
-            "[APNs] send_to_user done user=%s sent=%s total_ios_devices=%s sound=%s",
-            getattr(user, "id", None),
-            sent,
-            devices.count(),
-            sound,
-        )
 
         return sent
 

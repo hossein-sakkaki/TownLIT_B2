@@ -118,8 +118,6 @@ async def _watchdog_loop():
                 await asyncio.sleep(_TICK)
                 continue
 
-            logger.info("[PresenceWatchdog] Lock acquired")
-
             while True:
                 try:
                     await redis_conn.expire(_LOCK_KEY, _LOCK_TTL)
@@ -138,7 +136,6 @@ async def _watchdog_loop():
                     await asyncio.sleep(_TICK)
 
         except asyncio.CancelledError:
-            logger.info("[PresenceWatchdog] Task cancelled")
             return
 
         except Exception as exc:
@@ -176,4 +173,3 @@ def ensure_presence_watchdog_running():
         return
 
     _task = loop.create_task(_watchdog_loop())
-    logger.info("[PresenceWatchdog] Task started")

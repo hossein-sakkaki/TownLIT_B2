@@ -49,7 +49,6 @@ def _delete_storage_key(key: str | None, *, label: str) -> None:
     try:
         if default_storage.exists(key):
             default_storage.delete(key)
-            logger.info("🧹 Deleted %s: %s", label, key)
     except Exception:
         logger.exception("Failed deleting %s: %s", label, key)
 
@@ -325,13 +324,6 @@ def _notify_user_about_rejected_testimony(
                 "email_link": links["email_link"],
                 "web_link": links["email_link"],
             },
-        )
-
-        logger.info(
-            "Rejected testimony notification dispatched user=%s in_app_link=%s email_link=%s",
-            getattr(user, "pk", None),
-            links["in_app_link"],
-            links["email_link"],
         )
 
     except Exception:

@@ -318,6 +318,7 @@ class UpdateGroupInfoSerializer(serializers.Serializer):
 # Message Serializer -------------------------------------------------------------------
 class MessageSerializer(serializers.ModelSerializer):
     sender = SimpleCustomUserSerializer(read_only=True)
+    dialogue_slug = serializers.CharField(source="dialogue.slug", read_only=True)
     content_encrypted = serializers.SerializerMethodField()
     aes_key_encrypted = serializers.SerializerMethodField()
     encrypted_for_device = serializers.SerializerMethodField()
@@ -355,7 +356,7 @@ class MessageSerializer(serializers.ModelSerializer):
     class Meta:
         model = Message
         fields = [
-            'id', 'dialogue', 'sender', 'timestamp', 'edited_at', 'is_edited',
+            'id', 'dialogue', 'dialogue_slug', 'sender', 'timestamp', 'edited_at', 'is_edited',
             'seen_by_users', 'seen_count', 'seen_count_others', 'is_delivered',
             'reply_to_message_id', 'reply_preview',
             'is_forwarded', 'forwarded_from_message_id', 'forward_preview',

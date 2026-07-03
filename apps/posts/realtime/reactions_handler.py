@@ -20,6 +20,10 @@ class ReactionsHandler:
       { "app": "reactions", "type": "subscribe_inbox", "data": {...} }
       { "app": "reactions", "type": "unsubscribe_inbox", "data": {...} }
 
+    Supports both:
+      - content_type_id + object_id
+      - content_type + object_id
+
     Server -> Client:
       { "app": "reactions", "type": "event", "event": "...", "data": {...} }
     """
@@ -77,6 +81,20 @@ class ReactionsHandler:
     def _inbox_group(self, ct_id: int, obj_id: int, user_id: int) -> str:
         return f"reactions.inbox.{ct_id}.{obj_id}.{user_id}"
 
+    async def _resolve_payload_content_type(
+        self,
+        data: Dict[str, Any],
+    ) -> ContentType | None:
+        ct_id = self._to_int(data.get("content_type_id"))
+        if ct_id:
+            return await self._get_content_type_by_id(ct_id)
+
+        raw = data.get("content_type")
+        if not raw:
+            return None
+
+        return await self._get_content_type_by_value(str(raw))
+
     # --------------------------------------------------------------
     async def on_connect(self) -> None:
         logger.info(f"[ReactionsHandler] User {getattr(self.user, 'id', None)} connected")
@@ -122,17 +140,17 @@ class ReactionsHandler:
 
     # --------------------------------------------------------------
     async def _subscribe_target(self, data: Dict[str, Any]) -> None:
-        ct_id = self._to_int(data.get("content_type_id"))
+        cto = await self._resolve_payload_content_type(data)
         obj_id = self._to_int(data.get("object_id"))
 
-        if not ct_id or not obj_id:
+        if not cto or not obj_id:
             await self._send_error(
                 code="INVALID_SUBSCRIBE_TARGET_PAYLOAD",
-                message="content_type_id and object_id are required",
+                message="content_type/content_type_id and object_id are required",
             )
             return
 
-        group = self._target_group(ct_id, obj_id)
+        group = self._target_group(cto.id, obj_id)
 
         await self.socket.join_feature_group(group)
         self.groups.add(group)
@@ -140,23 +158,24 @@ class ReactionsHandler:
         await self._send_event(
             "subscribed_target",
             {
-                "content_type_id": ct_id,
+                "content_type_id": cto.id,
+                "content_type": f"{cto.app_label}.{cto.model}",
                 "object_id": obj_id,
             },
         )
 
     async def _unsubscribe_target(self, data: Dict[str, Any]) -> None:
-        ct_id = self._to_int(data.get("content_type_id"))
+        cto = await self._resolve_payload_content_type(data)
         obj_id = self._to_int(data.get("object_id"))
 
-        if not ct_id or not obj_id:
+        if not cto or not obj_id:
             await self._send_error(
                 code="INVALID_UNSUBSCRIBE_TARGET_PAYLOAD",
-                message="content_type_id and object_id are required",
+                message="content_type/content_type_id and object_id are required",
             )
             return
 
-        group = self._target_group(ct_id, obj_id)
+        group = self._target_group(cto.id, obj_id)
 
         if group in self.groups:
             await self.socket.leave_feature_group(group)
@@ -165,23 +184,24 @@ class ReactionsHandler:
         await self._send_event(
             "unsubscribed_target",
             {
-                "content_type_id": ct_id,
+                "content_type_id": cto.id,
+                "content_type": f"{cto.app_label}.{cto.model}",
                 "object_id": obj_id,
             },
         )
 
     async def _subscribe_inbox(self, data: Dict[str, Any]) -> None:
-        ct_id = self._to_int(data.get("content_type_id"))
+        cto = await self._resolve_payload_content_type(data)
         obj_id = self._to_int(data.get("object_id"))
 
-        if not ct_id or not obj_id:
+        if not cto or not obj_id:
             await self._send_error(
                 code="INVALID_SUBSCRIBE_INBOX_PAYLOAD",
-                message="content_type_id and object_id are required",
+                message="content_type/content_type_id and object_id are required",
             )
             return
 
-        is_owner = await self._is_owner(ct_id, obj_id, getattr(self.user, "id", None))
+        is_owner = await self._is_owner(cto.id, obj_id, getattr(self.user, "id", None))
         if not is_owner:
             await self._send_error(
                 code="FORBIDDEN",
@@ -189,7 +209,7 @@ class ReactionsHandler:
             )
             return
 
-        group = self._inbox_group(ct_id, obj_id, self.user.id)
+        group = self._inbox_group(cto.id, obj_id, self.user.id)
 
         await self.socket.join_feature_group(group)
         self.groups.add(group)
@@ -197,23 +217,24 @@ class ReactionsHandler:
         await self._send_event(
             "subscribed_inbox",
             {
-                "content_type_id": ct_id,
+                "content_type_id": cto.id,
+                "content_type": f"{cto.app_label}.{cto.model}",
                 "object_id": obj_id,
             },
         )
 
     async def _unsubscribe_inbox(self, data: Dict[str, Any]) -> None:
-        ct_id = self._to_int(data.get("content_type_id"))
+        cto = await self._resolve_payload_content_type(data)
         obj_id = self._to_int(data.get("object_id"))
 
-        if not ct_id or not obj_id:
+        if not cto or not obj_id:
             await self._send_error(
                 code="INVALID_UNSUBSCRIBE_INBOX_PAYLOAD",
-                message="content_type_id and object_id are required",
+                message="content_type/content_type_id and object_id are required",
             )
             return
 
-        group = self._inbox_group(ct_id, obj_id, getattr(self.user, "id", 0))
+        group = self._inbox_group(cto.id, obj_id, getattr(self.user, "id", 0))
 
         if group in self.groups:
             await self.socket.leave_feature_group(group)
@@ -222,7 +243,8 @@ class ReactionsHandler:
         await self._send_event(
             "unsubscribed_inbox",
             {
-                "content_type_id": ct_id,
+                "content_type_id": cto.id,
+                "content_type": f"{cto.app_label}.{cto.model}",
                 "object_id": obj_id,
             },
         )
@@ -239,6 +261,57 @@ class ReactionsHandler:
         await self._send_event(event_type, data)
 
     # --------------------------------------------------------------
+    @database_sync_to_async
+    def _get_content_type_by_id(self, ct_id: int) -> ContentType | None:
+        try:
+            return ContentType.objects.get(pk=ct_id)
+        except ContentType.DoesNotExist:
+            return None
+
+    @database_sync_to_async
+    def _get_content_type_by_value(self, raw_value: str) -> ContentType | None:
+        raw = str(raw_value or "").strip().lower()
+
+        if not raw:
+            return None
+
+        alias_map = {
+            "moment": ("posts", "moment"),
+            "testimony": ("posts", "testimony"),
+            "prayer": ("posts", "prayer"),
+            "pray": ("posts", "prayer"),
+            "prayerresponse": ("posts", "prayer"),
+            "prayer_response": ("posts", "prayer"),
+            "prayer-response": ("posts", "prayer"),
+        }
+
+        try:
+            if raw.isdigit():
+                return ContentType.objects.get(pk=int(raw))
+
+            if "." in raw:
+                app_label, model = raw.split(".", 1)
+                app_label = app_label.strip()
+                model = model.strip()
+
+                if app_label == "posts" and model in alias_map:
+                    target = alias_map[model]
+                    return ContentType.objects.get(app_label=target[0], model=target[1])
+
+                return ContentType.objects.get(app_label=app_label, model=model)
+
+            if raw in alias_map:
+                target = alias_map[raw]
+                return ContentType.objects.get(app_label=target[0], model=target[1])
+
+            matches = ContentType.objects.filter(model=raw)
+            if matches.count() == 1:
+                return matches.first()
+
+            return None
+        except ContentType.DoesNotExist:
+            return None
+
     @database_sync_to_async
     def _is_owner(self, ct_id: int, obj_id: int, user_id: Optional[int]) -> bool:
         if not user_id:

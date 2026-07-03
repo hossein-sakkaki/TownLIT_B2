@@ -39,11 +39,6 @@ def friendship_notifications(sender, instance, created, **kwargs):
         # the original pending row to accepted.
         # ----------------------------------------------------
         if created and status_value == "accepted":
-            logger.debug(
-                "[Friendship] Created accepted symmetric row skipped → %s -> %s",
-                from_user.id,
-                to_user.id,
-            )
             return
 
         payload = {
@@ -69,11 +64,6 @@ def friendship_notifications(sender, instance, created, **kwargs):
                 extra_payload=payload,
             )
 
-            logger.debug(
-                "[Friendship] Request sent → from=%s to=%s",
-                from_user.id,
-                to_user.id,
-            )
             return
 
         # ----------------------------------------------------
@@ -93,11 +83,6 @@ def friendship_notifications(sender, instance, created, **kwargs):
                 extra_payload=payload,
             )
 
-            logger.debug(
-                "[Friendship] Accepted → notify=%s actor=%s",
-                from_user.id,
-                to_user.id,
-            )
             return
 
         # ----------------------------------------------------
@@ -117,11 +102,6 @@ def friendship_notifications(sender, instance, created, **kwargs):
                 extra_payload=payload,
             )
 
-            logger.debug(
-                "[Friendship] Declined → notify=%s actor=%s",
-                from_user.id,
-                to_user.id,
-            )
             return
 
         # ----------------------------------------------------
@@ -141,11 +121,6 @@ def friendship_notifications(sender, instance, created, **kwargs):
                 extra_payload=payload,
             )
 
-            logger.debug(
-                "[Friendship] Cancelled → notify=%s actor=%s",
-                to_user.id,
-                from_user.id,
-            )
             return
 
         # ----------------------------------------------------
@@ -166,11 +141,6 @@ def friendship_notifications(sender, instance, created, **kwargs):
                 extra_payload=payload,
             )
 
-            logger.debug(
-                "[Friendship] Deleted → notify=%s actor=%s",
-                to_user.id,
-                from_user.id,
-            )
             return
 
     except Exception:

@@ -179,7 +179,6 @@ class AccessRequestViewSet(viewsets.ModelViewSet):
         
         # Step 1 – Check for duplicate requests
         if AccessRequest.objects.filter(email=email).exists():
-            logger.info(f"Duplicate access request attempt detected for email: {email}")
             return Response(
                 {
                     "message": "You have already submitted a request with this email. "

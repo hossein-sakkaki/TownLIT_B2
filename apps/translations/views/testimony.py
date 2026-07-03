@@ -29,7 +29,6 @@ class TestimonyTranslationViewSet(viewsets.ViewSet):
     # -------------------------------------------------
     def get_object(self):
         slug = self.kwargs.get("slug")
-        logger.debug("[translation] resolving testimony slug=%s", slug)
         return get_object_or_404(Testimony, slug=slug)
 
     # -------------------------------------------------
@@ -37,11 +36,6 @@ class TestimonyTranslationViewSet(viewsets.ViewSet):
     # -------------------------------------------------
     @action(detail=True, methods=["post"], url_path="translate")
     def translate(self, request, slug=None):
-        logger.info(
-            "[translation] request start slug=%s viewer=%s",
-            slug,
-            request.user if request.user.is_authenticated else "anonymous",
-        )
 
         testimony = self.get_object()
 
@@ -78,12 +72,6 @@ class TestimonyTranslationViewSet(viewsets.ViewSet):
             )
 
         if gate_reason:
-            logger.info(
-                "[translation] visibility denied testimony_id=%s reason=%s viewer=%s",
-                testimony.id,
-                gate_reason,
-                request.user if request.user.is_authenticated else "anonymous",
-            )
             return Response(
                 {"detail": "Access restricted.", "code": gate_reason},
                 status=status.HTTP_403_FORBIDDEN,
@@ -102,11 +90,6 @@ class TestimonyTranslationViewSet(viewsets.ViewSet):
             return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
 
         target_language = ser.validated_data.get("target_language")
-        logger.debug(
-            "[translation] target_language=%s testimony_id=%s",
-            target_language,
-            testimony.id,
-        )
 
         # Normalize viewer for translation layer
         viewer_user = request.user if request.user.is_authenticated else None
@@ -115,10 +98,7 @@ class TestimonyTranslationViewSet(viewsets.ViewSet):
         # 4) Translation execution
         # -------------------------------------------------
         try:
-            logger.debug(
-                "[translation] translating title testimony_id=%s",
-                testimony.id,
-            )
+
             title_result = translate_cached(
                 obj=testimony,
                 field_name="title",
@@ -126,10 +106,6 @@ class TestimonyTranslationViewSet(viewsets.ViewSet):
                 target_language=target_language,
             )
 
-            logger.debug(
-                "[translation] translating content testimony_id=%s",
-                testimony.id,
-            )
             content_result = translate_cached(
                 obj=testimony,
                 field_name="content",
@@ -138,10 +114,6 @@ class TestimonyTranslationViewSet(viewsets.ViewSet):
             )
 
         except EmptySourceTextError:
-            logger.info(
-                "[translation] empty source text testimony_id=%s",
-                testimony.id,
-            )
             return Response(
                 {"detail": "Source text is empty."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -161,13 +133,6 @@ class TestimonyTranslationViewSet(viewsets.ViewSet):
         # -------------------------------------------------
         # 5) Success response
         # -------------------------------------------------
-        logger.info(
-            "[translation] success testimony_id=%s target_language=%s cached=%s",
-            testimony.id,
-            title_result.get("target_language"),
-            bool(title_result.get("cached")) and bool(content_result.get("cached")),
-        )
-
         return Response(
             {
                 "title": title_result["text"],

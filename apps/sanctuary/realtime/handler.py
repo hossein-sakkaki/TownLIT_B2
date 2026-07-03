@@ -142,7 +142,6 @@ class SanctuaryHandler:
             await self._submit_review(data)
             return
 
-        logger.debug("[SanctuaryHandler] Unknown client type=%s", msg_type)
         await self._send_error(
             code="UNSUPPORTED_MESSAGE_TYPE",
             message=f"Unknown type '{msg_type}'",
@@ -383,6 +382,7 @@ class SanctuaryHandler:
 
                 review.review_status = status
                 review.comment = comment
+                review.reviewed_at = timezone.now()
                 review.save(update_fields=["review_status", "comment", "reviewed_at"])
 
                 return True, {

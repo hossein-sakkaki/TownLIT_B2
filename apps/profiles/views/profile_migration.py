@@ -63,7 +63,6 @@ class ProfileMigrationViewSet(viewsets.ViewSet):
     # ---------------------------------------------------------------------
     def _get_label_obj(self, label_name: str):
         label = CustomLabel.objects.filter(name=label_name).first()
-        logger.debug("Profile migration: resolved label '%s' -> %s", label_name, bool(label))
         return label
 
     # ---------------------------------------------------------------------
@@ -95,13 +94,6 @@ class ProfileMigrationViewSet(viewsets.ViewSet):
             update_fields.append("label")
 
         if update_fields:
-            logger.info(
-                "Profile migration: syncing identity fields for user_id=%s username=%s target_type=%s update_fields=%s",
-                user.id,
-                user.username,
-                target_type,
-                update_fields,
-            )
             user.save(update_fields=update_fields)
 
     # ---------------------------------------------------------------------
@@ -164,15 +156,6 @@ class ProfileMigrationViewSet(viewsets.ViewSet):
             object_id=to_profile.id,
         )
 
-        logger.info(
-            "Profile migration: moved %s moment(s) from %s:%s to %s:%s",
-            moved,
-            from_profile.__class__.__name__,
-            from_profile.id,
-            to_profile.__class__.__name__,
-            to_profile.id,
-        )
-
         return moved
 
     # ---------------------------------------------------------------------
@@ -212,16 +195,6 @@ class ProfileMigrationViewSet(viewsets.ViewSet):
         #     object_id=member.id,
         # ).update(is_active=is_active)
 
-        logger.info(
-            "Profile migration: set member-only content active=%s for member_id=%s "
-            "(testimonies=%s, prayers=%s, journeys=%s, echolits=%s)",
-            is_active,
-            member.id,
-            testimony_updated,
-            prayer_updated,
-            journey_updated,
-            echolit_updated,
-        )
         
     # ---------------------------------------------------------------------
     def _serialize_active_profile(self, user, request):
@@ -246,20 +219,10 @@ class ProfileMigrationViewSet(viewsets.ViewSet):
 
     # ---------------------------------------------------------------------
     def _activate_guest(self, user):
-        logger.info(
-            "Profile migration: activating guest for user_id=%s username=%s",
-            user.id,
-            user.username,
-        )
 
         member = getattr(user, "member_profile", None)
 
         if member and member.is_active:
-            logger.info(
-                "Profile migration: deactivating existing member profile id=%s for user_id=%s",
-                member.id,
-                user.id,
-            )
             member.is_active = False
             member.is_migrated = True
             member.save(update_fields=["is_active", "is_migrated"])
@@ -267,11 +230,6 @@ class ProfileMigrationViewSet(viewsets.ViewSet):
         guest = getattr(user, "guest_profile", None)
 
         if guest:
-            logger.info(
-                "Profile migration: reactivating existing guest profile id=%s for user_id=%s",
-                guest.id,
-                user.id,
-            )
             guest.is_active = True
             guest.is_migrated = False
             guest.save(update_fields=["is_active", "is_migrated"])
@@ -283,30 +241,14 @@ class ProfileMigrationViewSet(viewsets.ViewSet):
             is_migrated=False,
         )
 
-        logger.info(
-            "Profile migration: created new guest profile id=%s for user_id=%s",
-            guest.id,
-            user.id,
-        )
-
         return guest, True
 
     # ---------------------------------------------------------------------
     def _activate_member(self, user, request):
-        logger.info(
-            "Profile migration: activating member for user_id=%s username=%s",
-            user.id,
-            user.username,
-        )
 
         guest = getattr(user, "guest_profile", None)
 
         if guest and guest.is_active:
-            logger.info(
-                "Profile migration: deactivating existing guest profile id=%s for user_id=%s",
-                guest.id,
-                user.id,
-            )
             guest.is_active = False
             guest.is_migrated = True
             guest.save(update_fields=["is_active", "is_migrated"])
@@ -314,11 +256,6 @@ class ProfileMigrationViewSet(viewsets.ViewSet):
         member = getattr(user, "member_profile", None)
 
         if member:
-            logger.info(
-                "Profile migration: reactivating existing member profile id=%s for user_id=%s",
-                member.id,
-                user.id,
-            )
             member.is_active = True
             member.is_migrated = False
             member.save(update_fields=["is_active", "is_migrated"])
@@ -326,12 +263,6 @@ class ProfileMigrationViewSet(viewsets.ViewSet):
 
         member_payload = (request.data.get("member_profile") or {}).copy()
         member_payload.pop("user", None)
-
-        logger.info(
-            "Profile migration: creating minimal member for user_id=%s payload_keys=%s",
-            user.id,
-            list(member_payload.keys()),
-        )
 
         try:
             member = Member.objects.create(
@@ -348,11 +279,6 @@ class ProfileMigrationViewSet(viewsets.ViewSet):
             raise
 
         if not member_payload:
-            logger.info(
-                "Profile migration: minimal member created successfully id=%s for user_id=%s",
-                member.id,
-                user.id,
-            )
             return member, True, None
 
         serializer = MemberSerializer(
@@ -381,12 +307,6 @@ class ProfileMigrationViewSet(viewsets.ViewSet):
             )
             member.delete()
             raise
-
-        logger.info(
-            "Profile migration: member activated successfully id=%s for user_id=%s",
-            member.id,
-            user.id,
-        )
 
         return member, True, None
 
@@ -469,23 +389,8 @@ class ProfileMigrationViewSet(viewsets.ViewSet):
         target_profile_type = request.data.get("target_profile_type")
         guest_label = request.data.get("guest_label", SEEKER)
 
-        logger.info(
-            "Profile migration request: user_id=%s username=%s target_profile_type=%s guest_label=%s",
-            user.id,
-            user.username,
-            target_profile_type,
-            guest_label,
-        )
-
         try:
             limits = self._can_migrate(user)
-            logger.info(
-                "Profile migration limits: user_id=%s monthly=%s lifetime=%s allowed=%s",
-                user.id,
-                limits["monthly_count"],
-                limits["lifetime_count"],
-                limits["allowed"],
-            )
 
             if not limits["allowed"]:
                 return Response(
@@ -497,12 +402,6 @@ class ProfileMigrationViewSet(viewsets.ViewSet):
                 )
 
             target_type = self._resolve_target_type(user, explicit_target=target_profile_type)
-
-            logger.info(
-                "Profile migration target resolved: user_id=%s resolved_target=%s",
-                user.id,
-                target_type,
-            )
 
             if target_type is None:
                 return Response(
@@ -517,11 +416,6 @@ class ProfileMigrationViewSet(viewsets.ViewSet):
                 )
 
             active = get_active_profile(user)
-            logger.info(
-                "Profile migration active profile: user_id=%s active_type=%s",
-                user.id,
-                active.profile_type,
-            )
 
             if active.profile_type == target_type:
                 return Response(
@@ -631,12 +525,6 @@ class ProfileMigrationViewSet(viewsets.ViewSet):
                     member,
                     context={"request": request},
                 ).data
-
-                logger.info(
-                    "Profile migration success: user_id=%s migrated_to=member created=%s",
-                    user.id,
-                    created,
-                )
 
                 return Response(
                     {

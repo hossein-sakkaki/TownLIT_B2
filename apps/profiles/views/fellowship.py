@@ -530,7 +530,6 @@ class FellowshipViewSet(viewsets.ModelViewSet):
                 # 2) cleanup row (no need to keep declined)
                 fellowship.delete()
 
-            logger.info(f"Fellowship {pk} declined+deleted by user {request.user.id}.")
             return Response({'message': 'Fellowship request declined.'}, status=status.HTTP_200_OK)
 
         except Exception as e:
@@ -566,7 +565,6 @@ class FellowshipViewSet(viewsets.ModelViewSet):
                 # 2) cleanup row
                 fellowship.delete()
 
-            logger.info(f"Fellowship {pk} cancelled+deleted by user {request.user.id}.")
             return Response({'message': 'Fellowship request canceled.'}, status=status.HTTP_200_OK)
 
         except Fellowship.DoesNotExist:

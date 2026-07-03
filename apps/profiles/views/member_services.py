@@ -52,14 +52,10 @@ class MemberServicesViewSet(viewsets.ViewSet):
     @transaction.atomic  # ensure all-or-nothing on errors
     def create_service(self, request):
         """Create a MemberServiceType and attach it to current member."""
-        # light start log (helpful for tracing, not noisy)
-        logger.info("member.services:create start ct=%s keys=%s",
-                    request.content_type, list(request.data.keys()))
 
         # resolve member
         member = getattr(request.user, "member_profile", None)
         if not member:
-            logger.warning("member.services:create no-member-profile user_id=%s", request.user.id)
             return Response({"detail": "Member profile not found for current user."},
                             status=status.HTTP_400_BAD_REQUEST)
 
@@ -72,13 +68,11 @@ class MemberServicesViewSet(viewsets.ViewSet):
         # validate input
         ser = MemberServiceTypeSerializer(data=request.data, context=self.get_serializer_context())
         if not ser.is_valid():
-            logger.info("member.services:create invalid payload errors=%s", ser.errors)
             return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
 
         # prevent duplicates for this member
         service = ser.validated_data["service"]
         if member.service_types.filter(service=service, is_active=True).exists():
-            logger.info("member.services:create duplicate service member_id=%s service_id=%s", member.id, service.id)
             return Response({"detail": "This service is already added to your profile."},
                             status=status.HTTP_400_BAD_REQUEST)
 
@@ -93,7 +87,6 @@ class MemberServicesViewSet(viewsets.ViewSet):
 
         # response
         out = MemberServiceTypeSerializer(instance, context=self.get_serializer_context()).data
-        logger.info("member.services:create ok member_id=%s mst_id=%s", member.id, instance.id)
         return Response(out, status=status.HTTP_201_CREATED)
 
     # ---------------------------------------------------------------

@@ -27,7 +27,6 @@ def _safe_delete_storage_key(key: str, label: str):
         key = str(key).lstrip("/")
         if default_storage.exists(key):
             default_storage.delete(key)
-            logger.info("✅ Deleted storage key (%s): %s", label, key)
 
     except Exception:
         logger.exception("❌ Failed deleting storage key (%s): %s", label, key)
@@ -51,7 +50,6 @@ def _safe_delete_prefix(storage, prefix: str, label: str):
             return  # not S3 or no bucket handle
 
         bucket.objects.filter(Prefix=prefix).delete()
-        logger.info("✅ Deleted S3 prefix (%s): %s", label, prefix)
 
     except Exception:
         logger.exception("❌ Failed deleting S3 prefix (%s): %s", label, prefix)
@@ -72,7 +70,6 @@ def _safe_delete_filefield(field, label: str):
 
         # 1️⃣ Delete the file itself
         field.delete(save=False)
-        logger.info("✅ Prayer media deleted (%s): %s", label, key)
 
         # 2️⃣ If this is HLS master (.m3u8), delete folder
         if label == "video" and key.lower().endswith(".m3u8") and storage:
@@ -120,11 +117,6 @@ def _cleanup_conversion_jobs(model_class, instance_pk: int):
                         _safe_delete_prefix(default_storage, prefix, "job.output-prefix")
 
         jobs_qs.delete()
-        logger.info(
-            "✅ Deleted MediaConversionJob rows for %s %s",
-            model_class.__name__,
-            instance_pk,
-        )
 
     except Exception:
         logger.exception(

@@ -158,14 +158,6 @@ def cleanup_hidden_confidant_fellowship_before_friendship_delete(
         fellowship.delete()
         deleted_count += 1
 
-    logger.info(
-        "Hidden Confidant/Entrusted fellowship cleaned before friendship deletion: "
-        "%s <-> %s, rows=%s",
-        initiator.id,
-        counterpart.id,
-        deleted_count,
-    )
-
     return FriendshipCovenantCleanupResult(
         allowed=True,
         cleaned=True,

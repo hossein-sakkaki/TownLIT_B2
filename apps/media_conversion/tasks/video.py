@@ -76,14 +76,6 @@ def convert_video_to_multi_hls_task(
     try:
         raise_if_job_canceled(job)
 
-        logger.info(
-            "🎬 Video conversion task started: %s[%s] retry=%s/%s",
-            model_name,
-            instance_id,
-            self.request.retries,
-            self.max_retries,
-        )
-
         # -------------------------------------------------
         # Fetch target instance
         # -------------------------------------------------

@@ -1,55 +1,119 @@
 # apps/conversation/services/realtime_dispatch.py
 
+import logging
+
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
-from apps.conversation.services.boundary_access import should_send_conversation_notification
+
+from apps.conversation.services.boundary_access import (
+    should_send_conversation_notification,
+)
+
+logger = logging.getLogger(__name__)
 
 APP_NAME = "conversation"
 
 
-def _group_send(group_name: str, event_name: str, data: dict | None = None):
+def conversation_dispatch_payload(
+    event_name: str,
+    data: dict | None = None,
+) -> dict:
+    """
+    Build the canonical conversation realtime payload.
+
+    CentralWebSocketConsumer expects:
+    {
+        "type": "dispatch_event",
+        "app": "conversation",
+        "event": "...",
+        "data": {...}
+    }
+    """
+    return {
+        "type": "dispatch_event",
+        "app": APP_NAME,
+        "event": event_name,
+        "data": data or {},
+    }
+
+
+def _group_send(
+    group_name: str,
+    event_name: str,
+    data: dict | None = None,
+) -> bool:
     """
     Send one canonical conversation realtime event to one channel group.
     """
     if not group_name:
-        return
+        return False
 
     channel_layer = get_channel_layer()
-    async_to_sync(channel_layer.group_send)(
-        group_name,
-        {
-            "type": "dispatch_event",
-            "app": APP_NAME,
-            "event": event_name,
-            "data": data or {},
-        },
-    )
+
+    if not channel_layer:
+        logger.warning(
+            "[ConversationRealtime] No channel layer available event=%s group=%s",
+            event_name,
+            group_name,
+        )
+        return False
+
+    try:
+        async_to_sync(channel_layer.group_send)(
+            group_name,
+            conversation_dispatch_payload(event_name, data),
+        )
+
+        return True
+
+    except Exception:
+        logger.warning(
+            "[ConversationRealtime] group_send failed event=%s group=%s",
+            event_name,
+            group_name,
+            exc_info=True,
+        )
+        return False
 
 
-def conv_group_send(group_name: str, event_name: str, data: dict | None = None):
+def conv_group_send(
+    group_name: str,
+    event_name: str,
+    data: dict | None = None,
+) -> bool:
     """
     Public generic wrapper for one conversation event.
     """
-    _group_send(group_name, event_name, data)
+    return _group_send(group_name, event_name, data)
 
 
-def conv_multi_group_send(group_names: list[str], event_name: str, data: dict | None = None):
+def conv_multi_group_send(
+    group_names: list[str],
+    event_name: str,
+    data: dict | None = None,
+) -> int:
     """
     Broadcast one conversation event to multiple groups.
     Deduplicates group names safely.
+    Returns number of successful sends.
     """
     seen = set()
+    sent_count = 0
 
     for group_name in group_names or []:
         if not group_name or group_name in seen:
             continue
 
         seen.add(group_name)
-        _group_send(group_name, event_name, data)
+
+        if _group_send(group_name, event_name, data):
+            sent_count += 1
+
+    return sent_count
 
 
 # --------------------------------------------------------------------------------------
-# MESSAGE REALTIME HELPERS
+# GROUP NAME HELPERS
 # --------------------------------------------------------------------------------------
 
 def conversation_dialogue_group_name(dialogue_slug: str) -> str:
@@ -59,6 +123,25 @@ def conversation_dialogue_group_name(dialogue_slug: str) -> str:
     """
     return f"dialogue_{dialogue_slug}"
 
+
+def conversation_user_group_name(user_id: int) -> str:
+    """
+    Return the canonical per-user conversation group.
+    """
+    return f"user_{user_id}"
+
+
+def conversation_user_device_group_name(user_id: int, device_id: str) -> str:
+    """
+    Return the canonical per-user-device conversation group.
+    """
+    normalized_device_id = (device_id or "").strip().lower()
+    return f"user_device_{user_id}_{normalized_device_id}"
+
+
+# --------------------------------------------------------------------------------------
+# MESSAGE REALTIME HELPERS
+# --------------------------------------------------------------------------------------
 
 def simple_user_payload(user) -> dict:
     """
@@ -79,13 +162,18 @@ def simple_user_payload(user) -> dict:
     }
 
 
-def build_group_text_message_payload(*, message, dialogue_slug: str, plain_text: str) -> dict:
+def build_group_text_message_payload(
+    *,
+    message,
+    dialogue_slug: str,
+    plain_text: str,
+) -> dict:
     """
     Build realtime payload for a REST-created group text message.
 
     Group conversations are backend-managed:
     - iOS sends plaintext to REST.
-    - Backend stores it according to group encryption/storage policy.
+    - Backend stores it according to group storage policy.
     - Backend broadcasts a readable payload to active group participants.
     """
     return {
@@ -108,7 +196,12 @@ def build_group_text_message_payload(*, message, dialogue_slug: str, plain_text:
     }
 
 
-def broadcast_group_text_message(*, message, dialogue_slug: str, plain_text: str):
+def broadcast_group_text_message(
+    *,
+    message,
+    dialogue_slug: str,
+    plain_text: str,
+) -> bool:
     """
     Broadcast one REST-created group text message to the dialogue realtime group.
     """
@@ -118,8 +211,12 @@ def broadcast_group_text_message(*, message, dialogue_slug: str, plain_text: str
         plain_text=plain_text,
     )
 
-    conv_group_send(
+    return conv_group_send(
         conversation_dialogue_group_name(dialogue_slug),
         "chat_message",
         payload,
     )
+    
+    
+    
+    

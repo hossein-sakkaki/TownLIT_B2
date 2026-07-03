@@ -55,7 +55,6 @@ def send_email_notification(self, email, subject, message, link=None):
             logger.warning("❌ Notification email not sent to %s (send_custom_email returned False)", email)
             raise Exception("send_custom_email returned False")
 
-        logger.info("✅ Notification email sent to %s", email)
         return True
 
     except Exception as e:

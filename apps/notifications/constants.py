@@ -8,6 +8,18 @@ class NotificationVerb(str, Enum):
     COMMENT = "comment"
     REPLY = "reply"
 
+# -------------------------------------------------------------------
+# Messenger push-only notification types
+# -------------------------------------------------------------------
+MESSENGER_PUSH_ONLY_TYPES = {
+    "new_message_direct",
+    "new_message_group",
+    "messenger_group_created",
+    "messenger_message_pinned",
+    "messenger_reaction_direct",
+    "messenger_reaction_group",
+}
+
 
 # Notification Channels -----------------------------------------------------------
 CHANNEL_PUSH = 1     # FCM / Native Push
@@ -16,6 +28,7 @@ CHANNEL_EMAIL = 4    # Email
 
 CHANNEL_DEFAULT = CHANNEL_PUSH | CHANNEL_WS | CHANNEL_EMAIL
 CHANNEL_DEFAULT_NO_EMAIL = CHANNEL_PUSH | CHANNEL_WS
+
 
 
 # Flat, stable types (good for analytics & prefs)
@@ -55,6 +68,12 @@ NOTIFICATION_TYPES = [
     ("new_message_direct", "New Direct Message"),
     ("new_message_group", "New Group Message"),
 
+    # --- Messenger events ---
+    ("messenger_group_created", "Messenger Group Created"),
+    ("messenger_message_pinned", "Messenger Message Pinned"),
+    ("messenger_reaction_direct", "Messenger Direct Message Reaction"),
+    ("messenger_reaction_group", "Messenger Group Message Reaction"),
+    
     # --- Testimonies ---
     ("new_testimony_written", "New Written Testimony"),
     ("new_testimony_audio", "New Audio Testimony"),
@@ -115,6 +134,10 @@ GUEST_ALLOWED_NOTIFICATION_TYPES = {
     "new_message_direct",
     "new_message_group",
 
+    "messenger_group_created",
+    "messenger_message_pinned",
+    "messenger_reaction_direct",
+    "messenger_reaction_group",
     # --- Moments ---
     "new_moment_image",
     "new_moment_video",
@@ -138,6 +161,10 @@ NOTIFICATION_TYPES_NO_EMAIL = {
     # Messenger is push-only and should never use general notification email.
     "new_message_direct",
     "new_message_group",
+    "messenger_group_created",
+    "messenger_message_pinned",
+    "messenger_reaction_direct",
+    "messenger_reaction_group",
 
     # Comments and replies.
     "new_comment",
@@ -175,35 +202,43 @@ NOTIFICATION_TYPES_NO_EMAIL = {
 }
 
 
-# Notification types that are not controlled by general notification preferences.
-# Messenger should be controlled later by conversation-level mute settings.
 NOTIFICATION_TYPES_FORCE_ENABLED = {
     "new_message_direct",
     "new_message_group",
+    "messenger_group_created",
+    "messenger_message_pinned",
+    "messenger_reaction_direct",
+    "messenger_reaction_group",
 }
 
 
-# Types that should not be counted in the general notification unread badge.
-# Messenger has its own unread source from Dialogue unread messages.
 NOTIFICATION_TYPES_EXCLUDED_FROM_GENERAL_UNREAD = {
     "new_message_direct",
     "new_message_group",
+    "messenger_group_created",
+    "messenger_message_pinned",
+    "messenger_reaction_direct",
+    "messenger_reaction_group",
 }
 
 
-# Types that should not be persisted in the general Notification table.
-# Messenger has its own inbox, unread count, and realtime channel.
 NOTIFICATION_TYPES_PUSH_ONLY = {
     "new_message_direct",
     "new_message_group",
+    "messenger_group_created",
+    "messenger_message_pinned",
+    "messenger_reaction_direct",
+    "messenger_reaction_group",
 }
 
 
-# Types that should not appear in the Notification Center list.
-# This also hides old message notification records if they already exist.
 NOTIFICATION_TYPES_EXCLUDED_FROM_NOTIFICATION_CENTER = {
     "new_message_direct",
     "new_message_group",
+    "messenger_group_created",
+    "messenger_message_pinned",
+    "messenger_reaction_direct",
+    "messenger_reaction_group",
 }
 
 
@@ -481,4 +516,31 @@ NOTIFICATION_PREF_METADATA = {
         "label": "Prayer follow-up update",
         "description": "You will be notified when a friend shares a follow-up update on their prayer request.",
     },
+
+    # ------------------------
+    # MESSENGER PUSH-ONLY
+    # ------------------------
+    "messenger_group_created": {
+        "category": "Messenger",
+        "label": "Added to group",
+        "description": "Push-only messenger alert when you are added to a group conversation.",
+    },
+    "messenger_message_pinned": {
+        "category": "Messenger",
+        "label": "Message pinned",
+        "description": "Push-only messenger alert when a message is pinned in a group conversation.",
+    },
+    "messenger_reaction_direct": {
+        "category": "Messenger",
+        "label": "Direct message reaction",
+        "description": "Push-only messenger alert when someone reacts to your private message.",
+    },
+    "messenger_reaction_group": {
+        "category": "Messenger",
+        "label": "Group message reaction",
+        "description": "Push-only messenger alert when someone reacts to your message in a group.",
+    },
+
 }
+
+

@@ -50,3 +50,6 @@ class ReactionActorSerializer(serializers.Serializer):
     reaction_type = serializers.CharField()
     timestamp = serializers.CharField()
     user = serializers.DictField()
+    
+    
+    

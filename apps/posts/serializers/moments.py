@@ -328,7 +328,6 @@ class MomentSerializer(
                 owner.pop("internal_roles", None)
                 owner.pop("permissions", None)
 
-            logger.debug("Moment owner dto=%s", owner)
             return owner
 
         except Exception:

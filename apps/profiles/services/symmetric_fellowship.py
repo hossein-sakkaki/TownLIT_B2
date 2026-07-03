@@ -34,9 +34,7 @@ def add_symmetric_fellowship(from_user, to_user, fellowship_type, reciprocal_fel
                     reciprocal_fellowship_type=reciprocal_fellowship_type,
                     status='Accepted'
                 )
-                logger.info(f"Fellowship created: {from_user} -> {to_user} ({fellowship_type})")
 
-            # چک کردن وجود رابطه متقارن
             if reciprocal_fellowship_type:
                 reciprocal_fellowship_exists = Fellowship.objects.filter(
                     from_user=to_user,
@@ -53,7 +51,6 @@ def add_symmetric_fellowship(from_user, to_user, fellowship_type, reciprocal_fel
                         reciprocal_fellowship_type=fellowship_type,
                         status='Accepted'
                     )
-                    logger.info(f"Reciprocal fellowship created: {to_user} -> {from_user} ({reciprocal_fellowship_type})")
 
         return True
     except IntegrityError as e:
@@ -95,7 +92,6 @@ def remove_symmetric_fellowship(from_user, to_user, relationship_type) -> bool:
 
             # If neither exists, nothing to do
             if not main and not reciprocal:
-                logger.info("No active fellowship rows to remove.")
                 return True
 
             # Prefer to notify via 'main'. If missing, notify via 'reciprocal'.
@@ -113,7 +109,6 @@ def remove_symmetric_fellowship(from_user, to_user, relationship_type) -> bool:
             if other:
                 other.delete()
 
-            logger.info(f"Fellowship unpaired: {from_user.id} ↔ {to_user.id} ({relationship_type})")
             return True
 
     except Exception as e:

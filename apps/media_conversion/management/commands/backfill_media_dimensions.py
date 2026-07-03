@@ -575,6 +575,7 @@ class Command(BaseCommand):
         fields: list[str],
         force: bool,
     ) -> tuple[dict, bool]:
+
         changed = False
 
         for field_name in fields:
@@ -589,13 +590,21 @@ class Command(BaseCommand):
             if not video_key:
                 continue
 
-            should_refresh_video = force or not self.has_dimensions(existing)
-
             payload = dict(existing)
             payload["key"] = video_key
 
             qualities = payload.get("qualities")
             qualities = qualities if isinstance(qualities, list) else []
+
+            if not qualities:
+                inferred_qualities = self.infer_hls_qualities_from_master(
+                    master_key=video_key,
+                )
+
+                if inferred_qualities:
+                    qualities = inferred_qualities
+                    payload["qualities"] = qualities
+                    changed = True
 
             refreshed_qualities, qualities_changed = self.refresh_hls_quality_metadata(
                 master_key=video_key,
@@ -609,7 +618,9 @@ class Command(BaseCommand):
 
             source_quality = self.find_source_quality(refreshed_qualities)
 
-            if should_refresh_video and source_quality:
+            should_refresh_video = force or not self.has_dimensions(payload)
+
+            if should_refresh_video and source_quality and self.has_dimensions(source_quality):
                 payload.update(
                     {
                         "width": source_quality.get("width"),
@@ -618,6 +629,20 @@ class Command(BaseCommand):
                     }
                 )
                 changed = True
+
+            if not payload.get("duration_ms") and source_quality:
+                playlist_key = self.quality_playlist_key(
+                    master_key=video_key,
+                    quality=source_quality,
+                )
+
+                duration_ms = self.hls_playlist_duration_ms(
+                    playlist_key=playlist_key,
+                )
+
+                if duration_ms:
+                    payload["duration_ms"] = duration_ms
+                    changed = True
 
             preview = payload.get("preview")
             if isinstance(preview, dict):
@@ -641,13 +666,20 @@ class Command(BaseCommand):
         qualities: list,
         force: bool,
     ) -> tuple[list, bool]:
-        if not qualities:
-            return qualities, False
-
         master_key = self.clean_key(master_key)
 
         if not master_key:
-            return qualities, False
+            return qualities or [], False
+
+        qualities = qualities if isinstance(qualities, list) else []
+
+        if not qualities:
+            qualities = self.infer_hls_qualities_from_master(
+                master_key=master_key,
+            )
+
+            if not qualities:
+                return [], False
 
         changed = False
         refreshed = []
@@ -818,6 +850,153 @@ class Command(BaseCommand):
 
         return None
 
+    def infer_hls_qualities_from_master(
+        self,
+        *,
+        master_key: str,
+    ) -> list:
+        master_key = self.clean_key(master_key)
+
+        if not master_key:
+            return []
+
+        try:
+            if not default_storage.exists(master_key):
+                return []
+
+            with default_storage.open(master_key, "rb") as file:
+                content = file.read().decode("utf-8", "ignore")
+
+            base_dir = os.path.dirname(master_key)
+            qualities = []
+            pending_bandwidth = None
+            pending_resolution = None
+
+            for raw_line in content.splitlines():
+                line = raw_line.strip()
+
+                if not line:
+                    continue
+
+                if line.startswith("#EXT-X-STREAM-INF"):
+                    pending_bandwidth = self.extract_m3u8_attribute(
+                        line,
+                        "BANDWIDTH",
+                    )
+                    pending_resolution = self.extract_m3u8_attribute(
+                        line,
+                        "RESOLUTION",
+                    )
+                    continue
+
+                if line.startswith("#"):
+                    continue
+
+                if not line.endswith(".m3u8"):
+                    continue
+
+                path = line
+                playlist_key = self.clean_key(os.path.join(base_dir, path))
+
+                width = None
+                height = None
+                aspect_ratio = None
+
+                if pending_resolution and "x" in pending_resolution:
+                    try:
+                        raw_width, raw_height = pending_resolution.lower().split("x", 1)
+                        width = int(raw_width)
+                        height = int(raw_height)
+                        aspect_ratio = width / height if width and height else None
+                    except Exception:
+                        width = None
+                        height = None
+                        aspect_ratio = None
+
+                quality_key = "source" if not qualities else f"q{len(qualities) + 1}"
+
+                qualities.append(
+                    self.clean_payload(
+                        {
+                            "key": quality_key,
+                            "path": path,
+                            "playlist_key": playlist_key,
+                            "width": width,
+                            "height": height,
+                            "bandwidth": pending_bandwidth,
+                            "aspect_ratio": aspect_ratio,
+                        }
+                    )
+                )
+
+                pending_bandwidth = None
+                pending_resolution = None
+
+            return qualities
+
+        except Exception as exc:
+            self.stdout.write(
+                self.style.WARNING(
+                    f"Could not infer HLS qualities from {master_key}: {exc}"
+                )
+            )
+            return []
+
+    def extract_m3u8_attribute(
+        self,
+        line: str,
+        name: str,
+    ) -> str | None:
+        marker = f"{name}="
+
+        if marker not in line:
+            return None
+
+        try:
+            value = line.split(marker, 1)[1].split(",", 1)[0].strip()
+            return value.strip('"') or None
+        except Exception:
+            return None
+
+    def hls_playlist_duration_ms(
+        self,
+        *,
+        playlist_key: str,
+    ) -> int | None:
+        playlist_key = self.clean_key(playlist_key)
+
+        if not playlist_key:
+            return None
+
+        try:
+            if not default_storage.exists(playlist_key):
+                return None
+
+            with default_storage.open(playlist_key, "rb") as file:
+                content = file.read().decode("utf-8", "ignore")
+
+            total_seconds = 0.0
+
+            for raw_line in content.splitlines():
+                line = raw_line.strip()
+
+                if not line.startswith("#EXTINF:"):
+                    continue
+
+                try:
+                    value = line.split(":", 1)[1].split(",", 1)[0]
+                    total_seconds += float(value)
+                except Exception:
+                    continue
+
+            if total_seconds <= 0:
+                return None
+
+            return int(total_seconds * 1000)
+
+        except Exception:
+            return None
+        
     # ------------------------------------------------------------------
     # Storage metadata helpers
     # ------------------------------------------------------------------
@@ -972,6 +1151,4 @@ class Command(BaseCommand):
 # docker compose exec backend python manage.py backfill_media_dimensions --model all --limit 20 --force --include-video --dry-run
 # docker compose exec backend python manage.py backfill_media_dimensions --model all --force --include-video
 # docker compose exec backend python manage.py backfill_media_dimensions --model all --force --include-video --rebuild-image-variants
-
-# docker compose exec backend python manage.py backfill_media_dimensions --model moment --limit 20 --force --include-video --rebuild-image-variants --dry-run
-# docker compose exec backend python manage.py backfill_media_dimensions --model moment --force --include-video --rebuild-image-variants
+# docker compose exec backend python manage.py backfill_media_dimensions --model testimony --force --include-video

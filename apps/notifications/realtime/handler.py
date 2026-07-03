@@ -114,12 +114,6 @@ class NotificationsHandler:
         event_type = event.get("event")
         data = event.get("data", {}) or {}
 
-        logger.info(
-            "[NotifHandler] handle_backend_event event_type=%s data=%s",
-            event_type,
-            data,
-        )
-
         if not event_type:
             logger.warning("[NotifHandler] Missing backend event type")
             return

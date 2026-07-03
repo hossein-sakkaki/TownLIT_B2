@@ -19,7 +19,6 @@ def import_invite_users_from_json(file_path):
             table_data = block.get("data", [])
             break
     else:
-        print("❌ Table 'forms_invitemodel' not found.")
         return
 
     for entry in table_data:

@@ -42,11 +42,6 @@ def _get_accepted_friends(user: CustomUser):
 
     qs = User.objects.filter(id__in=friend_ids, is_active=True)
 
-    logger.debug(
-        "[Notif][Testimony] Accepted friends for user %s → %s",
-        user.id,
-        list(qs.values_list("id", flat=True)),
-    )
     return qs
 
 

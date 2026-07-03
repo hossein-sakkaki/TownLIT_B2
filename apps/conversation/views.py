@@ -40,6 +40,7 @@ from .models import (
     UserDialogueMarker,
     DialogueParticipant,
     DialoguePin,
+    MessageReaction
 )
 from .serializers import (
     DialogueSerializer,
@@ -137,11 +138,13 @@ from apps.conversation.services.realtime_dispatch import (
     conv_group_send,
     conv_multi_group_send,
     conversation_dialogue_group_name,
+    conversation_user_group_name,
+    conversation_user_device_group_name,
+    broadcast_group_text_message,
 )
 from apps.conversation.services.event_contracts import (
     build_group_updated_event_data,
 )
-from apps.conversation.services.realtime_dispatch import broadcast_group_text_message
 from apps.conversation.services.boundary_access import (
     can_create_private_dialogue,
     can_add_user_to_group,
@@ -153,6 +156,12 @@ from apps.conversation.services.boundary_access import (
 from apps.core.boundaries.constants import BOUNDARY_GENERIC_UNAVAILABLE_MESSAGE
 from apps.core.boundaries.services.policy import BoundaryPolicy
 
+from apps.conversation.services.messenger_notification_adapter import (
+    notify_group_created_or_user_added,
+    notify_message_pinned,
+    notify_message_reaction,
+)
+
 import logging
 logger = logging.getLogger(__name__)
 from django.contrib.auth import get_user_model
@@ -160,28 +169,6 @@ CustomUser = get_user_model()
 
 
 # REALTIME HELPERS ------------------------------------------------------------------------
-def conv_dispatch_payload(event: str, data: dict | None = None):
-    """
-    Canonical conversation dispatch payload for channel_layer.group_send.
-    """
-    return {
-        "type": "dispatch_event",
-        "app": "conversation",
-        "event": event,
-        "data": data or {},
-    }
-
-
-def conv_group_send(group_name: str, event: str, data: dict | None = None):
-    """
-    Send one canonical conversation realtime event to one group.
-    """
-    channel_layer = get_channel_layer()
-    async_to_sync(channel_layer.group_send)(
-        group_name,
-        conv_dispatch_payload(event, data),
-    )
-
 def _dialogue_payload_for_realtime(dialogue, request):
     """
     Serialize dialogue once for realtime UI sync.
@@ -206,9 +193,8 @@ def _broadcast_group_updated(
     """
     Broadcast a generic group_updated event to active group sockets.
 
-    This is intentionally separate from system messages:
-    - system message updates the chat stream
-    - group_updated updates header/list/avatar/roles/member count
+    System messages update the chat stream.
+    group_updated updates header/list/avatar/roles/member count.
     """
     dialogue_payload = _dialogue_payload_for_realtime(dialogue, request)
 
@@ -229,11 +215,15 @@ def _broadcast_group_updated(
 # SYSTEM MESSAGES ------------------------------------------------------------------------
 def send_system_message(dialogue, sender, system_event, content):
     plain_text = (content or "").strip()
+
     if not plain_text:
         return None
 
-    # Store plaintext in current DB format (base64 bytes)
-    base64_str = base64.b64encode(plain_text.encode("utf-8")).decode("utf-8")
+    # Store plaintext in current DB format: base64 text bytes.
+    base64_str = base64.b64encode(
+        plain_text.encode("utf-8")
+    ).decode("utf-8")
+
     content_bytes = base64_str.encode("utf-8")
 
     system_message = Message.objects.create(
@@ -247,7 +237,7 @@ def send_system_message(dialogue, sender, system_event, content):
     # Keep system message visible in realtime chat stream,
     # but do not overwrite global non-system last_message cache.
     conv_group_send(
-        f"dialogue_{dialogue.slug}",
+        conversation_dialogue_group_name(dialogue.slug),
         "chat_message",
         build_system_chat_message_data(
             dialogue=dialogue,
@@ -702,7 +692,7 @@ class DialogueViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_403_FORBIDDEN,
             )
-    
+
         result = add_group_participant(
             dialogue=dialogue,
             acting_user=request.user,
@@ -715,19 +705,22 @@ class DialogueViewSet(viewsets.ModelViewSet):
                 status=result["status"]
             )
 
+        # Refresh dialogue from DB after membership mutation.
+        dialogue.refresh_from_db()
+
         serializer = DialogueSerializer(dialogue, context={"request": request})
         json_data = JSONRenderer().render(serializer.data)
         parsed_data = json.loads(json_data)
         parsed_data["my_role"] = "participant"
 
-        # 1) Targeted realtime event
+        # 1) Targeted conversation realtime event.
         conv_group_send(
-            f"user_{participant.id}",
+            conversation_user_group_name(participant.id),
             "group_added",
             build_group_added_event_data(dialogue=parsed_data),
         )
 
-        # 2) System message after targeted event
+        # 2) System chat-stream message.
         send_system_message(
             dialogue,
             request.user,
@@ -735,12 +728,21 @@ class DialogueViewSet(viewsets.ModelViewSet):
             f"{participant.username} joined the group.",
         )
 
+        # 3) Shared group metadata refresh.
         _broadcast_group_updated(
             dialogue=dialogue,
             request=request,
             reason="member_added",
             actor_user=request.user,
             target_user=participant,
+        )
+
+        # 4) Push-only Messenger notification.
+        # This does not create a Notification row, WS notification, or email.
+        notify_group_created_or_user_added(
+            dialogue=dialogue,
+            actor=request.user,
+            recipients=[participant],
         )
 
         return Response(
@@ -2037,7 +2039,21 @@ class MessageViewSet(viewsets.ModelViewSet):
     # Get Message -------------------------------------------------------------------------------------------
     @action(detail=True, methods=["get"], url_path="get-message", permission_classes=[IsAuthenticated])
     def get_message(self, request, pk=None):
-        message = get_object_or_404(Message, pk=pk)
+        device_id = (
+            request.query_params.get("device_id", "")
+            or request.headers.get("X-Device-ID", "")
+        ).strip().lower()
+
+        message = get_object_or_404(
+            Message.objects
+            .select_related("dialogue", "sender")
+            .prefetch_related(
+                "seen_by_users",
+                "encryptions",
+                "pins",
+            ),
+            pk=pk,
+        )
 
         if not message.dialogue.participants.filter(id=request.user.id).exists():
             return Response({"error": "Access denied."}, status=403)
@@ -2045,7 +2061,14 @@ class MessageViewSet(viewsets.ModelViewSet):
         if message.deleted_by_users.filter(id=request.user.id).exists():
             return Response({"error": "Message not found."}, status=404)
 
-        serializer = MessageSerializer(message, context={"request": request})
+        serializer = MessageSerializer(
+            message,
+            context={
+                "request": request,
+                "device_id": device_id,
+            },
+        )
+
         return Response(serializer.data)
 
     # Pin Message -------------------------------------------------------------------------------------------
@@ -2072,12 +2095,20 @@ class MessageViewSet(viewsets.ModelViewSet):
 
         realtime_data = build_message_pin_event_data(pin=pin)
 
+        # Conversation realtime event for all active participants.
         for uid in dialogue.participants.values_list("id", flat=True):
             conv_group_send(
-                f"user_{uid}",
+                conversation_user_group_name(uid),
                 "message_pinned",
                 realtime_data,
             )
+
+        # Push-only Messenger notification for group members.
+        # The adapter intentionally skips private chats and skips the actor.
+        notify_message_pinned(
+            pin=pin,
+            actor=request.user,
+        )
 
         return Response(
             {
@@ -2509,13 +2540,24 @@ class MessageViewSet(viewsets.ModelViewSet):
             pk=pk,
         )
 
-        if not target_message.dialogue.participants.filter(id=request.user.id).exists():
+        dialogue = target_message.dialogue
+
+        if not dialogue.participants.filter(id=request.user.id).exists():
             return Response(
                 {
                     "error": "Access denied.",
                     "code": "DIALOGUE_ACCESS_DENIED",
                 },
                 status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if target_message.deleted_by_users.filter(id=request.user.id).exists():
+            return Response(
+                {
+                    "error": "Message not found.",
+                    "code": "MESSAGE_NOT_VISIBLE",
+                },
+                status=status.HTTP_404_NOT_FOUND,
             )
 
         if (
@@ -2529,7 +2571,7 @@ class MessageViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_403_FORBIDDEN,
             )
-    
+
         result = toggle_message_reaction(
             message_id=pk,
             acting_user=request.user,
@@ -2547,32 +2589,45 @@ class MessageViewSet(viewsets.ModelViewSet):
         dialogue = message.dialogue
         summary = payload["summary"]
 
+        reaction_action = (payload.get("action") or "").strip().lower()
+        normalized_reaction_type = payload.get("reaction_type") or reaction_type
+
         realtime_data = build_message_reaction_toggled_event_data(
             dialogue_slug=dialogue.slug,
             message_id=message.id,
             user_id=request.user.id,
-            reaction_type=payload["reaction_type"],
-            action=payload["action"],
+            reaction_type=normalized_reaction_type,
+            action=reaction_action,
             summary=summary,
         )
 
-        # Shared dialogue state -> broadcast to all participants
+        # Shared conversation state -> broadcast to all active participants.
         for uid in dialogue.participants.values_list("id", flat=True):
             conv_group_send(
-                f"user_{uid}",
+                conversation_user_group_name(uid),
                 "message_reaction_toggled",
                 realtime_data,
             )
 
+        # Push-only Messenger notification.
+        # Direct: notify the original sender.
+        # Group: notify only the original sender, not every group member.
+        notify_message_reaction(
+            message=message,
+            actor=request.user,
+            reaction_type=normalized_reaction_type,
+            reaction_action=reaction_action,
+        )
+
         return Response(
             {
                 "message": "Reaction updated successfully.",
-                "action": payload["action"],
+                "action": reaction_action,
                 "summary": summary,
             },
             status=status.HTTP_200_OK,
         )
-
+        
     # Message Reaction Summary ------------------------------------------------------------------------------
     @action(detail=True, methods=["get"], url_path="reaction-summary", permission_classes=[IsAuthenticated])
     def reaction_summary(self, request, pk=None):
@@ -2657,4 +2712,6 @@ class UserDialogueMarkerViewSet(viewsets.ViewSet):
         marker = get_object_or_404(UserDialogueMarker, pk=pk, user=request.user)
         marker.delete()
         return Response({'detail': 'Dialogue unmarked as sensitive.'}, status=status.HTTP_204_NO_CONTENT)
+
+
 

@@ -313,26 +313,6 @@ class PrayViewSet(OwnerGateMixin, viewsets.ModelViewSet):
 
         existing = getattr(prayer, "response", None)
 
-        # Short debug log: keeps upload diagnosis precise without dumping files.
-        logger.info(
-            "[PrayerRespond] incoming request prayer_id=%s slug=%s method=%s user_id=%s data_keys=%s file_keys=%s files=%s existing_response=%s",
-            getattr(prayer, "id", None),
-            getattr(prayer, "slug", None),
-            request.method,
-            getattr(request.user, "id", None),
-            list(request.data.keys()),
-            list(request.FILES.keys()),
-            {
-                key: {
-                    "name": getattr(file_obj, "name", None),
-                    "content_type": getattr(file_obj, "content_type", None),
-                    "size": getattr(file_obj, "size", None),
-                }
-                for key, file_obj in request.FILES.items()
-            },
-            bool(existing),
-        )
-
         result_status = request.data.get("result_status")
         if result_status not in (PrayerStatus.ANSWERED, PrayerStatus.NOT_ANSWERED):
             logger.warning(

@@ -81,6 +81,51 @@ def _safe_broadcast(event_name: str, payload: dict, ct_id: int, obj_id: int):
         
 
 # ---------------------------------------------------------------------
+def _comment_realtime_payload(instance: Comment, serialized: dict | None = None) -> dict:
+    """
+    Canonical realtime payload for comment events.
+
+    Important for iOS:
+    - content_type_id is required for legacy numeric subscriptions.
+    - content_type is required for clients that only know app.model.
+    - object_id is required to route the event to the visible target.
+    - recomment / parent_id / is_reply are required to distinguish roots/replies.
+    """
+    data = dict(serialized or {})
+
+    ct = instance.content_type
+    data["content_type_id"] = instance.content_type_id
+    data["ct_id"] = instance.content_type_id
+    data["content_type"] = f"{ct.app_label}.{ct.model}" if ct else None
+    data["object_id"] = instance.object_id
+    data["id"] = instance.id
+    data["recomment"] = instance.recomment_id
+    data["parent_id"] = instance.recomment_id
+    data["is_reply"] = instance.recomment_id is not None
+
+    return data
+
+# ---------------------------------------------------------------------
+def _deleted_comment_realtime_payload(
+    *,
+    comment_id: int,
+    content_type_id: int,
+    content_type_label: str | None,
+    object_id: int,
+    parent_id: int | None,
+) -> dict:
+    return {
+        "id": comment_id,
+        "content_type_id": content_type_id,
+        "ct_id": content_type_id,
+        "content_type": content_type_label,
+        "object_id": object_id,
+        "recomment": parent_id,
+        "parent_id": parent_id,
+        "is_reply": parent_id is not None,
+    }
+
+# ---------------------------------------------------------------------
 class CommentViewSet(viewsets.ModelViewSet):
     """
     🔹 REST + WebSocket broadcast for comments.
@@ -161,7 +206,6 @@ class CommentViewSet(viewsets.ModelViewSet):
 
     # Override create -----------------------------------------------------------
     def create(self, request, *args, **kwargs):
-        logger.info("POST /posts/comments/ incoming", extra={"data": request.data})
         serializer = self.get_serializer(data=request.data)
 
         try:
@@ -313,45 +357,83 @@ class CommentViewSet(viewsets.ModelViewSet):
     # Create with WS broadcast (safe)
     def perform_create(self, serializer):
         inst: Comment = serializer.save()
-        # Serialize once
-        data = CommentReadSerializer(
-            inst, context=self.get_serializer_context()
-        ).data
 
-        # Broadcast AFTER commit, safely
-        transaction.on_commit(lambda: _safe_broadcast(
-            "created", data, inst.content_type_id, inst.object_id
-        ))
-
-    # -----------------------------------------------------------------
-    # Update with WS broadcast (safe)
-    def perform_update(self, serializer):
-        inst = serializer.save()
-
-        data = CommentReadSerializer(
+        serialized = CommentReadSerializer(
             inst,
             context=self.get_serializer_context(),
         ).data
 
-        transaction.on_commit(lambda: _safe_broadcast(
-            "updated",
-            data,
-            inst.content_type_id,
-            inst.object_id,
-        ))
+        data = _comment_realtime_payload(
+            inst,
+            serialized=serialized,
+        )
+
+        transaction.on_commit(
+            lambda: _safe_broadcast(
+                "created",
+                data,
+                inst.content_type_id,
+                inst.object_id,
+            )
+        )
+
+    # -----------------------------------------------------------------
+    # Update with WS broadcast (safe)
+    def perform_update(self, serializer):
+        inst: Comment = serializer.save()
+
+        serialized = CommentReadSerializer(
+            inst,
+            context=self.get_serializer_context(),
+        ).data
+
+        data = _comment_realtime_payload(
+            inst,
+            serialized=serialized,
+        )
+
+        transaction.on_commit(
+            lambda: _safe_broadcast(
+                "updated",
+                data,
+                inst.content_type_id,
+                inst.object_id,
+            )
+        )
 
     # -----------------------------------------------------------------
     # Delete with WS broadcast (safe)
     def perform_destroy(self, instance: Comment):
         self._check_delete_permission(instance, self.request.user)
 
-        ct_id, oid, cid = instance.content_type_id, instance.object_id, instance.id
+        ct_id = instance.content_type_id
+        oid = instance.object_id
+        cid = instance.id
+        parent_id = instance.recomment_id
+
+        ct = instance.content_type
+        ct_label = f"{ct.app_label}.{ct.model}" if ct else None
+
+        payload = _deleted_comment_realtime_payload(
+            comment_id=cid,
+            content_type_id=ct_id,
+            content_type_label=ct_label,
+            object_id=oid,
+            parent_id=parent_id,
+        )
+
         instance.delete()
 
-        transaction.on_commit(lambda: _safe_broadcast(
-            "deleted", {"id": cid}, ct_id, oid
-        ))
-
+        transaction.on_commit(
+            lambda: _safe_broadcast(
+                "deleted",
+                payload,
+                ct_id,
+                oid,
+            )
+        )
+        
+    
     # -----------------------------------------------------------------
     # THREAD — all top-level comments + 1-level replies
     @action(

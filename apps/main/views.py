@@ -173,7 +173,6 @@ class UserFeedbackViewSet(viewsets.ModelViewSet):
         )
 
         if success:
-            logger.info(f"[UserFeedback] Confirmation email sent to {request.user.email} for feedback ID {feedback.id}")
             return Response(
                 {"message": "Feedback submitted successfully. Confirmation email sent."},
                 status=status.HTTP_201_CREATED
