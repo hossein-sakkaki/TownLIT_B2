@@ -28,7 +28,7 @@ from apps.media_conversion.services.readiness import get_media_ready_state
 from utils.api.error_response import build_validation_error_response
 
 from validators.user_validators import validate_phone_number
-from utils.common.utils import create_active_code, send_sms
+from utils.common.utils import create_active_code, send_sms, mask_phone
 from utils.email.email_tools import send_custom_email
 from django.contrib.auth import get_user_model
 
@@ -432,9 +432,9 @@ class MemberViewSet(viewsets.ModelViewSet):
             user.save()
 
             # Debugging logs
-            # print('===================')
-            # print(f"Original Code: {verification_code}")  # Delete after test ------------------------------------------------------------------------------
-            # print('===================')
+            print('===================')
+            print(f"Original Code: {verification_code}")  # Delete after test ------------------------------------------------------------------------------
+            print('===================')
             
             if user.name and user.name.strip():
                 greeting = f"Good to See You {user.name.capitalize()},"  #  Onward
@@ -453,6 +453,14 @@ This code is valid for 10 minutes. If this wasn’t you, feel free to ignore thi
 Stay secure,  
 The TownLIT Team 🌍
 """
+            )
+            logger.info(
+                "PHONE_VERIFICATION_SMS_RESULT user_id=%s phone=%s success=%s message_id=%s error=%s",
+                user.id,
+                mask_phone(new_phone),
+                sms_response.get("success"),
+                sms_response.get("message_id"),
+                sms_response.get("error"),
             )
             if not sms_response["success"]:
                 raise Exception(sms_response["error"])
