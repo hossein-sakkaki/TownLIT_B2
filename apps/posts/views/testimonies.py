@@ -165,6 +165,62 @@ class TestimonyViewSet(OwnerGateMixin ,viewsets.ModelViewSet):
         instance.delete()
 
     # -------------------------------------------------
+    # Audio artwork update
+    # -------------------------------------------------
+    @action(
+        detail=True,
+        methods=["patch"],
+        url_path="audio-artwork",
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def audio_artwork(self, request, slug=None):
+        """
+        Owner-only endpoint to update optional artwork for audio testimony.
+
+        This does not replace the audio file.
+        It only updates `audio_artwork`.
+        """
+        obj = self.get_object()
+        self._assert_is_owner(obj)
+
+        if obj.type != Testimony.TYPE_AUDIO:
+            return Response(
+                {
+                    "detail": "Audio artwork can only be updated for audio testimonies."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        uploaded = request.FILES.get("audio_artwork")
+
+        if not uploaded:
+            return Response(
+                {
+                    "audio_artwork": "This field is required."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = self.get_serializer(
+            obj,
+            data={
+                "audio_artwork": uploaded,
+            },
+            partial=True,
+        )
+
+        serializer.is_valid(raise_exception=True)
+        serializer.save(updated_at=timezone.now())
+
+        refreshed = self.get_object()
+        response_serializer = self.get_serializer(refreshed)
+
+        return Response(
+            response_serializer.data,
+            status=status.HTTP_200_OK,
+        )
+
+    # -------------------------------------------------
     # Feed (cursor-based, home timeline)
     # -------------------------------------------------
     @action(
@@ -212,6 +268,7 @@ class TestimonyViewSet(OwnerGateMixin ,viewsets.ModelViewSet):
                 "audio",
                 "video",
                 "thumbnail",
+                "audio_artwork",
                 "media_assets",
 
                 # Visibility / UI
@@ -318,6 +375,7 @@ class TestimonyViewSet(OwnerGateMixin ,viewsets.ModelViewSet):
                 "audio",
                 "video",
                 "thumbnail",
+                "audio_artwork",
                 "media_assets",
 
                 # Visibility / UI
@@ -353,7 +411,9 @@ class TestimonyViewSet(OwnerGateMixin ,viewsets.ModelViewSet):
                 "audio": None,
                 "video": None,
                 "thumbnail": None,
+                "audio_artwork": None,
                 "thumbnail_asset": None,
+                "audio_artwork_asset": None,
                 "is_converted": False,
                 "converting": False,
                 "ready_status": None,
@@ -393,6 +453,7 @@ class TestimonyViewSet(OwnerGateMixin ,viewsets.ModelViewSet):
             # Older frontend aliases
             if item.type == Testimony.TYPE_AUDIO:
                 data["audio_key"] = getattr(item.audio, "name", None)
+                data["audio_artwork_key"] = getattr(item.audio_artwork, "name", None)
 
             if item.type == Testimony.TYPE_VIDEO:
                 data["video_key"] = getattr(item.video, "name", None)

@@ -383,6 +383,12 @@ def _email_subject_for_notification(
     if notification_type == "testimony_video_rejected":
         return "Your TownLIT video testimony was not accepted"
 
+    if notification_type == "testimony_video_needs_review":
+        return "Your TownLIT video testimony is being reviewed"
+
+    if notification_type == "testimony_video_approved":
+        return "Your TownLIT video testimony was approved"
+
     return "New Notification from TownLIT"
 
 def _push_title_for_notification(
@@ -393,6 +399,12 @@ def _push_title_for_notification(
     """
     if notification_type == "testimony_video_rejected":
         return "Video testimony not accepted"
+
+    if notification_type == "testimony_video_needs_review":
+        return "Video testimony under review"
+
+    if notification_type == "testimony_video_approved":
+        return "Video testimony approved"
 
     if notification_type == "new_message_direct":
         return "New message"
@@ -425,6 +437,18 @@ def _push_body_for_notification(
         return (
             "Your video did not appear to be a personal testimony. "
             "You can upload a new testimony from your profile."
+        )
+
+    if notification_type == "testimony_video_needs_review":
+        return (
+            "Your video testimony was uploaded and is waiting for review "
+            "before it appears in Square or Stream."
+        )
+
+    if notification_type == "testimony_video_approved":
+        return (
+            "Your video testimony was approved and may now appear in "
+            "Square or Stream."
         )
 
     clean = (message or "").strip()

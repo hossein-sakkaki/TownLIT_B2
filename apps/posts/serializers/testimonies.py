@@ -167,6 +167,7 @@ class TestimonySerializer(
     has_transcript = serializers.SerializerMethodField(read_only=True)
 
     thumbnail_asset = serializers.SerializerMethodField(read_only=True)
+    audio_artwork_asset = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Testimony
@@ -182,9 +183,11 @@ class TestimonySerializer(
             "audio",
             "video",
             "thumbnail",
+            "audio_artwork",
 
             # Lightweight media metadata.
             "thumbnail_asset",
+            "audio_artwork_asset",
 
             # Visibility / moderation.
             "visibility",
@@ -241,6 +244,7 @@ class TestimonySerializer(
 
             # Lightweight media metadata.
             "thumbnail_asset",
+            "audio_artwork_asset",
         ]
 
     # -------------------------------------------------
@@ -260,6 +264,20 @@ class TestimonySerializer(
             )
             return None
 
+    def get_audio_artwork_asset(self, obj):
+        try:
+            return _image_asset_payload(
+                obj=obj,
+                field_name="audio_artwork",
+                fallback_key=getattr(getattr(obj, "audio_artwork", None), "name", None),
+            )
+        except Exception:
+            logger.exception(
+                "get_audio_artwork_asset failed for testimony id=%s",
+                getattr(obj, "id", None),
+            )
+            return None
+        
     # -------------------------------------------------
     # Owner DTO
     # -------------------------------------------------
@@ -377,11 +395,15 @@ class TestimonySerializer(
         content = attrs.get("content") or (instance.content if instance else None)
         audio = attrs.get("audio") or (instance.audio if instance else None)
         video = attrs.get("video") or (instance.video if instance else None)
+        thumbnail = attrs.get("thumbnail") or (instance.thumbnail if instance else None)
+        audio_artwork = attrs.get("audio_artwork") or (
+            instance.audio_artwork if instance else None
+        )
 
         if ttype == Testimony.TYPE_WRITTEN:
-            if not content or audio or video:
+            if content or audio or video or thumbnail or audio_artwork:
                 raise serializers.ValidationError(
-                    "Written testimony requires content only."
+                    "Written testimony requires content only and no media files."
                 )
 
             if not title or not title.strip():
@@ -395,15 +417,15 @@ class TestimonySerializer(
                 })
 
         elif ttype == Testimony.TYPE_AUDIO:
-            if not audio or content or video:
+            if not audio or content or video or thumbnail:
                 raise serializers.ValidationError(
-                    "Audio testimony requires audio only."
+                    "Audio testimony requires audio only. Optional audio_artwork is allowed."
                 )
 
         elif ttype == Testimony.TYPE_VIDEO:
-            if not video or content or audio:
+            if not video or content or audio or audio_artwork:
                 raise serializers.ValidationError(
-                    "Video testimony requires video only."
+                    "Video testimony requires video only. Optional thumbnail is allowed."
                 )
 
         else:
@@ -497,7 +519,8 @@ class TestimonyProfileHeaderSerializer(serializers.ModelSerializer):
 
     owner = serializers.SerializerMethodField(read_only=True)
     thumbnail_asset = serializers.SerializerMethodField(read_only=True)
-
+    audio_artwork_asset = serializers.SerializerMethodField(read_only=True)
+    
     class Meta:
         model = Testimony
         fields = [
@@ -513,7 +536,9 @@ class TestimonyProfileHeaderSerializer(serializers.ModelSerializer):
             "audio",
             "video",
             "thumbnail",
+            "audio_artwork",
             "thumbnail_asset",
+            "audio_artwork_asset",
 
             # Visibility / UI.
             "visibility",
@@ -542,6 +567,20 @@ class TestimonyProfileHeaderSerializer(serializers.ModelSerializer):
         except Exception:
             logger.exception(
                 "get_thumbnail_asset failed for profile header testimony id=%s",
+                getattr(obj, "id", None),
+            )
+            return None
+        
+    def get_audio_artwork_asset(self, obj):
+        try:
+            return _image_asset_payload(
+                obj=obj,
+                field_name="audio_artwork",
+                fallback_key=getattr(getattr(obj, "audio_artwork", None), "name", None),
+            )
+        except Exception:
+            logger.exception(
+                "get_audio_artwork_asset failed for profile header testimony id=%s",
                 getattr(obj, "id", None),
             )
             return None
@@ -640,3 +679,120 @@ class TestimonyProfileHeaderSerializer(serializers.ModelSerializer):
             )
 
         return data
+    
+    
+# -------------------------------------------------
+# Lightweight Testimony serializer for Stream payload
+# -------------------------------------------------
+class TestimonyStreamPayloadSerializer(
+    InstanceTargetMixin,
+    serializers.ModelSerializer,
+):
+    """
+    Ultra-light Testimony serializer for Stream endpoint only.
+
+    StreamItemSerializer adds:
+    - preview
+    - transcript/subtitle/voice metadata
+    - owner
+    - boundary metadata
+    """
+
+    audio = serializers.SerializerMethodField(read_only=True)
+    video = serializers.SerializerMethodField(read_only=True)
+    thumbnail = serializers.SerializerMethodField(read_only=True)
+    audio_artwork = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = Testimony
+        fields = [
+            "id",
+            "slug",
+
+            # Core.
+            "type",
+            "title",
+            "content",
+            "audio",
+            "video",
+            "thumbnail",
+            "audio_artwork",
+
+            # Visibility / moderation.
+            "visibility",
+            "is_hidden",
+            "is_active",
+            "is_suspended",
+            "reports_count",
+
+            # Counters.
+            "comments_count",
+            "recomments_count",
+            "reactions_count",
+            "reactions_breakdown",
+
+            # Timestamps.
+            "published_at",
+            "updated_at",
+
+            # Pipeline.
+            "is_converted",
+
+            # Interaction targets.
+            "comment_target",
+            "reaction_target",
+        ]
+
+        read_only_fields = fields
+
+    def get_audio(self, obj):
+        return self._safe_key_for_field(
+            obj=obj,
+            field_name="audio",
+        )
+
+    def get_video(self, obj):
+        return self._safe_key_for_field(
+            obj=obj,
+            field_name="video",
+        )
+
+    def get_thumbnail(self, obj):
+        return self._safe_cdn_for_field(
+            obj=obj,
+            field_name="thumbnail",
+        )
+
+    def get_audio_artwork(self, obj):
+        return self._safe_cdn_for_field(
+            obj=obj,
+            field_name="audio_artwork",
+        )
+        
+    def _safe_key_for_field(
+        self,
+        *,
+        obj,
+        field_name: str,
+    ) -> str | None:
+        asset = _media_asset(obj, field_name)
+        key = _clean_asset_key(asset.get("key"))
+
+        if key:
+            return key
+
+        value = getattr(obj, field_name, None)
+        return _clean_asset_key(value)
+
+    def _safe_cdn_for_field(
+        self,
+        *,
+        obj,
+        field_name: str,
+    ) -> str | None:
+        key = self._safe_key_for_field(
+            obj=obj,
+            field_name=field_name,
+        )
+
+        return _build_asset_cdn_url(key)

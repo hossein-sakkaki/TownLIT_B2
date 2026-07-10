@@ -79,6 +79,8 @@ NOTIFICATION_TYPES = [
     ("new_testimony_audio", "New Audio Testimony"),
     ("new_testimony_video", "New Video Testimony"),
     ("testimony_video_rejected", "Video Testimony Not Accepted"),
+    ("testimony_video_needs_review", "Video Testimony Needs Review"),
+    ("testimony_video_approved", "Video Testimony Approved"),
 
     # --- Sanctuary ---
     ("sanctuary_admin_assignment", "Sanctuary: Admin Assignment"),
@@ -209,6 +211,12 @@ NOTIFICATION_TYPES_FORCE_ENABLED = {
     "messenger_message_pinned",
     "messenger_reaction_direct",
     "messenger_reaction_group",
+
+    # System/content-status notice.
+    # Keep email enabled for this type so users understand why the video
+    # may not appear in Square/Stream yet.
+    "testimony_video_needs_review",
+    "testimony_video_approved",
 }
 
 
@@ -453,6 +461,16 @@ NOTIFICATION_PREF_METADATA = {
         "category": "Testimonies",
         "label": "Video testimony not accepted",
         "description": "You will be notified if your video testimony cannot be accepted and needs to be replaced.",
+    },
+    "testimony_video_needs_review": {
+        "category": "Testimonies",
+        "label": "Video testimony under review",
+        "description": "You will be notified when your video testimony needs manual review before appearing in Square or Stream.",
+    },
+        "testimony_video_approved": {
+        "category": "Testimonies",
+        "label": "Video testimony approved",
+        "description": "You will be notified when your video testimony is approved and can appear in Square or Stream.",
     },
 
     # ------------------------

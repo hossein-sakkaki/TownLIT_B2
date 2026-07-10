@@ -5,6 +5,7 @@ from typing import Optional
 from django.conf import settings
 import boto3
 from botocore.config import Config
+from functools import lru_cache
 
 from apps.asset_delivery.services.job_resolver import get_latest_done_output_path
 from apps.asset_delivery.services.playback_resolver import resolve_fallback_filefield_key
@@ -24,6 +25,31 @@ def _cdn_url(key: str | None) -> str | None:
 
     return f"{base}/{str(key).lstrip('/')}"
 
+
+@lru_cache(maxsize=8)
+def _cached_s3_client(
+    *,
+    region_name: str,
+    access_key: str | None,
+    secret_key: str | None,
+    session_token: str | None,
+):
+    client_kwargs = {
+        "region_name": region_name,
+        "config": Config(signature_version="s3v4"),
+    }
+
+    if access_key and secret_key:
+        client_kwargs["aws_access_key_id"] = access_key
+        client_kwargs["aws_secret_access_key"] = secret_key
+
+    if session_token:
+        client_kwargs["aws_session_token"] = session_token
+
+    return boto3.client(
+        "s3",
+        **client_kwargs,
+    )
 
 def _s3_presigned_url(
     key: str | None,
@@ -57,22 +83,6 @@ def _s3_presigned_url(
         getattr(settings, "STREAM_VIDEO_PREVIEW_URL_TTL_SECONDS", 21600)
     )
 
-    client_kwargs = {
-        "region_name": region_name,
-        "config": Config(signature_version="s3v4"),
-    }
-
-    access_key = getattr(settings, "AWS_ACCESS_KEY_ID", None)
-    secret_key = getattr(settings, "AWS_SECRET_ACCESS_KEY", None)
-    session_token = getattr(settings, "AWS_SESSION_TOKEN", None)
-
-    if access_key and secret_key:
-        client_kwargs["aws_access_key_id"] = access_key
-        client_kwargs["aws_secret_access_key"] = secret_key
-
-    if session_token:
-        client_kwargs["aws_session_token"] = session_token
-
     params = {
         "Bucket": bucket_name,
         "Key": key,
@@ -82,9 +92,15 @@ def _s3_presigned_url(
         params["ResponseContentType"] = content_type
 
     try:
-        client = boto3.client(
-            "s3",
-            **client_kwargs,
+        access_key = getattr(settings, "AWS_ACCESS_KEY_ID", None)
+        secret_key = getattr(settings, "AWS_SECRET_ACCESS_KEY", None)
+        session_token = getattr(settings, "AWS_SESSION_TOKEN", None)
+
+        client = _cached_s3_client(
+            region_name=region_name,
+            access_key=access_key,
+            secret_key=secret_key,
+            session_token=session_token,
         )
 
         return client.generate_presigned_url(
@@ -766,6 +782,33 @@ def build_stream_preview(obj, *, subtype: str) -> dict:
         out["type"] = getattr(obj, "type", None)
 
         if subtype == "written":
+            return out
+
+        if subtype == "audio":
+            artwork_key = _safe_preview_key(obj, "audio_artwork")
+            thumbnail_key = _safe_preview_key(obj, "thumbnail")
+
+            artwork_url = _cdn_url(artwork_key)
+            thumbnail_url = _cdn_url(thumbnail_key)
+
+            out["thumbnail_url"] = thumbnail_url
+            out["image_url"] = artwork_url
+            out["poster_url"] = artwork_url or thumbnail_url
+
+            artwork_asset = _media_asset(obj, "audio_artwork")
+            thumbnail_asset = _media_asset(obj, "thumbnail")
+
+            dimensions = _asset_dimensions(artwork_asset)
+
+            if not dimensions.get("aspect_ratio"):
+                dimensions = _asset_dimensions(thumbnail_asset)
+
+            if not dimensions.get("aspect_ratio"):
+                dimensions = _model_dimension_payload(obj, "audio_artwork")
+
+            _apply_dimensions(out, dimensions)
+            _apply_image_variants(out, artwork_asset or thumbnail_asset)
+
             return out
 
         thumb_key = _safe_preview_key(obj, "thumbnail")

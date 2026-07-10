@@ -68,6 +68,7 @@ class Testimony(
     THUMBNAIL = FileUpload("posts", "photos", "testimony")
     AUDIO = FileUpload("posts", "audios", "testimony")
     VIDEO = FileUpload("posts", "videos", "testimony")
+    AUDIO_ARTWORK = FileUpload("posts", "artworks", "testimony")
 
     id = models.BigAutoField(primary_key=True)
 
@@ -120,6 +121,18 @@ class Testimony(
             validate_no_executable_file,
         ],
         verbose_name="Thumbnail",
+    )
+
+    audio_artwork = models.ImageField(
+        upload_to=AUDIO_ARTWORK.dir_upload,
+        null=True,
+        blank=True,
+        validators=[
+            validate_image_file,
+            validate_image_size,
+            validate_no_executable_file,
+        ],
+        verbose_name="Audio Artwork",
     )
 
     # -------------------------------------------------
@@ -177,6 +190,7 @@ class Testimony(
         "audio": {"upload": AUDIO, "kind": "audio"},
         "video": {"upload": VIDEO, "kind": "video"},
         "thumbnail": {"upload": THUMBNAIL, "kind": "image"},
+        "audio_artwork": {"upload": AUDIO_ARTWORK, "kind": "image"},
     }
 
     # -------------------------------------------------
@@ -187,12 +201,14 @@ class Testimony(
         self._orig_audio = getattr(self.audio, "name", None)
         self._orig_video = getattr(self.video, "name", None)
         self._orig_thumb = getattr(self.thumbnail, "name", None)
+        self._orig_audio_artwork = getattr(self.audio_artwork, "name", None)
 
     def _media_changed(self) -> bool:
         return any([
             getattr(self.audio, "name", None) != self._orig_audio,
             getattr(self.video, "name", None) != self._orig_video,
             getattr(self.thumbnail, "name", None) != self._orig_thumb,
+            getattr(self.audio_artwork, "name", None) != self._orig_audio_artwork,
         ])
 
     # -------------------------------------------------
@@ -200,25 +216,32 @@ class Testimony(
     # -------------------------------------------------
     def clean(self):
         if self.type == self.TYPE_WRITTEN:
-            if not self.content or self.audio or self.video:
+            if (
+                not self.content
+                or self.audio
+                or self.video
+                or self.thumbnail
+                or self.audio_artwork
+            ):
                 raise ValidationError(
-                    "Written testimony requires content and no audio/video."
+                    "Written testimony requires content and no media files."
                 )
+
             if not self.title or not self.title.strip():
                 raise ValidationError(
                     "Written testimony requires a title."
                 )
 
         elif self.type == self.TYPE_AUDIO:
-            if not self.audio or self.content or self.video:
+            if not self.audio or self.content or self.video or self.thumbnail:
                 raise ValidationError(
-                    "Audio testimony requires audio only."
+                    "Audio testimony requires audio only. Optional audio_artwork is allowed."
                 )
 
         elif self.type == self.TYPE_VIDEO:
-            if not self.video or self.content or self.audio:
+            if not self.video or self.content or self.audio or self.audio_artwork:
                 raise ValidationError(
-                    "Video testimony requires video only."
+                    "Video testimony requires video only. Optional thumbnail is allowed."
                 )
 
         else:

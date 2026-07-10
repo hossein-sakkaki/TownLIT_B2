@@ -1189,3 +1189,112 @@ class MomentProfileGridSerializer(serializers.ModelSerializer):
             )
 
         return data
+
+
+
+# -------------------------------------------------
+# Lightweight serializer for Stream payload
+# -------------------------------------------------
+class MomentStreamPayloadSerializer(
+    InstanceTargetMixin,
+    serializers.ModelSerializer,
+):
+    """
+    Ultra-light Moment serializer for Stream endpoint only.
+
+    Important:
+    - Do NOT use ImageField/FileField URL generation here.
+    - Do NOT build owner here; StreamItemSerializer resolves compact owner once.
+    - Do NOT run upload/update validation logic.
+    - StreamItemSerializer adds preview, owner, boundary, subtitles, etc.
+    """
+
+    image = serializers.SerializerMethodField(read_only=True)
+    video = serializers.SerializerMethodField(read_only=True)
+    thumbnail = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = Moment
+        fields = [
+            "id",
+            "slug",
+
+            # Content.
+            "caption",
+
+            # Lightweight legacy media hints.
+            # iOS primarily uses preview/mediaIdentity, but these keep payload compatibility.
+            "image",
+            "video",
+            "thumbnail",
+
+            # Visibility / UI.
+            "visibility",
+            "is_hidden",
+
+            # Counters.
+            "comments_count",
+            "recomments_count",
+            "reactions_count",
+            "reactions_breakdown",
+
+            # Timestamps.
+            "published_at",
+            "updated_at",
+
+            # Pipeline.
+            "is_converted",
+
+            # Interaction targets.
+            "comment_target",
+            "reaction_target",
+        ]
+
+        read_only_fields = fields
+
+    def get_image(self, obj):
+        return self._safe_cdn_for_field(
+            obj=obj,
+            field_name="image",
+        )
+
+    def get_video(self, obj):
+        # Keep this lightweight. Playback uses asset delivery through mediaIdentity.
+        return self._safe_key_for_field(
+            obj=obj,
+            field_name="video",
+        )
+
+    def get_thumbnail(self, obj):
+        return self._safe_cdn_for_field(
+            obj=obj,
+            field_name="thumbnail",
+        )
+
+    def _safe_key_for_field(
+        self,
+        *,
+        obj,
+        field_name: str,
+    ) -> str | None:
+        asset = _media_asset(obj, field_name)
+        key = _clean_asset_key(asset.get("key"))
+
+        if key:
+            return key
+
+        value = getattr(obj, field_name, None)
+        return _clean_asset_key(value)
+
+    def _safe_cdn_for_field(
+        self,
+        *,
+        obj,
+        field_name: str,
+    ) -> str | None:
+        key = self._safe_key_for_field(
+            obj=obj,
+            field_name=field_name,
+        )
+
+        return _build_asset_cdn_url(key)

@@ -6,7 +6,9 @@ from apps.core.visibility.query import VisibilityQuery
 from apps.core.owner_visibility.query import OwnerVisibilityQuery
 from apps.core.ownership.ownership_filters import exclude_owned_by_viewer
 from apps.core.boundaries.query import BoundaryVisibilityQuery
-
+from apps.subtitles.services.testimony_enforcement import (
+    filter_testimony_queryset_for_public_feeds,
+)
 from apps.core.streams.constants import (
     STREAM_SCOPE_SQUARE,
     STREAM_SCOPE_PROFILE,
@@ -72,8 +74,25 @@ class StreamQuery:
             viewer=viewer,
         )
 
+        if StreamQuery._is_public_feed_scope(scope):
+            qs = filter_testimony_queryset_for_public_feeds(qs)
+
         return qs
 
+    @staticmethod
+    def _is_public_feed_scope(scope: str) -> bool:
+        """
+        Public stream scopes must not expose unapproved video testimonies.
+
+        Profile/owner/messenger scopes intentionally keep the current behavior
+        so users can still see their uploaded testimony in profile contexts.
+        """
+
+        return scope in {
+            STREAM_SCOPE_SQUARE,
+            STREAM_SCOPE_GLOBAL,
+        }
+        
     @staticmethod
     def build(
         *,
@@ -112,6 +131,9 @@ class StreamQuery:
 
         if requires_conversion and hasattr(model, "is_converted"):
             qs = qs.filter(is_converted=True)
+
+        if StreamQuery._is_public_feed_scope(scope):
+            qs = filter_testimony_queryset_for_public_feeds(qs)
 
         qs = StreamQuery._filter_by_subtype(
             qs=qs,

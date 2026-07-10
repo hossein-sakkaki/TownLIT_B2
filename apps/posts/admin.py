@@ -9,7 +9,11 @@ from django.forms import Textarea
 from django.urls import reverse
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
-from django.db.models import Q
+
+from django.db.models import Q, Exists, OuterRef
+from django.utils import timezone
+from django.contrib import messages
+from django.db.models import Exists, OuterRef
 
 from apps.posts.models.pray import Prayer, PrayerResponse, PrayerStatus
 from apps.posts.models.moment import Moment
@@ -17,6 +21,15 @@ from apps.posts.models.testimony import Testimony
 
 from apps.posts.models.reaction import Reaction
 from apps.posts.models.comment import Comment
+
+from apps.subtitles.models import (
+    VideoTranscript,
+    TranscriptContentReviewStatus,
+    TranscriptDetectedContentType,
+)
+from apps.subtitles.services.testimony_enforcement import (
+    enforce_testimony_review_outcome,
+)
 
 # -------------------- Common mixins & helpers --------------------
 
@@ -592,9 +605,85 @@ class MomentAdmin(admin.ModelAdmin):
     media_type.short_description = "Media"
 
 
+# Review Status Filter for Testimony Video -----------------------------------------------------
+class TestimonyVideoReviewStatusFilter(SimpleListFilter):
+    """
+    Filter video testimonies by transcript content review status.
+    """
+
+    title = "Video review status"
+    parameter_name = "video_review_status"
+
+    def lookups(self, request, model_admin):
+        return [
+            ("approved", "Approved"),
+            ("needs_review", "Needs review"),
+            ("rejected", "Rejected"),
+            ("pending", "Pending"),
+            ("no_transcript", "No transcript"),
+        ]
+
+    def queryset(self, request, queryset):
+        value = self.value()
+
+        if not value:
+            return queryset
+
+        video_qs = queryset.filter(type=Testimony.TYPE_VIDEO)
+
+        ct = ContentType.objects.get_for_model(Testimony)
+
+        if value == "no_transcript":
+            transcript_exists = VideoTranscript.objects.filter(
+                content_type=ct,
+                object_id=OuterRef("pk"),
+            )
+
+            return (
+                video_qs
+                .annotate(has_video_transcript=Exists(transcript_exists))
+                .filter(has_video_transcript=False)
+            )
+
+        return video_qs.filter(
+            id__in=VideoTranscript.objects.filter(
+                content_type=ct,
+                content_review_status=value,
+            ).values("object_id")
+        )
+        
+def get_testimony_transcript(obj: Testimony) -> VideoTranscript | None:
+    """
+    Resolve the transcript linked to a testimony.
+    """
+    try:
+        ct = ContentType.objects.get_for_model(Testimony)
+        return (
+            VideoTranscript.objects
+            .filter(content_type=ct, object_id=obj.pk)
+            .first()
+        )
+    except Exception:
+        return None
 
 
+def ensure_testimony_transcript(obj: Testimony) -> VideoTranscript | None:
+    """
+    Ensure a VideoTranscript row exists for a video testimony.
+    """
+    if not obj or obj.type != Testimony.TYPE_VIDEO:
+        return None
 
+    try:
+        ct = ContentType.objects.get_for_model(Testimony)
+        transcript, _ = VideoTranscript.objects.get_or_create(
+            content_type=ct,
+            object_id=obj.pk,
+        )
+        return transcript
+    except Exception:
+        return None
+    
 # Testimony Admin ---------------------------------------------------------------------------------------------------------
 @admin.register(Testimony)
 class TestimonyAdmin(admin.ModelAdmin):
@@ -607,6 +696,8 @@ class TestimonyAdmin(admin.ModelAdmin):
         "slug",
         "type",
         "owner_repr",
+        "review_status_badge",
+        "review_reason_short",
         "is_active",
         "is_converted",
         "media_flags",
@@ -616,13 +707,13 @@ class TestimonyAdmin(admin.ModelAdmin):
     )
     list_filter = (
         "type",
+        TestimonyVideoReviewStatusFilter,
         "is_active",
         "is_converted",
         "is_hidden",
-        # "is_restricted",
         "is_suspended",
         ("published_at", DateFieldListFilter),
-        "content_type",    # lets you filter by owner model (Member, Organization, …)
+        "content_type",
     )
     search_fields = (
         "slug",
@@ -635,7 +726,7 @@ class TestimonyAdmin(admin.ModelAdmin):
     ordering = ("-id",)
 
     list_editable = (
-        "visibility",
+        "is_active",
     )
     
     # Speed & UX for large M2M sets
@@ -648,11 +739,10 @@ class TestimonyAdmin(admin.ModelAdmin):
         "preview_media",
         "file_links",
         "diagnostics",
-        # timestamps are usually readonly in admin
+        "review_status_detail",
         "published_at",
         "updated_at",
         "view_count_internal",
-
     )
 
     fieldsets = (
@@ -675,6 +765,11 @@ class TestimonyAdmin(admin.ModelAdmin):
                 "video",
                 "preview_media",
                 "file_links",
+            )
+        }),
+        ("Video Testimony Review", {
+            "fields": (
+                "review_status_detail",
             )
         }),
         ("Moderation & Visibility", {
@@ -839,7 +934,15 @@ class TestimonyAdmin(admin.ModelAdmin):
     diagnostics.short_description = "Diagnostics"
 
     # -------- Actions --------
-    actions = ("action_mark_active", "action_mark_inactive", "action_requeue_conversion", "action_rebuild_slug")
+    actions = (
+        "action_mark_active",
+        "action_mark_inactive",
+        "action_requeue_conversion",
+        "action_rebuild_slug",
+        "action_approve_video_testimonies",
+        "action_mark_video_testimonies_needs_review",
+        "action_reject_and_delete_video_testimonies",
+    )
 
     @admin.action(description="Mark selected as Active")
     def action_mark_active(self, request, queryset):
@@ -893,7 +996,260 @@ class TestimonyAdmin(admin.ModelAdmin):
         return qs, use_distinct
 
 
+    @admin.display(description="Review")
+    def review_status_badge(self, obj: Testimony):
+        if obj.type != Testimony.TYPE_VIDEO:
+            return mark_safe('<span style="color:#777;">—</span>')
 
+        transcript = get_testimony_transcript(obj)
+
+        if not transcript:
+            return mark_safe(
+                '<span style="display:inline-block;padding:3px 8px;'
+                'border-radius:10px;background:#555;color:#fff;">NO TRANSCRIPT</span>'
+            )
+
+        status = transcript.content_review_status or "pending"
+
+        colors = {
+            TranscriptContentReviewStatus.APPROVED: "#2ecc71",
+            TranscriptContentReviewStatus.NEEDS_REVIEW: "#f39c12",
+            TranscriptContentReviewStatus.REJECTED: "#c0392b",
+            "pending": "#7f8c8d",
+        }
+
+        color = colors.get(status, "#7f8c8d")
+
+        return mark_safe(
+            f'<span style="display:inline-block;padding:3px 8px;'
+            f'border-radius:10px;background:{color};color:#fff;'
+            f'font-weight:600;">{status.upper()}</span>'
+        )
+
+    @admin.display(description="Review reason")
+    def review_reason_short(self, obj: Testimony):
+        if obj.type != Testimony.TYPE_VIDEO:
+            return "—"
+
+        transcript = get_testimony_transcript(obj)
+
+        if not transcript:
+            return "No transcript"
+
+        reason = transcript.content_review_reason or ""
+
+        if not reason:
+            return "—"
+
+        return reason[:80] + "…" if len(reason) > 80 else reason
+
+    def review_status_detail(self, obj: Testimony):
+        if obj.type != Testimony.TYPE_VIDEO:
+            return mark_safe("<em>Review is only used for video testimonies.</em>")
+
+        transcript = get_testimony_transcript(obj)
+
+        if not transcript:
+            return mark_safe(
+                '<div style="padding:8px;border:1px solid #ddd;'
+                'background:#fff8e1;border-radius:6px;">'
+                '<strong>No transcript found.</strong><br/>'
+                'This video testimony has no VideoTranscript row yet.'
+                '</div>'
+            )
+
+        rows = [
+            ("Transcript ID", transcript.id),
+            ("Transcript status", getattr(transcript, "status", None)),
+            ("Review status", transcript.content_review_status),
+            ("Detected type", transcript.detected_content_type),
+            ("Confidence", transcript.content_review_confidence),
+            ("AI allowed", transcript.ai_processing_allowed),
+            ("Reviewed at", transcript.content_reviewed_at),
+            ("Reason", transcript.content_review_reason or "—"),
+            ("Text preview", (transcript.full_text or "")[:500] or "—"),
+        ]
+
+        html_rows = "".join(
+            f"<tr><th style='text-align:left;padding:4px 10px 4px 0;'>{label}</th>"
+            f"<td style='padding:4px 0;'>{value}</td></tr>"
+            for label, value in rows
+        )
+
+        return mark_safe(
+            "<table style='border-collapse:collapse;'>"
+            f"{html_rows}"
+            "</table>"
+        )
+
+    review_status_detail.short_description = "Video review status"
+
+
+    @admin.action(description="Approve selected video testimonies")
+    def action_approve_video_testimonies(self, request, queryset):
+        count = 0
+        skipped = 0
+
+        for obj in queryset:
+            if obj.type != Testimony.TYPE_VIDEO:
+                skipped += 1
+                continue
+
+            transcript = ensure_testimony_transcript(obj)
+
+            if not transcript:
+                skipped += 1
+                continue
+
+            transcript.content_review_status = TranscriptContentReviewStatus.APPROVED
+            transcript.detected_content_type = (
+                TranscriptDetectedContentType.PERSONAL_TESTIMONY
+            )
+            transcript.content_review_confidence = 1.0
+            transcript.content_review_reason = (
+                "Approved by TownLIT admin review."
+            )
+            transcript.ai_processing_allowed = True
+            transcript.content_reviewed_at = timezone.now()
+
+            transcript.save(
+                update_fields=[
+                    "content_review_status",
+                    "detected_content_type",
+                    "content_review_confidence",
+                    "content_review_reason",
+                    "ai_processing_allowed",
+                    "content_reviewed_at",
+                    "updated_at",
+                ]
+            )
+
+            enforce_testimony_review_outcome(transcript)
+            count += 1
+
+        self.message_user(
+            request,
+            f"{count} video testimony/testimonies approved. "
+            f"{skipped} skipped.",
+            level=messages.SUCCESS,
+        )
+
+    @admin.action(description="Mark selected video testimonies as Needs Review")
+    def action_mark_video_testimonies_needs_review(self, request, queryset):
+        count = 0
+        skipped = 0
+
+        for obj in queryset:
+            if obj.type != Testimony.TYPE_VIDEO:
+                skipped += 1
+                continue
+
+            transcript = ensure_testimony_transcript(obj)
+
+            if not transcript:
+                skipped += 1
+                continue
+
+            transcript.content_review_status = TranscriptContentReviewStatus.NEEDS_REVIEW
+            transcript.detected_content_type = (
+                transcript.detected_content_type
+                or TranscriptDetectedContentType.UNKNOWN
+            )
+            transcript.content_review_confidence = (
+                transcript.content_review_confidence
+                if transcript.content_review_confidence is not None
+                else 0.0
+            )
+            transcript.content_review_reason = (
+                transcript.content_review_reason
+                or "Marked for manual review by TownLIT admin."
+            )
+            transcript.ai_processing_allowed = False
+            transcript.content_reviewed_at = timezone.now()
+
+            transcript.save(
+                update_fields=[
+                    "content_review_status",
+                    "detected_content_type",
+                    "content_review_confidence",
+                    "content_review_reason",
+                    "ai_processing_allowed",
+                    "content_reviewed_at",
+                    "updated_at",
+                ]
+            )
+
+            enforce_testimony_review_outcome(transcript)
+            count += 1
+
+        self.message_user(
+            request,
+            f"{count} video testimony/testimonies marked as needs review. "
+            f"{skipped} skipped.",
+            level=messages.WARNING,
+        )
+
+    @admin.action(description="Reject and delete selected video testimonies")
+    def action_reject_and_delete_video_testimonies(self, request, queryset):
+        count = 0
+        skipped = 0
+
+        for obj in list(queryset):
+            if obj.type != Testimony.TYPE_VIDEO:
+                skipped += 1
+                continue
+
+            transcript = ensure_testimony_transcript(obj)
+
+            if not transcript:
+                skipped += 1
+                continue
+
+            transcript.content_review_status = TranscriptContentReviewStatus.REJECTED
+            transcript.detected_content_type = (
+                transcript.detected_content_type
+                or TranscriptDetectedContentType.OTHER
+            )
+            transcript.content_review_confidence = (
+                transcript.content_review_confidence
+                if transcript.content_review_confidence is not None
+                else 1.0
+            )
+            transcript.content_review_reason = (
+                transcript.content_review_reason
+                or (
+                    "Rejected by TownLIT admin review because this video did "
+                    "not appear to be a personal testimony."
+                )
+            )
+            transcript.ai_processing_allowed = False
+            transcript.content_reviewed_at = timezone.now()
+
+            transcript.save(
+                update_fields=[
+                    "content_review_status",
+                    "detected_content_type",
+                    "content_review_confidence",
+                    "content_review_reason",
+                    "ai_processing_allowed",
+                    "content_reviewed_at",
+                    "updated_at",
+                ]
+            )
+
+            outcome = enforce_testimony_review_outcome(transcript)
+
+            if outcome == "deleted":
+                count += 1
+            else:
+                skipped += 1
+
+        self.message_user(
+            request,
+            f"{count} video testimony/testimonies rejected and deleted. "
+            f"{skipped} skipped.",
+            level=messages.ERROR,
+        )
 
 # ============================================================
 # PrayerResponse Inline

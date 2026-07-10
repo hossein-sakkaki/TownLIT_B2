@@ -155,3 +155,10 @@ OPENAI_TTS_ALLOWED_VOICES: set[str] = {
     "marin",
     "cedar",
 }
+
+# ------------------------------------------------------------------
+# Notification types
+# ------------------------------------------------------------------
+TESTIMONY_VIDEO_REJECTED_NOTIFICATION_TYPE = "testimony_video_rejected"
+TESTIMONY_VIDEO_NEEDS_REVIEW_NOTIFICATION_TYPE = "testimony_video_needs_review"
+TESTIMONY_VIDEO_APPROVED_NOTIFICATION_TYPE = "testimony_video_approved"

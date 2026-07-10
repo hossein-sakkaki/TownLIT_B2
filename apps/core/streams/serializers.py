@@ -3,10 +3,12 @@
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 from rest_framework import serializers
+from time import perf_counter
+from django.conf import settings
 
-from apps.posts.serializers.moments import MomentSerializer
-from apps.posts.serializers.testimonies import TestimonySerializer
-from apps.posts.serializers.prayers import PrayerSerializer
+from apps.posts.serializers.moments import MomentStreamPayloadSerializer
+from apps.posts.serializers.testimonies import TestimonyStreamPayloadSerializer
+from apps.posts.serializers.prayers import PrayerStreamPayloadSerializer
 
 from apps.core.boundaries.services.policy import BoundaryPolicy
 
@@ -24,19 +26,49 @@ from apps.subtitles.serializers import (
     SubtitleTrackMiniSerializer,
     VoiceTrackMiniSerializer,
 )
+from apps.accounts.mixins import AvatarURLMixin
 
 
 CustomUser = get_user_model()
 
-
 SERIALIZER_MAP = {
-    STREAM_KIND_MOMENT: MomentSerializer,
-    STREAM_KIND_TESTIMONY: TestimonySerializer,
-    STREAM_KIND_PRAY: PrayerSerializer,
+    STREAM_KIND_MOMENT: MomentStreamPayloadSerializer,
+    STREAM_KIND_TESTIMONY: TestimonyStreamPayloadSerializer,
+    STREAM_KIND_PRAY: PrayerStreamPayloadSerializer,
 }
 
+def _stream_serializer_perf_enabled() -> bool:
+    return bool(
+        getattr(
+            settings,
+            "STREAM_PERF_LOGS_ENABLED",
+            getattr(settings, "DEBUG", False),
+        )
+    )
 
-class StreamItemSerializer(serializers.Serializer):
+
+def _stream_serializer_time(name: str, started_at: float, **kwargs) -> None:
+    if not _stream_serializer_perf_enabled():
+        return
+
+    elapsed_ms = int((perf_counter() - started_at) * 1000)
+
+    suffix = " ".join(
+        f"{key}={value}"
+        for key, value in kwargs.items()
+    )
+
+
+def _stream_serializer_mark(name: str, **kwargs) -> None:
+    if not _stream_serializer_perf_enabled():
+        return
+
+    suffix = " ".join(
+        f"{key}={value}"
+        for key, value in kwargs.items()
+    )
+
+class StreamItemSerializer(AvatarURLMixin, serializers.Serializer):
     """
     Universal stream item serializer.
 
@@ -59,14 +91,84 @@ class StreamItemSerializer(serializers.Serializer):
     has_boundary_between = serializers.SerializerMethodField()
     direct_interaction_available = serializers.SerializerMethodField()
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self._owner_cache = {}
+        self._boundary_cache = {}
+        self._transcript_cache = {}
+        self._payload_serializer_count = 0
+        self._boundary_resolve_count = 0
+        self._owner_resolve_count = 0
+
+    def _item_cache_key(self, item_or_obj) -> str:
+        obj = getattr(item_or_obj, "obj", item_or_obj)
+        model_name = obj.__class__.__name__ if obj is not None else "none"
+        object_id = getattr(obj, "id", None)
+
+        return f"{model_name}:{object_id}"
+
+    def _cached_owner_user(self, item_or_obj):
+        key = self._item_cache_key(item_or_obj)
+
+        if key in self._owner_cache:
+            return self._owner_cache[key]
+
+        start = perf_counter()
+        obj = getattr(item_or_obj, "obj", item_or_obj)
+
+        owner = self._resolve_owner_user_uncached(obj)
+
+        self._owner_cache[key] = owner
+        self._owner_resolve_count += 1
+
+        _stream_serializer_time(
+            "Stream.serializer.owner.resolve",
+            start,
+            key=key,
+            ownerID=getattr(owner, "id", None),
+            count=self._owner_resolve_count,
+        )
+
+        return owner
+
+    def _cached_boundary_state_for(self, target_user):
+        user_id = getattr(target_user, "id", None)
+
+        if not user_id:
+            return self._open_boundary_state()
+
+        if user_id in self._boundary_cache:
+            return self._boundary_cache[user_id]
+
+        start = perf_counter()
+
+        state = self._boundary_state_for_uncached(target_user)
+
+        self._boundary_cache[user_id] = state
+        self._boundary_resolve_count += 1
+
+        _stream_serializer_time(
+            "Stream.serializer.boundary.resolve",
+            start,
+            targetID=user_id,
+            count=self._boundary_resolve_count,
+        )
+
+        return state
+    
+    
     # ------------------------------------------------------------------
     # Main payload
     # ------------------------------------------------------------------
-
     def get_payload(self, item):
+        start = perf_counter()
+
         serializer_cls = SERIALIZER_MAP.get(item.kind)
         if not serializer_cls:
             return None
+
+        serializer_start = perf_counter()
 
         serializer = serializer_cls(
             item.obj,
@@ -74,19 +176,50 @@ class StreamItemSerializer(serializers.Serializer):
         )
 
         raw = serializer.data
+
+        self._payload_serializer_count += 1
+
+        _stream_serializer_time(
+            "Stream.serializer.payload.base",
+            serializer_start,
+            kind=item.kind,
+            objectID=getattr(item.obj, "id", None),
+            count=self._payload_serializer_count,
+        )
+
         if raw is None:
             return None
 
         data = dict(raw)
 
+        subtype_start = perf_counter()
         subtype = resolve_stream_subtype(item.obj) or ""
+
+        _stream_serializer_time(
+            "Stream.serializer.payload.subtype",
+            subtype_start,
+            kind=item.kind,
+            objectID=getattr(item.obj, "id", None),
+            subtype=subtype,
+        )
+
+        preview_start = perf_counter()
 
         data["preview"] = self._safe_preview_for(
             item.obj,
             subtype=subtype,
         )
 
-        # Attach video subtitle / voice / quality metadata for iOS player.
+        _stream_serializer_time(
+            "Stream.serializer.payload.preview",
+            preview_start,
+            kind=item.kind,
+            objectID=getattr(item.obj, "id", None),
+            subtype=subtype,
+        )
+
+        metadata_start = perf_counter()
+
         data = self._attach_video_playback_metadata(
             data=data,
             obj=item.obj,
@@ -100,8 +233,16 @@ class StreamItemSerializer(serializers.Serializer):
                 prayer=item.obj,
             )
 
-        owner = self._resolve_owner_user(item.obj)
-        state = self._boundary_state_for(owner)
+        _stream_serializer_time(
+            "Stream.serializer.payload.metadata",
+            metadata_start,
+            kind=item.kind,
+            objectID=getattr(item.obj, "id", None),
+            subtype=subtype,
+        )
+
+        owner = self._cached_owner_user(item)
+        state = self._cached_boundary_state_for(owner)
 
         data["owner_user_id"] = getattr(owner, "id", None)
         data["owner_username"] = getattr(owner, "username", None)
@@ -114,6 +255,14 @@ class StreamItemSerializer(serializers.Serializer):
         data["has_boundary"] = state["has_boundary"]
         data["has_boundary_between"] = state["has_boundary_between"]
         data["direct_interaction_available"] = state["direct_interaction_available"]
+
+        _stream_serializer_time(
+            "Stream.serializer.payload.total",
+            start,
+            kind=item.kind,
+            objectID=getattr(item.obj, "id", None),
+            subtype=subtype,
+        )
 
         return data
 
@@ -185,6 +334,7 @@ class StreamItemSerializer(serializers.Serializer):
     def _get_video_transcript(self, obj):
         """
         Resolve VideoTranscript for any content object using GenericForeignKey.
+        Cached per serializer instance to avoid repeated transcript lookups.
         """
         if not obj:
             return None
@@ -195,14 +345,38 @@ class StreamItemSerializer(serializers.Serializer):
                 for_concrete_model=False,
             )
 
-            return (
+            object_id = getattr(obj, "id", None)
+
+            if not object_id:
+                return None
+
+            cache_key = f"{content_type.id}:{object_id}"
+
+            if cache_key in self._transcript_cache:
+                return self._transcript_cache[cache_key]
+
+            start = perf_counter()
+
+            transcript = (
                 VideoTranscript.objects
                 .filter(
                     content_type=content_type,
-                    object_id=getattr(obj, "id", None),
+                    object_id=object_id,
                 )
                 .first()
             )
+
+            self._transcript_cache[cache_key] = transcript
+
+            _stream_serializer_time(
+                "Stream.serializer.transcript.resolve",
+                start,
+                key=cache_key,
+                found=bool(transcript),
+            )
+
+            return transcript
+
         except Exception:
             return None
 
@@ -312,30 +486,34 @@ class StreamItemSerializer(serializers.Serializer):
     # ------------------------------------------------------------------
     # Top-level metadata
     # ------------------------------------------------------------------
-
     def get_owner_user_id(self, item):
-        owner = self._resolve_owner_user(item.obj)
+        owner = self._cached_owner_user(item)
         return getattr(owner, "id", None)
 
+
     def get_owner_username(self, item):
-        owner = self._resolve_owner_user(item.obj)
+        owner = self._cached_owner_user(item)
         return getattr(owner, "username", None)
 
+
     def get_in_stillness(self, item):
-        owner = self._resolve_owner_user(item.obj)
-        return self._boundary_state_for(owner)["in_stillness"]
+        owner = self._cached_owner_user(item)
+        return self._cached_boundary_state_for(owner)["in_stillness"]
+
 
     def get_has_boundary(self, item):
-        owner = self._resolve_owner_user(item.obj)
-        return self._boundary_state_for(owner)["has_boundary"]
+        owner = self._cached_owner_user(item)
+        return self._cached_boundary_state_for(owner)["has_boundary"]
+
 
     def get_has_boundary_between(self, item):
-        owner = self._resolve_owner_user(item.obj)
-        return self._boundary_state_for(owner)["has_boundary_between"]
+        owner = self._cached_owner_user(item)
+        return self._cached_boundary_state_for(owner)["has_boundary_between"]
+
 
     def get_direct_interaction_available(self, item):
-        owner = self._resolve_owner_user(item.obj)
-        return self._boundary_state_for(owner)["direct_interaction_available"]
+        owner = self._cached_owner_user(item)
+        return self._cached_boundary_state_for(owner)["direct_interaction_available"]
 
     # ------------------------------------------------------------------
     # Preview helpers
@@ -391,7 +569,7 @@ class StreamItemSerializer(serializers.Serializer):
     # Owner resolver
     # ------------------------------------------------------------------
 
-    def _resolve_owner_user(self, obj):
+    def _resolve_owner_user_uncached(self, obj):
         """
         Resolve the CustomUser owner behind Moment/Testimony/Prayer.
         """
@@ -463,8 +641,10 @@ class StreamItemSerializer(serializers.Serializer):
         """
         Build compact owner payload for stream headers.
 
-        Existing serializer owner data wins, but missing fields are filled
-        from the resolved CustomUser.
+        Performance goal:
+        - Do NOT use full/public user serializers here.
+        - Only expose the few fields iOS stream needs for avatar/header:
+        label color, verification, avatar URLs/version, profile URL, names.
         """
 
         base = dict(fallback) if isinstance(fallback, dict) else {}
@@ -483,62 +663,205 @@ class StreamItemSerializer(serializers.Serializer):
 
             return None
 
-        avatar_cdn_url = first_value(
-            base.get("avatar_cdn_url"),
-            base.get("avatarCDNURL"),
-            getattr(owner, "avatar_cdn_url", None),
+        def first_bool(*values):
+            for value in values:
+                if value is None:
+                    continue
+
+                return bool(value)
+
+            return None
+
+        def first_int(*values):
+            for value in values:
+                if value is None:
+                    continue
+
+                try:
+                    return int(value)
+                except Exception:
+                    continue
+
+            return None
+
+        # -------------------------------------------------
+        # Label / border color
+        # -------------------------------------------------
+        label = getattr(owner, "label", None)
+
+        label_color = first_value(
+            base.get("label_color"),
+            base.get("labelColor"),
+            getattr(label, "color", None),
         )
 
+        # -------------------------------------------------
+        # Avatar URLs
+        # -------------------------------------------------
         avatar_url = first_value(
             base.get("avatar_url"),
             base.get("avatarURL"),
-            getattr(owner, "avatar_url", None),
-            getattr(owner, "avatar", None),
+            self.build_avatar_url(owner),
         )
 
+        avatar_cdn_url = first_value(
+            base.get("avatar_cdn_url"),
+            base.get("avatarCDNURL"),
+            self.build_avatar_cdn_url(owner),
+        )
+
+        avatar_version = first_int(
+            base.get("avatar_version"),
+            base.get("avatarVersion"),
+            getattr(owner, "avatar_version", None),
+        )
+
+        # -------------------------------------------------
+        # Verification
+        # -------------------------------------------------
+        is_verified_identity = first_bool(
+            base.get("is_verified_identity"),
+            base.get("isVerifiedIdentity"),
+            getattr(owner, "is_verified_identity", None),
+        )
+
+        is_townlit_verified = first_bool(
+            base.get("is_townlit_verified"),
+            base.get("isTownlitVerified"),
+            self._owner_is_townlit_verified(owner),
+        )
+
+        # -------------------------------------------------
+        # Profile URL
+        # -------------------------------------------------
+        profile_url = first_value(
+            base.get("profile_url"),
+            base.get("profileURL"),
+            self._owner_profile_url(owner),
+        )
+
+        # -------------------------------------------------
+        # Identity / display
+        # -------------------------------------------------
         base["id"] = base.get("id") or getattr(owner, "id", None)
+
         base["username"] = first_value(
             base.get("username"),
             getattr(owner, "username", None),
         )
+
         base["name"] = first_value(
             base.get("name"),
             getattr(owner, "name", None),
             getattr(owner, "first_name", None),
         )
+
         base["family"] = first_value(
             base.get("family"),
             getattr(owner, "family", None),
             getattr(owner, "last_name", None),
         )
 
-        if avatar_cdn_url:
-            base["avatar_cdn_url"] = avatar_cdn_url
+        full_name = first_value(
+            base.get("full_name"),
+            base.get("fullName"),
+            " ".join(
+                part for part in [
+                    base.get("name"),
+                    base.get("family"),
+                ]
+                if part
+            ),
+        )
+
+        if full_name:
+            base["full_name"] = full_name
+
+        if profile_url:
+            base["profile_url"] = profile_url
 
         if avatar_url:
             base["avatar_url"] = avatar_url
 
-        # Keep verification/label fields if they exist.
-        if "label_color" not in base and hasattr(owner, "label_color"):
-            base["label_color"] = getattr(owner, "label_color", None)
+        if avatar_cdn_url:
+            base["avatar_cdn_url"] = avatar_cdn_url
 
-        if "is_verified_identity" not in base and hasattr(owner, "is_verified_identity"):
-            base["is_verified_identity"] = bool(
-                getattr(owner, "is_verified_identity", False)
+        if avatar_version is not None:
+            base["avatar_version"] = avatar_version
+
+        if label_color:
+            base["label_color"] = label_color
+
+            existing_label = base.get("label")
+            label_payload = dict(existing_label) if isinstance(existing_label, dict) else {}
+
+            label_payload["color"] = first_value(
+                label_payload.get("color"),
+                label_color,
             )
 
-        if "is_townlit_verified" not in base and hasattr(owner, "is_townlit_verified"):
-            base["is_townlit_verified"] = bool(
-                getattr(owner, "is_townlit_verified", False)
+            label_name = first_value(
+                label_payload.get("name"),
+                getattr(label, "name", None),
+                getattr(label, "title", None),
             )
+
+            if label_name:
+                label_payload["name"] = label_name
+
+            base["label"] = label_payload
+
+        if is_verified_identity is not None:
+            base["is_verified_identity"] = bool(is_verified_identity)
+
+        if is_townlit_verified is not None:
+            base["is_townlit_verified"] = bool(is_townlit_verified)
 
         return base
-    
+
+    def _owner_is_townlit_verified(self, owner) -> bool:
+        """
+        Lightweight TownLIT verification resolver.
+
+        Avoids full user serializers while matching CustomUser serializers:
+        True if user has member_profile and member_profile.is_townlit_verified.
+        """
+
+        if not owner:
+            return False
+
+        try:
+            member_profile = getattr(owner, "member_profile", None)
+            return bool(
+                member_profile
+                and getattr(member_profile, "is_townlit_verified", False)
+            )
+        except Exception:
+            return False
+
+
+    def _owner_profile_url(self, owner) -> str | None:
+        if not owner:
+            return None
+
+        try:
+            if hasattr(owner, "get_absolute_url"):
+                return owner.get_absolute_url()
+        except Exception:
+            return None
+
+        username = getattr(owner, "username", None)
+
+        if username:
+            return f"/lit/{username}"
+
+        return None
+
     # ------------------------------------------------------------------
     # Boundary state
     # ------------------------------------------------------------------
 
-    def _boundary_state_for(self, target_user):
+    def _boundary_state_for_uncached(self, target_user):
         """
         Return viewer -> target boundary state.
         """

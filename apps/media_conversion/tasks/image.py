@@ -163,12 +163,21 @@ def convert_image_to_jpg_task(
             message="Finalizing output",
         )
 
+        mark_model_converted = not (
+            model_name == "Testimony"
+            and field_name in {
+                "thumbnail",
+                "audio_artwork",
+            }
+        )
+
         bind_converted_file(
             model_name=model_name,
             app_label=app_label,
             instance_id=instance_id,
             field_name=field_name,
             relative_path=relative_output_path,
+            mark_converted=mark_model_converted,
         )
 
         refreshed_instance = get_instance(

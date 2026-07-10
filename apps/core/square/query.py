@@ -21,6 +21,9 @@ from apps.core.visibility.query import VisibilityQuery
 from apps.core.owner_visibility.query import OwnerVisibilityQuery
 from apps.core.boundaries.query import BoundaryVisibilityQuery
 from apps.profiles.selectors.friends import get_friend_user_ids
+from apps.subtitles.services.testimony_enforcement import (
+    filter_testimony_queryset_for_public_feeds,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +104,13 @@ class SquareQuery:
                 qs = qs.filter(media_q)
 
             # ---------------------------------------------
-            # 4) Visibility filtering
+            # 4) Testimony review public-feed policy
+            # ---------------------------------------------
+            if source.kind == "testimony":
+                qs = filter_testimony_queryset_for_public_feeds(qs)
+
+            # ---------------------------------------------
+            # 5) Visibility filtering
             # ---------------------------------------------
             qs = VisibilityQuery.for_viewer(
                 viewer=viewer,
@@ -109,7 +118,7 @@ class SquareQuery:
             )
 
             # ---------------------------------------------
-            # 5) Owner visibility filtering
+            # 6) Owner visibility filtering
             # ---------------------------------------------
             qs = OwnerVisibilityQuery.filter_queryset_for_square(
                 qs,
@@ -118,7 +127,7 @@ class SquareQuery:
             )
 
             # ---------------------------------------------
-            # 6) Boundary visibility filtering
+            # 7) Boundary visibility filtering
             # ---------------------------------------------
             qs = BoundaryVisibilityQuery.exclude_boundary_conflicts(
                 qs,
@@ -126,7 +135,7 @@ class SquareQuery:
             )
 
             # ---------------------------------------------
-            # 7) Exclude viewer-owned content
+            # 8) Exclude viewer-owned content
             # Square discovery policy:
             # user should not see their own content in Square.
             # ---------------------------------------------
@@ -136,7 +145,7 @@ class SquareQuery:
             )
 
             # ---------------------------------------------
-            # 8) Friends scope
+            # 9) Friends scope
             # ---------------------------------------------
             if kind == SQUARE_KIND_FRIENDS:
                 qs = qs.filter(
@@ -144,7 +153,7 @@ class SquareQuery:
                 )
 
             # ---------------------------------------------
-            # 9) Annotate square metadata
+            # 10) Annotate square metadata
             # ---------------------------------------------
             qs = qs.annotate(
                 square_kind=models.Value(

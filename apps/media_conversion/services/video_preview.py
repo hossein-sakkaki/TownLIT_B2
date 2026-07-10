@@ -22,7 +22,12 @@ def build_video_preview_mp4(
     width: int = 360,
 ) -> dict:
     """
-    Build a short muted MP4 preview for fast grid/profile autoplay.
+    Build a short muted MP4 preview for fast Stream/Square/Profile autoplay.
+
+    Important:
+    - This does not replace user uploaded thumbnails.
+    - Output uses faststart for streaming.
+    - Stored object is explicitly marked as video/mp4.
     """
 
     local_output = f"/tmp/video_preview_{os.getpid()}.mp4"
@@ -52,6 +57,12 @@ def build_video_preview_mp4(
         "veryfast",
         "-crf",
         "26",
+        "-profile:v",
+        "high",
+        "-level",
+        "4.1",
+        "-pix_fmt",
+        "yuv420p",
         "-movflags",
         "+faststart",
         local_output,
@@ -65,11 +76,10 @@ def build_video_preview_mp4(
             stderr=subprocess.DEVNULL,
         )
 
-        with open(local_output, "rb") as file:
-            saved_key = default_storage.save(
-                str(output_key).lstrip("/"),
-                File(file),
-            )
+        saved_key = save_mp4_with_content_type(
+            local_path=local_output,
+            output_key=str(output_key).lstrip("/"),
+        )
 
         meta = video_metadata_from_local(local_output)
         meta.update(
@@ -85,3 +95,34 @@ def build_video_preview_mp4(
     finally:
         if os.path.exists(local_output):
             os.remove(local_output)
+
+
+def save_mp4_with_content_type(
+    *,
+    local_path: str,
+    output_key: str,
+) -> str:
+    """
+    Save MP4 with explicit content type.
+
+    S3/CloudFront/AVPlayer are sensitive to Content-Type for direct preview
+    playback.
+    """
+
+    output_key = str(output_key).lstrip("/")
+
+    with open(local_path, "rb") as file:
+        wrapped_file = File(
+            file,
+            name=os.path.basename(output_key),
+        )
+
+        # S3-compatible storages can persist this as object metadata.
+        wrapped_file.content_type = "video/mp4"
+
+        saved_key = default_storage.save(
+            output_key,
+            wrapped_file,
+        )
+
+    return str(saved_key).lstrip("/")
