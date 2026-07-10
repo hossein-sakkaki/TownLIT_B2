@@ -238,6 +238,16 @@ class Testimony(
                     "Audio testimony requires audio only. Optional audio_artwork is allowed."
                 )
 
+            if not self.title or not self.title.strip():
+                raise ValidationError(
+                    "Audio testimony requires a title."
+                )
+
+            if len(self.title.strip()) > 50:
+                raise ValidationError(
+                    "Audio testimony title must be 50 characters or fewer."
+                )
+
         elif self.type == self.TYPE_VIDEO:
             if not self.video or self.content or self.audio or self.audio_artwork:
                 raise ValidationError(
@@ -294,10 +304,8 @@ class Testimony(
         return self.type != self.TYPE_WRITTEN
 
     def before_autoconvert_save(self):
-        # Ensure title for media testimonies
-        self._ensure_default_title()
-
-        # Written testimony has no conversion
+        # Written testimony has no conversion.
+        # Media testimony titles must be provided by the user.
         if self.type == self.TYPE_WRITTEN:
             self.is_converted = True
 
@@ -312,16 +320,6 @@ class Testimony(
     # -------------------------------------------------
     # Slug + defaults
     # -------------------------------------------------
-    def _ensure_default_title(self):
-        if self.type == self.TYPE_WRITTEN:
-            return
-        if self.title and self.title.strip():
-            return
-
-        label = dict(self.FILE_TYPE_CHOICES).get(self.type, self.type).title()
-        self.title = f"{label} testimony {timezone.now().strftime('%Y%m%d-%H%M%S')}"
-
-
     def get_slug_source(self):
         if self.title and self.title.strip():
             return self.title

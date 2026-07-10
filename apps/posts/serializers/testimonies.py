@@ -391,7 +391,7 @@ class TestimonySerializer(
             instance.type if instance else self.context.get("ttype")
         )
 
-        title = attrs.get("title") or (instance.title if instance else None)
+        title = attrs.get("title", instance.title if instance else None)
         content = attrs.get("content") or (instance.content if instance else None)
         audio = attrs.get("audio") or (instance.audio if instance else None)
         video = attrs.get("video") or (instance.video if instance else None)
@@ -401,26 +401,40 @@ class TestimonySerializer(
         )
 
         if ttype == Testimony.TYPE_WRITTEN:
-            if content or audio or video or thumbnail or audio_artwork:
+            if not content or audio or video or thumbnail or audio_artwork:
                 raise serializers.ValidationError(
                     "Written testimony requires content only and no media files."
                 )
 
-            if not title or not title.strip():
+            if not title or not str(title).strip():
                 raise serializers.ValidationError({
                     "title": "Title is required."
                 })
 
-            if len(title) > 50:
+            if len(str(title).strip()) > 50:
                 raise serializers.ValidationError({
                     "title": "Max 50 characters."
                 })
+
+            attrs["title"] = str(title).strip()
 
         elif ttype == Testimony.TYPE_AUDIO:
             if not audio or content or video or thumbnail:
                 raise serializers.ValidationError(
                     "Audio testimony requires audio only. Optional audio_artwork is allowed."
                 )
+
+            if not title or not str(title).strip():
+                raise serializers.ValidationError({
+                    "title": "Title is required for audio testimony."
+                })
+
+            if len(str(title).strip()) > 50:
+                raise serializers.ValidationError({
+                    "title": "Max 50 characters."
+                })
+
+            attrs["title"] = str(title).strip()
 
         elif ttype == Testimony.TYPE_VIDEO:
             if not video or content or audio or audio_artwork:
