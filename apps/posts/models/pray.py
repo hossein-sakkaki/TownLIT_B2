@@ -63,7 +63,7 @@ class Prayer(
     VisibilityModelMixin,         # 👁️ visibility
     InteractionCounterMixin,      # 🧮 counters
     ReactionBreakdownMixin,       # ❤️ reactions
-     MediaAssetsMixin,             # 🖼️ Media metadata
+    MediaAssetsMixin,             # 🖼️ Media metadata
     MediaAutoConvertMixin,        # 🎞 raw → converted detection
     MediaConversionMixin,         # 🔄 async conversion
     SlugMixin,
@@ -173,10 +173,6 @@ class Prayer(
         notify_prayer_ready(self)
 
     def save(self, *args, **kwargs):
-        is_new = self._state.adding
-        image_only = bool(self.image and not self.video)
-
-        # Let MediaAutoConvertMixin run first
         super().save(*args, **kwargs)
             
     # --- slug ---
@@ -318,17 +314,14 @@ class PrayerResponse(
         prayer.save(update_fields=["status", "answered_at", "updated_at"])
 
     def save(self, *args, **kwargs):
-        is_new = self._state.adding
-
-        image_only = bool(self.image and not self.video)
-
         if self.pk is not None:
             self.updated_at = timezone.now()
 
         super().save(*args, **kwargs)
 
-        # Defer parent sync until outer transaction commits
-        transaction.on_commit(self._sync_parent_prayer)
+        transaction.on_commit(
+            self._sync_parent_prayer
+        )
 
     def delete(self, *args, **kwargs):
         """

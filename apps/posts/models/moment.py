@@ -164,6 +164,17 @@ class Moment(
     published_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(null=True, blank=True)
 
+    notification_dispatched_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+        verbose_name="Publication Notification Dispatched At",
+        help_text=(
+            "Persistent marker preventing the original Moment publication "
+            "notification from being dispatched more than once."
+        ),
+    )
+
     # -------------------------------------------------
     # Media pipeline
     # -------------------------------------------------
@@ -437,17 +448,139 @@ class Moment(
     # -------------------------------------------------
     # Save override for availability and notifications
     # -------------------------------------------------
-    def save(self, *args, **kwargs):
-        is_new = self._state.adding
+    def _media_state_snapshot(self) -> dict:
+        """
+        Return normalized persisted-media state for change detection.
 
+        This state intentionally contains only fields whose changes should
+        trigger Moment media processing.
+        """
+        return {
+            "image": str(
+                getattr(self.image, "name", "") or ""
+            ),
+            "video": str(
+                getattr(self.video, "name", "") or ""
+            ),
+            "thumbnail": str(
+                getattr(self.thumbnail, "name", "") or ""
+            ),
+            "image_items": (
+                self.image_items
+                if isinstance(self.image_items, list)
+                else []
+            ),
+            "cover_image_id": (
+                str(self.cover_image_id)
+                if self.cover_image_id
+                else None
+            ),
+            "media_kind": self.media_kind,
+        }
+
+
+    @staticmethod
+    def _normalized_persisted_media_state(
+        state: dict | None,
+    ) -> dict | None:
+        """
+        Normalize a values() result to the same shape as
+        _media_state_snapshot().
+        """
+        if state is None:
+            return None
+
+        image_items = state.get("image_items")
+
+        return {
+            "image": str(state.get("image") or ""),
+            "video": str(state.get("video") or ""),
+            "thumbnail": str(
+                state.get("thumbnail") or ""
+            ),
+            "image_items": (
+                image_items
+                if isinstance(image_items, list)
+                else []
+            ),
+            "cover_image_id": (
+                str(state.get("cover_image_id"))
+                if state.get("cover_image_id")
+                else None
+            ),
+            "media_kind": state.get("media_kind"),
+        }
+
+
+    def _schedule_image_item_conversion_after_commit(self) -> None:
+        """
+        Reload the Moment after commit before entering the image-item pipeline.
+
+        This avoids running conversion decisions from a stale in-memory instance.
+        """
+        moment_id = self.pk
+
+        if not moment_id:
+            return
+
+        def _after_commit():
+            fresh_moment = (
+                type(self).objects
+                .filter(pk=moment_id)
+                .first()
+            )
+
+            if not fresh_moment:
+                return
+
+            fresh_moment._enqueue_image_item_conversion_jobs()
+
+        transaction.on_commit(_after_commit)
+
+
+    def save(self, *args, **kwargs):
+        is_new = bool(self._state.adding)
+        raw_update_fields = kwargs.get("update_fields")
+
+        update_fields = (
+            set(raw_update_fields)
+            if raw_update_fields is not None
+            else None
+        )
+
+        previous_media_state = None
+
+        if not is_new and self.pk:
+            previous = (
+                type(self).objects
+                .filter(pk=self.pk)
+                .values(
+                    "image",
+                    "video",
+                    "thumbnail",
+                    "image_items",
+                    "cover_image_id",
+                    "media_kind",
+                )
+                .first()
+            )
+
+            previous_media_state = (
+                self._normalized_persisted_media_state(
+                    previous
+                )
+            )
+
+        # Determine the canonical media kind.
         if self.video:
             self.media_kind = MOMENT_MEDIA_KIND_VIDEO
         elif self.image or self.has_image_items():
             self.media_kind = MOMENT_MEDIA_KIND_IMAGE
 
-        # Legacy single image becomes JSON-backed cover.
+        # Legacy single image becomes a JSON-backed image item.
         if self.image and not self.has_image_items():
             key = getattr(self.image, "name", None)
+
             if key:
                 item = self.build_image_item(
                     key=key,
@@ -457,22 +590,51 @@ class Moment(
                     order=0,
                     is_cover=True,
                 )
+
                 self.image_items = [item]
                 self.cover_image_id = item["id"]
 
         normalized_items = self.normalized_image_items()
 
         if normalized_items and not self.cover_image_id:
-            self.cover_image_id = normalized_items[0]["id"]
+            self.cover_image_id = str(
+                normalized_items[0]["id"]
+            )
 
-        image_only = self.media_kind == MOMENT_MEDIA_KIND_IMAGE
+        current_media_state = self._media_state_snapshot()
+
+        media_fields = {
+            "image",
+            "video",
+            "thumbnail",
+            "image_items",
+            "cover_image_id",
+            "media_kind",
+        }
+
+        update_touches_media = (
+            update_fields is None
+            or bool(update_fields & media_fields)
+        )
+
+        media_changed = (
+            is_new
+            or (
+                update_touches_media
+                and previous_media_state
+                != current_media_state
+            )
+        )
 
         super().save(*args, **kwargs)
 
-        # Generic conversion does not understand image_items JSON.
-        # Enqueue Moment photo conversions after DB commit.
-        if image_only:
-            transaction.on_commit(self._enqueue_image_item_conversion_jobs)
+        is_photo_moment = (
+            self.media_kind
+            == MOMENT_MEDIA_KIND_IMAGE
+        )
+
+        if is_photo_moment and media_changed:
+            self._schedule_image_item_conversion_after_commit()
             
     # -------------------------------------------------
     # Availability (Domain-level)

@@ -196,20 +196,20 @@ class Testimony(
     # -------------------------------------------------
     # Change tracking (for reconvert)
     # -------------------------------------------------
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._orig_audio = getattr(self.audio, "name", None)
-        self._orig_video = getattr(self.video, "name", None)
-        self._orig_thumb = getattr(self.thumbnail, "name", None)
-        self._orig_audio_artwork = getattr(self.audio_artwork, "name", None)
+    # def __init__(self, *args, **kwargs):
+    #     super().__init__(*args, **kwargs)
+    #     self._orig_audio = getattr(self.audio, "name", None)
+    #     self._orig_video = getattr(self.video, "name", None)
+    #     self._orig_thumb = getattr(self.thumbnail, "name", None)
+    #     self._orig_audio_artwork = getattr(self.audio_artwork, "name", None)
 
-    def _media_changed(self) -> bool:
-        return any([
-            getattr(self.audio, "name", None) != self._orig_audio,
-            getattr(self.video, "name", None) != self._orig_video,
-            getattr(self.thumbnail, "name", None) != self._orig_thumb,
-            getattr(self.audio_artwork, "name", None) != self._orig_audio_artwork,
-        ])
+    # def _media_changed(self) -> bool:
+    #     return any([
+    #         getattr(self.audio, "name", None) != self._orig_audio,
+    #         getattr(self.video, "name", None) != self._orig_video,
+    #         getattr(self.thumbnail, "name", None) != self._orig_thumb,
+    #         getattr(self.audio_artwork, "name", None) != self._orig_audio_artwork,
+    #     ])
 
     # -------------------------------------------------
     # Validation
@@ -284,7 +284,7 @@ class Testimony(
         Responsible for triggering notifications.
         """
 
-        # ✅ HARD idempotency at domain level
+        # Prevent duplicate execution on the same in-memory instance.
         if getattr(self, "_availability_fired", False):
             return
 

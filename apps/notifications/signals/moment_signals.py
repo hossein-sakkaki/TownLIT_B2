@@ -1,11 +1,11 @@
 # apps/notifications/signals/moment_signals.py
 
 import logging
-from django.db.models.signals import post_save
-from django.dispatch import receiver
 from django.db.models import Q
 from django.contrib.auth import get_user_model
 from urllib.parse import quote
+from django.db import transaction
+from django.utils import timezone
 
 from apps.posts.models.moment import Moment
 from apps.profiles.models import Friendship, Member
@@ -157,58 +157,172 @@ def _build_moment_link(moment: Moment) -> str:
 # ---------------------------------------------------------
 def notify_moment_ready(moment: Moment):
     """
-    Send notifications for a moment that is fully available.
+    Notify accepted friends exactly once when a Moment first becomes available.
+
+    The persistent dispatch marker is stored on Moment itself, so deleting
+    Notification history cannot recreate the original publication event.
     """
-    # ---- Domain guard ----
-    if not moment.is_available():
+    if not moment or not moment.pk:
         return
 
-    # Visibility & moderation guards
-    if (
-        not moment.is_active
-        or moment.is_hidden
-        or moment.is_suspended
-    ):
-        return
+    owner_user = None
+    claimed_moment = None
 
-    # PRIVATE moments never notify
-    if moment.visibility == VISIBILITY_PRIVATE:
-        return
-
-    owner_user = _get_owner_user(moment)
-    if not owner_user:
-        return
-
-    # Determine recipients
-    recipients_qs = User.objects.none()
-
-    if moment.visibility in (VISIBILITY_FRIENDS, VISIBILITY_COVENANT):
-        recipients_qs = _get_accepted_friends(owner_user)
-    else:
-        recipients_qs = _get_accepted_friends(owner_user)
-
-    if not recipients_qs.exists():
-        return
-
-    kind = _classify_moment_kind(moment)
-    notif_type = _pick_notif_type(kind)
-    link = _build_moment_link(moment)
-    message = _build_message(owner_user, kind)
-
-    for recipient in recipients_qs:
-        if recipient.id == owner_user.id:
-            continue
-
-        create_and_dispatch_notification(
-            recipient=recipient,
-            actor=owner_user,
-            notif_type=notif_type,
-            message=message,
-            target_obj=moment,
-            action_obj=None,
-            link=link,
-            extra_payload={
-                "moment_id": moment.id,
-                "kind": kind,
-            },
+    with transaction.atomic():
+        locked_moment = (
+            Moment.objects
+            .select_for_update()
+            .filter(pk=moment.pk)
+            .first()
         )
+
+        if not locked_moment:
+            return
+
+        if (
+            locked_moment.notification_dispatched_at
+            is not None
+        ):
+            logger.info(
+                "[Notif][Moment] Publication already dispatched "
+                "moment=%s dispatched_at=%s",
+                locked_moment.pk,
+                locked_moment.notification_dispatched_at,
+            )
+            return
+
+        if not locked_moment.is_available():
+            logger.info(
+                "[Notif][Moment] Moment is not available; skipped "
+                "moment=%s",
+                locked_moment.pk,
+            )
+            return
+
+        if (
+            not locked_moment.is_active
+            or locked_moment.is_hidden
+            or locked_moment.is_suspended
+        ):
+            logger.info(
+                "[Notif][Moment] Moment unavailable by moderation; "
+                "skipped moment=%s",
+                locked_moment.pk,
+            )
+            return
+
+        if (
+            locked_moment.visibility
+            == VISIBILITY_PRIVATE
+        ):
+            logger.info(
+                "[Notif][Moment] Private Moment; skipped moment=%s",
+                locked_moment.pk,
+            )
+            return
+
+        owner_user = _get_owner_user(
+            locked_moment
+        )
+
+        if not owner_user:
+            logger.warning(
+                "[Notif][Moment] Owner could not be resolved "
+                "moment=%s",
+                locked_moment.pk,
+            )
+            return
+
+        claimed_at = timezone.now()
+
+        claimed = (
+            Moment.objects
+            .filter(
+                pk=locked_moment.pk,
+                notification_dispatched_at__isnull=True,
+            )
+            .update(
+                notification_dispatched_at=claimed_at,
+            )
+        )
+
+        if claimed != 1:
+            logger.info(
+                "[Notif][Moment] Publication claim lost "
+                "moment=%s",
+                locked_moment.pk,
+            )
+            return
+
+        locked_moment.notification_dispatched_at = (
+            claimed_at
+        )
+        claimed_moment = locked_moment
+
+    recipients_qs = (
+        _get_accepted_friends(owner_user)
+        .exclude(pk=owner_user.pk)
+    )
+
+    kind = _classify_moment_kind(
+        claimed_moment
+    )
+    notif_type = _pick_notif_type(
+        kind
+    )
+    link = _build_moment_link(
+        claimed_moment
+    )
+    message = _build_message(
+        owner_user,
+        kind,
+    )
+
+    dispatched_count = 0
+    failed_count = 0
+
+    for recipient in recipients_qs.iterator(
+        chunk_size=200
+    ):
+        try:
+            notification = (
+                create_and_dispatch_notification(
+                    recipient=recipient,
+                    actor=owner_user,
+                    notif_type=notif_type,
+                    message=message,
+                    target_obj=claimed_moment,
+                    action_obj=None,
+                    link=link,
+                    extra_payload={
+                        "moment_id": claimed_moment.id,
+                        "kind": kind,
+                        "publication_event": (
+                            "moment_available"
+                        ),
+                    },
+                )
+            )
+
+            if notification is not None:
+                dispatched_count += 1
+
+        except Exception:
+            failed_count += 1
+
+            logger.exception(
+                "[Notif][Moment] Recipient dispatch failed "
+                "moment=%s recipient=%s",
+                claimed_moment.pk,
+                getattr(recipient, "pk", None),
+            )
+
+    logger.info(
+        "[Notif][Moment] Publication dispatch completed "
+        "moment=%s recipients=%s dispatched=%s failed=%s",
+        claimed_moment.pk,
+        recipients_qs.count(),
+        dispatched_count,
+        failed_count,
+    )
+
