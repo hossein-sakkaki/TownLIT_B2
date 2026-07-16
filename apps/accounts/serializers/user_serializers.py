@@ -237,19 +237,40 @@ class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
         try:
             username = validate_username_format(value)
         except DjangoValidationError as exc:
-            raise serializers.ValidationError(exc.messages)
-
-        if self.instance and username == self.instance.username:
-            return username
-
-        if UsernameReservation.is_reserved_for_other_user(username, self.instance):
             raise serializers.ValidationError(
-                "This username was recently used by another account and is temporarily unavailable."
+                exc.messages
             )
 
-        if CustomUser.objects.filter(username=username).exists():
+        current_user = self.instance
+
+        if (
+            current_user is not None
+            and username == current_user.username
+        ):
+            return username
+
+        if UsernameReservation.is_reserved_for_other_user(
+            username,
+            current_user,
+        ):
             raise serializers.ValidationError(
-                "This username is already taken by another account. Please choose a different username."
+                "This username was previously used by another account "
+                "and cannot be reassigned."
+            )
+
+        existing_users = CustomUser.objects.filter(
+            username=username
+        )
+
+        if current_user is not None:
+            existing_users = existing_users.exclude(
+                pk=current_user.pk
+            )
+
+        if existing_users.exists():
+            raise serializers.ValidationError(
+                "This username is already taken by another account. "
+                "Please choose a different username."
             )
 
         return username

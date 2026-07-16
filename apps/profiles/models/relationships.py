@@ -4,6 +4,7 @@ from django.db import models
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.contrib.auth import get_user_model
+from urllib.parse import urlencode
 
 from apps.profiles.constants.friendship import (
     FRIENDSHIP_STATUS_CHOICES,
@@ -57,21 +58,39 @@ class Friendship(models.Model):
         return f"{self.from_user.username} to {self.to_user.username} ({self.status})"
 
     def get_absolute_url(self):
-        # Return frontend route for friendship notifications.
+        """
+        Return a frontend route for friendship notifications.
+        """
         try:
-            if self.status == "pending":
-                return "/settings/friendships?tab=requests"
+            status_value = (self.status or "").strip().lower()
+
+            if status_value == "pending":
+                params = {
+                    "tab": "requests",
+                    "request_id": self.id,
+                    "friendship_id": self.id,
+                    "user_id": self.from_user_id,
+                    "request_kind": "received",
+                }
+
+                username = getattr(self.from_user, "username", None)
+
+                if username:
+                    params["username"] = username
+
+                return f"/settings/friendships?{urlencode(params)}"
 
             actor = getattr(self, "from_user", None)
             target = getattr(self, "to_user", None)
 
-            if self.status in ["deleted", "cancelled"] and actor:
+            if status_value in {"deleted", "cancelled"} and actor:
                 return f"/lit/{actor.username}"
 
             if target:
                 return f"/lit/{target.username}"
 
             return "/lit/"
+
         except Exception:
             return "/lit/"
 

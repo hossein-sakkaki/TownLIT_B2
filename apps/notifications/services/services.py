@@ -25,9 +25,10 @@ from apps.notifications.constants import (
     notification_default_channels,
 )
 from apps.notifications.services.ui_link_resolver import (
+    ENTRY_BY_CT,
     build_content_link,
-    guess_entry_section, 
-    ENTRY_BY_CT
+    build_friendship_request_link,
+    guess_entry_section,
 )
 from apps.notifications.services.delivery_policy import (
     apply_relationship_delivery_policy,
@@ -120,6 +121,104 @@ def _resolve_link(target_obj, action_obj) -> Optional[str]:
         return url
     return _safe_get_absolute_url(target_obj)
 
+def _resolve_relationship_ui_link(
+    *,
+    notif_type: str,
+    target_obj=None,
+    action_obj=None,
+    extra_payload: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """
+    Build precise relationship deep links.
+
+    Friendship request notifications must include the friendship/request ID
+    so iOS can open and highlight the exact request row.
+    """
+    if notif_type != "friend_request_received":
+        return None
+
+    payload = (
+        extra_payload
+        if isinstance(extra_payload, dict)
+        else {}
+    )
+
+    relationship_obj = action_obj or target_obj
+
+    friendship_id = (
+        payload.get("request_id")
+        or payload.get("friendship_id")
+        or getattr(relationship_obj, "pk", None)
+        or getattr(relationship_obj, "id", None)
+    )
+
+    if not friendship_id:
+        logger.warning(
+            "[Notif][FriendshipLink] Missing friendship ID type=%s",
+            notif_type,
+        )
+        return None
+
+    from_user = getattr(
+        relationship_obj,
+        "from_user",
+        None,
+    )
+
+    user_id = (
+        payload.get("from_user_id")
+        or payload.get("user_id")
+        or getattr(
+            relationship_obj,
+            "from_user_id",
+            None,
+        )
+        or getattr(
+            from_user,
+            "id",
+            None,
+        )
+    )
+
+    username = (
+        payload.get("from_username")
+        or payload.get("username")
+        or getattr(
+            from_user,
+            "username",
+            None,
+        )
+    )
+
+    request_kind = (
+        payload.get("request_kind")
+        or "received"
+    )
+
+    resolved_link = build_friendship_request_link(
+        friendship_id=int(friendship_id),
+        user_id=(
+            int(user_id)
+            if user_id is not None
+            else None
+        ),
+        username=(
+            str(username).strip()
+            if username
+            else None
+        ),
+        request_kind=str(request_kind),
+    )
+
+    logger.info(
+        "[Notif][FriendshipLink] Resolved link type=%s friendship=%s user=%s link=%s",
+        notif_type,
+        friendship_id,
+        user_id,
+        resolved_link,
+    )
+
+    return resolved_link
 
 # -------------------------------------------------------------------------
 # Smart UI deep-link resolver (comment/reply aware)
@@ -812,36 +911,51 @@ def create_and_dispatch_notification(
     extra_payload: Optional[Dict[str, Any]] = None,
 ):
     """
-    Centralized notification creation + dispatch
-    (DB + WebSocket + Push + Email).
+    Centralized notification creation and delivery.
+
+    Delivery:
+    - Database
+    - WebSocket
+    - Push
+    - Email
 
     Relationship policy:
-    - Boundary suppresses notification completely.
-    - Stillness keeps DB notification but suppresses WS/Push/Email.
+    - Boundary suppresses the notification completely.
+    - Stillness keeps the database notification but suppresses
+      WebSocket, Push, and Email.
     """
 
     if not recipient:
-        logger.warning("[Notif] Missing recipient; notification skipped.")
+        logger.warning(
+            "[Notif] Missing recipient; notification skipped."
+        )
         return None
 
-    if actor and getattr(actor, "id", None) == getattr(recipient, "id", None):
+    if (
+        actor
+        and getattr(actor, "id", None)
+        == getattr(recipient, "id", None)
+    ):
         return None
 
-    # Resolve user preference + channel mask
-    enabled, channels_mask = _is_enabled(recipient, notif_type)
+    enabled, channels_mask = _is_enabled(
+        recipient,
+        notif_type,
+    )
 
-    # For some types, only Push + Email are allowed, no WS.
     if notif_type in NOTIFICATION_TYPES_PUSH_EMAIL_ONLY:
-        channels_mask = channels_mask & (CHANNEL_PUSH | CHANNEL_EMAIL)
+        channels_mask &= (
+            CHANNEL_PUSH
+            | CHANNEL_EMAIL
+        )
 
-    # Messenger notifications must never send email.
-    # They may still use DB persistence, WebSocket, and Push.
     if notif_type in NOTIFICATION_TYPES_NO_EMAIL:
-        channels_mask = channels_mask & ~CHANNEL_EMAIL
+        channels_mask &= ~CHANNEL_EMAIL
 
     if not enabled:
         logger.info(
-            "[Notif] Notification disabled by preference → user=%s type=%s",
+            "[Notif] Notification disabled by preference "
+            "user=%s type=%s",
             recipient.id,
             notif_type,
         )
@@ -858,7 +972,8 @@ def create_and_dispatch_notification(
 
     if not delivery_decision.persist:
         logger.info(
-            "[Notif] Suppressed by relationship policy → user=%s actor=%s type=%s reason=%s",
+            "[Notif] Suppressed by relationship policy "
+            "user=%s actor=%s type=%s reason=%s",
             getattr(recipient, "id", None),
             getattr(actor, "id", None),
             notif_type,
@@ -868,17 +983,81 @@ def create_and_dispatch_notification(
 
     channels_mask = delivery_decision.channels_mask
 
+    # ------------------------------------------------------------
+    # Generic relation metadata
+    # ------------------------------------------------------------
     target_ct = _safe_ct(target_obj)
-    target_id = getattr(target_obj, "pk", None)
-    action_ct = _safe_ct(action_obj)
-    action_id = getattr(action_obj, "pk", None)
+    target_id = getattr(
+        target_obj,
+        "pk",
+        None,
+    )
 
-    # Prefer explicit link, else smart UI link, else get_absolute_url fallback
-    link = link or _smart_ui_link(target_obj, action_obj, extra_payload) or _resolve_link(target_obj, action_obj)
+    action_ct = _safe_ct(action_obj)
+    action_id = getattr(
+        action_obj,
+        "pk",
+        None,
+    )
+
+    # ------------------------------------------------------------
+    # Resolve frontend link
+    #
+    # Priority:
+    # 1. Explicit caller-provided link
+    # 2. Precise relationship link
+    # 3. Smart content link
+    # 4. Model get_absolute_url()
+    # ------------------------------------------------------------
+    explicit_link = (
+        link.strip()
+        if isinstance(link, str)
+        and link.strip()
+        else None
+    )
+
+    relationship_link = _resolve_relationship_ui_link(
+        notif_type=notif_type,
+        target_obj=target_obj,
+        action_obj=action_obj,
+        extra_payload=extra_payload,
+    )
+
+    smart_content_link = _smart_ui_link(
+        target_obj,
+        action_obj,
+        extra_payload,
+    )
+
+    fallback_link = _resolve_link(
+        target_obj,
+        action_obj,
+    )
+
+    resolved_link = (
+        explicit_link
+        or relationship_link
+        or smart_content_link
+        or fallback_link
+        or ""
+    )
+
+    logger.info(
+        "[Notif] Link resolved "
+        "type=%s recipient=%s target=%s action=%s link=%s",
+        notif_type,
+        getattr(recipient, "id", None),
+        target_id,
+        action_id,
+        resolved_link,
+    )
 
     dedupe_key = (
-        f"{recipient.id}:{actor.id if actor else 0}:"
-        f"{notif_type}:{action_id or 0}:{target_id or 0}"
+        f"{recipient.id}:"
+        f"{actor.id if actor else 0}:"
+        f"{notif_type}:"
+        f"{action_id or 0}:"
+        f"{target_id or 0}"
     )
 
     def _persist():
@@ -886,24 +1065,64 @@ def create_and_dispatch_notification(
             if dedupe:
                 notif, created = Notification.objects.get_or_create(
                     dedupe_key=dedupe_key,
-                    defaults=dict(
-                        user=recipient,
-                        actor=actor,
-                        message=message,
-                        notification_type=notif_type,
-                        target_content_type=target_ct,
-                        target_object_id=target_id,
-                        action_content_type=action_ct,
-                        action_object_id=action_id,
-                        link=link,
-                    ),
+                    defaults={
+                        "user": recipient,
+                        "actor": actor,
+                        "message": message,
+                        "notification_type": notif_type,
+                        "target_content_type": target_ct,
+                        "target_object_id": target_id,
+                        "action_content_type": action_ct,
+                        "action_object_id": action_id,
+                        "link": resolved_link,
+                    },
                 )
 
                 if created:
-                    _deliver_notification(notif, channels_mask, extra_payload)
+                    logger.info(
+                        "[Notif] Created notification "
+                        "id=%s type=%s link=%s",
+                        notif.id,
+                        notif_type,
+                        notif.link,
+                    )
+
+                    _deliver_notification(
+                        notif,
+                        channels_mask,
+                        extra_payload,
+                    )
+
+                    return notif
+
+                # Keep an existing deduplicated record synchronized with
+                # the newest precise link and message, without re-delivery.
+                update_fields = []
+
+                if notif.link != resolved_link:
+                    notif.link = resolved_link
+                    update_fields.append("link")
+
+                if notif.message != message:
+                    notif.message = message
+                    update_fields.append("message")
+
+                if update_fields:
+                    notif.save(
+                        update_fields=update_fields
+                    )
+
+                    logger.info(
+                        "[Notif] Dedup record updated "
+                        "notif_id=%s fields=%s link=%s",
+                        notif.id,
+                        update_fields,
+                        notif.link,
+                    )
                 else:
                     logger.info(
-                        "[Notif] Dedup hit → notif_id=%s dedupe_key=%s",
+                        "[Notif] Dedup hit "
+                        "notif_id=%s dedupe_key=%s",
                         notif.id,
                         dedupe_key,
                     )
@@ -919,14 +1138,29 @@ def create_and_dispatch_notification(
                 target_object_id=target_id,
                 action_content_type=action_ct,
                 action_object_id=action_id,
-                link=link,
+                link=resolved_link,
             )
-            _deliver_notification(notif, channels_mask, extra_payload)
+
+            logger.info(
+                "[Notif] Created non-deduplicated notification "
+                "id=%s type=%s link=%s",
+                notif.id,
+                notif_type,
+                notif.link,
+            )
+
+            _deliver_notification(
+                notif,
+                channels_mask,
+                extra_payload,
+            )
+
             return notif
 
         except Exception:
             logger.error(
-                "[Notif] Failed to create/deliver notification user=%s actor=%s type=%s",
+                "[Notif] Failed to create/deliver notification "
+                "user=%s actor=%s type=%s",
                 getattr(recipient, "id", None),
                 getattr(actor, "id", None),
                 notif_type,
@@ -935,12 +1169,12 @@ def create_and_dispatch_notification(
             return None
 
     if transaction.get_connection().in_atomic_block:
-        transaction.on_commit(lambda: _persist())
+        transaction.on_commit(
+            lambda: _persist()
+        )
         return None
 
     return _persist()
-
-
 
 # -------------------------------------------------------------------------
 # Deliver across all enabled channels

@@ -67,6 +67,14 @@ from apps.accounts.serializers.user_serializers import (
 from apps.accounts.serializers.device_serializers import (
     UserDeviceKeySerializer,
 )
+from apps.accounts.services.device_push_ownership import (
+    claim_device_push_ownership,
+    normalize_device_id,
+    normalize_install_id,
+    normalize_platform,
+    normalize_push_token,
+    release_user_device_push_ownership,
+)
 
 from apps.accounts.tasks.onboarding_tasks import send_believer_welcome_email
 from apps.profiles.models import Member, GuestUser
@@ -1156,46 +1164,124 @@ class AuthViewSet(viewsets.ViewSet):
         }, status=status.HTTP_400_BAD_REQUEST)
 
     # Logout ---------------------------------------------------------------------------------------------------------
-    @action(detail=False, methods=["post"], url_path="logout", permission_classes=[IsAuthenticated])
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="logout",
+        permission_classes=[IsAuthenticated],
+    )
     def logout(self, request):
         """
-        Revoke refresh token and force WS logout for THIS device only.
+        Revoke the refresh token and release this device.
 
-        Logout is intentionally idempotent:
-        even if the refresh token is missing, invalid, or already blacklisted,
-        the client should still be allowed to clear its local session.
+        Logout remains idempotent.
         """
         refresh_token = request.data.get("refresh")
 
-        # Read device_id used by WS querystring.
-        device_id = (request.data.get("device_id") or "").strip().lower()
+        body_device_id = normalize_device_id(
+            request.data.get("device_id")
+        )
+
+        header_device_id = normalize_device_id(
+            request.headers.get("X-Device-ID")
+        )
+
+        device_id = (
+            body_device_id
+            or header_device_id
+        )
+
+        body_install_id = normalize_install_id(
+            request.data.get("install_id")
+        )
+
+        header_install_id = normalize_install_id(
+            request.headers.get("X-Install-ID")
+        )
+
+        install_id = (
+            body_install_id
+            or header_install_id
+        )
+
+        push_token = normalize_push_token(
+            request.data.get("push_token")
+        )
+
+        if (
+            body_device_id
+            and header_device_id
+            and body_device_id != header_device_id
+        ):
+            return Response(
+                {
+                    "error": "X-Device-ID mismatch.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if (
+            body_install_id
+            and header_install_id
+            and body_install_id != header_install_id
+        ):
+            return Response(
+                {
+                    "error": "X-Install-ID mismatch.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         token_revoked = False
         token_status = "missing"
 
         if refresh_token:
             try:
-                token = RefreshToken(refresh_token)
+                token = RefreshToken(
+                    refresh_token
+                )
 
                 try:
                     token.blacklist()
                     token_revoked = True
                     token_status = "revoked"
+
                 except Exception:
-                    # Already blacklisted or blacklist app edge case.
-                    token_status = "already_revoked_or_unavailable"
+                    token_status = (
+                        "already_revoked_or_unavailable"
+                    )
 
             except TokenError:
-                # Do not block logout because token is already invalid/expired.
                 token_status = "invalid_or_expired"
 
-        # Best-effort WS force logout.
+        released_device_count = 0
+
+        try:
+            released_device_count = (
+                release_user_device_push_ownership(
+                    user=request.user,
+                    device_id=device_id,
+                    install_id=install_id,
+                    push_token=push_token,
+                )
+            )
+
+        except Exception:
+            logger.exception(
+                "Device push ownership release failed "
+                "during logout for user_id=%s",
+                request.user.id,
+            )
+
+        # Force logout for this device only.
         if device_id:
             try:
                 channel_layer = get_channel_layer()
 
                 if channel_layer is not None:
-                    async_to_sync(channel_layer.group_send)(
+                    async_to_sync(
+                        channel_layer.group_send
+                    )(
                         f"device_{device_id}",
                         {
                             "type": "dispatch_event",
@@ -1207,15 +1293,25 @@ class AuthViewSet(viewsets.ViewSet):
                             },
                         },
                     )
+
             except Exception:
-                # Logout must not fail because realtime cleanup failed.
-                pass
+                logger.exception(
+                    "Device WebSocket logout failed "
+                    "for user_id=%s device_id=%s",
+                    request.user.id,
+                    device_id,
+                )
 
         return Response(
             {
-                "message": "User has been successfully logged out.",
+                "message": (
+                    "User has been successfully logged out."
+                ),
                 "token_revoked": token_revoked,
                 "token_status": token_status,
+                "released_device_count": (
+                    released_device_count
+                ),
             },
             status=status.HTTP_200_OK,
         )
@@ -1821,60 +1917,123 @@ class AuthViewSet(viewsets.ViewSet):
             return Response({"error": f"An error occurred: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     # Register Device Key ----------------------------------------------------------------------------------------------------
-    @action(detail=False, methods=["post"], url_path="register-device-key", permission_classes=[IsAuthenticated])
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="register-device-key",
+        permission_classes=[IsAuthenticated],
+    )
     def register_device_key(self, request):
         """
-        Register/rotate a device public key + (NEW: push token support).
+        Register or update a canonical conversation device.
 
-        Policy:
-        - device_id MUST be the key-fingerprint (canonical).
-        - Dedup Plan A: install_id (stable per install) → remove old rows of same install.
-        - Dedup Plan B: fingerprint_hint + replace_same_fp=True.
-        - Both A and B may run; do NOT use elif.
+        Push ownership is transferred to the current account.
+        Previous account rows remain for key history.
         """
         user = request.user
 
-        # ----- Inputs -----
-        device_id = (request.data.get("device_id") or "").strip().lower()
+        # Normalize identifiers.
+        device_id = normalize_device_id(
+            request.data.get("device_id")
+        )
+
+        body_install_id = normalize_install_id(
+            request.data.get("install_id")
+        )
+
+        header_install_id = normalize_install_id(
+            request.headers.get("X-Install-ID")
+        )
+
+        install_id = body_install_id or header_install_id
+
+        header_device_id = normalize_device_id(
+            request.headers.get("X-Device-ID")
+        )
+
+        push_token = normalize_push_token(
+            request.data.get("push_token")
+        )
+
+        platform = normalize_platform(
+            request.data.get("platform")
+        )
+
         public_key = request.data.get("public_key")
         device_name = request.data.get("device_name")
-        allow_rotate = bool(request.data.get("allow_rotate", False))
 
-        # PUSH TOKEN (NEW)
-        push_token = request.data.get("push_token") or None
-        platform = request.data.get("platform") or None
+        allow_rotate = str(
+            request.data.get("allow_rotate", "")
+        ).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
 
-        # ----- install_id -----
-        body_install = (request.data.get("install_id") or "").strip().lower()
-        header_install = (request.headers.get("X-Install-ID") or "").strip().lower()
-        install_id = body_install or header_install or None
+        fingerprint_hint = (
+            request.data.get("fingerprint_hint") or ""
+        ).strip() or None
 
-        # ----- Plan-B hint -----
-        fingerprint_hint = (request.data.get("fingerprint_hint") or "").strip()
-        replace_same_fp = str(request.data.get("replace_same_fp", "")).lower() in ("1", "true", "yes", "on")
+        replace_same_fp = str(
+            request.data.get("replace_same_fp", "")
+        ).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
 
-        # ----- Consistency checks -----
-        header_device = (request.headers.get("X-Device-ID") or "").strip().lower()
-        if header_device and header_device != device_id:
-            return Response({"error": "X-Device-ID mismatch."}, status=status.HTTP_400_BAD_REQUEST)
+        # Validate request identity.
+        if header_device_id and header_device_id != device_id:
+            return Response(
+                {
+                    "error": "X-Device-ID mismatch.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        if body_install and header_install and body_install != header_install:
-            return Response({"error": "X-Install-ID mismatch."}, status=status.HTTP_400_BAD_REQUEST)
+        if (
+            body_install_id
+            and header_install_id
+            and body_install_id != header_install_id
+        ):
+            return Response(
+                {
+                    "error": "X-Install-ID mismatch.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        user_agent = request.META.get("HTTP_USER_AGENT", "") or ""
+        if not device_id or not public_key:
+            return Response(
+                {
+                    "error": "Device ID and public key are required.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if (
+            "-----BEGIN PUBLIC KEY-----" not in public_key
+            or "-----END PUBLIC KEY-----" not in public_key
+        ):
+            return Response(
+                {
+                    "error": "Invalid public key format.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user_agent = request.META.get(
+            "HTTP_USER_AGENT",
+            "",
+        ) or ""
+
         ip_address = get_client_ip(request)
 
-        # ----- Basic validation -----
-        if not device_id or not public_key:
-            return Response({"error": "Device ID and public key are required."},
-                            status=status.HTTP_400_BAD_REQUEST)
-
-        if "-----BEGIN PUBLIC KEY-----" not in public_key or "-----END PUBLIC KEY-----" not in public_key:
-            return Response({"error": "Invalid public key format (PEM expected)."},
-                            status=status.HTTP_400_BAD_REQUEST)
-
-        # ----- Geo -----
+        # Resolve device location.
         location = get_location_from_ip(ip_address) or {}
+
         city = location.get("city")
         region = location.get("region")
         country = location.get("country")
@@ -1890,65 +2049,82 @@ class AuthViewSet(viewsets.ViewSet):
             or country
         )
 
-        # ----- Limits -----
         try:
-            MAX_ACTIVE_DEVICE_KEYS = int(getattr(settings, "MAX_ACTIVE_DEVICE_KEYS", 10))
-        except Exception:
-            MAX_ACTIVE_DEVICE_KEYS = 10
+            max_active_devices = int(
+                getattr(
+                    settings,
+                    "MAX_ACTIVE_DEVICE_KEYS",
+                    10,
+                )
+            )
+        except (TypeError, ValueError):
+            max_active_devices = 10
 
         try:
-            POP_TTL_MINUTES = int(getattr(settings, "POP_TTL_MINUTES", 10))
-        except Exception:
-            POP_TTL_MINUTES = 10
+            pop_ttl_minutes = int(
+                getattr(
+                    settings,
+                    "POP_TTL_MINUTES",
+                    10,
+                )
+            )
+        except (TypeError, ValueError):
+            pop_ttl_minutes = 10
 
         pop_payload = None
         dedup_removed_ids = []
         created = False
         rotated = False
+        ownership_released_count = 0
 
-        # =====================================================================================
-        # TRANSACTION START
-        # =====================================================================================
         with transaction.atomic():
-
-            # ----- Lock this device_id for this user -----
             existing = (
                 UserDeviceKey.objects
-                .select_for_update(of=("self",))
-                .filter(user=user, device_id=device_id)
+                .select_for_update()
+                .filter(
+                    user=user,
+                    device_id=device_id,
+                )
                 .first()
             )
 
-            # =================================================================================
-            # 1) EXISTING DEVICE → UPDATE
-            # =================================================================================
             if existing:
-                old_der = _pem_to_der_bytes(existing.public_key)
-                new_der = _pem_to_der_bytes(public_key)
+                old_der = _pem_to_der_bytes(
+                    existing.public_key
+                )
+
+                new_der = _pem_to_der_bytes(
+                    public_key
+                )
 
                 if old_der != new_der:
                     if not allow_rotate:
                         return Response(
                             {
-                                "error": "Public key mismatch for this device_id.",
+                                "error": (
+                                    "Public key mismatch for this device_id."
+                                ),
                                 "code": "KEY_MISMATCH",
                                 "detail": (
-                                    "This device_id is already registered with a different public key. "
-                                    "If you intend to rotate keys, re-send with allow_rotate=true. "
-                                    "Old E2EE messages may no longer be decryptable after rotation."
+                                    "Send allow_rotate=true only when "
+                                    "intentionally rotating this device key."
                                 ),
                             },
                             status=status.HTTP_409_CONFLICT,
                         )
+
                     existing.public_key = public_key
                     rotated = True
 
-                # Update metadata
-                existing.device_name = device_name or existing.device_name
+                existing.device_name = (
+                    device_name
+                    or existing.device_name
+                )
+
                 existing.user_agent = user_agent
                 existing.ip_address = ip_address
-                existing.last_used = timezone.now()
                 existing.is_active = True
+
                 existing.location_city = city
                 existing.location_region = region
                 existing.location_country = country
@@ -1960,47 +2136,94 @@ class AuthViewSet(viewsets.ViewSet):
 
                 if install_id:
                     existing.install_id = install_id
+
                 if fingerprint_hint:
                     existing.fp_hint = fingerprint_hint
 
-                # NEW: store push_token/platform
                 if push_token:
                     existing.push_token = push_token
+
                 if platform:
                     existing.platform = platform
 
-                existing.save(update_fields=[
-                    "public_key", "device_name", "user_agent", "ip_address",
-                    "last_used", "is_active",
-                    "location_city", "location_region", "location_country", "timezone",
-                    "organization", "latitude", "longitude", "postal_code",
-                    "install_id", "fp_hint",
-                    "push_token", "platform",  # NEW
-                ])
+                existing.save(
+                    update_fields=[
+                        "public_key",
+                        "device_name",
+                        "user_agent",
+                        "ip_address",
+                        "is_active",
+                        "location_city",
+                        "location_region",
+                        "location_country",
+                        "timezone",
+                        "organization",
+                        "latitude",
+                        "longitude",
+                        "postal_code",
+                        "install_id",
+                        "fp_hint",
+                        "push_token",
+                        "platform",
+                        "last_used",
+                    ]
+                )
 
                 device_obj = existing
 
-            # =================================================================================
-            # 2) CREATE NEW DEVICE
-            # =================================================================================
             else:
-                active_count = UserDeviceKey.objects.filter(user=user, is_active=True).count()
+                active_count = (
+                    UserDeviceKey.objects
+                    .filter(
+                        user=user,
+                        is_active=True,
+                    )
+                    .count()
+                )
 
-                # Possible rows to remove
-                would_remove_ids = set()
+                removable_ids = set()
 
                 if install_id:
-                    ids = UserDeviceKey.objects.filter(user=user, install_id=install_id).values_list("id", flat=True)
-                    would_remove_ids.update(ids)
+                    removable_ids.update(
+                        UserDeviceKey.objects
+                        .filter(
+                            user=user,
+                            install_id=install_id,
+                        )
+                        .values_list(
+                            "id",
+                            flat=True,
+                        )
+                    )
 
                 if replace_same_fp and fingerprint_hint:
-                    ids = UserDeviceKey.objects.filter(user=user, fp_hint=fingerprint_hint).values_list("id", flat=True)
-                    would_remove_ids.update(ids)
+                    removable_ids.update(
+                        UserDeviceKey.objects
+                        .filter(
+                            user=user,
+                            fp_hint=fingerprint_hint,
+                        )
+                        .values_list(
+                            "id",
+                            flat=True,
+                        )
+                    )
 
-                if active_count >= MAX_ACTIVE_DEVICE_KEYS and (active_count - len(would_remove_ids)) >= MAX_ACTIVE_DEVICE_KEYS:
+                remaining_active_count = (
+                    active_count
+                    - len(removable_ids)
+                )
+
+                if (
+                    active_count >= max_active_devices
+                    and remaining_active_count >= max_active_devices
+                ):
                     return Response(
-                        {"error": "Active device limit reached.", "limit": MAX_ACTIVE_DEVICE_KEYS},
-                        status=status.HTTP_403_FORBIDDEN
+                        {
+                            "error": "Active device limit reached.",
+                            "limit": max_active_devices,
+                        },
+                        status=status.HTTP_403_FORBIDDEN,
                     )
 
                 try:
@@ -2021,137 +2244,250 @@ class AuthViewSet(viewsets.ViewSet):
                         longitude=longitude,
                         postal_code=postal,
                         install_id=install_id,
-                        fp_hint=fingerprint_hint or None,
-
-                        # NEW
+                        fp_hint=fingerprint_hint,
                         push_token=push_token,
                         platform=platform,
                     )
+
                     created = True
 
                 except IntegrityError:
-                    # Lost the race → update existing instead
-                    existing = (
+                    device_obj = (
                         UserDeviceKey.objects
-                        .select_for_update(of=("self",))
-                        .get(user=user, device_id=device_id)
+                        .select_for_update()
+                        .get(
+                            user=user,
+                            device_id=device_id,
+                        )
                     )
 
-                    old_der = _pem_to_der_bytes(existing.public_key)
-                    new_der = _pem_to_der_bytes(public_key)
+                    old_der = _pem_to_der_bytes(
+                        device_obj.public_key
+                    )
+
+                    new_der = _pem_to_der_bytes(
+                        public_key
+                    )
 
                     if old_der != new_der and not allow_rotate:
                         return Response(
                             {
-                                "error": "Public key mismatch for this device_id.",
+                                "error": (
+                                    "Public key mismatch for this device_id."
+                                ),
                                 "code": "KEY_MISMATCH",
                             },
                             status=status.HTTP_409_CONFLICT,
                         )
-                    if old_der != new_der and allow_rotate:
-                        existing.public_key = public_key
+
+                    if old_der != new_der:
+                        device_obj.public_key = public_key
                         rotated = True
 
-                    existing.device_name = device_name or existing.device_name
-                    existing.user_agent = user_agent
-                    existing.ip_address = ip_address
-                    existing.last_used = timezone.now()
-                    existing.is_active = True
-                    existing.location_city = city
-                    existing.location_region = region
-                    existing.location_country = country
-                    existing.timezone = timezone_str
-                    existing.organization = organization
-                    existing.latitude = latitude
-                    existing.longitude = longitude
-                    existing.postal_code = postal
+                    device_obj.device_name = (
+                        device_name
+                        or device_obj.device_name
+                    )
+
+                    device_obj.user_agent = user_agent
+                    device_obj.ip_address = ip_address
+                    device_obj.is_active = True
+
+                    device_obj.location_city = city
+                    device_obj.location_region = region
+                    device_obj.location_country = country
+                    device_obj.timezone = timezone_str
+                    device_obj.organization = organization
+                    device_obj.latitude = latitude
+                    device_obj.longitude = longitude
+                    device_obj.postal_code = postal
 
                     if install_id:
-                        existing.install_id = install_id
+                        device_obj.install_id = install_id
+
                     if fingerprint_hint:
-                        existing.fp_hint = fingerprint_hint
+                        device_obj.fp_hint = fingerprint_hint
 
-                    # NEW
                     if push_token:
-                        existing.push_token = push_token
+                        device_obj.push_token = push_token
+
                     if platform:
-                        existing.platform = platform
+                        device_obj.platform = platform
 
-                    existing.save(update_fields=[
-                        "public_key", "device_name", "user_agent", "ip_address",
-                        "last_used", "is_active",
-                        "location_city", "location_region", "location_country", "timezone",
-                        "organization", "latitude", "longitude", "postal_code",
-                        "install_id", "fp_hint",
-                        "push_token", "platform",  # NEW
-                    ])
-                    device_obj = existing
+                    device_obj.save(
+                        update_fields=[
+                            "public_key",
+                            "device_name",
+                            "user_agent",
+                            "ip_address",
+                            "is_active",
+                            "location_city",
+                            "location_region",
+                            "location_country",
+                            "timezone",
+                            "organization",
+                            "latitude",
+                            "longitude",
+                            "postal_code",
+                            "install_id",
+                            "fp_hint",
+                            "push_token",
+                            "platform",
+                            "last_used",
+                        ]
+                    )
 
-            # =================================================================================
-            # PoP Challenge (unchanged)
-            # =================================================================================
-            issue_pop = created or rotated or (not device_obj.is_verified)
+            # Transfer push ownership.
+            claim_result = claim_device_push_ownership(
+                device_pk=device_obj.pk,
+            )
+
+            device_obj = claim_result.device
+            ownership_released_count = (
+                claim_result.released_count
+            )
+
+            # Issue PoP when required.
+            issue_pop = (
+                created
+                or rotated
+                or not device_obj.is_verified
+            )
+
             if issue_pop:
                 nonce = crsa.randbytes(32)
-                device_obj.pop_challenge_hash = crsa.sha256_bytes(nonce)
-                device_obj.pop_challenge_expiry = timezone.now() + timedelta(minutes=POP_TTL_MINUTES)
+
+                device_obj.pop_challenge_hash = (
+                    crsa.sha256_bytes(nonce)
+                )
+
+                device_obj.pop_challenge_expiry = (
+                    timezone.now()
+                    + timedelta(
+                        minutes=pop_ttl_minutes,
+                    )
+                )
+
                 device_obj.pop_attempts = 0
                 device_obj.is_verified = False
                 device_obj.verified_at = None
 
-                device_obj.save(update_fields=[
-                    "pop_challenge_hash", "pop_challenge_expiry", "pop_attempts",
-                    "is_verified", "verified_at", "last_used",
-                ])
+                device_obj.save(
+                    update_fields=[
+                        "pop_challenge_hash",
+                        "pop_challenge_expiry",
+                        "pop_attempts",
+                        "is_verified",
+                        "verified_at",
+                        "last_used",
+                    ]
+                )
 
-                ct = crsa.rsa_oaep_encrypt_with_public_pem(device_obj.public_key, nonce)
+                ciphertext = (
+                    crsa.rsa_oaep_encrypt_with_public_pem(
+                        device_obj.public_key,
+                        nonce,
+                    )
+                )
+
                 pop_payload = {
-                    "ciphertext_b64": crsa.b64e(ct),
-                    "expires_at": device_obj.pop_challenge_expiry.isoformat(),
-                    "ttl_minutes": POP_TTL_MINUTES,
+                    "ciphertext_b64": crsa.b64e(
+                        ciphertext
+                    ),
+                    "expires_at": (
+                        device_obj
+                        .pop_challenge_expiry
+                        .isoformat()
+                    ),
+                    "ttl_minutes": pop_ttl_minutes,
                 }
 
-            # =================================================================================
-            # Dedup A: install_id
-            # =================================================================================
+            # Remove stale rows for this user only.
             if install_id:
-                stale_qs = UserDeviceKey.objects.filter(user=user, install_id=install_id).exclude(id=device_obj.id)
-                if stale_qs.exists():
-                    dedup_removed_ids.extend(list(stale_qs.values_list("device_id", flat=True)))
-                    stale_qs.delete()
-
-            # =================================================================================
-            # Dedup B: fingerprint_hint
-            # =================================================================================
-            if replace_same_fp and fingerprint_hint:
-                stale_fp_qs = (
+                stale_install_rows = (
                     UserDeviceKey.objects
-                    .filter(user=user, fp_hint=fingerprint_hint)
-                    .exclude(id=device_obj.id)
+                    .select_for_update()
+                    .filter(
+                        user=user,
+                        install_id=install_id,
+                    )
+                    .exclude(
+                        id=device_obj.id,
+                    )
                 )
-                stale_fp_qs = stale_fp_qs.filter(Q(ip_address=ip_address) | Q(is_verified=False))
-                if stale_fp_qs.exists():
-                    dedup_removed_ids.extend(list(stale_fp_qs.values_list("device_id", flat=True)))
-                    stale_fp_qs.delete()
 
-            # =================================================================================
-            # Optional profile country fallback
-            # =================================================================================
+                if stale_install_rows.exists():
+                    dedup_removed_ids.extend(
+                        stale_install_rows.values_list(
+                            "device_id",
+                            flat=True,
+                        )
+                    )
+
+                    stale_install_rows.delete()
+
+            if replace_same_fp and fingerprint_hint:
+                stale_fp_rows = (
+                    UserDeviceKey.objects
+                    .select_for_update()
+                    .filter(
+                        user=user,
+                        fp_hint=fingerprint_hint,
+                    )
+                    .exclude(
+                        id=device_obj.id,
+                    )
+                    .filter(
+                        Q(ip_address=ip_address)
+                        | Q(is_verified=False)
+                    )
+                )
+
+                if stale_fp_rows.exists():
+                    dedup_removed_ids.extend(
+                        stale_fp_rows.values_list(
+                            "device_id",
+                            flat=True,
+                        )
+                    )
+
+                    stale_fp_rows.delete()
+
             if not user.country and profile_country:
                 user.country = profile_country
-                user.save(update_fields=["country"])
-                
-        # =====================================================================================
-        # RESPONSE
-        # =====================================================================================
-        return Response({
-            "message": "Device key registered successfully." if created else "Device key updated.",
-            "created": bool(created),
-            "rotated": bool(rotated),
-            "location": location,
-            "pop": pop_payload,
-            "dedup_removed": dedup_removed_ids,
-        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+                user.save(
+                    update_fields=[
+                        "country",
+                    ]
+                )
+
+        return Response(
+            {
+                "message": (
+                    "Device key registered successfully."
+                    if created
+                    else "Device key updated."
+                ),
+                "created": bool(created),
+                "rotated": bool(rotated),
+                "location": location,
+                "pop": pop_payload,
+                "dedup_removed": list(
+                    dict.fromkeys(
+                        dedup_removed_ids
+                    )
+                ),
+                "push_ownership_released": (
+                    ownership_released_count
+                ),
+            },
+            status=(
+                status.HTTP_201_CREATED
+                if created
+                else status.HTTP_200_OK
+            ),
+        )
 
     # Device Pop Challenge --------------------------------------------------------------------------------
     @action(detail=False, methods=["post"], url_path="device-pop-challenge", permission_classes=[IsAuthenticated])

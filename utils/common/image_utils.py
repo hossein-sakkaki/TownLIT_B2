@@ -1,3 +1,5 @@
+# utils/common/image_utils.py
+
 import os
 import logging
 
@@ -17,17 +19,60 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 logger = logging.getLogger(__name__)
 
 
+def _normalized_rgb_image(image: Image.Image) -> Image.Image:
+    """
+    Return an RGB image ready for high-quality JPEG output.
+
+    Notes:
+    - Applies transparency over white for PNG/WebP/HEIC with alpha.
+    - Avoids black backgrounds when converting transparent images to JPEG.
+    - Keeps normal RGB images untouched when possible.
+    """
+    if image.mode in ("RGBA", "LA"):
+        background = Image.new(
+            "RGB",
+            image.size,
+            (255, 255, 255),
+        )
+
+        alpha = image.getchannel("A") if image.mode == "RGBA" else image.getchannel("A")
+        rgb = image.convert("RGB")
+
+        background.paste(
+            rgb,
+            mask=alpha,
+        )
+
+        return background
+
+    if image.mode == "P":
+        converted = image.convert("RGBA")
+
+        if "A" in converted.getbands():
+            return _normalized_rgb_image(converted)
+
+        return converted.convert("RGB")
+
+    if image.mode != "RGB":
+        return image.convert("RGB")
+
+    return image
+
+
 def convert_image_to_jpg(
     source_path: str,
     instance,
     fileupload: FileUpload,
 ) -> str:
     """
-    Convert uploaded image to normalized JPEG.
+    Convert uploaded image to normalized high-quality JPEG.
 
     Important:
     - Applies EXIF orientation before saving.
-    - This makes stored width/height match actual display orientation.
+    - Preserves display dimensions after iPhone/HEIC rotation.
+    - Uses high-quality JPEG settings to avoid visible degradation.
+    - Uses 4:4:4 chroma sampling for better text, face and detail quality.
+    - Preserves ICC profile when available.
     - Saves through Django storage so it works with local or remote storage.
     """
     temp_input_path = None
@@ -64,8 +109,8 @@ def convert_image_to_jpg(
             # Critical for iPhone / HEIC / rotated JPEG files.
             image = ImageOps.exif_transpose(image)
 
-            if image.mode not in ("RGB",):
-                image = image.convert("RGB")
+            icc_profile = image.info.get("icc_profile")
+            image = _normalized_rgb_image(image)
 
             with NamedTemporaryFile(
                 delete=False,
@@ -73,12 +118,20 @@ def convert_image_to_jpg(
             ) as temp_output:
                 temp_output_path = temp_output.name
 
+            save_kwargs = {
+                "format": "JPEG",
+                "quality": 95,
+                "optimize": True,
+                "progressive": True,
+                "subsampling": 0,
+            }
+
+            if icc_profile:
+                save_kwargs["icc_profile"] = icc_profile
+
             image.save(
                 temp_output_path,
-                "JPEG",
-                quality=88,
-                optimize=True,
-                progressive=True,
+                **save_kwargs,
             )
 
         with open(temp_output_path, "rb") as file:
@@ -88,7 +141,7 @@ def convert_image_to_jpg(
             )
 
         logger.info(
-            "✅ Image converted to normalized JPG: %s",
+            "✅ Image converted to high-quality normalized JPG: %s",
             saved_key,
         )
 

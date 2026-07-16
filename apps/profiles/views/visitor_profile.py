@@ -35,6 +35,9 @@ from apps.profiles.constants.fellowship import CONFIDANT
 from apps.profiles.services.active_profile import get_active_profile
 from apps.accounts.serializers.user_serializers import SimpleCustomUserSerializer
 from apps.core.boundaries.services.policy import BoundaryPolicy
+from apps.accounts.services.username_resolution import (
+    resolve_username,
+)
 
 CustomUser = get_user_model()
 SAFE_PROFILE_UNAVAILABLE_REASON = "temporarily_unavailable"
@@ -50,71 +53,197 @@ class VisitorProfileViewSet(viewsets.GenericViewSet):
     pagination_page_size = 12
 
     # --- helpers -------------------------------------------------
-    def _get_user(self, username: str):
-        try:
-            return (
-                CustomUser.objects
-                .filter(username=username)
-                .filter(Q(is_deleted=False) | Q(is_deleted__isnull=True))
-                .get()
-            )
-        except CustomUser.DoesNotExist:
+    def _resolve_user(self, username: str):
+        resolved = resolve_username(
+            username,
+            include_deleted=False,
+        )
+
+        if resolved is None:
             raise Http404
 
-    def _get_member(self, username: str):
+        return resolved
+
+    def _get_member_for_user(self, user):
         try:
             return (
-                Member.objects.select_related("user", "academic_record")
-                .prefetch_related("service_types", "organization_memberships")
+                Member.objects
+                .select_related(
+                    "user",
+                    "academic_record",
+                )
+                .prefetch_related(
+                    "service_types",
+                    "organization_memberships",
+                )
                 .filter(
-                    user__username=username,
+                    user_id=user.id,
                     is_active=True,
                 )
-                .filter(Q(user__is_deleted=False) | Q(user__is_deleted__isnull=True))
+                .filter(
+                    Q(user__is_deleted=False)
+                    | Q(user__is_deleted__isnull=True)
+                )
                 .get()
             )
         except Member.DoesNotExist:
             raise Http404
 
-    def _get_guest(self, username: str):
+
+    def _get_guest_for_user(self, user):
         try:
             return (
-                GuestUser.objects.select_related("user")
+                GuestUser.objects
+                .select_related("user")
                 .filter(
-                    user__username=username,
+                    user_id=user.id,
                     is_active=True,
                 )
-                .filter(Q(user__is_deleted=False) | Q(user__is_deleted__isnull=True))
+                .filter(
+                    Q(user__is_deleted=False)
+                    | Q(user__is_deleted__isnull=True)
+                )
                 .get()
             )
         except GuestUser.DoesNotExist:
             raise Http404
 
+
+    def _resolve_member_profile(self, username: str):
+        resolved_username = self._resolve_user(
+            username
+        )
+
+        member = self._get_member_for_user(
+            resolved_username.user
+        )
+
+        return {
+            "profile_type": "member",
+            "profile": member,
+            "user": member.user,
+            "requested_username": (
+                resolved_username.requested_username
+            ),
+            "canonical_username": (
+                resolved_username.canonical_username
+            ),
+            "was_alias": resolved_username.was_alias,
+        }
+
+
+    def _resolve_guest_profile(self, username: str):
+        resolved_username = self._resolve_user(
+            username
+        )
+
+        guest = self._get_guest_for_user(
+            resolved_username.user
+        )
+
+        return {
+            "profile_type": "guest",
+            "profile": guest,
+            "user": guest.user,
+            "requested_username": (
+                resolved_username.requested_username
+            ),
+            "canonical_username": (
+                resolved_username.canonical_username
+            ),
+            "was_alias": resolved_username.was_alias,
+        }
+
+
     def _resolve_active_profile(self, username: str):
         """
-        Resolve the active profile by username.
-        Keeps old endpoints intact and powers unified visitor endpoints.
+        Resolve the active profile through either the current username or any
+        permanent historical alias.
+
+        Profile lookup is always performed by stable user_id after resolution.
         """
-        user = self._get_user(username)
+
+        resolved_username = self._resolve_user(
+            username
+        )
+
+        user = resolved_username.user
         active = get_active_profile(user)
 
         if active.profile_type == "member":
-            member = self._get_member(username)
+            member = self._get_member_for_user(
+                user
+            )
+
             return {
                 "profile_type": "member",
                 "profile": member,
                 "user": member.user,
+                "requested_username": (
+                    resolved_username.requested_username
+                ),
+                "canonical_username": (
+                    resolved_username.canonical_username
+                ),
+                "was_alias": resolved_username.was_alias,
             }
 
         if active.profile_type == "guest":
-            guest = self._get_guest(username)
+            guest = self._get_guest_for_user(
+                user
+            )
+
             return {
                 "profile_type": "guest",
                 "profile": guest,
                 "user": guest.user,
+                "requested_username": (
+                    resolved_username.requested_username
+                ),
+                "canonical_username": (
+                    resolved_username.canonical_username
+                ),
+                "was_alias": resolved_username.was_alias,
             }
 
         raise Http404
+
+    def _attach_canonical_profile_headers(
+        self,
+        response,
+        resolved,
+    ):
+        canonical_username = resolved.get(
+            "canonical_username"
+        )
+
+        requested_username = resolved.get(
+            "requested_username"
+        )
+
+        was_alias = bool(
+            resolved.get("was_alias")
+        )
+
+        if canonical_username:
+            response[
+                "X-TownLIT-Canonical-Username"
+            ] = canonical_username
+
+            response[
+                "Content-Location"
+            ] = f"/lit/{canonical_username}"
+
+        response[
+            "X-TownLIT-Username-Alias-Resolved"
+        ] = "1" if was_alias else "0"
+
+        if requested_username:
+            response[
+                "X-TownLIT-Requested-Username"
+            ] = requested_username
+
+        return response
 
     def _is_friend(self, viewer, owner_user) -> bool:
         # True if there's an accepted friendship in either direction
@@ -659,144 +788,290 @@ class VisitorProfileViewSet(viewsets.GenericViewSet):
     
     
     # Profile -----------------------------------------------------
-    @action(detail=False, methods=["get"], url_path=r"profile/(?P<username>[^/]+)")
-    def profile(self, request, username=None):
-        """
-        Old Member-only endpoint.
-        Keeps current frontend behavior unchanged.
-        """
-        member = self._get_member(username)
-        return self._member_profile_response(request, member)
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path=r"profile/(?P<username>[^/]+)",
+    )
+    def profile(
+        self,
+        request,
+        username=None,
+    ):
+        resolved = self._resolve_member_profile(
+            username
+        )
+
+        response = self._member_profile_response(
+            request,
+            resolved["profile"],
+        )
+
+        return self._attach_canonical_profile_headers(
+            response,
+            resolved,
+        )
 
     # Moments -----------------------------------------------------
-    @action(detail=False, methods=["get"], url_path=r"profile/(?P<username>[^/]+)/moments")
-    def moments(self, request, username=None):
-        member = self._get_member(username)
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path=r"profile/(?P<username>[^/]+)/moments",
+    )
+    def moments(
+        self,
+        request,
+        username=None,
+    ):
+        resolved = self._resolve_member_profile(
+            username
+        )
 
-        gate_response = self._profile_content_gate_response(
-            request=request,
-            profile=member,
-            user=member.user,
-            profile_type="member",
+        member = resolved["profile"]
+
+        gate_response = (
+            self._profile_content_gate_response(
+                request=request,
+                profile=member,
+                user=member.user,
+                profile_type="member",
+            )
         )
 
         if gate_response is not None:
-            return gate_response
+            return self._attach_canonical_profile_headers(
+                gate_response,
+                resolved,
+            )
 
-        qs = self._visible_moments_qs(request, member)
+        queryset = self._visible_moments_qs(
+            request,
+            member,
+        )
 
-        page = self.paginate_queryset(qs)
-        serializer = MomentSerializer(page, many=True, context={"request": request})
-        return self.get_paginated_response(serializer.data)
+        page = self.paginate_queryset(
+            queryset
+        )
+
+        serializer = MomentSerializer(
+            page,
+            many=True,
+            context={
+                "request": request,
+            },
+        )
+
+        response = self.get_paginated_response(
+            serializer.data
+        )
+
+        return self._attach_canonical_profile_headers(
+            response,
+            resolved,
+        )
 
     # Prayers -----------------------------------------------------
-    @action(detail=False, methods=["get"], url_path=r"profile/(?P<username>[^/]+)/prayers")
-    def prayers(self, request, username=None):
-        """
-        Old Member-only prayers endpoint.
-        Keeps current frontend behavior unchanged,
-        but applies profile-level privacy/security gates before exposing content.
-        """
-        member = self._get_member(username)
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path=r"profile/(?P<username>[^/]+)/prayers",
+    )
+    def prayers(
+        self,
+        request,
+        username=None,
+    ):
+        resolved = self._resolve_member_profile(
+            username
+        )
 
-        gate_response = self._profile_content_gate_response(
-            request=request,
-            profile=member,
-            user=member.user,
-            profile_type="member",
+        member = resolved["profile"]
+
+        gate_response = (
+            self._profile_content_gate_response(
+                request=request,
+                profile=member,
+                user=member.user,
+                profile_type="member",
+            )
         )
 
         if gate_response is not None:
-            return gate_response
+            return self._attach_canonical_profile_headers(
+                gate_response,
+                resolved,
+            )
 
-        qs = self._visible_prayers_qs(request, member)
+        queryset = self._visible_prayers_qs(
+            request,
+            member,
+        )
 
-        page = self.paginate_queryset(qs)
+        page = self.paginate_queryset(
+            queryset
+        )
+
         serializer = PrayerSerializer(
             page,
             many=True,
-            context={"request": request},
+            context={
+                "request": request,
+            },
         )
 
-        return self.get_paginated_response(serializer.data)
+        response = self.get_paginated_response(
+            serializer.data
+        )
+
+        return self._attach_canonical_profile_headers(
+            response,
+            resolved,
+        )
 
     # Unified Profile --------------------------------------------
-    @action(detail=False, methods=["get"], url_path=r"unified-profile/(?P<username>[^/]+)")
-    def unified_profile(self, request, username=None):
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path=r"unified-profile/(?P<username>[^/]+)",
+    )
+    def unified_profile(
+        self,
+        request,
+        username=None,
+    ):
         """
-        Unified public profile for active Member or GuestUser.
+        Unified public profile for an active Member or GuestUser.
+
+        Current and historical usernames resolve to the same stable user.
         """
-        resolved = self._resolve_active_profile(username)
+
+        resolved = self._resolve_active_profile(
+            username
+        )
+
         profile_type = resolved["profile_type"]
         profile = resolved["profile"]
 
         if profile_type == "member":
-            return self._member_profile_response(request, profile)
+            response = self._member_profile_response(
+                request,
+                profile,
+            )
+
+            return self._attach_canonical_profile_headers(
+                response,
+                resolved,
+            )
 
         if profile_type == "guest":
-            return self._guest_profile_response(request, profile)
+            response = self._guest_profile_response(
+                request,
+                profile,
+            )
+
+            return self._attach_canonical_profile_headers(
+                response,
+                resolved,
+            )
 
         raise Http404
 
     # Unified Moments --------------------------------------------
-    @action(detail=False, methods=["get"], url_path=r"unified-profile/(?P<username>[^/]+)/moments")
-    def unified_moments(self, request, username=None):
-        """
-        Unified public moments for active Member or GuestUser.
-        """
-        resolved = self._resolve_active_profile(username)
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path=r"unified-profile/(?P<username>[^/]+)/moments",
+    )
+    def unified_moments(
+        self,
+        request,
+        username=None,
+    ):
+        resolved = self._resolve_active_profile(
+            username
+        )
+
         profile_type = resolved["profile_type"]
         owner_profile = resolved["profile"]
         user = resolved["user"]
 
-        gate_response = self._profile_content_gate_response(
-            request=request,
-            profile=owner_profile,
-            user=user,
-            profile_type=profile_type,
+        gate_response = (
+            self._profile_content_gate_response(
+                request=request,
+                profile=owner_profile,
+                user=user,
+                profile_type=profile_type,
+            )
         )
 
         if gate_response is not None:
-            return gate_response
+            return self._attach_canonical_profile_headers(
+                gate_response,
+                resolved,
+            )
 
-        qs = self._visible_moments_qs(request, owner_profile)
+        queryset = self._visible_moments_qs(
+            request,
+            owner_profile,
+        )
 
-        page = self.paginate_queryset(qs)
+        page = self.paginate_queryset(
+            queryset
+        )
+
         serializer = MomentProfileGridSerializer(
             page,
             many=True,
-            context={"request": request},
+            context={
+                "request": request,
+            },
         )
-        return self.get_paginated_response(serializer.data)
+
+        response = self.get_paginated_response(
+            serializer.data
+        )
+
+        return self._attach_canonical_profile_headers(
+            response,
+            resolved,
+        )
     
     # Unified Prayers --------------------------------------------
-    @action(detail=False, methods=["get"], url_path=r"unified-profile/(?P<username>[^/]+)/prayers")
-    def unified_prayers(self, request, username=None):
-        """
-        Unified public prayers for active profile.
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path=r"unified-profile/(?P<username>[^/]+)/prayers",
+    )
+    def unified_prayers(
+        self,
+        request,
+        username=None,
+    ):
+        resolved = self._resolve_active_profile(
+            username
+        )
 
-        Member can have prayers.
-        Guest currently has no prayers, but profile-level gates are still applied
-        so iOS can understand limited/private guest state consistently.
-        """
-        resolved = self._resolve_active_profile(username)
         profile_type = resolved["profile_type"]
         owner_profile = resolved["profile"]
         user = resolved["user"]
 
-        gate_response = self._profile_content_gate_response(
-            request=request,
-            profile=owner_profile,
-            user=user,
-            profile_type=profile_type,
+        gate_response = (
+            self._profile_content_gate_response(
+                request=request,
+                profile=owner_profile,
+                user=user,
+                profile_type=profile_type,
+            )
         )
 
         if gate_response is not None:
-            return gate_response
+            return self._attach_canonical_profile_headers(
+                gate_response,
+                resolved,
+            )
 
-        # Guest has no prayers for now.
         if profile_type != "member":
-            return Response(
+            response = Response(
                 {
                     "count": 0,
                     "next": None,
@@ -806,15 +1081,36 @@ class VisitorProfileViewSet(viewsets.GenericViewSet):
                 status=status.HTTP_200_OK,
             )
 
-        qs = self._visible_prayers_qs(request, owner_profile)
+            return self._attach_canonical_profile_headers(
+                response,
+                resolved,
+            )
 
-        page = self.paginate_queryset(qs)
+        queryset = self._visible_prayers_qs(
+            request,
+            owner_profile,
+        )
+
+        page = self.paginate_queryset(
+            queryset
+        )
+
         serializer = PrayerProfileGridSerializer(
             page,
             many=True,
-            context={"request": request},
+            context={
+                "request": request,
+            },
         )
-        return self.get_paginated_response(serializer.data)
+
+        response = self.get_paginated_response(
+            serializer.data
+        )
+
+        return self._attach_canonical_profile_headers(
+            response,
+            resolved,
+        )
     
     # Unified Friends ---------------------------------------------
     @action(detail=False, methods=["get"], url_path=r"unified-profile/(?P<username>[^/]+)/friends")
@@ -839,7 +1135,10 @@ class VisitorProfileViewSet(viewsets.GenericViewSet):
         )
 
         if gate_response is not None:
-            return gate_response
+            return self._attach_canonical_profile_headers(
+                gate_response,
+                resolved,
+            )
 
         owner_friend_ids = self._friend_ids_for_user(owner_user)
 
@@ -885,13 +1184,24 @@ class VisitorProfileViewSet(viewsets.GenericViewSet):
             .order_by("username_lower")
         )
 
-        return Response(
+        response = Response(
             {
                 "total_count": len(owner_friend_ids),
                 "mutual_count": len(mutual_ids),
-                "mutual_friends": self._serialize_friend_users(request, mutual_qs),
-                "other_friends": self._serialize_friend_users(request, other_qs),
+                "mutual_friends": self._serialize_friend_users(
+                    request,
+                    mutual_qs,
+                ),
+                "other_friends": self._serialize_friend_users(
+                    request,
+                    other_qs,
+                ),
                 "profile_gate": None,
             },
             status=status.HTTP_200_OK,
+        )
+
+        return self._attach_canonical_profile_headers(
+            response,
+            resolved,
         )

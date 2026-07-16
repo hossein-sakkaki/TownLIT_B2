@@ -123,3 +123,37 @@ def build_testimony_create_link(
         params["u"] = username
 
     return f"/profiles/members/profile?{urlencode(params)}"
+
+# ------------------------------------------------------------
+# Friendships
+# ------------------------------------------------------------
+def build_friendship_request_link(
+    *,
+    friendship_id: int,
+    user_id: int | None = None,
+    username: str | None = None,
+    request_kind: str = "received",
+) -> str:
+    """
+    Build a precise friendship request deep link.
+    """
+    params = {
+        "tab": "requests",
+        "request_id": friendship_id,
+        "friendship_id": friendship_id,
+        "request_kind": request_kind,
+    }
+
+    if user_id is not None:
+        params["user_id"] = user_id
+
+    if username:
+        cleaned_username = str(username).strip()
+
+        if cleaned_username:
+            params["username"] = cleaned_username
+
+    return (
+        "/settings/friendships?"
+        f"{urlencode(params)}"
+    )

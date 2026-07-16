@@ -12,7 +12,9 @@ def build_humanize_prompt(
 ) -> list[dict]:
     """
     Production-grade TownLIT humanization prompt.
-    Safe for caching and multi-language use.
+
+    The caller may send either a complete text or one paragraph.
+    Paragraph and line-break structure must be preserved.
     """
 
     system_prompt = (
@@ -27,18 +29,22 @@ def build_humanize_prompt(
         "- Do NOT add new ideas, explanations, or interpretations\n"
         "- Do NOT preach, sermonize, or sound theological or archaic\n"
         "- Do NOT exaggerate spiritual language\n"
-        "- Do NOT shorten or expand the sentence\n\n"
+        "- Do NOT shorten or expand the text\n"
+        "- Preserve all paragraph boundaries and intentional line breaks\n"
+        "- Do NOT merge separate paragraphs\n"
+        "- Do NOT turn paragraphs into bullets unless the source already uses bullets\n\n"
         "Word choice guidance:\n"
         "- Prefer commonly used, contemporary expressions\n"
         "- If multiple correct words exist, choose the one that sounds most natural today\n"
         "- Use faith-sensitive terms ONLY if they are widely used and natural in daily language\n\n"
         f"Output rules:\n"
         f"- Return ONLY the final improved text in '{target_language}'\n"
-        f"- No quotes, no explanations, no extra formatting"
+        f"- Preserve the same paragraph and line-break structure as the input\n"
+        f"- No quotes, no explanations, and no additional formatting"
     )
 
     user_prompt_parts = [
-        "SOURCE TEXT (for meaning reference only):",
+        "SOURCE TEXT (for meaning and structure reference):",
         source_text,
         "",
         "CURRENT TRANSLATION:",
@@ -47,7 +53,7 @@ def build_humanize_prompt(
         "TASK:",
         (
             "Refine the CURRENT TRANSLATION to sound more natural and warm, "
-            "while keeping the meaning exactly the same."
+            "while preserving the exact meaning and the same paragraph structure."
         ),
     ]
 
@@ -56,13 +62,24 @@ def build_humanize_prompt(
             [
                 "",
                 "OPTIONAL LANGUAGE HINTS (apply only if fully natural):",
-                *[f"- {hint}" for hint in language_hints],
+                *[
+                    f"- {hint}"
+                    for hint in language_hints
+                ],
             ]
         )
 
-    user_prompt = "\n".join(user_prompt_parts)
+    user_prompt = "\n".join(
+        user_prompt_parts
+    )
 
     return [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
+        {
+            "role": "system",
+            "content": system_prompt,
+        },
+        {
+            "role": "user",
+            "content": user_prompt,
+        },
     ]

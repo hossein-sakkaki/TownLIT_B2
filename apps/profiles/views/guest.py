@@ -1,6 +1,7 @@
 # apps/profiles/views/guest.py
 
 from django.contrib.auth import get_user_model
+from django.http import Http404
 
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -19,6 +20,9 @@ from apps.posts.models.moment import Moment
 from apps.posts.serializers.moments import MomentSerializer
 from apps.posts.services.feed_access import get_visible_posts
 from utils.api.error_response import build_validation_error_response
+from apps.accounts.services.username_resolution import (
+    resolve_username,
+)
 
 CustomUser = get_user_model()
 
@@ -27,6 +31,34 @@ class GuestUserViewSet(viewsets.ModelViewSet):
     queryset = GuestUser.objects.all()
     permission_classes = [IsAuthenticated]
     serializer_class = GuestUserSerializer
+
+
+    def _resolve_public_guest(
+        self,
+        username: str,
+    ):
+        resolved_username = resolve_username(
+            username,
+            include_deleted=False,
+        )
+
+        if resolved_username is None:
+            raise Http404
+
+        guest = (
+            GuestUser.objects
+            .select_related("user")
+            .filter(
+                user_id=resolved_username.user.id,
+                is_active=True,
+            )
+            .first()
+        )
+
+        if guest is None:
+            raise Http404
+
+        return guest, resolved_username
 
     def get_queryset(self):
         # Stop deleted users at query level
@@ -182,67 +214,127 @@ class GuestUserViewSet(viewsets.ModelViewSet):
             status=status.HTTP_200_OK,
         )
 
-    @action(detail=False, methods=["get"], url_path=r"profile/(?P<username>[^/.]+)", permission_classes=[IsAuthenticated])
-    def profile(self, request, username=None):
-        # Public-by-username view
-        guest = GuestUser.objects.filter(
-            user__username=username,
-            is_active=True,
-        ).select_related("user").first()
-
-        if not guest:
-            return Response(
-                {"error": "Guest profile not found."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        if guest.user.is_suspended:
-            return Response(
-                {"error": "This profile is suspended."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
-        if guest.is_privacy and guest.user != request.user:
-            serializer = LimitedGuestUserSerializer(guest, context={"request": request})
-            return Response(serializer.data, status=status.HTTP_200_OK)
-
-        serializer = PublicGuestUserSerializer(guest, context={"request": request})
-        return Response(serializer.data, status=status.HTTP_200_OK)
-
-    @action(detail=False, methods=["get"], url_path=r"profile/(?P<username>[^/.]+)/moments", permission_classes=[IsAuthenticated])
-    def moments(self, request, username=None):
-        # Public guest moments
-        guest = GuestUser.objects.filter(
-            user__username=username,
-            is_active=True,
-        ).select_related("user").first()
-
-        if not guest:
-            return Response(
-                {"error": "Guest profile not found."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path=r"profile/(?P<username>[^/.]+)",
+        permission_classes=[IsAuthenticated],
+    )
+    def profile(
+        self,
+        request,
+        username=None,
+    ):
+        guest, resolved = self._resolve_public_guest(
+            username
+        )
 
         if guest.user.is_suspended:
             return Response(
-                {"error": "This profile is suspended."},
+                {
+                    "error": "This profile is suspended."
+                },
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        viewer = request.user if request.user.is_authenticated else None
+        if (
+            guest.is_privacy
+            and guest.user != request.user
+        ):
+            serializer = LimitedGuestUserSerializer(
+                guest,
+                context={
+                    "request": request,
+                },
+            )
+        else:
+            serializer = PublicGuestUserSerializer(
+                guest,
+                context={
+                    "request": request,
+                },
+            )
 
-        qs = get_visible_posts(
+        response = Response(
+            serializer.data,
+            status=status.HTTP_200_OK,
+        )
+
+        response[
+            "X-TownLIT-Canonical-Username"
+        ] = resolved.canonical_username
+
+        response[
+            "X-TownLIT-Username-Alias-Resolved"
+        ] = "1" if resolved.was_alias else "0"
+
+        response[
+            "Content-Location"
+        ] = f"/lit/{resolved.canonical_username}"
+
+        return response
+
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path=r"profile/(?P<username>[^/.]+)/moments",
+        permission_classes=[IsAuthenticated],
+    )
+    def moments(
+        self,
+        request,
+        username=None,
+    ):
+        guest, resolved = self._resolve_public_guest(
+            username
+        )
+
+        if guest.user.is_suspended:
+            return Response(
+                {
+                    "error": "This profile is suspended."
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        viewer = (
+            request.user
+            if request.user.is_authenticated
+            else None
+        )
+
+        queryset = get_visible_posts(
             model=Moment,
             owner=guest,
             viewer=viewer,
         )
 
         serializer = MomentSerializer(
-            qs,
+            queryset,
             many=True,
-            context={"request": request},
+            context={
+                "request": request,
+            },
         )
-        return Response(serializer.data, status=status.HTTP_200_OK)
+
+        response = Response(
+            serializer.data,
+            status=status.HTTP_200_OK,
+        )
+
+        response[
+            "X-TownLIT-Canonical-Username"
+        ] = resolved.canonical_username
+
+        response[
+            "X-TownLIT-Username-Alias-Resolved"
+        ] = "1" if resolved.was_alias else "0"
+
+        response[
+            "Content-Location"
+        ] = f"/lit/{resolved.canonical_username}"
+
+        return response
 
     @action(detail=True, methods=["get"], url_path="view", permission_classes=[IsAuthenticated])
     def view_guest_profile(self, request, pk=None):

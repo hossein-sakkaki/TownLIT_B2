@@ -1,11 +1,23 @@
 # validators/usernameValidators/constants.py
 
-MIN_USERNAME_LENGTH = 3
-MAX_USERNAME_LENGTH = 40
+MIN_USERNAME_LENGTH = 5
+MAX_USERNAME_LENGTH = 20
 
 USERNAME_REUSE_COOLDOWN_DAYS = 30
 
-USERNAME_ALLOWED_PATTERN = r"^[a-z0-9._]+$"
+# Allowed:
+#   hossein
+#   hossein_sakkaki
+#   user2026
+#
+# Disallowed:
+#   _hossein
+#   hossein_
+#   hossein__sakkaki
+#   hossein.sakkaki
+#   hossein-sakkaki
+#   hossein_sak_kaki
+USERNAME_ALLOWED_PATTERN = r"^[a-z0-9]+(?:_[a-z0-9]+)?$"
 
 RESERVED_USERNAMES = [
     "admin", "administrator", "root", "superuser", "system", "staff", "team",

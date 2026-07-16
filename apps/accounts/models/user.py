@@ -198,7 +198,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
 
     name = models.CharField(max_length=40, null=True, blank=True, verbose_name='Name')
     family = models.CharField(max_length=40, null=True, blank=True, verbose_name='Family')
-    username = models.CharField(max_length=40, unique=True, blank=True, verbose_name='Username')
+    username = models.CharField(max_length=20, unique=True, blank=True, verbose_name='Username')
 
     birthday = models.DateField(auto_now=False, auto_now_add=False, blank=True, null=True, verbose_name='Birthday')
     gender = models.CharField(max_length=6, choices=GENDER_CHOICES, null=True, blank=True, verbose_name='Gender')
@@ -382,6 +382,6 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
         return f'{self.username}'
 
     def get_absolute_url(self):
-        return f"/{self.username}"
+        return f"/lit/{self.username}"
     
     

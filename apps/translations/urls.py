@@ -1,27 +1,63 @@
 # apps/translations/urls.py
 
 from rest_framework.routers import SimpleRouter
-from apps.translations.views.testimony import TestimonyTranslationViewSet
-from apps.translations.views.moment import MomentTranslationViewSet
-from apps.translations.views.languages import TranslationMetaViewSet
-from apps.translations.views.prayer import PrayerTranslationViewSet
+
+from apps.translations.views.testimony import (
+    TestimonyTranslationViewSet,
+)
+from apps.translations.views.moment import (
+    MomentTranslationViewSet,
+)
+from apps.translations.views.languages import (
+    TranslationMetaViewSet,
+)
+from apps.translations.views.prayer import (
+    PrayerTranslationViewSet,
+)
+from apps.translations.views.member_profile import (
+    MemberProfileTranslationViewSet,
+)
+from apps.translations.views.conversation_key_guidance import (
+    ConversationKeyGuidanceTranslationViewSet,
+)
+
 
 router = SimpleRouter()
+
 router.register(
     r"testimonies",
     TestimonyTranslationViewSet,
     basename="translation-testimony",
 )
+
 router.register(
     r"moments",
     MomentTranslationViewSet,
     basename="translation-moment",
 )
+
 router.register(
     r"prayers",
     PrayerTranslationViewSet,
     basename="translation-prayer",
 )
-router.register(r"meta", TranslationMetaViewSet, basename="translation-meta")
+
+router.register(
+    r"member-profiles",
+    MemberProfileTranslationViewSet,
+    basename="translation-member-profile",
+)
+
+router.register(
+    r"conversation-key-guidance",
+    ConversationKeyGuidanceTranslationViewSet,
+    basename="translation-conversation-key-guidance",
+)
+
+router.register(
+    r"meta",
+    TranslationMetaViewSet,
+    basename="translation-meta",
+)
 
 urlpatterns = router.urls
