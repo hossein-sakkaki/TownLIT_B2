@@ -218,25 +218,66 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
 
         return payload
 
-    def _build_playback(self, *, target, kind: str, field_name: str, intent: str) -> dict:
+    def _resolve_playback_key(
+        self,
+        *,
+        target,
+        field_name: str,
+        job_kind: str,
+    ) -> str | None:
         """
-        Resolve asset key and sign it.
-        """
+        Resolve the current storage key.
 
+        Audio artwork is updated synchronously and does not create a new
+        conversion job, so its current FileField must be preferred.
+        """
+        if field_name == "audio_artwork":
+            current_key = resolve_fallback_filefield_key(
+                target,
+                field_name,
+            )
+
+            if current_key:
+                return current_key
+
+        job_key = get_latest_done_output_path(
+            target_obj=target,
+            field_name=field_name,
+            kind=job_kind,
+        )
+
+        if job_key:
+            return job_key
+
+        return resolve_fallback_filefield_key(
+            target,
+            field_name,
+        )
+
+    def _build_playback(
+        self,
+        *,
+        target,
+        kind: str,
+        field_name: str,
+        intent: str,
+    ) -> dict:
+        """
+        Resolve the asset key and sign it.
+        """
         job_kind = "image" if kind in ("thumbnail", "image") else kind
 
         fields_to_try = [field_name]
+
         if field_name == "thumbnail":
             fields_to_try.append("image")
 
         for fname in fields_to_try:
-            key = get_latest_done_output_path(
-                target_obj=target,
+            key = self._resolve_playback_key(
+                target=target,
                 field_name=fname,
-                kind=job_kind,
+                job_kind=job_kind,
             )
-            if not key:
-                key = resolve_fallback_filefield_key(target, fname)
 
             if key:
                 return self._sign_key(

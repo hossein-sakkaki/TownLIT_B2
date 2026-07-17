@@ -765,6 +765,7 @@ class TestimonyAdmin(admin.ModelAdmin):
                 "video",
                 "preview_media",
                 "file_links",
+                "audio_artwork",
             )
         }),
         ("Video Testimony Review", {

@@ -57,6 +57,33 @@ class ThumbnailFileMixin(BaseS3URLMixin):
         return rep
 
 
+# Audio Artwork File Mixin -------------------------------------------------------------------------
+class AudioArtworkFileMixin(BaseS3URLMixin):
+    """
+    Signed/public URL for Testimony `audio_artwork` field.
+
+    Adds:
+      - audio_artwork_key
+      - audio_artwork_url
+
+    Then renames:
+      - audio_artwork_url -> audio_artwork_signed_url
+
+    This keeps audio artwork aligned with thumbnail/audio/video media contracts.
+    """
+    signed_fields = {
+        "audio_artwork": _get_setting("DEFAULT_AUDIO_ARTWORK_PLACEHOLDER_URL", None),
+    }
+
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+
+        if "audio_artwork_url" in rep:
+            rep["audio_artwork_signed_url"] = rep.pop("audio_artwork_url")
+
+        return rep
+    
+    
 # Image File Mixin --------------------------------------------------------------------------------
 class ImageFileMixin(BaseS3URLMixin):
     """

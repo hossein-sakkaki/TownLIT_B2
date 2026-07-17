@@ -87,9 +87,13 @@ class TestimonyViewSet(OwnerGateMixin, viewsets.ModelViewSet):
             .order_by("-published_at", "-id")
         )
 
-        # retrieve: allow authenticated users to reach the object.
-        # Owner conversion UX is handled later by serializer gate.
-        if self.action == "retrieve":
+        # Owner mutation/detail actions must be able to reach the object
+        # even if media state is temporarily changing during the request.
+        if self.action in {
+            "retrieve",
+            "thumbnail",
+            "audio_artwork",
+        }:
             if self.request.user and self.request.user.is_authenticated:
                 return base
 
@@ -472,13 +476,19 @@ class TestimonyViewSet(OwnerGateMixin, viewsets.ModelViewSet):
     )
     def audio_artwork(self, request, slug=None):
         """
-        Owner-only endpoint to update optional artwork for audio testimony.
+        Owner-only endpoint to update optional artwork for an audio testimony.
 
-        This does not replace the audio file.
-        It only updates `audio_artwork`.
+        This does not replace or reconvert the audio file.
 
-        Audio artwork intentionally keeps using the generic serializer/model
-        save path for now, matching the existing media conversion behavior.
+        The uploaded artwork is normalized synchronously:
+        raw upload -> convert_image_to_jpg -> DB bind final JPG -> build variants.
+
+        Important:
+        - We do NOT temporarily bind the raw upload to the model.
+        - We do NOT call obj.save() for the artwork change.
+        - We update the DB field directly after conversion.
+        This prevents MediaAutoConvertMixin from treating artwork updates as
+        primary audio media changes.
         """
         obj = self.get_object()
         self._assert_is_owner(obj)
@@ -501,25 +511,183 @@ class TestimonyViewSet(OwnerGateMixin, viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        serializer = self.get_serializer(
-            obj,
-            data={
-                "audio_artwork": uploaded,
-            },
-            partial=True,
+        try:
+            self._validate_uploaded_image(uploaded)
+        except Exception as exc:
+            logger.warning(
+                "Invalid testimony audio artwork upload for testimony id=%s: %s",
+                getattr(obj, "id", None),
+                exc,
+                exc_info=True,
+            )
+
+            return Response(
+                {
+                    "audio_artwork": "Invalid image file."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        old_artwork_key = getattr(
+            getattr(obj, "audio_artwork", None),
+            "name",
+            None,
         )
 
-        serializer.is_valid(raise_exception=True)
-        serializer.save(updated_at=timezone.now())
+        raw_artwork_key = None
+        converted_key = None
 
-        refreshed = self.get_object()
+        try:
+            # Step 1:
+            # Save raw upload directly to storage.
+            # Do not bind raw upload to the model.
+            self._rewind_uploaded_file(uploaded)
+
+            field = Testimony._meta.get_field("audio_artwork")
+            generated_raw_key = field.generate_filename(
+                obj,
+                uploaded.name,
+            )
+
+            raw_artwork_key = default_storage.save(
+                str(generated_raw_key).lstrip("/"),
+                uploaded,
+            )
+            raw_artwork_key = str(raw_artwork_key or "").strip().lstrip("/")
+
+            if not raw_artwork_key:
+                return Response(
+                    {
+                        "audio_artwork": "Artwork was not saved."
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            logger.info(
+                "Audio artwork raw upload saved: testimony=%s key=%s",
+                getattr(obj, "id", None),
+                raw_artwork_key,
+            )
+
+            # Step 2:
+            # Normalize synchronously through the project image converter.
+            converted_key = convert_image_to_jpg(
+                source_path=raw_artwork_key,
+                instance=obj,
+                fileupload=Testimony.AUDIO_ARTWORK,
+            )
+
+            converted_key = str(converted_key or "").strip().lstrip("/")
+
+            if not converted_key:
+                return Response(
+                    {
+                        "audio_artwork": "Could not prepare artwork."
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Step 3:
+            # Bind final JPG directly in DB.
+            # This bypasses model.save(), signals and MediaAutoConvertMixin.
+            updated_count = Testimony.objects.filter(pk=obj.pk).update(
+                audio_artwork=converted_key,
+                updated_at=timezone.now(),
+            )
+
+            if updated_count != 1:
+                return Response(
+                    {
+                        "audio_artwork": "Could not save artwork."
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            refreshed = Testimony.objects.get(pk=obj.pk)
+
+            persisted_key = getattr(
+                getattr(refreshed, "audio_artwork", None),
+                "name",
+                None,
+            )
+            persisted_key = str(persisted_key or "").strip().lstrip("/")
+
+            if persisted_key != converted_key:
+                logger.error(
+                    "Audio artwork DB bind mismatch: testimony=%s expected=%s actual=%s",
+                    getattr(obj, "id", None),
+                    converted_key,
+                    persisted_key,
+                )
+
+                return Response(
+                    {
+                        "audio_artwork": "Artwork was prepared but not attached."
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Step 4:
+            # Build metadata and variants immediately.
+            self._build_and_store_image_asset(
+                instance=refreshed,
+                field_name="audio_artwork",
+                key=converted_key,
+            )
+
+            refreshed = Testimony.objects.get(pk=obj.pk)
+
+            logger.info(
+                "Audio artwork updated: testimony=%s old=%s raw=%s converted=%s",
+                getattr(obj, "id", None),
+                old_artwork_key,
+                raw_artwork_key,
+                converted_key,
+            )
+
+            # Step 5:
+            # Cleanup only after DB bind and media asset creation succeeded.
+            if raw_artwork_key and raw_artwork_key != converted_key:
+                self._safe_delete_storage_key(
+                    raw_artwork_key,
+                    label="raw testimony audio artwork",
+                )
+
+            if old_artwork_key and old_artwork_key != converted_key:
+                self._safe_delete_storage_key(
+                    old_artwork_key,
+                    label="old testimony audio artwork",
+                )
+
+        except Exception as exc:
+            logger.exception(
+                "Failed to normalize testimony audio artwork for testimony id=%s: %s",
+                getattr(obj, "id", None),
+                exc,
+            )
+
+            # If conversion failed after saving raw, cleanup raw only.
+            # Never delete old artwork on failure.
+            if raw_artwork_key and raw_artwork_key != converted_key:
+                self._safe_delete_storage_key(
+                    raw_artwork_key,
+                    label="failed raw testimony audio artwork",
+                )
+
+            return Response(
+                {
+                    "audio_artwork": "Could not prepare artwork."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         response_serializer = self.get_serializer(refreshed)
 
         return Response(
             response_serializer.data,
             status=status.HTTP_200_OK,
         )
-
+        
     # -------------------------------------------------
     # Feed (cursor-based, home timeline)
     # -------------------------------------------------

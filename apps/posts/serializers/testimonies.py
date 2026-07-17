@@ -15,6 +15,7 @@ from common.file_handlers.media_mixins import (
     AudioFileMixin,
     VideoFileMixin,
     ThumbnailFileMixin,
+    AudioArtworkFileMixin,
 )
 from common.serializers.targets import InstanceTargetMixin
 from apps.core.ownership.utils import resolve_owner_from_request
@@ -111,9 +112,10 @@ def _image_asset_payload(
     """
     Return thumbnail/image-like asset metadata.
 
-    For Testimony we intentionally keep this minimal:
-    - thumbnail_asset is the only profile/media preview asset needed.
-    - old testimonies fall back to obj.thumbnail.name.
+    For Testimony this is used for image-like secondary media:
+    - thumbnail_asset for video testimony poster/banner
+    - audio_artwork_asset for audio testimony artwork
+    - old records fall back to the model field key
     """
     asset = _media_asset(obj, field_name)
     key = _clean_asset_key(asset.get("key")) or _clean_asset_key(fallback_key)
@@ -139,6 +141,7 @@ class TestimonySerializer(
     AudioFileMixin,
     VideoFileMixin,
     ThumbnailFileMixin,
+    AudioArtworkFileMixin,
     serializers.ModelSerializer,
 ):
     """
@@ -519,7 +522,11 @@ class TestimonySerializer(
 # -------------------------------------------------
 # Profile header serializer
 # -------------------------------------------------
-class TestimonyProfileHeaderSerializer(serializers.ModelSerializer):
+class TestimonyProfileHeaderSerializer(
+    ThumbnailFileMixin,
+    AudioArtworkFileMixin,
+    serializers.ModelSerializer,
+):
     """
     Lightweight serializer for profile testimony header/carousel.
 
@@ -700,6 +707,8 @@ class TestimonyProfileHeaderSerializer(serializers.ModelSerializer):
 # -------------------------------------------------
 class TestimonyStreamPayloadSerializer(
     InstanceTargetMixin,
+    ThumbnailFileMixin,
+    AudioArtworkFileMixin,
     serializers.ModelSerializer,
 ):
     """
