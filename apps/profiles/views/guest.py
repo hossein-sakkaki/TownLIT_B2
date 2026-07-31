@@ -1,6 +1,14 @@
-# apps/profiles/views/guest.py
+#
+#  apps/profiles/views/guest.py
+#  TownLIT
+#
+#  Created by Hossein Sakkaki on 2026-04-01.
+#  Last Update by Hossein Sakkaki on 2026-07-30.
+#
 
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
+from django.db import IntegrityError, transaction
 from django.http import Http404
 
 from rest_framework import status, viewsets
@@ -25,6 +33,11 @@ from apps.accounts.services.username_resolution import (
 )
 
 CustomUser = get_user_model()
+import logging
+logger = logging.getLogger(
+    __name__
+)
+
 
 
 class GuestUserViewSet(viewsets.ModelViewSet):
@@ -130,47 +143,138 @@ class GuestUserViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["post"], url_path="update-profile", permission_classes=[IsAuthenticated])
     def update_profile(self, request):
-        # Block deleted accounts
-        if getattr(request.user, "is_deleted", False):
+        # Block deleted accounts.
+        if getattr(
+            request.user,
+            "is_deleted",
+            False,
+        ):
             return Response(
-                {"error": "Your account is deactivated. Reactivate first to update your profile."},
+                {
+                    "error": (
+                        "Your account is deactivated. "
+                        "Reactivate first to update your profile."
+                    ),
+                },
                 status=status.HTTP_403_FORBIDDEN,
             )
 
         try:
             guest = request.user.guest_profile
-        except (GuestUser.DoesNotExist, AttributeError):
+
+        except (
+            GuestUser.DoesNotExist,
+            AttributeError,
+        ):
             return Response(
-                {"error": "Guest profile not found. Please create a guest profile first."},
+                {
+                    "error": (
+                        "Guest profile not found. "
+                        "Please create a guest profile first."
+                    ),
+                },
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        serializer = self.get_serializer(guest, data=request.data, partial=True)
+        serializer = self.get_serializer(
+            guest,
+            data=request.data,
+            partial=True,
+        )
 
         if not serializer.is_valid():
-            return build_validation_error_response(serializer.errors)
+            return build_validation_error_response(
+                serializer.errors
+            )
 
-        updated_guest = serializer.save()
+        try:
+            with transaction.atomic():
+                updated_guest = serializer.save()
+
+        except ValidationError as exc:
+            if hasattr(
+                exc,
+                "message_dict",
+            ):
+                errors = exc.message_dict
+            else:
+                errors = {
+                    "non_field_errors": (
+                        getattr(
+                            exc,
+                            "messages",
+                            None,
+                        )
+                        or [str(exc)]
+                    ),
+                }
+
+            return build_validation_error_response({
+                "user": errors,
+            })
+
+        except IntegrityError as exc:
+            error_text = str(
+                exc
+            )
+
+            if (
+                "accounts_user_distinct_profile_languages"
+                in error_text
+            ):
+                return build_validation_error_response({
+                    "user": {
+                        "secondary_language": [
+                            (
+                                "Primary and secondary languages "
+                                "must be different."
+                            )
+                        ],
+                    },
+                })
+
+            logger.exception(
+                "Guest profile update integrity error | user_id=%s",
+                request.user.id,
+            )
+
+            return Response(
+                {
+                    "error": (
+                        "The profile could not be updated "
+                        "because some values conflict."
+                    ),
+                    "code": "profile_update_conflict",
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
 
         user_data = CustomUserSerializer(
             updated_guest.user,
-            context={"request": request},
+            context={
+                "request": request,
+            },
         ).data
 
         guest_data = GuestUserSerializer(
             updated_guest,
-            context={"request": request},
+            context={
+                "request": request,
+            },
         ).data
 
         return Response(
             {
-                "message": "Guest profile updated successfully.",
+                "message": (
+                    "Guest profile updated successfully."
+                ),
                 "guest": guest_data,
                 "user": user_data,
             },
             status=status.HTTP_200_OK,
         )
-
+        
+        
     @action(detail=False, methods=["post"], url_path="update-profile-image", permission_classes=[IsAuthenticated])
     def update_profile_image(self, request):
         # Block deleted accounts

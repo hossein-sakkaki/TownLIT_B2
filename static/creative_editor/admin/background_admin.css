@@ -1,0 +1,111 @@
+/* Creative Editor Background Admin */
+
+.creative-background-list-preview {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 54px;
+    height: 78px;
+    overflow: hidden;
+    border-radius: 12px;
+    border: 1px solid rgba(0, 0, 0, 0.14);
+    box-shadow: 0 5px 14px rgba(0, 0, 0, 0.16);
+}
+
+.creative-background-list-preview span {
+    position: absolute;
+    top: 5px;
+    right: 6px;
+    color: #F6C860;
+    font-size: 14px;
+    text-shadow: 0 1px 5px rgba(0, 0, 0, 0.8);
+}
+
+.creative-background-preview-shell {
+    width: min(100%, 560px);
+}
+
+.creative-background-live-preview {
+    position: relative;
+    width: min(100%, 360px);
+    aspect-ratio: 9 / 16;
+    overflow: hidden;
+    border-radius: 24px;
+    border: 1px solid rgba(0, 0, 0, 0.14);
+    box-shadow:
+        0 20px 50px rgba(0, 0, 0, 0.20),
+        0 4px 14px rgba(0, 0, 0, 0.12);
+    transition:
+        background 180ms ease,
+        opacity 180ms ease;
+}
+
+.creative-background-preview-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    padding: 24px;
+    color: white;
+    background:
+        linear-gradient(
+            180deg,
+            transparent 40%,
+            rgba(0, 0, 0, 0.52) 100%
+        );
+    box-sizing: border-box;
+}
+
+.creative-background-preview-overlay strong {
+    font-size: 28px;
+    line-height: 1.15;
+}
+
+.creative-background-preview-overlay span {
+    margin-top: 5px;
+    font-size: 13px;
+    opacity: 0.84;
+}
+
+.creative-background-preview-values {
+    margin-top: 14px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: #f4f4f4;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    word-break: break-word;
+}
+
+.creative-background-json-preview {
+    max-height: 300px;
+    overflow: auto;
+    margin: 0;
+    padding: 14px;
+    border-radius: 12px;
+    color: #e5e7eb;
+    background: #111827;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.creative-consumer-badge {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 999px;
+    color: #064e3b;
+    background: #d1fae5;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.creative-background-color-input {
+    max-width: 240px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.creative-background-colors-input {
+    max-width: 620px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}

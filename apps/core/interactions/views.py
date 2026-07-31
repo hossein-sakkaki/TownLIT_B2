@@ -16,53 +16,93 @@ from apps.core.interactions.serializers import (
     ReactionToggleSerializer,
     ReactionActorSerializer,
 )
+from apps.posts.services.boundary_interactions import (
+    check_reaction_create_boundary,
+    content_interaction_error_payload,
+)
 import logging
 
 logger = logging.getLogger(__name__)
 
 def _resolve_content_type(raw_value):
-    """
-    Resolve public interaction content_type values safely.
-
-    Accepts:
-      - numeric id: "23"
-      - dotted key: "posts.testimony"
-      - public aliases: "moment", "testimony", "prayer", "pray"
-
-    Important:
-      Avoid ContentType.objects.get(model=raw) because model names are not
-      globally unique across apps and can raise MultipleObjectsReturned.
-    """
-    raw = str(raw_value or "").strip().lower()
+    raw = str(
+        raw_value or ""
+    ).strip().lower()
 
     if not raw:
         raise ContentType.DoesNotExist
 
     if raw.isdigit():
-        return ContentType.objects.get(pk=int(raw))
+        return ContentType.objects.get(
+            pk=int(raw)
+        )
 
     alias_map = {
-        # Canonical public interaction targets
-        "moment": ("posts", "moment"),
-        "testimony": ("posts", "testimony"),
+        "moment": (
+            "posts",
+            "moment",
+        ),
+        "testimony": (
+            "posts",
+            "testimony",
+        ),
+        "prayer": (
+            "posts",
+            "prayer",
+        ),
+        "pray": (
+            "posts",
+            "prayer",
+        ),
+        "prayerresponse": (
+            "posts",
+            "prayer",
+        ),
+        "prayer_response": (
+            "posts",
+            "prayer",
+        ),
+        "prayer-response": (
+            "posts",
+            "prayer",
+        ),
 
-        # Prayer and PrayerResponse share interactions on the parent Prayer.
-        "prayer": ("posts", "prayer"),
-        "pray": ("posts", "prayer"),
-
-        # Defensive aliases: never target PrayerResponse for shared interactions.
-        "prayerresponse": ("posts", "prayer"),
-        "prayer_response": ("posts", "prayer"),
-        "prayer-response": ("posts", "prayer"),
+        # Journey target.
+        "journey": (
+            "posts",
+            "journeyentry",
+        ),
+        "journeyentry": (
+            "posts",
+            "journeyentry",
+        ),
+        "journey_entry": (
+            "posts",
+            "journeyentry",
+        ),
+        "journey-entry": (
+            "posts",
+            "journeyentry",
+        ),
     }
 
     if "." in raw:
-        app_label, model = raw.split(".", 1)
+        app_label, model = raw.split(
+            ".",
+            1,
+        )
+
         app_label = app_label.strip()
         model = model.strip()
 
-        alias_target = alias_map.get(model)
-        if app_label == "posts" and alias_target:
+        alias_target = alias_map.get(
+            model
+        )
+
+        if (
+            app_label == "posts"
+            and alias_target
+        ):
             return ContentType.objects.get(
                 app_label=alias_target[0],
                 model=alias_target[1],
@@ -73,16 +113,19 @@ def _resolve_content_type(raw_value):
             model=model,
         )
 
-    alias_target = alias_map.get(raw)
+    alias_target = alias_map.get(
+        raw
+    )
+
     if alias_target:
         return ContentType.objects.get(
             app_label=alias_target[0],
             model=alias_target[1],
         )
 
-    # Last-resort fallback:
-    # only allow plain model lookup if it is globally unique.
-    matches = ContentType.objects.filter(model=raw)
+    matches = ContentType.objects.filter(
+        model=raw
+    )
 
     count = matches.count()
 
@@ -91,7 +134,10 @@ def _resolve_content_type(raw_value):
 
     if count > 1:
         raise ContentType.MultipleObjectsReturned(
-            f"Ambiguous content_type '{raw}'. Use 'app_label.model'."
+            (
+                f"Ambiguous content_type "
+                f"'{raw}'. Use 'app_label.model'."
+            )
         )
 
     raise ContentType.DoesNotExist
@@ -297,46 +343,118 @@ class InteractionReactionViewSet(viewsets.ModelViewSet):
     # ------------------------------------------------------------------
     # 🔁 Reaction toggle
     # ------------------------------------------------------------------
-    @action(detail=False, methods=["post"])
+    @action(
+        detail=False,
+        methods=["post"],
+    )
     @transaction.atomic
     def toggle(self, request):
-        serializer = ReactionToggleSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        """
+        Toggle or change one reaction with Boundary enforcement.
 
-        content_type_param = serializer.validated_data["content_type"]
-        object_id = serializer.validated_data["object_id"]
-        reaction_type = serializer.validated_data["reaction_type"]
+        Rules:
+        - Same reaction exists: remove it.
+        - New reaction: enforce Boundary.
+        - Changed reaction: enforce Boundary before replacing it.
+        """
+
+        serializer = ReactionToggleSerializer(
+            data=request.data
+        )
+
+        serializer.is_valid(
+            raise_exception=True
+        )
+
+        content_type_param = (
+            serializer.validated_data[
+                "content_type"
+            ]
+        )
+
+        object_id = (
+            serializer.validated_data[
+                "object_id"
+            ]
+        )
+
+        reaction_type = (
+            serializer.validated_data[
+                "reaction_type"
+            ]
+        )
 
         try:
-            ct = _resolve_content_type(content_type_param)
-        except ContentType.DoesNotExist:
-            return Response(
-                {"detail": "Invalid content_type."},
-                status=status.HTTP_400_BAD_REQUEST,
+            ct = _resolve_content_type(
+                content_type_param
             )
 
-        model_class = _resolve_model_class(ct)
+        except ContentType.DoesNotExist:
+            return Response(
+                {
+                    "detail": (
+                        "Invalid content_type."
+                    ),
+                },
+                status=(
+                    status.HTTP_400_BAD_REQUEST
+                ),
+            )
+
+        except ContentType.MultipleObjectsReturned:
+            return Response(
+                {
+                    "detail": (
+                        "Ambiguous content_type. "
+                        "Use 'app_label.model'."
+                    ),
+                },
+                status=(
+                    status.HTTP_400_BAD_REQUEST
+                ),
+            )
+
+        model_class = _resolve_model_class(
+            ct
+        )
+
         if not model_class:
             return Response(
                 {
                     "detail": (
-                        f"Invalid target model. "
-                        f"content_type={ct.app_label}.{ct.model}"
-                    )
+                        "Invalid target model. "
+                        f"content_type="
+                        f"{ct.app_label}."
+                        f"{ct.model}"
+                    ),
                 },
-                status=status.HTTP_400_BAD_REQUEST,
+                status=(
+                    status.HTTP_400_BAD_REQUEST
+                ),
             )
 
-        target = _fetch_target_reaction_counters(model_class, object_id)
+        target = (
+            _fetch_target_reaction_counters(
+                model_class,
+                object_id,
+            )
+        )
+
         if not target:
             return Response(
-                {"detail": "Target not found."},
-                status=status.HTTP_404_NOT_FOUND,
+                {
+                    "detail": (
+                        "Target not found."
+                    ),
+                },
+                status=(
+                    status.HTTP_404_NOT_FOUND
+                ),
             )
 
         user = request.user
 
-        existing = (
+        current_reaction = (
             Reaction.objects
             .select_for_update()
             .filter(
@@ -344,37 +462,97 @@ class InteractionReactionViewSet(viewsets.ModelViewSet):
                 object_id=object_id,
                 name=user,
             )
+            .order_by(
+                "-timestamp",
+                "-id",
+            )
+            .first()
         )
 
-        if existing.exists():
-            current = existing.first()
+        # --------------------------------------------------------------
+        # Same reaction: removal is always allowed.
+        # --------------------------------------------------------------
+        if (
+            current_reaction
+            and current_reaction.reaction_type
+            == reaction_type
+        ):
+            current_reaction.delete()
 
-            if current.reaction_type == reaction_type:
-                current.delete()
-                action_name = "removed"
-            else:
-                current.delete()
+            action_name = "removed"
+
+        else:
+            # ----------------------------------------------------------
+            # New or changed reaction requires Boundary permission.
+            # ----------------------------------------------------------
+            boundary_check = (
+                check_reaction_create_boundary(
+                    actor=user,
+                    content_type=ct,
+                    object_id=object_id,
+                )
+            )
+
+            if not boundary_check.allowed:
+                return Response(
+                    content_interaction_error_payload(
+                        message=(
+                            boundary_check.message
+                        ),
+                        code=(
+                            boundary_check.code
+                        ),
+                    ),
+                    status=(
+                        status.HTTP_403_FORBIDDEN
+                    ),
+                )
+
+            if current_reaction:
+                # Replace only after permission passes.
+                current_reaction.delete()
+
                 Reaction.objects.create(
                     content_type=ct,
                     object_id=object_id,
                     name=user,
-                    reaction_type=reaction_type,
+                    reaction_type=(
+                        reaction_type
+                    ),
                 )
-                action_name = "changed"
-        else:
-            Reaction.objects.create(
-                content_type=ct,
-                object_id=object_id,
-                name=user,
-                reaction_type=reaction_type,
-            )
-            action_name = "added"
 
-        target = _fetch_target_reaction_counters(model_class, object_id)
-        if not target:
+                action_name = "changed"
+
+            else:
+                Reaction.objects.create(
+                    content_type=ct,
+                    object_id=object_id,
+                    name=user,
+                    reaction_type=(
+                        reaction_type
+                    ),
+                )
+
+                action_name = "added"
+
+        refreshed_target = (
+            _fetch_target_reaction_counters(
+                model_class,
+                object_id,
+            )
+        )
+
+        if not refreshed_target:
             return Response(
-                {"detail": "Target not found after toggle."},
-                status=status.HTTP_404_NOT_FOUND,
+                {
+                    "detail": (
+                        "Target not found "
+                        "after toggle."
+                    ),
+                },
+                status=(
+                    status.HTTP_404_NOT_FOUND
+                ),
             )
 
         my_reaction = (
@@ -384,28 +562,49 @@ class InteractionReactionViewSet(viewsets.ModelViewSet):
                 object_id=object_id,
                 name=user,
             )
-            .values_list("reaction_type", flat=True)
+            .values_list(
+                "reaction_type",
+                flat=True,
+            )
             .first()
         )
 
         payload = {
-            "content_type": content_type_param,
+            "content_type": (
+                content_type_param
+            ),
             "object_id": object_id,
             "action": action_name,
-            "reactions_count": target.get("reactions_count") or 0,
-            "reactions_breakdown": target.get("reactions_breakdown") or {},
+            "reactions_count": (
+                refreshed_target.get(
+                    "reactions_count"
+                )
+                or 0
+            ),
+            "reactions_breakdown": (
+                refreshed_target.get(
+                    "reactions_breakdown"
+                )
+                or {}
+            ),
             "my_reaction": my_reaction,
         }
 
-        transaction.on_commit(lambda: _broadcast_reaction_summary_changed(
-            ct=ct,
-            object_id=object_id,
-            action_name=action_name,
-            actor_user_id=request.user.id,
-        ))
+        transaction.on_commit(
+            lambda: (
+                _broadcast_reaction_summary_changed(
+                    ct=ct,
+                    object_id=object_id,
+                    action_name=action_name,
+                    actor_user_id=user.id,
+                )
+            )
+        )
 
         return Response(
-            ReactionSummarySerializer(payload).data,
+            ReactionSummarySerializer(
+                payload
+            ).data,
             status=status.HTTP_200_OK,
         )
         

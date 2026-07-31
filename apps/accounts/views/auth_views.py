@@ -47,6 +47,7 @@ from apps.accounts.models.devices import UserDeviceKey, UserDeviceKeyBackup, Use
 
 from apps.main.services.policy_acceptance import accept_required_policies
 from utils.security.security_manager import SecurityStateManager
+
 # Auth serializers
 from apps.accounts.serializers.auth_serializers import (
     RegisterUserSerializer,
@@ -54,6 +55,11 @@ from apps.accounts.serializers.auth_serializers import (
     VerifyNewBornSerializer,
     ForgetPasswordSerializer,
     ResetPasswordSerializer,
+    ProfileLanguageSelectionSerializer,
+    ProfileLanguageOptionSerializer,
+)
+from apps.accounts.services.profile_languages import (
+    get_profile_language_options,
 )
 
 # User serializers
@@ -88,6 +94,10 @@ import utils as utils
 import logging
 from django.contrib.auth import get_user_model
 from apps.accounts.utils.country import normalize_profile_country
+from apps.accounts.services.conversation_encryption_reset import (
+    ConversationEncryptionResetError,
+    reset_conversation_encryption_identity,
+)
 
 CustomUser = get_user_model()
 logger = logging.getLogger(__name__)
@@ -912,6 +922,142 @@ class AuthViewSet(viewsets.ViewSet):
                 "note": "Feel free to complete your profile or start exploring.",
             },
             status=status.HTTP_200_OK
+        )
+        
+    # Profile Languages ---------------------------------------------------------
+    @action(
+        detail=False,
+        methods=["get", "patch"],
+        url_path="profile-languages",
+        permission_classes=[IsAuthenticated],
+    )
+    def profile_languages(self, request):
+        """
+        Read profile languages or complete language onboarding.
+
+        Profile languages are separate from the language used
+        for policy acceptance during registration.
+        """
+        user = request.user
+
+        has_active_profile = (
+            Member.objects.filter(
+                user=user,
+                is_active=True,
+            ).exists()
+            or GuestUser.objects.filter(
+                user=user,
+                is_active=True,
+            ).exists()
+        )
+
+        if not has_active_profile:
+            return Response(
+                {
+                    "error": (
+                        "Complete profile path selection before "
+                        "choosing profile languages."
+                    ),
+                    "code": "profile_path_required",
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        if request.method == "GET":
+            options = get_profile_language_options()
+
+            option_serializer = (
+                ProfileLanguageOptionSerializer(
+                    options,
+                    many=True,
+                )
+            )
+
+            return Response(
+                {
+                    "languages": option_serializer.data,
+                    "primary_language": (
+                        user.primary_language
+                    ),
+                    "secondary_language": (
+                        user.secondary_language
+                    ),
+                    "completed": bool(
+                        user.language_onboarding_completed
+                    ),
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        serializer = (
+            ProfileLanguageSelectionSerializer(
+                data=request.data,
+            )
+        )
+
+        if not serializer.is_valid():
+            return Response(
+                serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        primary_language = (
+            serializer.validated_data[
+                "primary_language"
+            ]
+        )
+
+        secondary_language = (
+            serializer.validated_data.get(
+                "secondary_language"
+            )
+        )
+
+        with transaction.atomic():
+            locked_user = (
+                CustomUser.objects
+                .select_for_update()
+                .get(pk=user.pk)
+            )
+
+            locked_user.primary_language = (
+                primary_language
+            )
+
+            locked_user.secondary_language = (
+                secondary_language
+            )
+
+            locked_user.language_onboarding_completed = (
+                True
+            )
+
+            # Apply model-level language rules.
+            locked_user.clean()
+
+            locked_user.save(
+                update_fields=[
+                    "primary_language",
+                    "secondary_language",
+                    "language_onboarding_completed",
+                ],
+            )
+
+        response_user = CustomUserSerializer(
+            locked_user,
+            context={
+                "request": request,
+            },
+        ).data
+
+        return Response(
+            {
+                "message": (
+                    "Language preferences saved."
+                ),
+                "user": response_user,
+            },
+            status=status.HTTP_200_OK,
         )
         
     # Login ----------------------------------------------------------------------------------
@@ -1916,6 +2062,73 @@ class AuthViewSet(viewsets.ViewSet):
             logger.error(f"Error in confirm_reactivate_account: {str(e)}")
             return Response({"error": f"An error occurred: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    # Reset Conversation Encryption Identity -----------------------------------
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="reset-conversation-encryption",
+        permission_classes=[IsAuthenticated],
+    )
+    def reset_conversation_encryption(self, request):
+        """
+        Replace the account encryption identity.
+
+        This operation requires:
+        - The current TownLIT account password
+        - Explicit RESET confirmation
+        - A newly generated public key from the client
+
+        Existing encrypted messages may become permanently unreadable.
+        """
+
+        try:
+            result = reset_conversation_encryption_identity(
+                request=request,
+                user=request.user,
+            )
+
+            security_logger.warning(
+                "Conversation encryption identity reset "
+                "user_id=%s device_id=%s removed_devices=%s "
+                "removed_backups=%s",
+                request.user.id,
+                result.device.device_id,
+                result.removed_device_count,
+                result.removed_backup_count,
+            )
+
+            return Response(
+                result.as_dict(),
+                status=status.HTTP_201_CREATED,
+            )
+
+        except ConversationEncryptionResetError as exc:
+            return Response(
+                {
+                    "error": exc.message,
+                    "code": exc.code,
+                },
+                status=exc.status_code,
+            )
+
+        except Exception:
+            security_logger.exception(
+                "Conversation encryption identity reset failed "
+                "for user_id=%s",
+                request.user.id,
+            )
+
+            return Response(
+                {
+                    "error": (
+                        "The encryption identity could not be reset. "
+                        "Your previous encryption data was not changed."
+                    ),
+                    "code": "ENCRYPTION_RESET_FAILED",
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+            
     # Register Device Key ----------------------------------------------------------------------------------------------------
     @action(
         detail=False,

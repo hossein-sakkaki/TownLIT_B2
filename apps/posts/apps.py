@@ -2,72 +2,90 @@
 
 from django.apps import AppConfig
 
+
 class PostsConfig(AppConfig):
-    default_auto_field = "django.db.models.BigAutoField"
+    default_auto_field = (
+        "django.db.models.BigAutoField"
+    )
+
     name = "apps.posts"
 
     def ready(self):
         # -------------------------------------------------
-        # Existing signal registrations (DO NOT TOUCH)
+        # Media cleanup signals
         # -------------------------------------------------
-        from apps.posts.signals import moment_media_cleanup
-        from apps.posts.signals import testimony_media_cleanup
-        from apps.posts.signals import prayer_media_cleanup
-
-        # -------------------------------------------------
-        # New trust-related signal registrations
-        # -------------------------------------------------
-        from apps.posts.signals import trust_activity_signals
-        from apps.posts.signals import townlit_activity_signals
-
-        # -------------------------------------------------
-        # Square registrations
-        # -------------------------------------------------
-        from apps.core.square.registry import (
-            register_square_source,
-            get_square_source,
-            SquareContentSource,
+        from apps.posts.signals import (
+            journey_media_cleanup,
+            moment_media_cleanup,
+            prayer_media_cleanup,
+            testimony_media_cleanup,
         )
 
-        from apps.posts.models.moment import Moment
-        from apps.posts.models.testimony import Testimony
-        from apps.posts.models.pray import Prayer
+        # -------------------------------------------------
+        # Existing trust signals
+        # -------------------------------------------------
+        from apps.posts.signals import (
+            townlit_activity_signals,
+            trust_activity_signals,
+        )
 
-        # -----------------------------
-        # Moment → Square
-        # -----------------------------
+        # -------------------------------------------------
+        # Existing Square registrations
+        # -------------------------------------------------
+        from apps.core.square.registry import (
+            SquareContentSource,
+            get_square_source,
+            register_square_source,
+        )
+
+        from apps.posts.models.moment import (
+            Moment,
+        )
+        from apps.posts.models.pray import (
+            Prayer,
+        )
+        from apps.posts.models.testimony import (
+            Testimony,
+        )
+
         if get_square_source("moment") is None:
             register_square_source(
                 source=SquareContentSource(
                     model=Moment,
                     kind="moment",
-                    media_fields=["image", "video"],
+                    media_fields=[
+                        "image",
+                        "video",
+                    ],
                     requires_conversion=True,
                 )
             )
 
-        # -----------------------------
-        # Testimony → Square
-        # -----------------------------
-        if get_square_source("testimony") is None:
+        if get_square_source(
+            "testimony"
+        ) is None:
             register_square_source(
                 source=SquareContentSource(
                     model=Testimony,
                     kind="testimony",
-                    media_fields=["video"],
+                    media_fields=[
+                        "video",
+                    ],
                     requires_conversion=True,
                 )
             )
 
-        # -----------------------------
-        # Prayer → Square
-        # -----------------------------
         if get_square_source("pray") is None:
             register_square_source(
                 source=SquareContentSource(
                     model=Prayer,
                     kind="pray",
-                    media_fields=["image", "video"],
+                    media_fields=[
+                        "image",
+                        "video",
+                    ],
                     requires_conversion=True,
                 )
             )
+
+        # Journey is intentionally not registered in Square.

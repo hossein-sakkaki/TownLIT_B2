@@ -163,6 +163,31 @@ def testimony_cleanup_media_on_replace(sender, instance: Testimony, **kwargs):
         if old_thumb and old_thumb != new_thumb:
             to_delete.append(("thumbnail", old.thumbnail))
 
+        # audio artwork replaced or cleared
+        old_audio_artwork = getattr(
+            old.audio_artwork,
+            "name",
+            None,
+        )
+
+        new_audio_artwork = getattr(
+            instance.audio_artwork,
+            "name",
+            None,
+        )
+
+        if (
+            old_audio_artwork
+            and old_audio_artwork
+            != new_audio_artwork
+        ):
+            to_delete.append(
+                (
+                    "audio-artwork",
+                    old.audio_artwork,
+                )
+            )
+            
         if not to_delete:
             return
 
@@ -212,9 +237,41 @@ def testimony_cleanup_media_on_delete(sender, instance: Testimony, **kwargs):
             logger.exception("❌ Failed deleting MediaConversionJob paths for testimony %s", instance.pk)
 
         # ✅ 1) delete model-linked fields
-        _safe_delete_fieldfile(getattr(instance, "audio", None), "audio")
-        _safe_delete_fieldfile(getattr(instance, "video", None), "video")
-        _safe_delete_fieldfile(getattr(instance, "thumbnail", None), "thumbnail")
+        _safe_delete_fieldfile(
+            getattr(
+                instance,
+                "audio",
+                None,
+            ),
+            "audio",
+        )
+
+        _safe_delete_fieldfile(
+            getattr(
+                instance,
+                "video",
+                None,
+            ),
+            "video",
+        )
+
+        _safe_delete_fieldfile(
+            getattr(
+                instance,
+                "thumbnail",
+                None,
+            ),
+            "thumbnail",
+        )
+
+        _safe_delete_fieldfile(
+            getattr(
+                instance,
+                "audio_artwork",
+                None,
+            ),
+            "audio-artwork",
+        )
 
         # ✅ 2) cleanup subtitles + transcript
         _cleanup_subtitles_for_testimony(instance)

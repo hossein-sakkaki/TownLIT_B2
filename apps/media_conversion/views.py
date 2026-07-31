@@ -360,57 +360,8 @@ class MediaConversionJobViewSet(viewsets.ReadOnlyModelViewSet):
             )
             return Response({"detail": "Internal error."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-
-    # --------------------------------------------------------
-    # Cancel
-    # --------------------------------------------------------
     # --------------------------------------------------------
     # Cancel job
-    # --------------------------------------------------------
-    @action(detail=True, methods=["post"], url_path="cancel")
-    def cancel(self, request, pk=None):
-        try:
-            job = self.get_queryset().get(pk=pk)
-            target = job.content_object
-
-            if not _safe_can_view_target(request, target):
-                return Response(
-                    {"detail": "Access restricted."},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-
-            job = cancel_media_job(job)
-
-            return Response(
-                self.get_serializer(job).data,
-                status=status.HTTP_200_OK,
-            )
-
-        except MediaConversionJob.DoesNotExist:
-            return Response(
-                {"detail": "Job not found."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        except ValidationError as e:
-            return Response(
-                {"detail": str(e)},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        except Exception:
-            logger.exception(
-                "media_jobs.cancel failed job=%s user=%s",
-                pk,
-                getattr(request.user, "pk", None),
-            )
-            return Response(
-                {"detail": "Internal error."},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-    # --------------------------------------------------------
-    # Retry job
     # --------------------------------------------------------
     @action(detail=True, methods=["post"], url_path="cancel")
     def cancel(self, request, pk=None):

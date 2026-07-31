@@ -3,9 +3,12 @@
 from django.db import models
 from django.utils import timezone
 from django.core.exceptions import ValidationError
-from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from django.db import transaction
+from django.contrib.contenttypes.fields import (
+    GenericForeignKey,
+    GenericRelation,
+)
 
 from utils.common.utils import FileUpload
 from utils.mixins.media_assets import MediaAssetsMixin
@@ -159,6 +162,23 @@ class Testimony(
     object_id = models.PositiveIntegerField()
     content_object = GenericForeignKey("content_type", "object_id")
 
+    # -------------------------------------------------
+    # Generic interactions
+    # -------------------------------------------------
+    reactions = GenericRelation(
+        "posts.Reaction",
+        content_type_field="content_type",
+        object_id_field="object_id",
+        related_query_name="testimony_targets",
+    )
+
+    comments = GenericRelation(
+        "posts.Comment",
+        content_type_field="content_type",
+        object_id_field="object_id",
+        related_query_name="testimony_targets",
+    )
+    
     # -------------------------------------------------
     # Analytics (views)
     # -------------------------------------------------

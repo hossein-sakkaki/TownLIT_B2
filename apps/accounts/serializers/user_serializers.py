@@ -1,13 +1,21 @@
-# accounts/serializers/user_serializers.py
+#
+#  apps/accounts/serializers/user_serializers.py
+#  TownLIT
+#
+#  Created by Hossein Sakkaki on 2023-01-01.
+#  Last Update by Hossein Sakkaki on 2026-07-30.
+#
 
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+from django.db import IntegrityError
 
 from apps.accounts.serializers.label_serializers import CustomLabelSerializer
 from apps.accounts.services.age_policy import validate_standard_account_birthday
 from ..mixins import AvatarURLMixin
 from ..models import CustomLabel, LITShieldGrant
 from django.core.exceptions import ValidationError as DjangoValidationError
+from apps.profilesOrg.constants import LANGUAGE_CHOICES
 
 from apps.accounts.models.username_reservation import UsernameReservation
 from validators.usernameValidators.username_validator import validate_username_format
@@ -76,6 +84,7 @@ class CustomUserAuthSerializer(AvatarURLMixin, serializers.ModelSerializer):
             "primary_language_display",
             "secondary_language",
             "secondary_language_display",
+            "language_onboarding_completed",
             "country_display",
 
             "avatar_url",
@@ -115,7 +124,7 @@ class CustomUserAuthSerializer(AvatarURLMixin, serializers.ModelSerializer):
 
 
 # -------------------------------------------------------------------
-# CustomUserSerializer — Full editable profile (for owner only)
+# CustomUserSerializer — Full editable profile for owner
 # -------------------------------------------------------------------
 class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
     # --- Label + color ---
@@ -130,74 +139,119 @@ class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
     has_litshield_access = serializers.SerializerMethodField()
 
     # --- Display enums ---
-    country_display = serializers.CharField(source='get_country_display', read_only=True)
-    primary_language_display = serializers.CharField(source='get_primary_language_display', read_only=True)
-    secondary_language_display = serializers.CharField(source='get_secondary_language_display', read_only=True)
+    country_display = serializers.CharField(source="get_country_display", read_only=True)
+    primary_language_display = serializers.CharField(source="get_primary_language_display", read_only=True)
+    secondary_language_display = serializers.CharField(source="get_secondary_language_display", read_only=True)
 
-    # --- Profile URL (detail page) ---
+    # --- Profile languages ---
+    primary_language = serializers.ChoiceField(
+        choices=LANGUAGE_CHOICES,
+        required=False,
+        allow_null=False,
+        allow_blank=False,
+    )
+    secondary_language = serializers.ChoiceField(
+        choices=LANGUAGE_CHOICES,
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+    )
+    language_onboarding_completed = serializers.BooleanField(read_only=True)
+
+    # --- Profile URL ---
     profile_url = serializers.SerializerMethodField()
 
-    # --- Avatar proxy (FAST, no S3 signing on frontend) ---
+    # --- Avatar proxy ---
     avatar_url = serializers.SerializerMethodField()
     avatar_cdn_url = serializers.SerializerMethodField()
     avatar_version = serializers.IntegerField(read_only=True)
 
-    # country = write_only field
-    country = serializers.CharField(write_only=True, required=False)
+    # --- Writable country code ---
+    country = serializers.CharField(
+        write_only=True,
+        required=False,
+        allow_blank=False,
+        allow_null=True,
+    )
 
     class Meta:
         model = CustomUser
 
-        # ⚠️ IMPORTANT:
-        # exclude dangerous internal fields but keep profile-related fields.
         exclude = [
-            'registration_id', 'access_pin', 'delete_pin', 'is_active',
-            'is_admin', 'is_deleted', 'reports_count', 'is_superuser',
-            'is_suspended', 'reactivated_at', 'deletion_requested_at',
-            'email_change_tokens', 'reset_token', 'reset_token_expiration',
-            'mobile_verification_code', 'mobile_verification_expiry',
-            'user_active_code', 'user_active_code_expiry',
+            "registration_id",
+            "access_pin",
+            "delete_pin",
+            "is_active",
+            "is_admin",
+            "is_deleted",
+            "reports_count",
+            "is_superuser",
+            "is_suspended",
+            "reactivated_at",
+            "deletion_requested_at",
+            "email_change_tokens",
+            "reset_token",
+            "reset_token_expiration",
+            "mobile_verification_code",
+            "mobile_verification_expiry",
+            "user_active_code",
+            "user_active_code_expiry",
         ]
 
-        read_only_fields = ['id', 'register_date']
+        read_only_fields = [
+            "id",
+            "register_date",
+            "language_onboarding_completed",
+        ]
 
         extra_kwargs = {
-            'password': {'write_only': True},
-            'username': {
-                'validators': []  # username uniqueness manually validated
-            }
+            "password": {"write_only": True},
+            "username": {
+                # Username uniqueness is validated manually.
+                "validators": [],
+            },
         }
 
     # --------------------------------------------------------------------
     # CREATE USER
     # --------------------------------------------------------------------
     def create(self, validated_data):
-        password = validated_data.pop('password', None)
-
+        password = validated_data.pop("password", None)
         instance = CustomUser(**validated_data)
 
         if password:
             instance.set_password(password)
 
-        # Generate RSA keys for E2EE system
+        # Generate RSA keys for E2EE.
         instance.generate_rsa_keys()
 
-        instance.save()
+        try:
+            instance.clean()
+            instance.save()
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(
+                self._django_validation_errors(exc)
+            ) from exc
+        except IntegrityError as exc:
+            self._raise_language_integrity_error(exc)
+            raise
+
         return instance
 
     # --------------------------------------------------------------------
-    # UPDATE USER (owner updates their profile)
+    # UPDATE USER
     # --------------------------------------------------------------------
     def update(self, instance, validated_data):
         old_username = instance.username
+        password = validated_data.pop("password", None)
 
-        password = validated_data.pop('password', None)
+        # Never allow privileged state changes here.
+        validated_data.pop("is_active", None)
+        validated_data.pop("is_admin", None)
+        validated_data.pop("is_superuser", None)
+        validated_data.pop("language_onboarding_completed", None)
 
-        validated_data.pop('is_active', None)
-        validated_data.pop('is_admin', None)
-        validated_data.pop('is_superuser', None)
-
-        profile_image = validated_data.pop('profile_image', None)
+        profile_image = validated_data.pop("profile_image", None)
 
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
@@ -209,13 +263,78 @@ class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
             instance.image_name = profile_image
             instance.avatar_version = (instance.avatar_version or 1) + 1
 
-        instance.save()
+        try:
+            instance.clean()
+            instance.save()
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(
+                self._django_validation_errors(exc)
+            ) from exc
+        except IntegrityError as exc:
+            self._raise_language_integrity_error(exc)
+            raise
 
         if old_username and instance.username != old_username:
             UsernameReservation.reserve(old_username, instance)
 
         return instance
 
+    # --------------------------------------------------------------------
+    # CROSS-FIELD VALIDATION
+    # --------------------------------------------------------------------
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+
+        effective_primary = self._effective_language_value(
+            attrs=attrs,
+            field_name="primary_language",
+        )
+        effective_secondary = self._effective_language_value(
+            attrs=attrs,
+            field_name="secondary_language",
+        )
+
+        # Existing profiles must always retain a primary language.
+        if self.instance is not None and not effective_primary:
+            raise serializers.ValidationError({
+                "primary_language": ["Primary language is required."],
+            })
+
+        if effective_secondary and effective_primary == effective_secondary:
+            raise serializers.ValidationError({
+                "secondary_language": [
+                    "Primary and secondary languages must be different."
+                ],
+            })
+
+        return attrs
+
+    # --------------------------------------------------------------------
+    # LANGUAGE NORMALIZATION
+    # --------------------------------------------------------------------
+    def validate_primary_language(self, value):
+        if value is None:
+            raise serializers.ValidationError(
+                "Primary language is required."
+            )
+
+        normalized = str(value).strip()
+
+        if not normalized:
+            raise serializers.ValidationError(
+                "Primary language is required."
+            )
+
+        return normalized
+
+    def validate_secondary_language(self, value):
+        if value is None:
+            return None
+
+        normalized = str(value).strip()
+
+        # Empty secondary language means remove it.
+        return normalized or None
 
     # --------------------------------------------------------------------
     # VALIDATE BIRTHDAY / AGE POLICY
@@ -223,10 +342,6 @@ class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
     def validate_birthday(self, value):
         """
         Standard TownLIT accounts currently require age 13+.
-
-        This validation is intentionally placed on CustomUserSerializer because
-        birthday belongs to CustomUser but is updated through nested Member/Guest
-        profile serializers.
         """
         return validate_standard_account_birthday(value)
 
@@ -237,16 +352,11 @@ class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
         try:
             username = validate_username_format(value)
         except DjangoValidationError as exc:
-            raise serializers.ValidationError(
-                exc.messages
-            )
+            raise serializers.ValidationError(exc.messages) from exc
 
         current_user = self.instance
 
-        if (
-            current_user is not None
-            and username == current_user.username
-        ):
+        if current_user is not None and username == current_user.username:
             return username
 
         if UsernameReservation.is_reserved_for_other_user(
@@ -258,14 +368,10 @@ class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
                 "and cannot be reassigned."
             )
 
-        existing_users = CustomUser.objects.filter(
-            username=username
-        )
+        existing_users = CustomUser.objects.filter(username=username)
 
         if current_user is not None:
-            existing_users = existing_users.exclude(
-                pk=current_user.pk
-            )
+            existing_users = existing_users.exclude(pk=current_user.pk)
 
         if existing_users.exists():
             raise serializers.ValidationError(
@@ -276,16 +382,56 @@ class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
         return username
 
     # --------------------------------------------------------------------
-    # Profile URL
+    # LANGUAGE HELPERS
+    # --------------------------------------------------------------------
+    def _effective_language_value(self, *, attrs, field_name):
+        """
+        Use the submitted value or preserve the current instance value
+        during partial profile updates.
+        """
+        if field_name in attrs:
+            value = attrs.get(field_name)
+        elif self.instance is not None:
+            value = getattr(self.instance, field_name, None)
+        else:
+            value = None
+
+        if value is None:
+            return None
+
+        normalized = str(value).strip()
+        return normalized or None
+
+    @staticmethod
+    def _django_validation_errors(exc):
+        if hasattr(exc, "message_dict"):
+            return exc.message_dict
+
+        if hasattr(exc, "messages"):
+            return {"non_field_errors": exc.messages}
+
+        return {"non_field_errors": [str(exc)]}
+
+    @staticmethod
+    def _raise_language_integrity_error(exc):
+        if "accounts_user_distinct_profile_languages" in str(exc):
+            raise serializers.ValidationError({
+                "secondary_language": [
+                    "Primary and secondary languages must be different."
+                ],
+            }) from exc
+
+    # --------------------------------------------------------------------
+    # PROFILE URL
     # --------------------------------------------------------------------
     def get_profile_url(self, obj):
         try:
             return obj.get_absolute_url()
         except Exception:
             return None
-        
+
     # --------------------------------------------------------------------
-    # Fast avatar proxy URL
+    # AVATAR URL
     # --------------------------------------------------------------------
     def get_avatar_url(self, obj):
         return self.build_avatar_url(obj)
@@ -294,26 +440,20 @@ class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
         return self.build_avatar_cdn_url(obj)
 
     # --------------------------------------------------------------------
-    # Is TownLIT verified?
+    # TOWNLIT VERIFICATION
     # --------------------------------------------------------------------
     def get_is_townlit_verified(self, obj):
-        """
-        Derived flag:
-        True if user has a member profile AND it is TownLIT verified.
-        """
-        mp = getattr(obj, "member_profile", None)
-        return bool(mp and mp.is_townlit_verified)
+        member_profile = getattr(obj, "member_profile", None)
+        return bool(member_profile and member_profile.is_townlit_verified)
 
     # --------------------------------------------------------------------
-    # LitShield access?
+    # LITSHIELD ACCESS
     # --------------------------------------------------------------------
     def get_has_litshield_access(self, obj):
-        """
-        Security permission flag (LITShield):
-        True ONLY if an active LITShieldGrant exists.
-        Independent from identity or spiritual verification.
-        """
-        return LITShieldGrant.objects.filter(user=obj, is_active=True).exists()
+        return LITShieldGrant.objects.filter(
+            user=obj,
+            is_active=True,
+        ).exists()
 
      
 # -------------------------------------------------------------------

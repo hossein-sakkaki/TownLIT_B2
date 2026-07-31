@@ -4,7 +4,9 @@ from django.db import models
 from django.utils import timezone
 from django.contrib.auth import get_user_model
 
-from utils.common.utils import FileUpload, SlugMixin
+from utils.common.utils import FileUpload
+from utils.mixins.slug_mixin import SlugMixin
+
 from validators.mediaValidators.pdf_validators import validate_pdf_file
 from validators.security_validators import validate_no_executable_file
 

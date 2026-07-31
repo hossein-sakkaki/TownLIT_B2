@@ -24,7 +24,8 @@ from validators.mediaValidators.pdf_validators import validate_pdf_file
 from validators.mediaValidators.image_validators import validate_image_file, validate_image_size
 from validators.security_validators import validate_no_executable_file
 
-from utils.common.utils import FileUpload, SlugMixin
+from utils.common.utils import FileUpload
+from utils.mixins.slug_mixin import SlugMixin
 from django.contrib.auth import get_user_model
 
 CustomUser = get_user_model()

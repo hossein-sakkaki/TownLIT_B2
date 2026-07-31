@@ -6,7 +6,7 @@ from django.contrib.auth import get_user_model
 
 from apps.accounts.models.address import Address
 from apps.profiles.constants.customer import CUSTOMER_DEACTIVATION_REASON_CHOICES
-from utils.common.utils import SlugMixin
+from utils.mixins.slug_mixin import SlugMixin
 from validators.user_validators import validate_phone_number
 
 CustomUser = get_user_model()

@@ -23,6 +23,13 @@ class SyncScope:
 
     STREAM_FEED = "stream.feed"
     MOMENTS_FEED = "moments.feed"
+    
+    # Journey scopes.
+    JOURNEY_ACTIVE = "journey.active"
+    JOURNEY_ARCHIVE = "journey.archive"
+    JOURNEY_ANALYTICS = (
+        "journey.analytics"
+    )
 
     MEDIA_METADATA = "media.metadata"
 

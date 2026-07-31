@@ -55,33 +55,72 @@ def _safe_delete_prefix(storage, prefix: str, label: str):
         logger.exception("❌ Failed deleting S3 prefix (%s): %s", label, prefix)
 
 
-def _safe_delete_filefield(field, label: str):
-    """Delete model FileField + related HLS folder if needed."""
+def _safe_delete_filefield(
+    field,
+    label: str,
+):
+    """
+    Delete one FileField and its HLS folder.
+    """
+
     try:
         if not field:
             return
 
-        name = getattr(field, "name", None)
+        name = getattr(
+            field,
+            "name",
+            None,
+        )
+
         if not name:
             return
 
-        storage = getattr(field, "storage", None)
-        key = str(name).lstrip("/")
+        storage = getattr(
+            field,
+            "storage",
+            None,
+        )
 
-        # 1️⃣ Delete the file itself
-        field.delete(save=False)
+        key = str(
+            name
+        ).lstrip("/")
 
-        # 2️⃣ If this is HLS master (.m3u8), delete folder
-        if label == "video" and key.lower().endswith(".m3u8") and storage:
-            prefix = os.path.dirname(key)
+        field.delete(
+            save=False
+        )
+
+        is_video = (
+            label == "video"
+            or label.endswith(".video")
+            or label.endswith("-video")
+        )
+
+        if (
+            is_video
+            and key.lower().endswith(".m3u8")
+            and storage
+        ):
+            prefix = os.path.dirname(
+                key
+            )
+
             if prefix:
-                _safe_delete_prefix(storage, prefix, "prayer.video-hls")
+                _safe_delete_prefix(
+                    storage,
+                    prefix,
+                    f"{label}-hls",
+                )
 
     except Exception:
         logger.exception(
-            "❌ Failed deleting Prayer media (%s): %s",
+            "Failed deleting Prayer media (%s): %s",
             label,
-            getattr(field, "name", None),
+            getattr(
+                field,
+                "name",
+                None,
+            ),
         )
 
 

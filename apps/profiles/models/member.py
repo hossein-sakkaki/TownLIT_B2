@@ -13,7 +13,8 @@ from apps.profilesOrg.constants_denominations import (
     CHURCH_FAMILY_CHOICES_ALL,
     FAMILIES_BY_BRANCH,
 )
-from utils.common.utils import FileUpload, SlugMixin
+from utils.common.utils import FileUpload
+from utils.mixins.slug_mixin import SlugMixin
 from django.contrib.auth import get_user_model
 
 CustomUser = get_user_model()

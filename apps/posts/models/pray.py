@@ -6,10 +6,13 @@ from urllib.parse import quote
 from django.db import models, transaction
 from django.utils import timezone
 from django.core.exceptions import ValidationError
-from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.auth import get_user_model
 from django.db.models import Q
+from django.contrib.contenttypes.fields import (
+    GenericForeignKey,
+    GenericRelation,
+)
 
 from utils.mixins.slug_mixin import SlugMixin
 from utils.mixins.media_conversion import MediaConversionMixin
@@ -107,6 +110,23 @@ class Prayer(
     object_id = models.PositiveIntegerField()
     content_object = GenericForeignKey("content_type", "object_id")
 
+    # -------------------------------------------------
+    # Generic interactions
+    # -------------------------------------------------
+    reactions = GenericRelation(
+        "posts.Reaction",
+        content_type_field="content_type",
+        object_id_field="object_id",
+        related_query_name="prayer_targets",
+    )
+
+    comments = GenericRelation(
+        "posts.Comment",
+        content_type_field="content_type",
+        object_id_field="object_id",
+        related_query_name="prayer_targets",
+    )
+    
     # --- lifecycle ---
     status = models.CharField(
         max_length=24,

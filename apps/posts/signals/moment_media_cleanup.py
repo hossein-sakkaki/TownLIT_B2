@@ -90,30 +90,71 @@ def _safe_delete_filefield(field, label: str):
         )
 
 
-def _iter_image_item_keys(instance: Moment):
+def _iter_image_item_keys(
+    instance: Moment,
+):
     """
-    Yield unique JSON-backed image keys for multi-photo Moments.
+    Yield source and variant keys for Moment photos.
     """
+
     seen = set()
 
     try:
-        items = instance.normalized_image_items()
+        items = (
+            instance.normalized_image_items()
+        )
+
     except Exception:
         items = []
 
     for item in items:
-        if not isinstance(item, dict):
+        if not isinstance(
+            item,
+            dict,
+        ):
             continue
 
-        key = str(item.get("key") or "").strip().lstrip("/")
-        if not key:
-            continue
+        candidate_values = [
+            item.get("key"),
+        ]
 
-        if key in seen:
-            continue
+        variants = item.get(
+            "variants"
+        )
 
-        seen.add(key)
-        yield key
+        if isinstance(
+            variants,
+            dict,
+        ):
+            candidate_values.extend(
+                variants.values()
+            )
+
+        for value in candidate_values:
+            if isinstance(
+                value,
+                dict,
+            ):
+                value = (
+                    value.get("key")
+                    or value.get("path")
+                )
+
+            key = str(
+                value or ""
+            ).strip().lstrip("/")
+
+            if (
+                not key
+                or key in seen
+            ):
+                continue
+
+            seen.add(
+                key
+            )
+
+            yield key
 
 
 def _delete_image_items(instance: Moment):

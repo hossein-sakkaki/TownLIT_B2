@@ -3,25 +3,75 @@
 from __future__ import annotations
 
 
-# Minimal, soft hints only.
-# Never used as hard replacement rules.
-
 _LANGUAGE_HINTS: dict[str, list[str]] = {
     "fa": [
-        "In Persian Christian usage, 'love' is often expressed as 'محبت' rather than 'عشق'.",
-        "Use modern Persian, not formal or archaic religious language.",
+        (
+            "Use natural contemporary Persian suitable for an app interface. "
+            "Avoid literal English sentence structures."
+        ),
+        (
+            "Prefer warm, clear, everyday Persian over formal, academic, "
+            "bureaucratic, or machine-translated wording."
+        ),
+        (
+            "In Persian Christian usage, use 'محبت' rather than 'عشق' "
+            "when the source refers to spiritual or caring love."
+        ),
+        (
+            "Use natural Persian pronouns and verb forms. Do not preserve "
+            "English word order when it sounds unnatural in Persian."
+        ),
     ],
     "ar": [
-        "Prefer commonly used modern Arabic faith terms, avoid classical or sermon-like wording.",
+        (
+            "Use natural modern Arabic suitable for an app interface. "
+            "Avoid literal English structures and unnecessarily classical wording."
+        ),
     ],
     "en": [
-        "Keep the tone modern and conversational, not sermon-like.",
+        (
+            "Keep the tone modern, clear, warm, and conversational."
+        ),
     ],
 }
 
 
-def get_language_hints(target_language: str) -> list[str]:
+def _base_language_code(
+    value: str | None,
+) -> str:
     """
-    Return optional soft language hints for the target language.
+    Resolve the base BCP-47 language code.
     """
-    return _LANGUAGE_HINTS.get(target_language, []).copy()
+
+    return (
+        str(
+            value or ""
+        )
+        .strip()
+        .replace(
+            "_",
+            "-",
+        )
+        .lower()
+        .split(
+            "-",
+            1,
+        )[0]
+    )
+
+
+def get_language_hints(
+    target_language: str,
+) -> list[str]:
+    """
+    Return soft hints for a target language.
+    """
+
+    base_code = _base_language_code(
+        target_language
+    )
+
+    return _LANGUAGE_HINTS.get(
+        base_code,
+        [],
+    ).copy()

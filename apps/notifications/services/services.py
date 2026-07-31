@@ -350,38 +350,58 @@ def _owner_username_for_content_obj(obj) -> str | None:
     return None
 
 
-def _profile_key_path_for_content_obj(obj, ct_key: str) -> str | None:
-    """
-    Return the profile viewer key path used by iOS.
-
-    Examples:
-    - moments.image
-    - moments.video
-    - prayers.image
-    - prayers.video
-    - testimonies.written
-    - testimonies.audio
-    - testimonies.video
-    """
+def _profile_key_path_for_content_obj(
+    obj,
+    ct_key: str,
+) -> str | None:
     if not obj:
         return None
 
     if ct_key == "posts.moment":
-        return "moments.video" if getattr(obj, "video", None) else "moments.image"
+        return (
+            "moments.video"
+            if getattr(
+                obj,
+                "video",
+                None,
+            )
+            else "moments.image"
+        )
 
     if ct_key == "posts.prayer":
-        return "prayers.video" if getattr(obj, "video", None) else "prayers.image"
+        return (
+            "prayers.video"
+            if getattr(
+                obj,
+                "video",
+                None,
+            )
+            else "prayers.image"
+        )
 
     if ct_key == "posts.testimony":
-        raw_type = (getattr(obj, "type", "") or "").strip().lower()
+        raw_type = str(
+            getattr(
+                obj,
+                "type",
+                "",
+            )
+            or ""
+        ).strip().lower()
 
-        if raw_type in {"audio", "voice"}:
+        if raw_type in {
+            "audio",
+            "voice",
+        }:
             return "testimonies.audio"
 
         if raw_type == "video":
             return "testimonies.video"
 
         return "testimonies.written"
+
+    if ct_key == "posts.journeyentry":
+        return "journeys.entries"
 
     return None
 

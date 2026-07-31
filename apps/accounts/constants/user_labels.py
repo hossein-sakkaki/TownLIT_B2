@@ -21,7 +21,7 @@ USER_LABEL_CHOICES = [
     (BELIEVER, "I follow Jesus (Believer)"),
     (SEEKER, "I’m exploring faith (Seeker)"),
     (PREFER_NOT_TO_SAY, "I’d prefer not to say"),
-    (YOUNG_PATH, "TownLIT Young Path — Coming Soon"),
+    (YOUNG_PATH, "Protected Children’s Path — Coming Soon")
 ]
 
 ACTIVE_USER_LABEL_KEYS = {
@@ -39,14 +39,15 @@ UNAVAILABLE_USER_LABEL_KEYS = {
 MIN_STANDARD_ACCOUNT_AGE = 13
 
 YOUNG_PATH_COMING_SOON_MESSAGE = (
-    "TownLIT Young Path is coming soon. Protected accounts for younger members "
-    "are not available yet. We are working carefully on this experience so it "
-    "can be safe, age-appropriate, and aligned with privacy expectations."
+    "TownLIT Protected Path is coming soon. Protected accounts for children "
+    "and younger members are not available yet. We are working carefully on "
+    "this experience so it can be safe, age-appropriate, and aligned with "
+    "privacy expectations."
 )
 
 UNDER_MINIMUM_STANDARD_ACCOUNT_AGE_MESSAGE = (
     "TownLIT standard accounts are currently available for users age 13 and older. "
-    "Protected younger accounts are coming soon. If this birthday is incorrect, "
-    "please enter your correct birthday. If you are under 13, please wait until "
-    "TownLIT Young Path becomes available."
+    "Protected accounts for children and younger members are coming soon. "
+    "If this birthday is incorrect, please enter your correct birthday. "
+    "If you are under 13, please wait until TownLIT Protected Path becomes available."
 )

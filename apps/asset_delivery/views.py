@@ -37,6 +37,61 @@ from apps.asset_delivery.services.field_aliases import resolve_field_alias
 logger = logging.getLogger(__name__)
 
 
+def _safe_can_deliver_asset(
+    request,
+    target,
+    *,
+    field_name: str,
+    intent: str,
+) -> bool:
+    """
+    Apply target-specific asset delivery rules.
+    """
+
+    hook = getattr(
+        target,
+        "can_deliver_asset",
+        None,
+    )
+
+    if callable(hook):
+        try:
+            return bool(
+                hook(
+                    viewer=getattr(
+                        request,
+                        "user",
+                        None,
+                    ),
+                    field_name=field_name,
+                    intent=intent,
+                )
+            )
+        except Exception:
+            logger.exception(
+                "asset_delivery.target_hook failed",
+                extra={
+                    "target_model": (
+                        target._meta.label_lower
+                        if hasattr(target, "_meta")
+                        else type(target).__name__
+                    ),
+                    "target_id": getattr(
+                        target,
+                        "pk",
+                        None,
+                    ),
+                    "field_name": field_name,
+                    "intent": intent,
+                },
+            )
+            return False
+
+    return safe_can_view_target(
+        request,
+        target,
+    )
+    
 def _join_cdn_url(key: str) -> str:
     """Build CDN absolute URL."""
     base = (getattr(settings, "ASSET_CDN_BASE_URL", "") or "").rstrip("/")
@@ -381,7 +436,12 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
 
         target = self._resolve_target(raw)
 
-        if not safe_can_view_target(request, target):
+        if not _safe_can_deliver_asset(
+            request,
+            target,
+            field_name=field_name,
+            intent=intent,
+        ):
             return {
                 "index": index,
                 "ok": False,
@@ -484,11 +544,20 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
         field_name = resolve_field_alias(raw_app_label, raw_model, field_name)
 
         try:
-            target = self._resolve_target(request.query_params)
+            target = self._resolve_target(
+                request.query_params
+            )
 
-            if not safe_can_view_target(request, target):
+            if not _safe_can_deliver_asset(
+                request,
+                target,
+                field_name=field_name,
+                intent=intent,
+            ):
                 return Response(
-                    {"detail": "Access restricted."},
+                    {
+                        "detail": "Access restricted.",
+                    },
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
@@ -581,11 +650,20 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
             )
 
         try:
-            target = self._resolve_target(request.data)
+            target = self._resolve_target(
+                request.data
+            )
 
-            if not safe_can_view_target(request, target):
+            if not _safe_can_deliver_asset(
+                request,
+                target,
+                field_name=field_name,
+                intent=intent,
+            ):
                 return Response(
-                    {"detail": "Access restricted."},
+                    {
+                        "detail": "Access restricted.",
+                    },
                     status=status.HTTP_403_FORBIDDEN,
                 )
 

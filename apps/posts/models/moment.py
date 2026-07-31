@@ -4,9 +4,12 @@ import os
 from django.db import models, transaction
 from django.utils import timezone
 from django.core.exceptions import ValidationError
-from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 import uuid
+from django.contrib.contenttypes.fields import (
+    GenericForeignKey,
+    GenericRelation,
+)
 
 from utils.mixins.slug_mixin import SlugMixin
 from utils.mixins.media_conversion import MediaConversionMixin
@@ -152,6 +155,23 @@ class Moment(
     object_id = models.PositiveIntegerField()
     content_object = GenericForeignKey("content_type", "object_id")
 
+    # -------------------------------------------------
+    # Generic interactions
+    # -------------------------------------------------
+    reactions = GenericRelation(
+        "posts.Reaction",
+        content_type_field="content_type",
+        object_id_field="object_id",
+        related_query_name="moment_targets",
+    )
+
+    comments = GenericRelation(
+        "posts.Comment",
+        content_type_field="content_type",
+        object_id_field="object_id",
+        related_query_name="moment_targets",
+    )
+    
     # -------------------------------------------------
     # Analytics (internal only)
     # -------------------------------------------------

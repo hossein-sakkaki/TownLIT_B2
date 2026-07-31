@@ -20,3 +20,7 @@ class TierFallback(StreamTier):
             qs = qs.exclude(id__in=used_ids)
 
         return qs
+    
+    
+    
+    

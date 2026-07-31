@@ -6,21 +6,67 @@ from django.core.exceptions import FieldDoesNotExist
 
 
 APP_MODEL_ALIASES = {
-    # iOS / legacy semantic labels -> real Django app/model
-    ("moments", "moment"): ("posts", "moment"),
-    ("moment", "moment"): ("posts", "moment"),
+    ("moments", "moment"): (
+        "posts",
+        "moment",
+    ),
+    ("moment", "moment"): (
+        "posts",
+        "moment",
+    ),
 
-    ("prayers", "prayer"): ("posts", "prayer"),
-    ("prayer", "prayer"): ("posts", "prayer"),
-    ("pray", "prayer"): ("posts", "prayer"),
+    ("prayers", "prayer"): (
+        "posts",
+        "prayer",
+    ),
+    ("prayer", "prayer"): (
+        "posts",
+        "prayer",
+    ),
+    ("pray", "prayer"): (
+        "posts",
+        "prayer",
+    ),
 
-    ("testimonies", "testimony"): ("posts", "testimony"),
-    ("testimony", "testimony"): ("posts", "testimony"),
+    ("testimonies", "testimony"): (
+        "posts",
+        "testimony",
+    ),
+    ("testimony", "testimony"): (
+        "posts",
+        "testimony",
+    ),
 
-    # Optional compatibility if client sends post/post-style labels.
-    ("posts", "moment"): ("posts", "moment"),
-    ("posts", "prayer"): ("posts", "prayer"),
-    ("posts", "testimony"): ("posts", "testimony"),
+    # Journey aliases.
+    ("journeys", "journeyentry"): (
+        "posts",
+        "journeyentry",
+    ),
+    ("journey", "journeyentry"): (
+        "posts",
+        "journeyentry",
+    ),
+    ("journey_entries", "journeyentry"): (
+        "posts",
+        "journeyentry",
+    ),
+    ("posts", "journeyentry"): (
+        "posts",
+        "journeyentry",
+    ),
+
+    ("posts", "moment"): (
+        "posts",
+        "moment",
+    ),
+    ("posts", "prayer"): (
+        "posts",
+        "prayer",
+    ),
+    ("posts", "testimony"): (
+        "posts",
+        "testimony",
+    ),
 }
 
 

@@ -4,7 +4,7 @@ from django.db import models
 from django.utils import timezone
 from django.contrib.auth import get_user_model
 
-from utils.common.utils import SlugMixin
+from utils.mixins.slug_mixin import SlugMixin
 
 CustomUser = get_user_model()
 

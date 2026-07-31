@@ -1,4 +1,10 @@
-# apps/profiles/views/member.py
+#
+#  apps/profiles/views/member.py
+#  TownLIT
+#
+#  Created by Hossein Sakkaki on 2023-01-01.
+#  Last Update by Hossein Sakkaki on 2026-07-30.
+#
 
 from datetime import timedelta
 import logging
@@ -144,50 +150,147 @@ class MemberViewSet(viewsets.ModelViewSet):
     # Update current user's member profile ------------------------------------
     @action(detail=False, methods=['post'], url_path='update-profile', permission_classes=[IsAuthenticated])
     def update_profile(self, request):
-        # Block updates for deleted accounts
-        if getattr(request.user, "is_deleted", False):
+        # Block updates for deleted accounts.
+        if getattr(
+            request.user,
+            "is_deleted",
+            False,
+        ):
             return Response(
-                {"error": "Your account is deactivated. Reactivate first to update your profile."},
-                status=status.HTTP_403_FORBIDDEN
+                {
+                    "error": (
+                        "Your account is deactivated. "
+                        "Reactivate first to update your profile."
+                    ),
+                },
+                status=status.HTTP_403_FORBIDDEN,
             )
 
         try:
             member = request.user.member_profile
-        except (Member.DoesNotExist, AttributeError):
-            return Response({"error": "Profile not found. Please create a profile first."},
-                            status=status.HTTP_404_NOT_FOUND)
+
+        except (
+            Member.DoesNotExist,
+            AttributeError,
+        ):
+            return Response(
+                {
+                    "error": (
+                        "Profile not found. "
+                        "Please create a profile first."
+                    ),
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         if member.is_hidden_by_confidants:
             return Response(
                 {
                     "code": "profile_temporarily_unavailable",
-                    "detail": "Your profile is currently unavailable. Please contact TownLIT Support for more information.",
+                    "detail": (
+                        "Your profile is currently unavailable. "
+                        "Please contact TownLIT Support for "
+                        "more information."
+                    ),
                 },
                 status=status.HTTP_403_FORBIDDEN,
             )
-            
-        serializer = self.get_serializer(member, data=request.data, partial=True)
+
+        serializer = self.get_serializer(
+            member,
+            data=request.data,
+            partial=True,
+        )
 
         if not serializer.is_valid():
-            return build_validation_error_response(serializer.errors)
+            return build_validation_error_response(
+                serializer.errors
+            )
 
-        updated_member = serializer.save()
+        try:
+            with transaction.atomic():
+                updated_member = serializer.save()
+
+        except ValidationError as exc:
+            if hasattr(
+                exc,
+                "message_dict",
+            ):
+                errors = exc.message_dict
+            else:
+                errors = {
+                    "non_field_errors": (
+                        getattr(
+                            exc,
+                            "messages",
+                            None,
+                        )
+                        or [str(exc)]
+                    ),
+                }
+
+            return build_validation_error_response({
+                "user": errors,
+            })
+
+        except IntegrityError as exc:
+            error_text = str(
+                exc
+            )
+
+            if (
+                "accounts_user_distinct_profile_languages"
+                in error_text
+            ):
+                return build_validation_error_response({
+                    "user": {
+                        "secondary_language": [
+                            (
+                                "Primary and secondary languages "
+                                "must be different."
+                            )
+                        ],
+                    },
+                })
+
+            logger.exception(
+                "Member profile update integrity error | user_id=%s",
+                request.user.id,
+            )
+
+            return Response(
+                {
+                    "error": (
+                        "The profile could not be updated "
+                        "because some values conflict."
+                    ),
+                    "code": "profile_update_conflict",
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
         user_data = CustomUserSerializer(
             updated_member.user,
-            context={'request': request}
+            context={
+                "request": request,
+            },
         ).data
 
         member_data = MemberSerializer(
             updated_member,
-            context={'request': request}
+            context={
+                "request": request,
+            },
         ).data
-        return Response({
-            "message": "Profile updated successfully.",
-            "member": member_data,
-            "user": user_data,
-            # "user": member_data.get("user"),
-        }, status=status.HTTP_200_OK)
-    
+
+        return Response(
+            {
+                "message": "Profile updated successfully.",
+                "member": member_data,
+                "user": user_data,
+            },
+            status=status.HTTP_200_OK,
+        )
 
     # Update profile image ------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='update-profile-image', permission_classes=[IsAuthenticated])

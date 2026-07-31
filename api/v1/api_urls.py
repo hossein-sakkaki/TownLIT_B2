@@ -28,6 +28,12 @@ urlpatterns = [
 
     # Asset delivery gateway
     path("assets/", include("apps.asset_delivery.urls")),
+    
+    # Audio catalog
+    path("audio-catalog/", include("apps.audio_catalog.urls")),
+    
+    # Creative editor
+    path("creative-editor/", include("apps.creative_editor.urls")),
 
     # Translations
     path('translations/', include('apps.translations.urls')),
@@ -35,8 +41,11 @@ urlpatterns = [
     # Subtitles (STT, translation, on-demand tracks)
     path('subtitles/', include('apps.subtitles.urls')),
 
-    # Streams
+    # Universal content stream.
     path("streams/", include("apps.core.streams.urls")),
+
+    # Dedicated Journey stream.
+    path("journey-streams/", include("apps.core.journey_streams.urls")),
     
     # Boundaries & Stillness
     path("peace/", include("apps.core.boundaries.urls")),
@@ -49,4 +58,7 @@ urlpatterns = [
 
     # Accounting
     path("accounting/", include("apps.accounting.urls.index")),
+    
+    # Journey Reflection and Monthly Insights
+    path("journey-insights/", include("apps.journey_insights.urls")),
 ]

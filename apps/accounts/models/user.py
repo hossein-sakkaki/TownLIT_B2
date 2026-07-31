@@ -6,6 +6,8 @@ from django.conf import settings
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
 from django.db import models
 from django.utils import timezone
+from django.core.exceptions import ValidationError
+from django.db.models import F, Q
 
 from apps.accounts.utils.username import generate_unique_username_from_email
 from apps.accounts.utils.name_normalizer import normalize_person_name
@@ -213,8 +215,27 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
 
     country = models.CharField(max_length=2, choices=COUNTRY_CHOICES, blank=True, null=True, verbose_name="Country")
     city = models.CharField(max_length=100, blank=True, null=True, verbose_name="City")
-    primary_language = models.CharField(max_length=5, choices=LANGUAGE_CHOICES, null=True, blank=True, verbose_name='Primary Language')
-    secondary_language = models.CharField(max_length=5, choices=LANGUAGE_CHOICES, null=True, blank=True, verbose_name='Secondary Language')
+
+    primary_language = models.CharField(
+        max_length=5,
+        choices=LANGUAGE_CHOICES,
+        null=True,
+        blank=True,
+        verbose_name="Primary Language",
+    )
+
+    secondary_language = models.CharField(
+        max_length=5,
+        choices=LANGUAGE_CHOICES,
+        null=True,
+        blank=True,
+        verbose_name="Secondary Language",
+    )
+
+    language_onboarding_completed = models.BooleanField(
+        default=False,
+        verbose_name="Language Onboarding Completed",
+    )
 
     image_name = models.ImageField(
         upload_to=IMAGE.dir_upload,
@@ -268,7 +289,64 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
         verbose_name = "1. Custom User"
         verbose_name_plural = "1. Custom Users"
 
+        constraints = [
+            models.CheckConstraint(
+                check=(
+                    Q(primary_language__isnull=True)
+                    | Q(secondary_language__isnull=True)
+                    | ~Q(primary_language=F("secondary_language"))
+                ),
+                name="accounts_user_distinct_profile_languages",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+
+        primary = (self.primary_language or "").strip() or None
+        secondary = (self.secondary_language or "").strip() or None
+
+        if secondary and not primary:
+            raise ValidationError({
+                "secondary_language": (
+                    "A secondary language requires a primary language."
+                ),
+            })
+
+        if primary and secondary and primary == secondary:
+            raise ValidationError({
+                "secondary_language": (
+                    "Primary and secondary languages must be different."
+                ),
+            })
+            
     def save(self, *args, **kwargs):
+        self.primary_language = (
+            str(self.primary_language).strip()
+            if self.primary_language
+            else None
+        )
+
+        self.secondary_language = (
+            str(self.secondary_language).strip()
+            if self.secondary_language
+            else None
+        )
+
+        if (
+            self.primary_language
+            and self.secondary_language
+            and self.primary_language == self.secondary_language
+        ):
+            raise ValidationError(
+                "Primary and secondary languages must be different."
+            )
+
+        if self.secondary_language and not self.primary_language:
+            raise ValidationError(
+                "A secondary language requires a primary language."
+            )
+
         if self.name is not None:
             self.name = normalize_person_name(self.name)
 

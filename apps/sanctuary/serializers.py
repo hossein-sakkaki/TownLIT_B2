@@ -118,18 +118,50 @@ class SanctuaryRequestSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         request_type = attrs.get("request_type")
         if request_type not in dict(REQUEST_TYPE_CHOICES):
-            raise serializers.ValidationError({"request_type": "Invalid request type."})
+            raise serializers.ValidationError({
+                "request_type": "Invalid request type."
+            })
 
         ct = attrs.get("content_type")
         obj_id = attrs.get("object_id")
 
-        # Ensure target exists
         try:
             model_cls = ct.model_class()
+
+            if model_cls is None:
+                raise serializers.ValidationError({
+                    "content_type": "Invalid target model."
+                })
+
             if not model_cls.objects.filter(pk=obj_id).exists():
-                raise serializers.ValidationError({"object_id": "Target object not found."})
+                raise serializers.ValidationError({
+                    "object_id": "Target object not found."
+                })
+        except serializers.ValidationError:
+            raise
         except Exception:
-            raise serializers.ValidationError({"content_type": "Invalid target model."})
+            raise serializers.ValidationError({
+                "content_type": "Invalid target model."
+            })
+
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+
+        if (
+            self.instance is None
+            and user
+            and getattr(user, "is_authenticated", False)
+        ):
+            duplicate_exists = SanctuaryRequest.objects.filter(
+                requester=user,
+                content_type=ct,
+                object_id=obj_id,
+            ).exists()
+
+            if duplicate_exists:
+                raise serializers.ValidationError({
+                    "detail": "You have already submitted a Sanctuary request for this target."
+                })
 
         return attrs
     

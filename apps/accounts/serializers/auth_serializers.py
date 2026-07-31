@@ -1,29 +1,41 @@
-# apps/accounts/serializers/auth_serializers.py
+#
+#  apps/accounts/serializers/auth_serializers.py
+#  TownLIT
+#
+#  Created by Hossein Sakkaki on 2026-04-01.
+#  Last Update by Hossein Sakkaki on 2026-07-30.
+#
 
-from rest_framework import serializers
+
 from django.conf import settings
 from django.contrib.auth import get_user_model
 
-from validators.user_validators import validate_email_field, validate_password_field
+from rest_framework import serializers
+
+from apps.profilesOrg.constants import LANGUAGE_CHOICES
+from validators.user_validators import validate_password_field
+
 from ..models import InviteCode
+
 
 CustomUser = get_user_model()
 
 
-# LOGIN Serializer
+# LOGIN Serializer -------------------------------------------------------------
 class LoginSerializer(serializers.Serializer):
-    # Backward-compatible:
-    # Existing clients may still send "email", but its value can now be email OR username.
+    # Existing clients may still send email.
     email = serializers.CharField(
         required=False,
         allow_blank=False,
         trim_whitespace=True,
     )
+
     identifier = serializers.CharField(
         required=False,
         allow_blank=False,
         trim_whitespace=True,
     )
+
     password = serializers.CharField(
         write_only=True,
         validators=[validate_password_field],
@@ -38,116 +50,260 @@ class LoginSerializer(serializers.Serializer):
 
         if not identifier:
             raise serializers.ValidationError({
-                "email": "Email or username is required."
+                "email": "Email or username is required.",
             })
 
         attrs["identifier"] = identifier
         return attrs
 
-# REGISTER USER Serializer
+
+# REGISTER USER Serializer -----------------------------------------------------
 class RegisterUserSerializer(serializers.ModelSerializer):
-    agree_to_terms = serializers.BooleanField(write_only=True)
-    invite_code = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    agree_to_terms = serializers.BooleanField(
+        write_only=True,
+    )
+
+    invite_code = serializers.CharField(
+        write_only=True,
+        required=False,
+        allow_blank=True,
+    )
+
     email = serializers.EmailField()
 
     class Meta:
         model = CustomUser
-        fields = ["email", "password", "agree_to_terms", "invite_code"]
-        extra_kwargs = {"password": {"write_only": True}}
+        fields = [
+            "email",
+            "password",
+            "agree_to_terms",
+            "invite_code",
+        ]
+
+        extra_kwargs = {
+            "password": {
+                "write_only": True,
+            },
+        }
 
     def validate_email(self, value):
-        existing_user = CustomUser.objects.filter(email__iexact=value).first()
+        normalized_email = value.strip()
+
+        existing_user = (
+            CustomUser.objects
+            .filter(email__iexact=normalized_email)
+            .first()
+        )
+
         if existing_user and existing_user.is_active:
             raise serializers.ValidationError(
                 "A user with this email already exists."
             )
-        return value
+
+        return normalized_email
 
     def validate(self, data):
-
         if not data.get("agree_to_terms"):
             raise serializers.ValidationError(
                 "You must agree to the terms and conditions."
             )
 
         if getattr(settings, "USE_INVITE_CODE", False):
-
-            invite_code = data.get("invite_code")
+            invite_code = (
+                data.get("invite_code")
+                or ""
+            ).strip()
 
             if not invite_code:
-                raise serializers.ValidationError({"invite_code": "Invite code required."})
+                raise serializers.ValidationError({
+                    "invite_code": "Invite code required.",
+                })
 
             try:
-                invite = InviteCode.objects.get(code=invite_code)
+                invite = InviteCode.objects.get(
+                    code=invite_code,
+                )
+
             except InviteCode.DoesNotExist:
-                raise serializers.ValidationError({"invite_code": "Invalid invite code."})
+                raise serializers.ValidationError({
+                    "invite_code": "Invalid invite code.",
+                })
 
             if invite.is_used:
-                raise serializers.ValidationError({"invite_code": "Invite code already used."})
+                raise serializers.ValidationError({
+                    "invite_code": (
+                        "Invite code already used."
+                    ),
+                })
 
             email = data.get("email")
 
-            if invite.email and invite.email.lower() != email.lower():
-                raise serializers.ValidationError({"invite_code": "Invite code email mismatch."})
+            if (
+                invite.email
+                and invite.email.lower() != email.lower()
+            ):
+                raise serializers.ValidationError({
+                    "invite_code": (
+                        "Invite code email mismatch."
+                    ),
+                })
 
             self.invite = invite
 
         return data
 
 
+# PROFILE LANGUAGE Serializer --------------------------------------------------
+class ProfileLanguageSelectionSerializer(
+    serializers.Serializer
+):
+    primary_language = serializers.ChoiceField(
+        choices=LANGUAGE_CHOICES,
+        required=True,
+        allow_null=False,
+        allow_blank=False,
+    )
+
+    secondary_language = serializers.ChoiceField(
+        choices=LANGUAGE_CHOICES,
+        required=False,
+        allow_null=True,
+        allow_blank=False,
+    )
+
+    def validate(self, attrs):
+        primary = attrs.get("primary_language")
+        secondary = attrs.get(
+            "secondary_language"
+        )
+
+        if not primary:
+            raise serializers.ValidationError({
+                "primary_language": (
+                    "Choose your primary language "
+                    "to continue."
+                ),
+            })
+
+        if secondary and primary == secondary:
+            raise serializers.ValidationError({
+                "secondary_language": (
+                    "Primary and secondary languages "
+                    "must be different."
+                ),
+            })
+
+        return attrs
+
+
+class ProfileLanguageOptionSerializer(
+    serializers.Serializer
+):
+    code = serializers.CharField()
+    name = serializers.CharField()
+
+    native_name = serializers.CharField(
+        required=False,
+        allow_null=True,
+    )
+
+    display_label = serializers.CharField(
+        required=False,
+        allow_null=True,
+    )
+
+    translation_supported = (
+        serializers.BooleanField()
+    )
+
+
+# VERIFY Serializer ------------------------------------------------------------
 class VerifyNewBornSerializer(serializers.Serializer):
-    active_code = serializers.CharField(max_length=5)
-    registration_id = serializers.CharField(required=False, allow_blank=True)
+    active_code = serializers.CharField(
+        max_length=5,
+    )
+
+    registration_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+    )
 
     def validate_active_code(self, value):
         if not value.isdigit() or len(value) != 5:
-            raise serializers.ValidationError("Invalid active code format")
+            raise serializers.ValidationError(
+                "Invalid active code format"
+            )
+
         return value
 
 
+# FORGET PASSWORD Serializer ---------------------------------------------------
 class ForgetPasswordSerializer(serializers.Serializer):
     email = serializers.EmailField()
 
 
+# RESET PASSWORD Serializer ----------------------------------------------------
 class ResetPasswordSerializer(serializers.Serializer):
-
-    new_password = serializers.CharField(max_length=128, write_only=True)
+    new_password = serializers.CharField(
+        max_length=128,
+        write_only=True,
+    )
 
     def validate_new_password(self, value):
-
         if len(value) < 8:
-            raise serializers.ValidationError("Password must be at least 8 characters.")
+            raise serializers.ValidationError(
+                "Password must be at least 8 characters."
+            )
 
         if not any(char.isdigit() for char in value):
-            raise serializers.ValidationError("Password must contain a digit.")
+            raise serializers.ValidationError(
+                "Password must contain a digit."
+            )
 
         if not any(char.isupper() for char in value):
-            raise serializers.ValidationError("Password must contain uppercase letter.")
+            raise serializers.ValidationError(
+                "Password must contain uppercase letter."
+            )
 
         if not any(char.islower() for char in value):
-            raise serializers.ValidationError("Password must contain lowercase letter.")
+            raise serializers.ValidationError(
+                "Password must contain lowercase letter."
+            )
 
         return value
 
 
+# CHANGE PASSWORD Serializer ---------------------------------------------------
 class ChangePasswordSerializer(serializers.Serializer):
+    old_password = serializers.CharField(
+        write_only=True,
+    )
 
-    old_password = serializers.CharField(write_only=True)
-    new_password = serializers.CharField(write_only=True)
-    confirm_new_password = serializers.CharField(write_only=True)
+    new_password = serializers.CharField(
+        write_only=True,
+    )
+
+    confirm_new_password = serializers.CharField(
+        write_only=True,
+    )
 
     def validate_old_password(self, value):
-
         user = self.context["request"].user
 
         if not user.check_password(value):
-            raise serializers.ValidationError("Old password incorrect.")
+            raise serializers.ValidationError(
+                "Old password incorrect."
+            )
 
         return value
 
     def validate(self, attrs):
-
-        if attrs["new_password"] != attrs["confirm_new_password"]:
-            raise serializers.ValidationError("Passwords do not match.")
+        if (
+            attrs["new_password"]
+            != attrs["confirm_new_password"]
+        ):
+            raise serializers.ValidationError(
+                "Passwords do not match."
+            )
 
         return attrs

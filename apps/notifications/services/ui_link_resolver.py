@@ -10,6 +10,12 @@ ENTRY_BY_CT = {
     "posts.moment": "/posts/moments",
     "posts.testimony": "/posts/testimonies",
     "posts.prayer": "/posts/prayers",
+    
+    # Journey entry.
+    "posts.journeyentry": (
+        "/posts/journey-entries"
+    ),
+    
     # add more later...
 }
 

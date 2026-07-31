@@ -38,6 +38,13 @@ from apps.core.boundaries.services.policy import BoundaryPolicy
 from apps.accounts.services.username_resolution import (
     resolve_username,
 )
+from apps.posts.serializers.journeys import (
+    JourneyProfileRingSerializer,
+)
+from apps.posts.services.journeys.profile_ring import (
+    build_journey_profile_ring,
+    empty_journey_profile_ring,
+)
 
 CustomUser = get_user_model()
 SAFE_PROFILE_UNAVAILABLE_REASON = "temporarily_unavailable"
@@ -786,6 +793,37 @@ class VisitorProfileViewSet(viewsets.GenericViewSet):
 
         return serializer.data
     
+    # Journey Ring helpers ----------------------------------------------
+    def _empty_journey_ring_gate_payload(
+        self,
+        user,
+        reason,
+    ):
+        """
+        Return an empty privacy-safe Journey Ring.
+        """
+
+        safe_reason = (
+            SAFE_PROFILE_UNAVAILABLE_REASON
+            if reason
+            == "hidden_by_confidants"
+            else reason
+        )
+
+        payload = (
+            empty_journey_profile_ring()
+            .as_dict()
+        )
+
+        payload["profile_gate"] = {
+            "key": "profile_privacy_redirect",
+            "reason": safe_reason,
+            "redirect_to": (
+                f"/lit/{user.username}"
+            ),
+        }
+
+        return payload
     
     # Profile -----------------------------------------------------
     @action(
@@ -928,6 +966,189 @@ class VisitorProfileViewSet(viewsets.GenericViewSet):
             resolved,
         )
 
+    # Unified Journey Ring ---------------------------------------
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path=(
+            r"unified-profile/"
+            r"(?P<username>[^/]+)/"
+            r"journey-ring"
+        ),
+    )
+    def unified_journey_ring(
+        self,
+        request,
+        username=None,
+    ):
+        """
+        Return a lightweight Journey Ring for profile UI.
+        """
+
+        resolved = self._resolve_active_profile(
+            username
+        )
+
+        profile_type = resolved[
+            "profile_type"
+        ]
+
+        owner_profile = resolved[
+            "profile"
+        ]
+
+        owner_user = resolved[
+            "user"
+        ]
+
+        viewer = (
+            request.user
+            if request.user.is_authenticated
+            else None
+        )
+
+        if getattr(
+            owner_user,
+            "is_deleted",
+            False,
+        ):
+            response = Response(
+                {
+                    "detail": (
+                        "Profile not found."
+                    ),
+                },
+                status=(
+                    status.HTTP_404_NOT_FOUND
+                ),
+            )
+
+            return (
+                self
+                ._attach_canonical_profile_headers(
+                    response,
+                    resolved,
+                )
+            )
+
+        blocked_reason = None
+
+        if getattr(
+            owner_user,
+            "is_suspended",
+            False,
+        ):
+            blocked_reason = (
+                "account_suspended"
+            )
+
+        elif getattr(
+            owner_user,
+            "is_account_paused",
+            False,
+        ):
+            blocked_reason = (
+                "account_paused"
+            )
+
+        elif self._has_boundary_between(
+            viewer,
+            owner_user,
+        ):
+            blocked_reason = "boundary"
+
+        elif (
+            profile_type == "member"
+            and getattr(
+                owner_profile,
+                "is_hidden_by_confidants",
+                False,
+            )
+            and not self._is_confidant(
+                viewer,
+                owner_profile,
+            )
+        ):
+            blocked_reason = (
+                SAFE_PROFILE_UNAVAILABLE_REASON
+            )
+
+        elif (
+            not (
+                viewer
+                and viewer.id
+                == owner_user.id
+            )
+            and getattr(
+                owner_profile,
+                "is_privacy",
+                False,
+            )
+            and not self._is_friend(
+                viewer,
+                owner_user,
+            )
+        ):
+            blocked_reason = (
+                "private_profile"
+            )
+
+        if blocked_reason:
+            response = Response(
+                self._empty_journey_ring_gate_payload(
+                    owner_user,
+                    blocked_reason,
+                ),
+                status=status.HTTP_200_OK,
+            )
+
+            return (
+                self
+                ._attach_canonical_profile_headers(
+                    response,
+                    resolved,
+                )
+            )
+
+        # Journey publishing is Member-only.
+        if profile_type != "member":
+            result = (
+                empty_journey_profile_ring()
+            )
+
+        else:
+            result = build_journey_profile_ring(
+                owner_profile=owner_profile,
+                viewer=viewer,
+                owner_can_see_all=bool(
+                    viewer
+                    and viewer.id
+                    == owner_user.id
+                ),
+            )
+
+        payload = JourneyProfileRingSerializer(
+            result,
+            context={
+                "request": request,
+            },
+        ).data
+
+        payload["profile_gate"] = None
+
+        response = Response(
+            payload,
+            status=status.HTTP_200_OK,
+        )
+
+        return (
+            self
+            ._attach_canonical_profile_headers(
+                response,
+                resolved,
+            )
+        )
+        
     # Unified Profile --------------------------------------------
     @action(
         detail=False,

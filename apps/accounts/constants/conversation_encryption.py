@@ -1,0 +1,32 @@
+#
+#  apps/accounts/constants/conversation_encryption.py
+#  TownLIT
+#
+#  Created by Hossein Sakkaki on 2026-07-28.
+#  Last Update by Hossein Sakkaki on 2026-07-28.
+#
+
+
+CONVERSATION_ENCRYPTION_NEVER_INITIALIZED = (
+    "never_initialized"
+)
+
+CONVERSATION_ENCRYPTION_INITIALIZED_WITHOUT_BACKUP = (
+    "initialized_without_backup"
+)
+
+CONVERSATION_ENCRYPTION_BACKUP_AVAILABLE = (
+    "backup_available"
+)
+
+CONVERSATION_ENCRYPTION_RECOVERY_METADATA_ONLY = (
+    "recovery_metadata_only"
+)
+
+
+CONVERSATION_ENCRYPTION_STATES = {
+    CONVERSATION_ENCRYPTION_NEVER_INITIALIZED,
+    CONVERSATION_ENCRYPTION_INITIALIZED_WITHOUT_BACKUP,
+    CONVERSATION_ENCRYPTION_BACKUP_AVAILABLE,
+    CONVERSATION_ENCRYPTION_RECOVERY_METADATA_ONLY,
+}

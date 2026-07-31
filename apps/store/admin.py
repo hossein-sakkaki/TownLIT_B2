@@ -3,7 +3,7 @@
 from django.contrib import admin
 from django_admin_listfilter_dropdown.filters import DropdownFilter
 from .models import ServiceCategory, Store
-from apps.posts.admin import MarkActiveMixin
+from apps.posts.admin.common import MarkActiveMixin
 
 # SERVICE CATEGORY ADMIN Manager -----------------------------------------------------------
 @admin.register(ServiceCategory)
