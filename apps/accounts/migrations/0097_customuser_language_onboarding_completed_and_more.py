@@ -3,9 +3,8 @@
 #  TownLIT
 #
 #  Created by Hossein Sakkaki on 2026-07-30.
-#  Last Update by Hossein Sakkaki on 2026-07-30.
+#  Last Update by Hossein Sakkaki on 2026-07-31.
 #
-
 
 from django.db import migrations, models
 from django.db.models import F, Q
@@ -16,21 +15,13 @@ import validators.security_validators
 
 
 def normalize_existing_user_languages(apps, schema_editor):
-    CustomUser = apps.get_model(
-        "accounts",
-        "CustomUser",
-    )
+    CustomUser = apps.get_model("accounts", "CustomUser")
 
     # Normalize legacy blank values.
-    CustomUser.objects.filter(
-        primary_language="",
-    ).update(
+    CustomUser.objects.filter(primary_language="").update(
         primary_language=None,
     )
-
-    CustomUser.objects.filter(
-        secondary_language="",
-    ).update(
+    CustomUser.objects.filter(secondary_language="").update(
         secondary_language=None,
     )
 
@@ -66,10 +57,7 @@ def normalize_existing_user_languages(apps, schema_editor):
     )
 
 
-def reverse_normalize_existing_user_languages(
-    apps,
-    schema_editor,
-):
+def reverse_normalize_existing_user_languages(apps, schema_editor):
     # Normalized legacy values cannot be restored safely.
     pass
 
@@ -84,22 +72,13 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.SeparateDatabaseAndState(
-            # The column already exists after the earlier
-            # partially applied MySQL migration.
-            database_operations=[],
-            state_operations=[
-                migrations.AddField(
-                    model_name="customuser",
-                    name="language_onboarding_completed",
-                    field=models.BooleanField(
-                        default=False,
-                        verbose_name=(
-                            "Language Onboarding Completed"
-                        ),
-                    ),
-                ),
-            ],
+        migrations.AddField(
+            model_name="customuser",
+            name="language_onboarding_completed",
+            field=models.BooleanField(
+                default=False,
+                verbose_name="Language Onboarding Completed",
+            ),
         ),
 
         migrations.RunPython(
@@ -115,14 +94,9 @@ class Migration(migrations.Migration):
                 null=True,
                 upload_to=utils.common.utils.FileUpload.dir_upload,
                 validators=[
-                    validators.mediaValidators
-                    .image_validators
-                    .validate_image_file,
-                    validators.mediaValidators
-                    .image_validators
-                    .validate_image_size,
-                    validators.security_validators
-                    .validate_no_executable_file,
+                    validators.mediaValidators.image_validators.validate_image_file,
+                    validators.mediaValidators.image_validators.validate_image_size,
+                    validators.security_validators.validate_no_executable_file,
                 ],
                 verbose_name="Image",
             ),
@@ -134,16 +108,9 @@ class Migration(migrations.Migration):
                 check=(
                     Q(primary_language__isnull=True)
                     | Q(secondary_language__isnull=True)
-                    | ~Q(
-                        primary_language=F(
-                            "secondary_language"
-                        )
-                    )
+                    | ~Q(primary_language=F("secondary_language"))
                 ),
-                name=(
-                    "accounts_user_distinct_"
-                    "profile_languages"
-                ),
+                name="accounts_user_distinct_profile_languages",
             ),
         ),
     ]

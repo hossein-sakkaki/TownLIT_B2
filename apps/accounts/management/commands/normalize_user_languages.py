@@ -152,10 +152,9 @@ class Command(BaseCommand):
                 )
                 
 
-# docker compose exec backend python manage.py normalize_user_languages \
+# sudo docker compose exec backend python manage.py normalize_user_languages \
 #     --dry-run \
 #     --mark-completed
     
 
-# docker compose exec backend python manage.py normalize_user_languages \
-#     --mark-completed
+# sudo docker compose exec backend python manage.py normalize_user_languages --mark-completed
