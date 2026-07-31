@@ -269,4 +269,4 @@ class Command(
             )
             
 
-# docker compose exec backend python manage.py seed_creative_editor
+# sudo docker compose exec backend python manage.py seed_creative_editor

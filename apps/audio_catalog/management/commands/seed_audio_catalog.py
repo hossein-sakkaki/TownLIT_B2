@@ -1065,8 +1065,8 @@ class Command(BaseCommand):
             )
             
             
-# docker compose exec backend python manage.py seed_audio_catalog --dry-run
+# sudo docker compose exec backend python manage.py seed_audio_catalog --dry-run
   
-# docker compose exec backend python manage.py seed_audio_catalog
+# sudo docker compose exec backend python manage.py seed_audio_catalog
   
-# docker compose exec backend python manage.py seed_audio_catalog --update
+# sudo docker compose exec backend python manage.py seed_audio_catalog --update

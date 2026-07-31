@@ -1496,4 +1496,4 @@ class Command(BaseCommand):
         }
         
         
-# docker compose exec backend python manage.py seed_creative_backgrounds
+# sudo docker compose exec backend python manage.py seed_creative_backgrounds

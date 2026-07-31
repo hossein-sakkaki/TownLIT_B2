@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 from django.contrib import admin, messages
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.http import HttpRequest
 from django.utils.html import format_html
-from django.db.models import Count, Q
 
 from apps.creative_editor.admin.base import (
     CreativeAdminFeatureActionsMixin,
@@ -432,10 +431,6 @@ class StickerAssetAdmin(
         "is_active",
         "is_featured",
         "sort_order",
-    )
-
-    autocomplete_fields = (
-        "pack",
     )
 
     list_select_related = (

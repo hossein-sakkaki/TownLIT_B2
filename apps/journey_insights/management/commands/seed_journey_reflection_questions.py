@@ -137,4 +137,4 @@ class Command(BaseCommand):
             )
         )
         
-# docker compose exec -T backend python manage.py seed_journey_reflection_questions
+# sudo docker compose exec -T backend python manage.py seed_journey_reflection_questions
