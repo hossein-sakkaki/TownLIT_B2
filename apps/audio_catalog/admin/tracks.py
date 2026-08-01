@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from django.contrib import admin, messages
 from django.db.models import Exists, OuterRef
-from django.utils import timezone
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.html import format_html
 
 from apps.audio_catalog.models import (
@@ -26,7 +26,6 @@ from .inlines import (
 )
 from .shared import (
     LargeResultAdminMixin,
-    admin_change_url,
     linked_object,
     render_audio_player,
     render_image_preview,
@@ -340,10 +339,6 @@ class MusicTrackAdmin(
         "contributor_links__contributor__display_name",
     )
 
-    autocomplete_fields = (
-        "catalog",
-    )
-
     filter_horizontal = (
         "categories",
         "genres",
@@ -579,16 +574,18 @@ class MusicTrackAdmin(
         ordering="title",
     )
     def title_column(self, obj):
-        subtitle = (
-            f"<br><small>{obj.subtitle}</small>"
-            if obj.subtitle
-            else ""
-        )
+        if obj.subtitle:
+            return format_html(
+                "<strong>{}</strong>"
+                "<br>"
+                "<small>{}</small>",
+                obj.title,
+                obj.subtitle,
+            )
 
         return format_html(
-            "<strong>{}</strong>{}",
+            "<strong>{}</strong>",
             obj.title,
-            format_html(subtitle),
         )
 
     @admin.display(
