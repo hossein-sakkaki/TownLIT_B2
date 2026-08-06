@@ -1,28 +1,26 @@
 # apps/posts/views/reactions.py
 
-from django.contrib.contenttypes.models import ContentType
-from django.db import models, transaction
+import logging
 
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
-
-from rest_framework import status, viewsets, mixins
-from rest_framework.response import Response
-from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated, AllowAny
-from apps.posts.serializers.reactions import ReactionSerializer
-
-from apps.posts.models.reaction import Reaction
-from apps.accounts.serializers.user_serializers import SimpleCustomUserSerializer
 from django.contrib.auth import get_user_model
+from django.contrib.contenttypes.models import ContentType
+from django.db import models, transaction
+from rest_framework import mixins, status, viewsets
+from rest_framework.decorators import action
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.response import Response
+
+from apps.accounts.serializers.user_serializers import SimpleCustomUserSerializer
+from apps.posts.models.reaction import Reaction
+from apps.posts.serializers.reactions import ReactionSerializer
 from apps.posts.services.boundary_interactions import (
     check_reaction_create_boundary,
     content_interaction_error_payload,
 )
 
-import logging
 logger = logging.getLogger(__name__)
-
 CustomUser = get_user_model()
 
 
@@ -39,8 +37,7 @@ def reaction_inbox_group_name(ct_id: int, obj_id: int, user_id: int) -> str:
 
 def _safe_reaction_broadcast(group_name: str, event_name: str, payload: dict):
     """
-    Safe WS send for reactions.
-    Never breaks HTTP flow if Redis / Channels is unavailable.
+    Send a reaction event without breaking the HTTP flow.
     """
     try:
         channel_layer = get_channel_layer()
@@ -61,36 +58,51 @@ def _safe_reaction_broadcast(group_name: str, event_name: str, payload: dict):
         logger.exception("Reaction WS broadcast failed (ignored)")
 
 
+def _reaction_has_message(reaction: Reaction) -> bool:
+    """
+    Check the decrypted message safely in Python.
+    """
+    message = getattr(reaction, "message", None)
+    return isinstance(message, str) and bool(message.strip())
+
+
+def _queryset_has_message(queryset) -> bool:
+    """
+    Check for a non-blank encrypted message without content lookups.
+    """
+    candidates = queryset.exclude(message__isnull=True).only("id", "message")
+    return any(_reaction_has_message(reaction) for reaction in candidates)
+
+
 def _resolve_owner_user_id(obj, request_user_id=None):
     """
-    Resolve real owner's user_id from target object.
-    Mirrors the owner resolution logic already used in with_message.
+    Resolve the target owner's user ID.
     """
     base = obj
 
-    # If object wraps another via GFK, drill into the real target
+    # Drill into wrapped content when available.
     if hasattr(base, "content_object") and getattr(base, "content_object") is not None:
         base = base.content_object
 
-    # Common direct *_id fields
+    # Check common direct owner fields.
     for fk in ("user_id", "name_id", "owner_id", "member_user_id", "org_owner_user_id"):
         if hasattr(base, fk):
-            val = getattr(base, fk)
-            if isinstance(val, int):
-                return val
+            value = getattr(base, fk)
+            if isinstance(value, int):
+                return value
 
-    # Member model (user OneToOne)
+    # Support Member user ownership.
     if base.__class__.__name__.lower() == "member" and hasattr(base, "user_id"):
         return getattr(base, "user_id", None)
 
-    # Related objects exposing .id
-    for rel in ("name", "owner", "member_user", "org_owner_user"):
-        if hasattr(base, rel):
-            rel_obj = getattr(base, rel)
-            if getattr(rel_obj, "id", None):
-                return rel_obj.id
+    # Check common related owner objects.
+    for relation in ("name", "owner", "member_user", "org_owner_user"):
+        if hasattr(base, relation):
+            related_obj = getattr(base, relation)
+            if getattr(related_obj, "id", None):
+                return related_obj.id
 
-    # Organization owners M2M (grant if requester is among owners)
+    # Support organization owner membership.
     if hasattr(base, "org_owners") and request_user_id:
         try:
             if base.org_owners.filter(id=request_user_id).exists():
@@ -111,14 +123,20 @@ def _get_target_owner_user_id(cto: ContentType, obj_id, request_user_id=None):
     except model_cls.DoesNotExist:
         return None
 
-    return _resolve_owner_user_id(target_obj, request_user_id=request_user_id)
+    return _resolve_owner_user_id(
+        target_obj,
+        request_user_id=request_user_id,
+    )
 
 
 def _build_summary_payload(cto: ContentType, obj_id, request_user=None):
     """
-    Fresh summary payload for realtime sync.
+    Build a fresh reaction summary for realtime sync.
     """
-    qs = Reaction.objects.filter(content_type=cto, object_id=obj_id)
+    qs = Reaction.objects.filter(
+        content_type=cto,
+        object_id=obj_id,
+    )
 
     breakdown_rows = (
         qs.values("reaction_type")
@@ -132,7 +150,8 @@ def _build_summary_payload(cto: ContentType, obj_id, request_user=None):
         "object_id": int(obj_id),
         "reactions_count": qs.count(),
         "reactions_breakdown": {
-            row["reaction_type"]: row["count"] for row in breakdown_rows
+            row["reaction_type"]: row["count"]
+            for row in breakdown_rows
         },
         "my_reaction": None,
     }
@@ -148,7 +167,12 @@ def _build_summary_payload(cto: ContentType, obj_id, request_user=None):
 
 
 def _broadcast_target_summary(cto: ContentType, obj_id, request_user=None):
-    payload = _build_summary_payload(cto, obj_id, request_user=request_user)
+    payload = _build_summary_payload(
+        cto,
+        obj_id,
+        request_user=request_user,
+    )
+
     _safe_reaction_broadcast(
         reaction_target_group_name(cto.id, int(obj_id)),
         "summary_changed",
@@ -176,25 +200,37 @@ def _broadcast_owner_inbox_changed(
     }
 
     if reaction is not None:
-        payload.update({
-            "id": reaction.id,
-            "reaction_type": reaction.reaction_type,
-            "timestamp": reaction.timestamp.isoformat() if reaction.timestamp else None,
-            "has_message": bool((reaction.message or "").strip()),
-            "user": {
-                "id": reaction.name.id,
-                "username": getattr(reaction.name, "username", None),
+        payload.update(
+            {
+                "id": reaction.id,
+                "reaction_type": reaction.reaction_type,
+                "timestamp": (
+                    reaction.timestamp.isoformat()
+                    if reaction.timestamp
+                    else None
+                ),
+                "has_message": _reaction_has_message(reaction),
+                "user": {
+                    "id": reaction.name.id,
+                    "username": getattr(reaction.name, "username", None),
+                },
             }
-        })
+        )
 
     _safe_reaction_broadcast(
-        reaction_inbox_group_name(cto.id, int(obj_id), int(owner_user_id)),
+        reaction_inbox_group_name(
+            cto.id,
+            int(obj_id),
+            int(owner_user_id),
+        ),
         "inbox_changed",
         payload,
     )
 
 
-# REACTIONS Viewset --------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Reaction ViewSet
+# -----------------------------------------------------------------------------
 class ReactionViewSet(
     mixins.CreateModelMixin,
     mixins.DestroyModelMixin,
@@ -203,39 +239,46 @@ class ReactionViewSet(
 ):
     """
     Centralized reactions endpoint.
-    POST /posts/reactions/ (toggle)
-    GET  /posts/reactions/?content_type=testimony&object_id=42
-    GET  /posts/reactions/summary/?content_type=testimony&object_id=42
-    DELETE /posts/reactions/<id>/  (owner-only)
+
+    POST   /posts/reactions/
+    GET    /posts/reactions/
+    GET    /posts/reactions/summary/
+    DELETE /posts/reactions/<id>/
     """
-    queryset = Reaction.objects.all().select_related('name', 'content_type')
+
+    queryset = Reaction.objects.all().select_related("name", "content_type")
     serializer_class = ReactionSerializer
-    permission_classes = [IsAuthenticated]  # default
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         qs = super().get_queryset()
-        ct = self.request.query_params.get('content_type')
-        oid = self.request.query_params.get('object_id')
+        ct = self.request.query_params.get("content_type")
+        oid = self.request.query_params.get("object_id")
 
         if ct and oid:
-            # allow id, app.model, or model
             try:
                 if str(ct).isdigit():
                     cto = ContentType.objects.get(pk=int(ct))
-                elif '.' in str(ct):
-                    app_label, model = str(ct).split('.', 1)
-                    cto = ContentType.objects.get(app_label=app_label, model=model)
+                elif "." in str(ct):
+                    app_label, model = str(ct).split(".", 1)
+                    cto = ContentType.objects.get(
+                        app_label=app_label,
+                        model=model,
+                    )
                 else:
                     cto = ContentType.objects.get(model=str(ct))
             except ContentType.DoesNotExist:
                 return Reaction.objects.none()
 
-            qs = qs.filter(content_type=cto, object_id=oid)
+            qs = qs.filter(
+                content_type=cto,
+                object_id=oid,
+            )
 
-        return qs.order_by('-timestamp')
+        return qs.order_by("-timestamp")
 
     def perform_destroy(self, instance):
-        # only owner can delete
+        # Only the reaction actor can delete it.
         if instance.name_id != self.request.user.id:
             raise PermissionError("Forbidden")
 
@@ -246,34 +289,37 @@ class ReactionViewSet(
             obj_id,
             request_user_id=self.request.user.id,
         )
-        had_message = bool((instance.message or "").strip())
+        had_message = _reaction_has_message(instance)
 
         super().perform_destroy(instance)
 
-        # Realtime broadcasts after delete
-        transaction.on_commit(lambda: _broadcast_target_summary(
-            cto,
-            obj_id,
-            request_user=self.request.user,
-        ))
+        # Broadcast only after the delete is committed.
+        transaction.on_commit(
+            lambda: _broadcast_target_summary(
+                cto,
+                obj_id,
+                request_user=self.request.user,
+            )
+        )
 
         if had_message:
-            transaction.on_commit(lambda: _broadcast_owner_inbox_changed(
-                cto=cto,
-                obj_id=obj_id,
-                owner_user_id=owner_user_id,
-                action_name="removed",
-                reaction=None,
-            ))
+            transaction.on_commit(
+                lambda: _broadcast_owner_inbox_changed(
+                    cto=cto,
+                    obj_id=obj_id,
+                    owner_user_id=owner_user_id,
+                    action_name="removed",
+                    reaction=None,
+                )
+            )
 
     def create(self, request, *args, **kwargs):
         """
-        Toggle logic with Boundary enforcement.
+        Toggle a reaction with Boundary enforcement.
 
         Rules:
-        - Same reaction exists -> remove it. This is allowed even with Boundary.
-        - New reaction or changing previous reaction -> blocked if Boundary exists
-        between actor and content owner.
+        - Same reaction exists: remove it.
+        - New or changed reaction: enforce Boundary first.
         """
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -289,41 +335,44 @@ class ReactionViewSet(
             request_user_id=request.user.id,
         )
 
-        # ------------------------------------------------------------
-        # 1) Same reaction already exists -> toggle off.
-        # This is cleanup/removal, not a new interaction.
-        # ------------------------------------------------------------
-        existing_same = Reaction.objects.filter(
-            name=user,
-            content_type=ct,
-            object_id=oid,
-            reaction_type=rtype,
-        ).first()
+        # Toggle off the same reaction.
+        existing_same = (
+            Reaction.objects
+            .filter(
+                name=user,
+                content_type=ct,
+                object_id=oid,
+                reaction_type=rtype,
+            )
+            .first()
+        )
 
         if existing_same:
-            had_message = bool((existing_same.message or "").strip())
+            had_message = _reaction_has_message(existing_same)
             existing_same.delete()
 
-            transaction.on_commit(lambda: _broadcast_target_summary(
-                ct,
-                oid,
-                request_user=request.user,
-            ))
+            transaction.on_commit(
+                lambda: _broadcast_target_summary(
+                    ct,
+                    oid,
+                    request_user=request.user,
+                )
+            )
 
             if had_message:
-                transaction.on_commit(lambda: _broadcast_owner_inbox_changed(
-                    cto=ct,
-                    obj_id=oid,
-                    owner_user_id=owner_user_id,
-                    action_name="removed",
-                    reaction=None,
-                ))
+                transaction.on_commit(
+                    lambda: _broadcast_owner_inbox_changed(
+                        cto=ct,
+                        obj_id=oid,
+                        owner_user_id=owner_user_id,
+                        action_name="removed",
+                        reaction=None,
+                    )
+                )
 
             return Response(status=status.HTTP_204_NO_CONTENT)
 
-        # ------------------------------------------------------------
-        # 2) Boundary enforcement for new/change reaction.
-        # ------------------------------------------------------------
+        # Enforce Boundary before creating or changing a reaction.
         boundary_check = check_reaction_create_boundary(
             actor=request.user,
             content_type=ct,
@@ -339,11 +388,8 @@ class ReactionViewSet(
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # ------------------------------------------------------------
-        # 3) Delete all other reactions by this user for same object.
-        # This is a replacement/change.
-        # ------------------------------------------------------------
-        previous_with_message_exists = (
+        # Load previous reactions before deleting them.
+        previous_reactions = (
             Reaction.objects
             .filter(
                 name=user,
@@ -351,86 +397,118 @@ class ReactionViewSet(
                 object_id=oid,
             )
             .exclude(reaction_type=rtype)
-            .exclude(message__isnull=True)
-            .exists()
         )
 
-        (
-            Reaction.objects
-            .filter(
-                name=user,
-                content_type=ct,
-                object_id=oid,
-            )
-            .exclude(reaction_type=rtype)
-            .delete()
+        previous_with_message_exists = _queryset_has_message(
+            previous_reactions
         )
 
-        # ------------------------------------------------------------
-        # 4) Create new reaction.
-        # ------------------------------------------------------------
+        previous_reactions.delete()
+
+        # Create the new reaction.
         instance = serializer.save()
         out = self.get_serializer(instance)
-        has_message = bool((instance.message or "").strip())
+        has_message = _reaction_has_message(instance)
 
-        transaction.on_commit(lambda: _broadcast_target_summary(
-            ct,
-            oid,
-            request_user=request.user,
-        ))
+        transaction.on_commit(
+            lambda: _broadcast_target_summary(
+                ct,
+                oid,
+                request_user=request.user,
+            )
+        )
 
         if previous_with_message_exists or has_message:
-            transaction.on_commit(lambda: _broadcast_owner_inbox_changed(
-                cto=ct,
-                obj_id=oid,
-                owner_user_id=owner_user_id,
-                action_name="changed" if previous_with_message_exists else "added",
-                reaction=instance if has_message else None,
-            ))
+            transaction.on_commit(
+                lambda: _broadcast_owner_inbox_changed(
+                    cto=ct,
+                    obj_id=oid,
+                    owner_user_id=owner_user_id,
+                    action_name=(
+                        "changed"
+                        if previous_with_message_exists
+                        else "added"
+                    ),
+                    reaction=instance if has_message else None,
+                )
+            )
 
-        return Response(out.data, status=status.HTTP_201_CREATED)
+        return Response(
+            out.data,
+            status=status.HTTP_201_CREATED,
+        )
 
-    @action(detail=False, methods=['get'], url_path='summary', permission_classes=[AllowAny])
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="summary",
+        permission_classes=[AllowAny],
+    )
     def summary(self, request):
-        """Count per reaction_type for a given object."""
-        ct = request.query_params.get('content_type')
-        oid = request.query_params.get('object_id')
+        """
+        Count reactions by type for a target.
+        """
+        ct = request.query_params.get("content_type")
+        oid = request.query_params.get("object_id")
 
         if not ct or not oid:
-            return Response({'detail': 'content_type and object_id required'}, status=400)
+            return Response(
+                {"detail": "content_type and object_id required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        # resolve CT
         try:
             if str(ct).isdigit():
                 cto = ContentType.objects.get(pk=int(ct))
-            elif '.' in str(ct):
-                app_label, model = str(ct).split('.', 1)
-                cto = ContentType.objects.get(app_label=app_label, model=model)
+            elif "." in str(ct):
+                app_label, model = str(ct).split(".", 1)
+                cto = ContentType.objects.get(
+                    app_label=app_label,
+                    model=model,
+                )
             else:
                 cto = ContentType.objects.get(model=str(ct))
         except ContentType.DoesNotExist:
-            return Response({'detail': 'Invalid content type'}, status=400)
+            return Response(
+                {"detail": "Invalid content type"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        # aggregate counts
         qs = (
-            Reaction.objects.filter(content_type=cto, object_id=oid)
-            .values('reaction_type')
-            .annotate(count=models.Count('id'))
+            Reaction.objects
+            .filter(
+                content_type=cto,
+                object_id=oid,
+            )
+            .values("reaction_type")
+            .annotate(count=models.Count("id"))
         )
-        return Response(list(qs), status=200)
 
-    @action(detail=False, methods=['get'], url_path='mine', permission_classes=[IsAuthenticated])
+        return Response(
+            list(qs),
+            status=status.HTTP_200_OK,
+        )
+
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="mine",
+        permission_classes=[IsAuthenticated],
+    )
     def mine(self, request):
-        """List current user's reactions (optional helper)."""
+        """
+        List the current user's reactions.
+        """
         qs = self.get_queryset().filter(name=request.user)
         page = self.paginate_queryset(qs)
+
         if page is not None:
-            ser = self.get_serializer(page, many=True)
-            return self.get_paginated_response(ser.data)
-        ser = self.get_serializer(qs, many=True)
-        return Response(ser.data)
-    
-    # existing methods (get_queryset, create, etc.) --------------------------------------------
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(qs, many=True)
+        return Response(serializer.data)
+
     @action(
         detail=False,
         methods=["get"],
@@ -439,77 +517,110 @@ class ReactionViewSet(
     )
     def with_message(self, request):
         """
-        🔒 Owner-only: list reactions that include user messages for a given object.
-        GET ?content_type=app.model|id|model&object_id=42[&reaction_type=...]
+        Owner-only reactions containing non-blank messages.
+
+        GET ?content_type=app.model|id|model&object_id=42
         """
         ct_param = request.query_params.get("content_type")
         obj_id = request.query_params.get("object_id")
         rtype = request.query_params.get("reaction_type")
 
         if not ct_param or not obj_id:
-            return Response({"detail": "content_type and object_id required"}, status=400)
+            return Response(
+                {"detail": "content_type and object_id required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        # --- Resolve ContentType safely (accept id, app.model, or model) ---
+        # Resolve ContentType from ID, app.model or model.
         try:
             if str(ct_param).isdigit():
                 cto = ContentType.objects.get(pk=int(ct_param))
             elif "." in str(ct_param):
                 app_label, model = str(ct_param).split(".", 1)
-                cto = ContentType.objects.get(app_label=app_label, model=model)
+                cto = ContentType.objects.get(
+                    app_label=app_label,
+                    model=model,
+                )
             else:
                 cto = ContentType.objects.get(model=str(ct_param))
         except ContentType.DoesNotExist:
-            return Response({"detail": "Invalid content type"}, status=400)
+            return Response(
+                {"detail": "Invalid content type"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        # --- Guard: model_class() may be None for swapped/proxy/unavailable models ---
         model_cls = cto.model_class()
         if model_cls is None:
-            return Response({"detail": "Target model is unavailable"}, status=400)
+            return Response(
+                {"detail": "Target model is unavailable"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        # --- Cast object_id to int when possible (fallback to raw for non-int PKs) ---
         try:
             obj_pk = int(obj_id)
         except (TypeError, ValueError):
             obj_pk = obj_id
 
-        # --- Load target object with a safe DoesNotExist branch ---
         try:
             target_obj = model_cls._default_manager.get(pk=obj_pk)
         except model_cls.DoesNotExist:
-            return Response({"detail": "Target object not found"}, status=404)
+            return Response(
+                {"detail": "Target object not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
-        owner_id = _resolve_owner_user_id(target_obj, request_user_id=request.user.id)
+        owner_id = _resolve_owner_user_id(
+            target_obj,
+            request_user_id=request.user.id,
+        )
+
         if owner_id != request.user.id:
-            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {"detail": "Forbidden"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
-        # --- Reactions WITH messages only (optimized user loading) ---
+        # Filter NULL in SQL and blank decrypted values in Python.
         qs = (
             Reaction.objects
-            .filter(content_type=cto, object_id=obj_pk)
+            .filter(
+                content_type=cto,
+                object_id=obj_pk,
+            )
             .exclude(message__isnull=True)
             .select_related(
-                "name",                    # user
-                "name__label",             # JOIN label
-                "name__member_profile"     # JOIN member_profile
+                "name",
+                "name__label",
+                "name__member_profile",
             )
             .order_by("-timestamp")
         )
+
         if rtype:
             qs = qs.filter(reaction_type=rtype)
 
-        # --- Build minimal payload; skip whitespace-only after decryption (safety) ---
         items = []
-        for r in qs[:200]:
-            if not (r.message or "").strip():
-                continue
-            user_data = SimpleCustomUserSerializer(r.name, context={"request": request}).data
-            items.append({
-                "id": r.id,
-                "reaction_type": r.reaction_type,
-                "message": r.message,      # transparently decrypted by field
-                "timestamp": r.timestamp,  # DRF handles datetime serialization
-                "user": user_data,
-            })
 
-        return Response(items, status=200)
-    
+        for reaction in qs[:200]:
+            if not _reaction_has_message(reaction):
+                continue
+
+            user_data = SimpleCustomUserSerializer(
+                reaction.name,
+                context={"request": request},
+            ).data
+
+            items.append(
+                {
+                    "id": reaction.id,
+                    "reaction_type": reaction.reaction_type,
+                    "message": reaction.message,
+                    "timestamp": reaction.timestamp,
+                    "user": user_data,
+                }
+            )
+
+        return Response(
+            items,
+            status=status.HTTP_200_OK,
+        )

@@ -13,11 +13,14 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from apps.asset_delivery.constants import PlaybackAuthMode, PlaybackIntent
-from apps.asset_delivery.permissions import safe_can_view_target
 from apps.asset_delivery.serializers import (
     PlaybackBatchRequestSerializer,
     PlaybackBatchResponseSerializer,
     PlaybackURLSerializer,
+)
+from apps.asset_delivery.permissions import (
+    safe_can_deliver_public_user_avatar,
+    safe_can_view_target,
 )
 from apps.asset_delivery.services.job_resolver import get_latest_done_output_path
 from apps.asset_delivery.services.playback_resolver import resolve_fallback_filefield_key
@@ -33,6 +36,11 @@ from apps.asset_delivery.services.target_resolver import (
     get_target_by_slug,
 )
 from apps.asset_delivery.services.field_aliases import resolve_field_alias
+from apps.sanctuary.services.held_content_access import (
+    can_inspect_held_content,
+    held_asset_field_is_allowed,
+    is_under_active_safety_hold,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,8 +53,36 @@ def _safe_can_deliver_asset(
     intent: str,
 ) -> bool:
     """
-    Apply target-specific asset delivery rules.
+    Apply Sanctuary hold policy before ordinary target delivery rules.
+
+    Active hold:
+    - ordinary users and owners are denied
+    - Sanctuary review admins may inspect only known target media fields
+
+    No active hold:
+    - target hooks remain authoritative
+    - visible CustomUser avatars can be delivered anonymously
+    - all remaining targets use the ordinary visibility policy
     """
+    viewer = getattr(
+        request,
+        "user",
+        None,
+    )
+
+    if is_under_active_safety_hold(
+        target
+    ):
+        if not can_inspect_held_content(
+            viewer=viewer,
+            target=target,
+        ):
+            return False
+
+        return held_asset_field_is_allowed(
+            target,
+            field_name,
+        )
 
     hook = getattr(
         target,
@@ -54,15 +90,13 @@ def _safe_can_deliver_asset(
         None,
     )
 
-    if callable(hook):
+    if callable(
+        hook
+    ):
         try:
             return bool(
                 hook(
-                    viewer=getattr(
-                        request,
-                        "user",
-                        None,
-                    ),
+                    viewer=viewer,
                     field_name=field_name,
                     intent=intent,
                 )
@@ -73,8 +107,13 @@ def _safe_can_deliver_asset(
                 extra={
                     "target_model": (
                         target._meta.label_lower
-                        if hasattr(target, "_meta")
-                        else type(target).__name__
+                        if hasattr(
+                            target,
+                            "_meta",
+                        )
+                        else type(
+                            target
+                        ).__name__
                     ),
                     "target_id": getattr(
                         target,
@@ -85,7 +124,14 @@ def _safe_can_deliver_asset(
                     "intent": intent,
                 },
             )
+
             return False
+
+    if safe_can_deliver_public_user_avatar(
+        target,
+        field_name=field_name,
+    ):
+        return True
 
     return safe_can_view_target(
         request,

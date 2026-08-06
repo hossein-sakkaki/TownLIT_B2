@@ -68,6 +68,13 @@ from apps.accounts.serializers.user_serializers import (
     CustomUserSerializer,
     ReactivationUserSerializer,
 )
+from apps.accounts.account_deletion.exceptions import (
+    AccountDeletionError,
+)
+from apps.accounts.account_deletion.service import (
+    cancel_account_deletion,
+    schedule_account_deletion,
+)
 
 # Device serializers
 from apps.accounts.serializers.device_serializers import (
@@ -1105,24 +1112,71 @@ class AuthViewSet(viewsets.ViewSet):
 
         # 3) hard-deleted flow
         if user.is_deleted:
+            if user.deletion_completed_at:
+                return Response(
+                    {
+                        "message": (
+                            "This account has been permanently "
+                            "deleted and cannot be restored."
+                        ),
+                        "is_deleted": True,
+                        "deletion_completed": True,
+                    },
+                    status=status.HTTP_410_GONE,
+                )
+
+            if (
+                not user.deletion_scheduled_for
+                or timezone.now()
+                >= user.deletion_scheduled_for
+            ):
+                return Response(
+                    {
+                        "message": (
+                            "The account recovery period has "
+                            "ended. Permanent deletion is in "
+                            "progress."
+                        ),
+                        "is_deleted": True,
+                        "deletion_deadline_passed": True,
+                    },
+                    status=status.HTTP_410_GONE,
+                )
+
             refresh = RefreshToken.for_user(user)
             access = refresh.access_token
+
             react_user = ReactivationUserSerializer(
                 user,
-                context={"request": request}
+                context={
+                    "request": request,
+                },
             ).data
 
-            return Response({
-                "message": "Your account deletion request is in progress. You can reactivate your account within 1 year.",
-                "reactivation_required": True,
-                "is_deleted": True,
-                "deletion_requested_at": user.deletion_requested_at,
-                "email": user.email,
-                "user_id": user.id,
-                "refresh": str(refresh),
-                "access": str(access),
-                "user": react_user,
-            }, status=status.HTTP_202_ACCEPTED)
+            return Response(
+                {
+                    "message": (
+                        "Your account is scheduled for permanent "
+                        "deletion. You may cancel the request "
+                        "before the scheduled deletion date."
+                    ),
+                    "reactivation_required": True,
+                    "is_deleted": True,
+                    "deletion_requested_at": (
+                        user.deletion_requested_at
+                    ),
+                    "deletion_scheduled_for": (
+                        user.deletion_scheduled_for
+                    ),
+                    "email": user.email,
+                    "user_id": user.id,
+                    "is_member": user.is_member,
+                    "refresh": str(refresh),
+                    "access": str(access),
+                    "user": react_user,
+                },
+                status=status.HTTP_202_ACCEPTED,
+            )
 
         # 4) suspended -> block login
         if getattr(user, "is_suspended", False):
@@ -1264,36 +1318,71 @@ class AuthViewSet(viewsets.ViewSet):
             access = refresh.access_token
 
             if user.is_deleted:
+                if user.deletion_completed_at:
+                    return Response(
+                        {
+                            "message": (
+                                "This account has been permanently "
+                                "deleted and cannot be restored."
+                            ),
+                            "is_deleted": True,
+                            "deletion_completed": True,
+                        },
+                        status=status.HTTP_410_GONE,
+                    )
+
+                if (
+                    not user.deletion_scheduled_for
+                    or timezone.now()
+                    >= user.deletion_scheduled_for
+                ):
+                    return Response(
+                        {
+                            "message": (
+                                "The account recovery period has "
+                                "ended. Permanent deletion is in "
+                                "progress."
+                            ),
+                            "is_deleted": True,
+                            "deletion_deadline_passed": True,
+                        },
+                        status=status.HTTP_410_GONE,
+                    )
+
+                refresh = RefreshToken.for_user(user)
+                access = refresh.access_token
+
                 react_user = ReactivationUserSerializer(
                     user,
-                    context={"request": request}
+                    context={
+                        "request": request,
+                    },
                 ).data
 
-                return Response({
-                    "message": "Account deactivated. You can reactivate within 1 year using the code sent to your email.",
-                    "reactivation_required": True,
-                    "is_deleted": True,
-                    "deletion_requested_at": user.deletion_requested_at,
-                    "email": user.email,
-                    "user_id": user.id,
-                    "refresh": str(refresh),
-                    "access": str(access),
-                    "user": react_user,
-                }, status=status.HTTP_202_ACCEPTED)
-
-            user_data = CustomUserSerializer(
-                user,
-                context={"request": request}
-            ).data
-
-            return Response({
-                'refresh': str(refresh),
-                'access': str(access),
-                'is_member': user.is_member,
-                'user': user_data,
-                'user_id': user.id,
-                'email': user.email,
-            }, status=status.HTTP_200_OK)
+                return Response(
+                    {
+                        "message": (
+                            "Your account is scheduled for permanent "
+                            "deletion. You may cancel the request "
+                            "before the scheduled deletion date."
+                        ),
+                        "reactivation_required": True,
+                        "is_deleted": True,
+                        "deletion_requested_at": (
+                            user.deletion_requested_at
+                        ),
+                        "deletion_scheduled_for": (
+                            user.deletion_scheduled_for
+                        ),
+                        "email": user.email,
+                        "user_id": user.id,
+                        "is_member": user.is_member,
+                        "refresh": str(refresh),
+                        "access": str(access),
+                        "user": react_user,
+                    },
+                    status=status.HTTP_202_ACCEPTED,
+                )
 
         if token_status == "expired":
             return Response({
@@ -1844,223 +1933,565 @@ class AuthViewSet(viewsets.ViewSet):
             return Response({"error": "An unexpected error occurred"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     # ---------------------------------------------------------------------------------------------------------------
-    @action(detail=False, methods=['post'], url_path='send-delete-confirmation', permission_classes=[IsAuthenticated])
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="send-delete-confirmation",
+        permission_classes=[IsAuthenticated],
+    )
     def send_delete_confirmation(self, request):
-        try:
-            user = request.user
-            if user.is_deleted:
-                return Response({"error": "Your account is already marked for deletion."}, status=status.HTTP_400_BAD_REQUEST)
+        user = request.user
 
-            # Generate and encrypt activation code
-            active_code = create_active_code(5)            
-            expiration_minutes = settings.EMAIL_CODE_EXPIRATION_MINUTES                      
-            expiration_time = timezone.now() + datetime.timedelta(minutes=expiration_minutes)
-            
-            encrypted_active_code = cipher_suite.encrypt(str(active_code).encode())
-            user.user_active_code = encrypted_active_code.decode()  # Save as string
-            user.user_active_code_expiry = expiration_time
-            user.save()
-
-            # Send email
-            subject = "Confirm Account Deletion - TownLIT"
-            context = {
-                'activation_code': active_code,
-                'user': user,
-                'site_domain': settings.SITE_URL,
-                "logo_base_url": settings.EMAIL_LOGO_URL,
-                "expiration_minutes": expiration_minutes,
-                "current_year": timezone.now().year,
-            }
-
-            success = send_custom_email(
-                to=user.email,
-                subject=subject,
-                template_path='emails/account/delete_confirmation_email.html',
-                context=context,
-                text_template_path=None
+        if user.is_deleted:
+            return Response(
+                {
+                    "error": (
+                        "Your account is already scheduled "
+                        "for permanent deletion."
+                    ),
+                    "code": "account_deletion_already_pending",
+                },
+                status=status.HTTP_409_CONFLICT,
             )
 
-            if not success:
-                return Response({"error": "Failed to send confirmation email. Please try again later."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        active_code = str(
+            create_active_code(5)
+        )
 
-            return Response({"message": "A confirmation email has been sent. Please check your inbox."}, status=status.HTTP_200_OK)
-        except Exception as e:
-            logger.error(f"Error in send_delete_confirmation: {str(e)}")
-            return Response({"error": f"An error occurred: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        expiration_minutes = (
+            settings.EMAIL_CODE_EXPIRATION_MINUTES
+        )
 
-    @action(detail=False, methods=['post'], url_path='confirm-delete-account', permission_classes=[AllowAny])
-    def confirm_delete_account(self, request):
-        try:
-            user = request.user
-            code = request.data.get('code')
-
-            if not code:
-                return Response({"error": "Confirmation code is required."}, status=status.HTTP_400_BAD_REQUEST)
-
-            if not user.user_active_code:
-                return Response({"error": "No confirmation code found. Please request a new one."}, status=status.HTTP_400_BAD_REQUEST)
-
-            # Decrypt the stored code
-            try:
-                decrypted_active_code = cipher_suite.decrypt(user.user_active_code.encode()).decode()
-            except Exception:
-                return Response({"error": "Failed to decrypt the confirmation code."}, status=status.HTTP_400_BAD_REQUEST)
-
-            # Check if the code matches
-            if decrypted_active_code != code:
-                return Response({"error": "Invalid confirmation code."}, status=status.HTTP_400_BAD_REQUEST)
-
-            # Check if the code has expired
-            if user.user_active_code_expiry and timezone.now() > user.user_active_code_expiry:
-                return Response({"error": "The confirmation code has expired. Please request a new one."}, status=status.HTTP_400_BAD_REQUEST)
-
-            # Mark account as deleted
-            user.is_deleted = True
-            user.deletion_requested_at = timezone.now()
-            user.user_active_code = None  # Clear the active code
-            user.user_active_code_expiry = None
-            user.save()
-            
-            external_contact = ExternalContact.objects.filter(email__iexact=user.email).first()
-            if external_contact:
-                external_contact.deleted_after_signup = True
-                external_contact.deleted_after_signup_at = timezone.now()
-                external_contact.became_user = False
-                external_contact.save()
-
-            subject = "Your Account Has Been Deactivated – TownLIT"
-            context = {
-                "user": user,
-                "email": user.email,
-                "logo_base_url": settings.EMAIL_LOGO_URL,
-                "site_domain": settings.SITE_URL,
-                "current_year": timezone.now().year,
-            }
-
-            success = send_custom_email(
-                to=user.email,
-                subject=subject,
-                template_path='emails/account/account_deleted_confirmation_email.html',
-                context=context,
-                text_template_path=None
+        expiration_time = (
+            timezone.now()
+            + datetime.timedelta(
+                minutes=expiration_minutes,
             )
+        )
 
-            if not success:
-                logger.warning(f"Account deleted but confirmation email failed to send for user {user.email}")
-            return Response({
-                "message": "Account deletion confirmed. A confirmation email has been sent. You can reactivate your account within 1 year."
-            }, status=status.HTTP_200_OK)
-        except Exception as e:
-            logger.error(f"Error in confirm_delete_account: {str(e)}")
-            return Response({"error": f"An error occurred: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        user.user_active_code = (
+            encrypt_active_code_for_storage(
+                active_code
+            )
+        )
+        user.user_active_code_expiry = (
+            expiration_time
+        )
+
+        user.save(
+            update_fields=[
+                "user_active_code",
+                "user_active_code_expiry",
+            ],
+        )
         
-    # ----------------------------------------------------------------------------------------------------        
-    @action(detail=False, methods=['post'], url_path='send-reactivate-confirmation', permission_classes=[IsAuthenticated])
-    def send_reactivate_confirmation(self, request):
-        try:
-            user = request.user
-            if not user.is_deleted:
-                return Response({"error": "Your account is not marked for deletion."}, status=status.HTTP_400_BAD_REQUEST)
+        print('-------------------------------')
+        print(active_code)
+        print('-------------------------------')
 
-            # Generate and store OTP (encrypted)
-            active_code = create_active_code(5)
-            expiration_minutes = settings.EMAIL_CODE_EXPIRATION_MINUTES
-            expiration_time = timezone.now() + datetime.timedelta(minutes=expiration_minutes)
+        context = {
+            "activation_code": active_code,
+            "user": user,
+            "site_domain": settings.SITE_URL,
+            "logo_base_url": settings.EMAIL_LOGO_URL,
+            "expiration_minutes": expiration_minutes,
+            "grace_days": getattr(
+                settings,
+                "ACCOUNT_DELETION_GRACE_DAYS",
+                30,
+            ),
+            "current_year": timezone.now().year,
+        }
 
-            encrypted_active_code = cipher_suite.encrypt(str(active_code).encode())
-            user.user_active_code = encrypted_active_code.decode()
-            user.user_active_code_expiry = expiration_time
-            user.save(update_fields=["user_active_code", "user_active_code_expiry"])
+        success = send_custom_email(
+            to=user.email,
+            subject=(
+                "Confirm Permanent Account Deletion "
+                "- TownLIT"
+            ),
+            template_path=(
+                "emails/account/"
+                "delete_confirmation_email.html"
+            ),
+            context=context,
+            text_template_path=None,
+        )
 
-            # Send email
-            subject = "Reactivate Your Account - TownLIT"
-            context = {
-                'activation_code': active_code,
-                'user': user,
-                'site_domain': settings.SITE_URL,
-                "logo_base_url": settings.EMAIL_LOGO_URL,
-                "expiration_minutes": expiration_minutes,
-                "current_year": timezone.now().year,
-            }
-            success = send_custom_email(
-                to=user.email,
-                subject=subject,
-                template_path='emails/account/reactivate_account_email.html',
-                context=context,
-                text_template_path=None
+        if not success:
+            return Response(
+                {
+                    "error": (
+                        "Failed to send confirmation email. "
+                        "Please try again later."
+                    ),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-            if not success:
-                return Response({"error": "Failed to send reactivation code. Please try again later."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-            return Response({"message": "A reactivation code has been sent to your email. Please check your inbox."}, status=status.HTTP_200_OK)
-        except Exception as e:
-            logger.error(f"Error in send_reactivate_confirmation: {str(e)}")
-            return Response({"error": f"An error occurred: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-                
-    @action(detail=False, methods=['post'], url_path='confirm-reactivate-account', permission_classes=[IsAuthenticated])
-    def confirm_reactivate_account(self, request):
-        try:
-            user = request.user
-            code = request.data.get('code')
-            if not code:
-                return Response({"error": "Reactivation code is required."}, status=status.HTTP_400_BAD_REQUEST)
-            if not user.is_deleted:
-                return Response({"error": "Your account is not marked for deletion."}, status=status.HTTP_400_BAD_REQUEST)
-            if not user.user_active_code:
-                return Response({"error": "No reactivation code found. Please request a new one."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {
+                "message": (
+                    "A confirmation code was sent to "
+                    "your email."
+                ),
+            },
+            status=status.HTTP_200_OK,
+        )
+        
+        
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="confirm-delete-account",
+        permission_classes=[IsAuthenticated],
+    )
+    def confirm_delete_account(self, request):
+        user = request.user
+        code = str(
+            request.data.get("code") or ""
+        ).strip()
 
-            # Decrypt and validate
-            try:
-                decrypted_active_code = cipher_suite.decrypt(user.user_active_code.encode()).decode()
-            except Exception:
-                return Response({"error": "Failed to decrypt the reactivation code."}, status=status.HTTP_400_BAD_REQUEST)
-            if decrypted_active_code != code:
-                return Response({"error": "Invalid reactivation code."}, status=status.HTTP_400_BAD_REQUEST)
-            if user.user_active_code_expiry and timezone.now() > user.user_active_code_expiry:
-                return Response({"error": "The reactivation code has expired. Please request a new one."}, status=status.HTTP_400_BAD_REQUEST)
+        if not code:
+            return Response(
+                {
+                    "error": (
+                        "Confirmation code is required."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-            # Reactivate
-            user.is_deleted = False
-            user.deletion_requested_at = None
+        if user.is_deleted:
+            return Response(
+                {
+                    "error": (
+                        "Your account is already scheduled "
+                        "for permanent deletion."
+                    ),
+                    "code": "account_deletion_already_pending",
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        if (
+            not user.user_active_code
+            or not user.user_active_code_expiry
+        ):
+            return Response(
+                {
+                    "error": (
+                        "No confirmation code was found. "
+                        "Please request a new one."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if timezone.now() > user.user_active_code_expiry:
             user.user_active_code = None
             user.user_active_code_expiry = None
-            user.reactivated_at = timezone.now()
-            user.save(update_fields=[
-                "is_deleted", "deletion_requested_at",
-                "user_active_code", "user_active_code_expiry",
-                "reactivated_at"
-            ])
 
-            external_contact = ExternalContact.objects.filter(email__iexact=user.email).first()
-            if external_contact:
-                external_contact.became_user = True
-                external_contact.became_user_at = timezone.now()
-                external_contact.deleted_after_signup = False
-                external_contact.save(update_fields=["became_user", "became_user_at", "deleted_after_signup"])
+            user.save(
+                update_fields=[
+                    "user_active_code",
+                    "user_active_code_expiry",
+                ],
+            )
 
-            # Email success
-            subject = "Welcome Back to TownLIT!"
-            context = {
+            return Response(
+                {
+                    "error": (
+                        "The confirmation code has expired. "
+                        "Please request a new one."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            stored_code = (
+                decrypt_active_code_from_storage(
+                    user.user_active_code
+                )
+            )
+        except Exception:
+            logger.exception(
+                "Deletion code decrypt failed "
+                "user_id=%s",
+                user.id,
+            )
+
+            return Response(
+                {
+                    "error": (
+                        "Unable to validate the confirmation "
+                        "code."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not secrets.compare_digest(
+            stored_code,
+            code,
+        ):
+            return Response(
+                {
+                    "error": (
+                        "Invalid confirmation code."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        deleted_user = schedule_account_deletion(
+            user=user,
+        )
+
+        external_contact = (
+            ExternalContact.objects
+            .filter(
+                email__iexact=user.email,
+            )
+            .first()
+        )
+
+        if external_contact:
+            external_contact.deleted_after_signup = True
+            external_contact.deleted_after_signup_at = (
+                timezone.now()
+            )
+            external_contact.became_user = False
+
+            external_contact.save(
+                update_fields=[
+                    "deleted_after_signup",
+                    "deleted_after_signup_at",
+                    "became_user",
+                ],
+            )
+
+        context = {
+            "user": deleted_user,
+            "email": deleted_user.email,
+            "deletion_scheduled_for": (
+                deleted_user.deletion_scheduled_for
+            ),
+            "grace_days": getattr(
+                settings,
+                "ACCOUNT_DELETION_GRACE_DAYS",
+                30,
+            ),
+            "logo_base_url": settings.EMAIL_LOGO_URL,
+            "site_domain": settings.SITE_URL,
+            "current_year": timezone.now().year,
+        }
+
+        send_custom_email(
+            to=deleted_user.email,
+            subject=(
+                "Your TownLIT Account Is Scheduled "
+                "for Permanent Deletion"
+            ),
+            template_path=(
+                "emails/account/"
+                "account_deleted_confirmation_email.html"
+            ),
+            context=context,
+            text_template_path=None,
+        )
+
+        return Response(
+            {
+                "message": (
+                    "Your account is scheduled for permanent "
+                    "deletion. You may cancel this request "
+                    "before the scheduled deletion date."
+                ),
+                "is_deleted": True,
+                "deletion_requested_at": (
+                    deleted_user.deletion_requested_at
+                ),
+                "deletion_scheduled_for": (
+                    deleted_user.deletion_scheduled_for
+                ),
+            },
+            status=status.HTTP_200_OK,
+        )
+        
+    # ----------------------------------------------------------------------------------------------------        
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="send-reactivate-confirmation",
+        permission_classes=[IsAuthenticated],
+    )
+    def send_reactivate_confirmation(self, request):
+        user = request.user
+
+        if not user.is_deleted:
+            return Response(
+                {
+                    "error": (
+                        "This account is not scheduled "
+                        "for deletion."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if (
+            user.deletion_completed_at
+            or not user.deletion_scheduled_for
+            or timezone.now()
+            >= user.deletion_scheduled_for
+        ):
+            return Response(
+                {
+                    "error": (
+                        "The account recovery period has ended."
+                    ),
+                    "code": "account_deletion_deadline_passed",
+                },
+                status=status.HTTP_410_GONE,
+            )
+
+        active_code = str(
+            create_active_code(5)
+        )
+
+        expiration_minutes = (
+            settings.EMAIL_CODE_EXPIRATION_MINUTES
+        )
+
+        expiration_time = (
+            timezone.now()
+            + datetime.timedelta(
+                minutes=expiration_minutes,
+            )
+        )
+
+        user.user_active_code = (
+            encrypt_active_code_for_storage(
+                active_code
+            )
+        )
+        user.user_active_code_expiry = (
+            expiration_time
+        )
+
+        user.save(
+            update_fields=[
+                "user_active_code",
+                "user_active_code_expiry",
+            ],
+        )
+
+        print('-------------------------------')
+        print(active_code)
+        print('-------------------------------')
+
+
+        success = send_custom_email(
+            to=user.email,
+            subject=(
+                "Confirm Account Deletion Cancellation "
+                "- TownLIT"
+            ),
+            template_path=(
+                "emails/account/"
+                "reactivate_account_email.html"
+            ),
+            context={
+                "activation_code": active_code,
                 "user": user,
-                "reactivated_at": user.reactivated_at.strftime("%Y-%m-%d %H:%M:%S"),
+                "expiration_minutes": expiration_minutes,
+                "deletion_scheduled_for": (
+                    user.deletion_scheduled_for
+                ),
                 "site_domain": settings.SITE_URL,
                 "logo_base_url": settings.EMAIL_LOGO_URL,
                 "current_year": timezone.now().year,
-            }
-            success = send_custom_email(
-                to=user.email,
-                subject=subject,
-                template_path="emails/account/reactivation_success_email.html",
-                context=context,
-                text_template_path=None
-            )
-            if not success:
-                return Response({"error": "Reactivated, but failed to send confirmation email."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            },
+            text_template_path=None,
+        )
 
-            return Response({"message": "Your account has been successfully reactivated."}, status=status.HTTP_200_OK)
-        except Exception as e:
-            logger.error(f"Error in confirm_reactivate_account: {str(e)}")
-            return Response({"error": f"An error occurred: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        if not success:
+            return Response(
+                {
+                    "error": (
+                        "Failed to send the confirmation code."
+                    ),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return Response(
+            {
+                "message": (
+                    "A confirmation code was sent to "
+                    "your email."
+                ),
+            },
+            status=status.HTTP_200_OK,
+        )
+                
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="confirm-reactivate-account",
+        permission_classes=[IsAuthenticated],
+    )
+    def confirm_reactivate_account(self, request):
+        user = request.user
+        code = str(
+            request.data.get("code") or ""
+        ).strip()
+
+        if not code:
+            return Response(
+                {
+                    "error": (
+                        "Confirmation code is required."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if (
+            not user.user_active_code
+            or not user.user_active_code_expiry
+        ):
+            return Response(
+                {
+                    "error": (
+                        "No confirmation code was found. "
+                        "Please request a new one."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if timezone.now() > user.user_active_code_expiry:
+            user.user_active_code = None
+            user.user_active_code_expiry = None
+
+            user.save(
+                update_fields=[
+                    "user_active_code",
+                    "user_active_code_expiry",
+                ],
+            )
+
+            return Response(
+                {
+                    "error": (
+                        "The confirmation code has expired. "
+                        "Please request a new one."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            stored_code = (
+                decrypt_active_code_from_storage(
+                    user.user_active_code
+                )
+            )
+        except Exception:
+            return Response(
+                {
+                    "error": (
+                        "Unable to validate the confirmation "
+                        "code."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not secrets.compare_digest(
+            stored_code,
+            code,
+        ):
+            return Response(
+                {
+                    "error": (
+                        "Invalid confirmation code."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            restored_user = cancel_account_deletion(
+                user=user,
+            )
+        except AccountDeletionError as exc:
+            return Response(
+                {
+                    "error": exc.message,
+                    "code": exc.code,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        external_contact = (
+            ExternalContact.objects
+            .filter(
+                email__iexact=restored_user.email,
+            )
+            .first()
+        )
+
+        if external_contact:
+            external_contact.became_user = True
+            external_contact.became_user_at = (
+                timezone.now()
+            )
+            external_contact.deleted_after_signup = False
+            external_contact.deleted_after_signup_at = None
+
+            external_contact.save(
+                update_fields=[
+                    "became_user",
+                    "became_user_at",
+                    "deleted_after_signup",
+                    "deleted_after_signup_at",
+                ],
+            )
+
+        send_custom_email(
+            to=restored_user.email,
+            subject=(
+                "Your Account Deletion Request "
+                "Was Canceled"
+            ),
+            template_path=(
+                "emails/account/"
+                "reactivation_success_email.html"
+            ),
+            context={
+                "user": restored_user,
+                "reactivated_at": (
+                    restored_user.reactivated_at
+                ),
+                "site_domain": settings.SITE_URL,
+                "logo_base_url": settings.EMAIL_LOGO_URL,
+                "current_year": timezone.now().year,
+            },
+            text_template_path=None,
+        )
+
+        return Response(
+            {
+                "message": (
+                    "Your account deletion request was "
+                    "successfully canceled."
+                ),
+            },
+            status=status.HTTP_200_OK,
+        )
 
     # Reset Conversation Encryption Identity -----------------------------------
     @action(

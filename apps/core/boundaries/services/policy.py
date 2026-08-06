@@ -167,27 +167,39 @@ class BoundaryPolicy:
         return True
 
     @staticmethod
-    def should_hide_from_feed(*, viewer, owner_user) -> bool:
+    def should_hide_from_feed(
+        *,
+        viewer,
+        owner_user,
+    ) -> bool:
         """
-        Used by stream/feed.
+        Determine whether owner_user content must be hidden from viewer.
 
-        Hide owner_user content from viewer if:
-        - viewer placed owner_user in Stillness
-        - Boundary exists between them
+        Product rule:
+        - Stillness does not remove content from feed, stream, profile,
+        or search. It quietly suppresses notifications and suggestions
+        for the owner who enabled it.
+        - Boundary hides content between both users.
         """
-        if not BoundaryPolicy._valid_user(viewer) or not BoundaryPolicy._valid_user(owner_user):
+
+        if (
+            not BoundaryPolicy._valid_user(viewer)
+            or not BoundaryPolicy._valid_user(
+                owner_user
+            )
+        ):
             return False
 
-        if BoundaryPolicy._same_user(viewer, owner_user):
+        if BoundaryPolicy._same_user(
+            viewer,
+            owner_user,
+        ):
             return False
 
-        if BoundaryPolicy.has_boundary_between(viewer, owner_user):
-            return True
-
-        if BoundaryPolicy.is_in_stillness(owner=viewer, target=owner_user):
-            return True
-
-        return False
+        return BoundaryPolicy.has_boundary_between(
+            viewer,
+            owner_user,
+        )
 
     @staticmethod
     def should_hide_from_suggestions(*, viewer, candidate) -> bool:

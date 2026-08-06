@@ -93,6 +93,12 @@ class CustomUserAuthSerializer(AvatarURLMixin, serializers.ModelSerializer):
 
             "profile_url",
             "groups",
+            
+            "is_deleted",
+            "deletion_requested_at",
+            "deletion_scheduled_for",
+            "deletion_canceled_at",
+            "deletion_completed_at",
         ]
 
         read_only_fields = fields  # 🔐 HARD READ-ONLY
@@ -196,6 +202,10 @@ class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
             "mobile_verification_expiry",
             "user_active_code",
             "user_active_code_expiry",
+            
+            "deletion_scheduled_for",
+            "deletion_canceled_at",
+            "deletion_completed_at",
         ]
 
         read_only_fields = [
@@ -900,22 +910,32 @@ class SimpleMutualFriendSerializer(AvatarURLMixin, serializers.ModelSerializer):
         return bool(mp and mp.is_townlit_verified)
     
 # Reactivation User Serializers -----------------------------------------------------------------------
-class ReactivationUserSerializer(serializers.ModelSerializer):
+class ReactivationUserSerializer(
+    serializers.ModelSerializer
+):
     """
-    Minimal payload for reactivation flow.
-    No PII beyond email/username. No profile/label/locale.
+    Minimal payload for canceling scheduled deletion.
     """
+
+    can_cancel_deletion = (
+        serializers.BooleanField(
+            read_only=True,
+        )
+    )
+
     class Meta:
         model = CustomUser
         fields = [
-            'id',
-            'email',
-            'username',
-            'is_member',
-            'is_deleted',
-            'deletion_requested_at',
-            # optional hints for FE UX:
-            'two_factor_enabled',
+            "id",
+            "email",
+            "username",
+            "is_member",
+            "is_deleted",
+            "deletion_requested_at",
+            "deletion_scheduled_for",
+            "deletion_completed_at",
+            "can_cancel_deletion",
+            "two_factor_enabled",
         ]
-        read_only_fields = fields
 
+        read_only_fields = fields

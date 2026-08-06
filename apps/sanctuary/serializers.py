@@ -1,4 +1,5 @@
 # apps/sanctuary/serializers.py
+
 from __future__ import annotations
 from rest_framework import serializers
 from django.contrib.contenttypes.models import ContentType
@@ -7,12 +8,12 @@ from django.utils import timezone
 
 from apps.main.models import TermsAndPolicy
 from apps.sanctuary.models import (
+    SanctuaryOutcome,
+    SanctuaryParticipantProfile,
     SanctuaryRequest,
     SanctuaryReview,
-    SanctuaryOutcome,
-    SanctuaryReview,
-    SanctuaryParticipantProfile, SanctuaryParticipantAudit
 )
+
 from apps.main.constants import SANCTUARY_COUNCIL_RULES
 from apps.sanctuary.constants.targets import REQUEST_TYPE_CHOICES
 from apps.sanctuary.constants.reasons import REASON_MAP
@@ -20,6 +21,14 @@ from apps.sanctuary.constants.states import (
     NO_OPINION,
     VIOLATION_CONFIRMED,
     VIOLATION_REJECTED,
+)
+from apps.sanctuary.services.target_access import (
+    assert_sanctuary_target_access,
+)
+from apps.sanctuary.constants.target_models import (
+    allowed_target_models_for,
+    content_type_key,
+    is_allowed_target_model,
 )
 
 # Allowed final votes ----------------------------------------------------------------------
@@ -30,23 +39,70 @@ _ALLOWED_FINAL_VOTES = {VIOLATION_CONFIRMED, VIOLATION_REJECTED}
 # Custom fields -----------------------------------------------------------------------------
 class ContentTypeKeyField(serializers.Field):
     """
-    Accepts "app_label.model" and returns ContentType instance.
-    Example: "posts.post"
+    Accept and return a Django ContentType natural key.
+
+    Expected format:
+
+        app_label.model_name
     """
 
-    def to_internal_value(self, data):
-        if not isinstance(data, str) or "." not in data:
-            raise serializers.ValidationError("content_type must be in format 'app_label.model'.")
+    default_error_messages = {
+        "invalid_format": (
+            "content_type must be in format "
+            "'app_label.model'."
+        ),
+        "invalid_content_type": (
+            "Invalid content_type."
+        ),
+    }
 
-        app_label, model = data.split(".", 1)
+    def to_internal_value(self, data):
+        if not isinstance(data, str):
+            self.fail(
+                "invalid_format"
+            )
+
+        normalized = data.strip().lower()
+
+        if (
+            not normalized
+            or normalized.count(".") != 1
+        ):
+            self.fail(
+                "invalid_format"
+            )
+
+        app_label, model = normalized.split(
+            ".",
+            1,
+        )
+
+        app_label = app_label.strip()
+        model = model.strip()
+
+        if not app_label or not model:
+            self.fail(
+                "invalid_format"
+            )
+
         try:
-            return ContentType.objects.get(app_label=app_label, model=model)
+            return ContentType.objects.get(
+                app_label__iexact=app_label,
+                model__iexact=model,
+            )
         except ContentType.DoesNotExist:
-            raise serializers.ValidationError("Invalid content_type.")
+            self.fail(
+                "invalid_content_type"
+            )
+        except ContentType.MultipleObjectsReturned:
+            self.fail(
+                "invalid_content_type"
+            )
 
     def to_representation(self, value):
-        # value can be ContentType instance
-        return f"{value.app_label}.{value.model}"
+        return content_type_key(
+            value
+        )
 
 # Sanctuary request serializers -------------------------------------------------------------
 class SanctuaryRequestSerializer(serializers.ModelSerializer):
@@ -94,74 +150,195 @@ class SanctuaryRequestSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
-    def validate_reasons(self, value):
-        # Keep unique reasons
-        value = [str(x).strip() for x in value if str(x).strip()]
-        if not value:
-            raise serializers.ValidationError("At least one reason is required.")
+    def validate_reasons(
+        self,
+        value,
+    ):
+        normalized_reasons: list[str] = []
 
-        if len(value) > 10:
-            raise serializers.ValidationError("Too many reasons.")
+        for item in value:
+            if not isinstance(
+                item,
+                str,
+            ):
+                raise serializers.ValidationError(
+                    "Every reason must be a string."
+                )
 
-        # Unique
-        if len(set(value)) != len(value):
-            raise serializers.ValidationError("Duplicate reasons are not allowed.")
+            normalized = item.strip()
 
-        request_type = (self.initial_data.get("request_type") or "").strip()
-        allowed = REASON_MAP.get(request_type, {})
-        invalid = [r for r in value if r not in allowed]
-        if invalid:
-            raise serializers.ValidationError(f"Invalid reason(s) for {request_type}: {invalid}")
+            if normalized:
+                normalized_reasons.append(
+                    normalized
+                )
 
-        return value
+        if not normalized_reasons:
+            raise serializers.ValidationError(
+                "At least one reason is required."
+            )
 
-    def validate(self, attrs):
-        request_type = attrs.get("request_type")
-        if request_type not in dict(REQUEST_TYPE_CHOICES):
-            raise serializers.ValidationError({
-                "request_type": "Invalid request type."
-            })
-
-        ct = attrs.get("content_type")
-        obj_id = attrs.get("object_id")
-
-        try:
-            model_cls = ct.model_class()
-
-            if model_cls is None:
-                raise serializers.ValidationError({
-                    "content_type": "Invalid target model."
-                })
-
-            if not model_cls.objects.filter(pk=obj_id).exists():
-                raise serializers.ValidationError({
-                    "object_id": "Target object not found."
-                })
-        except serializers.ValidationError:
-            raise
-        except Exception:
-            raise serializers.ValidationError({
-                "content_type": "Invalid target model."
-            })
-
-        request = self.context.get("request")
-        user = getattr(request, "user", None)
+        if len(normalized_reasons) > 10:
+            raise serializers.ValidationError(
+                "Too many reasons."
+            )
 
         if (
-            self.instance is None
-            and user
-            and getattr(user, "is_authenticated", False)
+            len(set(normalized_reasons))
+            != len(normalized_reasons)
         ):
+            raise serializers.ValidationError(
+                "Duplicate reasons are not allowed."
+            )
+
+        request_type = str(
+            self.initial_data.get(
+                "request_type"
+            )
+            or ""
+        ).strip()
+
+        allowed_reasons = REASON_MAP.get(
+            request_type,
+            {},
+        )
+
+        invalid_reasons = [
+            reason
+            for reason in normalized_reasons
+            if reason not in allowed_reasons
+        ]
+
+        if invalid_reasons:
+            raise serializers.ValidationError(
+                {
+                    "message": (
+                        "One or more reasons are not "
+                        "valid for this Sanctuary "
+                        "request type."
+                    ),
+                    "invalid_reasons": (
+                        invalid_reasons
+                    ),
+                }
+            )
+
+        return normalized_reasons
+    
+    def validate(self, attrs):
+        request_type = attrs.get(
+            "request_type"
+        )
+
+        valid_request_types = dict(
+            REQUEST_TYPE_CHOICES
+        )
+
+        if request_type not in valid_request_types:
+            raise serializers.ValidationError(
+                {
+                    "request_type": (
+                        "Invalid request type."
+                    ),
+                    "code": (
+                        "invalid_request_type"
+                    ),
+                }
+            )
+
+        target_content_type = attrs.get(
+            "content_type"
+        )
+
+        object_id = attrs.get(
+            "object_id"
+        )
+
+        if target_content_type is None:
+            raise serializers.ValidationError(
+                {
+                    "content_type": (
+                        "This field is required."
+                    ),
+                    "code": (
+                        "invalid_target_model"
+                    ),
+                }
+            )
+
+        if not is_allowed_target_model(
+            request_type=request_type,
+            content_type=target_content_type,
+        ):
+            allowed_models = sorted(
+                allowed_target_models_for(
+                    request_type
+                )
+            )
+
+            raise serializers.ValidationError(
+                {
+                    "content_type": (
+                        "This target model is not allowed "
+                        "for the selected Sanctuary "
+                        "request type."
+                    ),
+                    "allowed_content_types": (
+                        allowed_models
+                    ),
+                    "code": (
+                        "invalid_target_model"
+                    ),
+                }
+            )
+
+        request = self.context.get(
+            "request"
+        )
+
+        user = getattr(
+            request,
+            "user",
+            None,
+        )
+
+        if (
+            not user
+            or not getattr(
+                user,
+                "is_authenticated",
+                False,
+            )
+        ):
+            raise PermissionDenied(
+                "Authentication required."
+            )
+
+        # Central target existence, visibility, ownership, and
+        # Messenger membership policy.
+        assert_sanctuary_target_access(
+            user=user,
+            request_type=request_type,
+            content_type=target_content_type,
+            object_id=object_id,
+        )
+
+        if self.instance is None:
             duplicate_exists = SanctuaryRequest.objects.filter(
                 requester=user,
-                content_type=ct,
-                object_id=obj_id,
+                content_type=target_content_type,
+                object_id=object_id,
+                status__in=["pending", "under_review"],
             ).exists()
 
             if duplicate_exists:
                 raise serializers.ValidationError({
-                    "detail": "You have already submitted a Sanctuary request for this target."
+                    "detail": "You already have an active Sanctuary request for this target.",
+                    "code": "active_sanctuary_request_already_exists",
                 })
+
+        attrs["content_type"] = (
+            target_content_type
+        )
 
         return attrs
     
@@ -384,3 +561,11 @@ class SanctuaryCounterSerializer(serializers.Serializer):
 
     has_reported = serializers.BooleanField()
     request_id = serializers.IntegerField(allow_null=True)
+
+
+# Sanctuary target status serializers ------------------------------------------------------
+class SanctuaryTargetStatusSerializer(serializers.Serializer):
+    under_sanctuary_review = serializers.BooleanField()
+    status = serializers.CharField(allow_null=True)
+    applied_at = serializers.DateTimeField(allow_null=True)
+    message = serializers.CharField(allow_blank=True)

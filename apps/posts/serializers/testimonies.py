@@ -20,6 +20,9 @@ from common.file_handlers.media_mixins import (
 from common.serializers.targets import InstanceTargetMixin
 from apps.core.ownership.utils import resolve_owner_from_request
 from .serializers_owner_min import build_owner_dto_from_content_object
+from apps.sanctuary.services.held_content_access import (
+    held_representation_or_none,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -486,7 +489,11 @@ class TestimonySerializer(
                 include_job_target=True,
             )
 
-        return data
+        return held_representation_or_none(
+            target=obj,
+            viewer=viewer,
+            data=data,
+        )
 
     # -------------------------------------------------
     # Transcript / subtitles helpers
@@ -699,7 +706,11 @@ class TestimonyProfileHeaderSerializer(
                 include_job_target=True,
             )
 
-        return data
+        return held_representation_or_none(
+            target=obj,
+            viewer=viewer,
+            data=data,
+        )
     
     
 # -------------------------------------------------
@@ -819,3 +830,19 @@ class TestimonyStreamPayloadSerializer(
         )
 
         return _build_asset_cdn_url(key)
+    
+    def to_representation(self, obj):
+        request = self.context.get("request")
+        viewer = (
+            request.user
+            if request and request.user.is_authenticated
+            else None
+        )
+
+        data = super().to_representation(obj)
+
+        return held_representation_or_none(
+            target=obj,
+            viewer=viewer,
+            data=data,
+        )

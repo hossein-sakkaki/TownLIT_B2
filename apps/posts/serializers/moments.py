@@ -30,6 +30,9 @@ from validators.mediaValidators.image_validators import (
     validate_moment_image_upload_batch,
 )
 from validators.security_validators import validate_no_executable_file
+from apps.sanctuary.services.held_content_access import (
+    held_representation_or_none,
+)
 
 import logging
 
@@ -704,17 +707,19 @@ class MomentSerializer(
 
                 cover_id = image_items[0]["id"] if image_items else None
 
-                Moment.objects.filter(pk=instance.pk).update(
+                Moment.objects.filter(
+                    pk=instance.pk
+                ).update(
                     image_items=image_items,
                     cover_image_id=cover_id,
                     media_kind=MOMENT_MEDIA_KIND_IMAGE,
-                    is_converted=True,
+                    is_converted=False,
                 )
 
                 instance.image_items = image_items
                 instance.cover_image_id = cover_id
                 instance.media_kind = MOMENT_MEDIA_KIND_IMAGE
-                instance.is_converted = True
+                instance.is_converted = False
 
         return instance
 
@@ -909,8 +914,12 @@ class MomentSerializer(
             data.pop("is_hidden", None)
             data.pop("reactions_breakdown", None)
 
-        return data
-
+        return held_representation_or_none(
+            target=obj,
+            viewer=viewer,
+            data=data,
+        )
+        
 
 # -------------------------------------------------
 # Lightweight serializer for profile grid
@@ -1188,7 +1197,11 @@ class MomentProfileGridSerializer(serializers.ModelSerializer):
                 include_job_target=True,
             )
 
-        return data
+        return held_representation_or_none(
+            target=obj,
+            viewer=viewer,
+            data=data,
+        )
 
 
 
@@ -1298,3 +1311,19 @@ class MomentStreamPayloadSerializer(
         )
 
         return _build_asset_cdn_url(key)
+    
+    def to_representation(self, obj):
+        request = self.context.get("request")
+        viewer = (
+            request.user
+            if request and request.user.is_authenticated
+            else None
+        )
+
+        data = super().to_representation(obj)
+
+        return held_representation_or_none(
+            target=obj,
+            viewer=viewer,
+            data=data,
+        )

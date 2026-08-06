@@ -12,16 +12,24 @@ if TYPE_CHECKING:
 
 def is_profile_private(owner) -> bool:
     """
-    Checks whether the owner's profile is private.
+    Return the privacy state for Member, GuestUser, or compatible profiles.
 
-    Assumptions based on your models:
-    - Member / GuestUser / Organization may expose `is_private`
-    - If attribute does not exist → default PUBLIC
+    Current TownLIT profile models use `is_privacy`.
+    `is_private` remains supported for backward compatibility.
     """
+    if owner is None:
+        return False
+
     try:
-        return bool(getattr(owner, "is_private", False))
+        if hasattr(owner, "is_privacy"):
+            return bool(owner.is_privacy)
+
+        if hasattr(owner, "is_private"):
+            return bool(owner.is_private)
     except Exception:
         return False
+
+    return False
 
 
 # ------------------------------------------------------------------

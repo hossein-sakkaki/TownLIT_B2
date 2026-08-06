@@ -10,4 +10,5 @@ class AccountsConfig(AppConfig):
         import apps.accounts.signals.identity
         import apps.accounts.signals.trust_profile_signals
         import apps.accounts.signals.townlit_identity_dependency_signals
+        from apps.accounts.account_deletion import handlers
 

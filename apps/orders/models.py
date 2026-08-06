@@ -1,3 +1,5 @@
+# apps/orders/models.py
+
 from django.db import models
 from django.utils import timezone
 from apps.products.models import Product

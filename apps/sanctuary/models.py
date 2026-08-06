@@ -1,6 +1,7 @@
 # apps/sanctuary/models.py
 
 from django.db import models
+from django.db.models import Q
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.auth import get_user_model
@@ -126,8 +127,11 @@ class SanctuaryRequest(models.Model):
     # Multiple reasons allowed (stored as list of reason codes)
     reasons = models.JSONField(
         default=list,
-        verbose_name="Reported Reasons",
-        help_text="List of selected violation reasons",
+        verbose_name="Sanctuary Request Reasons",
+        help_text=(
+            "List of selected Sanctuary policy "
+            "concern reason codes."
+        ),
     )
 
     # Optional user explanation
@@ -148,8 +152,11 @@ class SanctuaryRequest(models.Model):
     # Snapshot of report count at creation time
     report_count_snapshot = models.PositiveIntegerField(
         default=1,
-        verbose_name="Report Count Snapshot",
-        help_text="Report count when this request was created",
+        verbose_name="Request Count Snapshot",
+        help_text=(
+            "Active Sanctuary request count when "
+            "this request was created."
+        ),
     )
 
     # Whether this case is council-based, admin-only, or monitor-only
@@ -223,9 +230,13 @@ class SanctuaryRequest(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
-        unique_together = (
-            ("requester", "content_type", "object_id"),
-        )
+        constraints = [
+            models.UniqueConstraint(
+                fields=["requester", "content_type", "object_id"],
+                condition=Q(status__in=["pending", "under_review"]),
+                name="uniq_open_sanctuary_request_per_user_target",
+            ),
+        ]
         indexes = [
             models.Index(fields=["content_type", "object_id"]),
             models.Index(fields=["status", "resolution_mode"]),
@@ -502,3 +513,109 @@ class SanctuaryProtectionLabel(models.Model):
 
     def __str__(self):
         return f"{self.label_type} on {self.content_type_id}:{self.object_id} (active={self.is_active})"
+    
+
+# SANCTUARY SAFETY HOLD Model ----------------------------------------------------------------
+class SanctuarySafetyHold(models.Model):
+    """
+    Temporary and reversible safety hold for severe Sanctuary content cases.
+
+    The hold is independent from final moderation suspension:
+    - active: target is temporarily unavailable while staff reviews it
+    - released: allegation was rejected and the temporary hold ended
+    - confirmed: violation was confirmed and permanent moderation took over
+    """
+
+    STATUS_ACTIVE = "active"
+    STATUS_RELEASED = "released"
+    STATUS_CONFIRMED = "confirmed"
+
+    STATUS_CHOICES = [
+        (STATUS_ACTIVE, "Active"),
+        (STATUS_RELEASED, "Released"),
+        (STATUS_CONFIRMED, "Confirmed"),
+    ]
+
+    id = models.BigAutoField(primary_key=True)
+
+    request_type = models.CharField(
+        max_length=32,
+        choices=REQUEST_TYPE_CHOICES,
+        default="content",
+        db_index=True,
+    )
+
+    content_type = models.ForeignKey(
+        ContentType,
+        on_delete=models.CASCADE,
+        related_name="sanctuary_safety_holds",
+    )
+    object_id = models.PositiveBigIntegerField()
+    content_object = GenericForeignKey("content_type", "object_id")
+
+    trigger_request = models.ForeignKey(
+        SanctuaryRequest,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="triggered_safety_holds",
+    )
+
+    supporting_requests = models.ManyToManyField(
+        SanctuaryRequest,
+        blank=True,
+        related_name="safety_holds",
+    )
+
+    reason_codes = models.JSONField(default=list, blank=True)
+
+    status = models.CharField(
+        max_length=16,
+        choices=STATUS_CHOICES,
+        default=STATUS_ACTIVE,
+        db_index=True,
+    )
+
+    previous_is_active = models.BooleanField(null=True, blank=True)
+    previous_is_suspended = models.BooleanField(null=True, blank=True)
+
+    did_deactivate_target = models.BooleanField(
+        default=False,
+        help_text="True only when this hold changed target.is_active from True to False.",
+    )
+
+    applied_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    ended_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
+    ended_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="ended_sanctuary_safety_holds",
+    )
+
+    release_note = models.TextField(blank=True, default="")
+
+    class Meta:
+        ordering = ["-applied_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["content_type", "object_id"],
+                condition=Q(status="active"),
+                name="uniq_active_sanctuary_hold_per_target",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["content_type", "object_id", "status"]),
+            models.Index(fields=["status", "applied_at"]),
+        ]
+        verbose_name = "Sanctuary Safety Hold"
+        verbose_name_plural = "Sanctuary Safety Holds"
+
+    @property
+    def is_active(self) -> bool:
+        return self.status == self.STATUS_ACTIVE and self.ended_at is None
+
+    def __str__(self):
+        return f"SafetyHold({self.content_type_id}:{self.object_id}, {self.status})"

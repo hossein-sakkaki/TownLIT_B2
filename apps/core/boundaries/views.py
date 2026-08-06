@@ -88,14 +88,35 @@ class UserBoundaryViewSet(viewsets.GenericViewSet):
             context={"request": request},
         ).data
 
+        boundary_type = (
+            serializer.validated_data[
+                "boundary_type"
+            ]
+        )
+
+        if boundary_type == BOUNDARY_STILLNESS:
+            response_message = (
+                "Stillness has been set."
+            )
+        else:
+            response_message = (
+                "Your Boundary has been set."
+            )
+
         return Response(
             {
-                "message": "Peace setting updated.",
+                "message": response_message,
                 "data": output,
                 "cleanup": {
-                    "relationships_cleaned": cleanup.cleaned_any,
-                    "friendships_cleaned": cleanup.friendships_cleaned,
-                    "fellowships_cleaned": cleanup.fellowships_cleaned,
+                    "relationships_cleaned": (
+                        cleanup.cleaned_any
+                    ),
+                    "friendships_cleaned": (
+                        cleanup.friendships_cleaned
+                    ),
+                    "fellowships_cleaned": (
+                        cleanup.fellowships_cleaned
+                    ),
                 },
             },
             status=status.HTTP_200_OK,
@@ -112,9 +133,29 @@ class UserBoundaryViewSet(viewsets.GenericViewSet):
             boundary_type=serializer.validated_data["boundary_type"],
         )
 
+        boundary_type = (
+            serializer.validated_data[
+                "boundary_type"
+            ]
+        )
+
+        if removed:
+            if boundary_type == BOUNDARY_STILLNESS:
+                response_message = (
+                    "Stillness has been lifted."
+                )
+            else:
+                response_message = (
+                    "Your Boundary has been lifted."
+                )
+        else:
+            response_message = (
+                "No active peace setting was found."
+            )
+
         return Response(
             {
-                "message": "Peace setting removed." if removed else "No active peace setting found.",
+                "message": response_message,
                 "removed": removed,
             },
             status=status.HTTP_200_OK,

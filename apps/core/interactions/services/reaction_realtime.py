@@ -114,10 +114,27 @@ def _safe_user_payload(user):
 
     return payload
 
+def _reaction_has_message(reaction: Reaction) -> bool:
+    """
+    Check the decrypted reaction message in Python.
+
+    EncryptedTextField must not be queried with content lookups such as:
+    exact, iexact, contains, startswith, etc.
+    """
+    message = getattr(reaction, "message", None)
+
+    if not isinstance(message, str):
+        return False
+
+    return bool(message.strip())
 
 def build_reaction_inbox_payload(*, content_type, object_id):
     """
-    Owner inbox payload for reactions that include a message.
+    Owner inbox payload for reactions that include a non-blank message.
+
+    Database filtering is limited to NULL checks because message is an
+    EncryptedTextField. Empty and whitespace-only values are checked after
+    transparent decryption in Python.
     """
     qs = (
         Reaction.objects
@@ -126,21 +143,30 @@ def build_reaction_inbox_payload(*, content_type, object_id):
             object_id=object_id,
         )
         .exclude(message__isnull=True)
-        .exclude(message__exact="")
         .select_related("name")
         .order_by("-timestamp")
     )
 
     items = []
+
     for reaction in qs:
+        if not _reaction_has_message(reaction):
+            continue
+
         items.append({
             "id": reaction.id,
             "reaction_type": reaction.reaction_type,
             "message": reaction.message,
-            "timestamp": reaction.timestamp.isoformat() if reaction.timestamp else None,
+            "timestamp": (
+                reaction.timestamp.isoformat()
+                if reaction.timestamp
+                else None
+            ),
             "content_type": _content_type_key(content_type),
             "object_id": reaction.object_id,
-            "user": _safe_user_payload(getattr(reaction, "name", None)),
+            "user": _safe_user_payload(
+                getattr(reaction, "name", None)
+            ),
         })
 
     return {
@@ -149,7 +175,6 @@ def build_reaction_inbox_payload(*, content_type, object_id):
         "object_id": int(object_id),
         "items": items,
     }
-
 
 def broadcast_reaction_summary_changed(*, content_type, object_id):
     try:

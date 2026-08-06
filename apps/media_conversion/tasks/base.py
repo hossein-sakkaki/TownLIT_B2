@@ -30,6 +30,36 @@ class MediaConversionCanceled(Exception):
     """
 
 
+class MediaConversionSuperseded(Exception):
+    """
+    Raised when a queued task no longer targets the model's current source.
+    """
+
+    def __init__(
+        self,
+        *,
+        model_name: str,
+        instance_id: int,
+        field_name: str,
+        expected_source_path: str,
+        current_source_path: str,
+    ):
+        self.model_name = model_name
+        self.instance_id = instance_id
+        self.field_name = field_name
+        self.expected_source_path = expected_source_path
+        self.current_source_path = current_source_path
+
+        super().__init__(
+            (
+                "Media conversion source was replaced: "
+                f"{model_name}[{instance_id}].{field_name} "
+                f"expected={expected_source_path!r} "
+                f"current={current_source_path!r}"
+            )
+        )
+        
+
 def is_job_canceled(job: Optional[MediaConversionJob]) -> bool:
     """
     Fresh DB check. Never trust a stale job instance inside a long task.
@@ -80,6 +110,78 @@ def get_instance(
                 continue
             raise
 
+
+# ---------------------------------------------------------------------
+# Source identity
+# ---------------------------------------------------------------------
+def normalize_storage_key(value) -> str:
+    """
+    Normalize a Django storage key for safe identity comparison.
+    """
+
+    if value is None:
+        return ""
+
+    name = getattr(value, "name", value)
+
+    return str(name or "").strip().lstrip("/")
+
+
+def get_instance_file_source_path(
+    instance,
+    field_name: str,
+) -> str:
+    """
+    Return the current storage key from a normal model FileField/ImageField.
+
+    Raises AttributeError for invalid field names instead of silently
+    classifying a programming error as a superseded conversion.
+    """
+
+    if not hasattr(instance, field_name):
+        raise AttributeError(
+            f"{type(instance).__name__} has no field '{field_name}'"
+        )
+
+    return normalize_storage_key(
+        getattr(instance, field_name)
+    )
+
+
+def raise_if_source_superseded(
+    *,
+    instance,
+    model_name: str,
+    instance_id: int,
+    field_name: str,
+    expected_source_path: str,
+) -> None:
+    """
+    Stop a stale task if the model no longer references its queued source.
+
+    An empty current source also means the original upload was cleared and
+    the queued task must not continue or bind its output.
+    """
+
+    expected_key = normalize_storage_key(
+        expected_source_path
+    )
+
+    current_key = get_instance_file_source_path(
+        instance,
+        field_name,
+    )
+
+    if current_key == expected_key:
+        return
+
+    raise MediaConversionSuperseded(
+        model_name=model_name,
+        instance_id=instance_id,
+        field_name=field_name,
+        expected_source_path=expected_key,
+        current_source_path=current_key,
+    )
 
 # ---------------------------------------------------------------------
 # Job resolution
@@ -483,6 +585,66 @@ def maybe_activate_after_convert(
             logger.warning("Activation hook failed: %s", exc)
 
 
+def _bind_converted_file_to_instance(
+    *,
+    instance,
+    model_name: str,
+    instance_id: int,
+    field_name: str,
+    relative_path: str,
+    mark_converted: bool,
+) -> None:
+    """
+    Apply one converted storage key to an already-resolved instance.
+    """
+
+    if not hasattr(instance, field_name):
+        raise AttributeError(
+            f"{model_name} has no field '{field_name}'"
+        )
+
+    file_field = getattr(
+        instance,
+        field_name,
+    )
+
+    file_field.name = relative_path
+
+    update_fields = [field_name]
+
+    if mark_converted and hasattr(instance, "is_converted"):
+        instance.is_converted = True
+        update_fields.append("is_converted")
+
+    maybe_activate_after_convert(
+        instance,
+        field_name,
+        update_fields,
+    )
+
+    # Prevent worker-bound output from re-enqueueing conversion.
+    setattr(
+        instance,
+        "_skip_media_autoconvert_once",
+        True,
+    )
+
+    instance.save(
+        update_fields=list(
+            dict.fromkeys(update_fields)
+        )
+    )
+
+    logger.info(
+        "Bound converted file %s -> %s[%s].%s mark_converted=%s",
+        relative_path,
+        model_name,
+        instance_id,
+        field_name,
+        mark_converted,
+    )
+    
+    
 def bind_converted_file(
     *,
     model_name: str,
@@ -491,58 +653,83 @@ def bind_converted_file(
     field_name: str,
     relative_path: str,
     mark_converted: bool = False,
+    expected_source_path: str | None = None,
 ) -> None:
     """
-    Bind already-uploaded converted file to model field.
-    Does not decide conversion completion unless explicitly told.
+    Bind an already-uploaded converted file to a model field.
+
+    When expected_source_path is provided, binding is guarded by a row lock.
+    The output is bound only if the model still references the source that
+    originally created this conversion task.
+
+    Existing callers that do not pass expected_source_path preserve the
+    previous behavior.
     """
+
     if os.path.isabs(relative_path):
         raise ValueError("Expected relative storage path.")
 
-    try:
-        instance = get_instance(
-            app_label,
-            model_name,
-            instance_id,
-        )
+    normalized_output_path = normalize_storage_key(
+        relative_path
+    )
 
-        if not hasattr(instance, field_name):
-            raise AttributeError(
-                f"{model_name} has no field '{field_name}'"
+    if not default_storage.exists(normalized_output_path):
+        logger.error(
+            "Converted file missing: %s",
+            normalized_output_path,
+        )
+        return
+
+    try:
+        if expected_source_path is None:
+            instance = get_instance(
+                app_label,
+                model_name,
+                instance_id,
             )
 
-        if not default_storage.exists(relative_path):
-            logger.error("Converted file missing: %s", relative_path)
+            _bind_converted_file_to_instance(
+                instance=instance,
+                model_name=model_name,
+                instance_id=instance_id,
+                field_name=field_name,
+                relative_path=normalized_output_path,
+                mark_converted=mark_converted,
+            )
+
             return
 
-        file_field = getattr(instance, field_name)
-        file_field.name = relative_path
-
-        update_fields = [field_name]
-
-        if mark_converted and hasattr(instance, "is_converted"):
-            instance.is_converted = True
-            update_fields.append("is_converted")
-
-        maybe_activate_after_convert(
-            instance,
-            field_name,
-            update_fields,
+        model_class = apps.get_model(
+            app_label=app_label,
+            model_name=model_name,
         )
 
-        # Prevent worker-bound output from re-enqueueing conversion.
-        setattr(instance, "_skip_media_autoconvert_once", True)
-        
-        instance.save(update_fields=update_fields)
+        with transaction.atomic():
+            instance = (
+                model_class._base_manager
+                .select_for_update()
+                .get(pk=instance_id)
+            )
 
-        logger.info(
-            "Bound converted file %s -> %s[%s].%s mark_converted=%s",
-            relative_path,
-            model_name,
-            instance_id,
-            field_name,
-            mark_converted,
-        )
+            raise_if_source_superseded(
+                instance=instance,
+                model_name=model_name,
+                instance_id=instance_id,
+                field_name=field_name,
+                expected_source_path=expected_source_path,
+            )
+
+            _bind_converted_file_to_instance(
+                instance=instance,
+                model_name=model_name,
+                instance_id=instance_id,
+                field_name=field_name,
+                relative_path=normalized_output_path,
+                mark_converted=mark_converted,
+            )
+
+    except MediaConversionSuperseded:
+        raise
 
     except Exception:
         logger.exception("Failed to bind converted file")

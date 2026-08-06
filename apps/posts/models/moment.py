@@ -2,6 +2,7 @@
 
 import os
 from django.db import models, transaction
+from django.core.files.storage import default_storage
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from django.contrib.contenttypes.models import ContentType
@@ -597,23 +598,6 @@ class Moment(
         elif self.image or self.has_image_items():
             self.media_kind = MOMENT_MEDIA_KIND_IMAGE
 
-        # Legacy single image becomes a JSON-backed image item.
-        if self.image and not self.has_image_items():
-            key = getattr(self.image, "name", None)
-
-            if key:
-                item = self.build_image_item(
-                    key=key,
-                    file_name=str(key).split("/")[-1],
-                    mime_type="",
-                    size=0,
-                    order=0,
-                    is_cover=True,
-                )
-
-                self.image_items = [item]
-                self.cover_image_id = item["id"]
-
         normalized_items = self.normalized_image_items()
 
         if normalized_items and not self.cover_image_id:
@@ -646,6 +630,8 @@ class Moment(
             )
         )
 
+        # ImageField upload_to is applied here.
+        # Do not create image_items before this save.
         super().save(*args, **kwargs)
 
         is_photo_moment = (
@@ -653,7 +639,59 @@ class Moment(
             == MOMENT_MEDIA_KIND_IMAGE
         )
 
-        if is_photo_moment and media_changed:
+        legacy_item_created = False
+
+        # Legacy single-image uploads are converted to image_items only
+        # after ImageField has persisted the canonical storage key.
+        if (
+            is_photo_moment
+            and self.image
+            and not self.has_image_items()
+        ):
+            persisted_key = str(
+                getattr(
+                    self.image,
+                    "name",
+                    "",
+                )
+                or ""
+            ).strip().lstrip("/")
+
+            if persisted_key:
+                item = self.build_image_item(
+                    key=persisted_key,
+                    file_name=os.path.basename(
+                        persisted_key
+                    ),
+                    mime_type="",
+                    size=0,
+                    order=0,
+                    is_cover=True,
+                )
+
+                type(self).objects.filter(
+                    pk=self.pk
+                ).update(
+                    image_items=[item],
+                    cover_image_id=item["id"],
+                    media_kind=MOMENT_MEDIA_KIND_IMAGE,
+                    is_converted=False,
+                )
+
+                self.image_items = [item]
+                self.cover_image_id = item["id"]
+                self.media_kind = MOMENT_MEDIA_KIND_IMAGE
+                self.is_converted = False
+
+                legacy_item_created = True
+
+        if (
+            is_photo_moment
+            and (
+                media_changed
+                or legacy_item_created
+            )
+        ):
             self._schedule_image_item_conversion_after_commit()
             
     # -------------------------------------------------

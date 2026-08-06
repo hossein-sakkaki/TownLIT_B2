@@ -10,8 +10,10 @@ from apps.core.boundaries.constants import (
     BOUNDARY_STILLNESS,
     BOUNDARY_BOUNDARY,
     BOUNDARY_TYPE_CHOICES,
+    BOUNDARY_SOURCE_CHOICES,
     BOUNDARY_SOURCE_PROFILE,
     BOUNDARY_GENERIC_UNAVAILABLE_MESSAGE,
+    BOUNDARY_SELF_ACTION_MESSAGE,
 )
 from apps.core.boundaries.models import UserBoundary
 
@@ -151,9 +153,9 @@ class BoundarySetSerializer(serializers.Serializer):
     boundary_type = serializers.ChoiceField(
         choices=BOUNDARY_TYPE_CHOICES,
     )
-    source = serializers.CharField(
+    source = serializers.ChoiceField(
+        choices=BOUNDARY_SOURCE_CHOICES,
         required=False,
-        allow_blank=True,
         default=BOUNDARY_SOURCE_PROFILE,
     )
     reason = serializers.CharField(
@@ -172,9 +174,13 @@ class BoundarySetSerializer(serializers.Serializer):
         owner = getattr(request, "user", None)
         target = attrs.get("target")
 
-        if owner and target and owner.id == target.id:
+        if (
+            owner
+            and target
+            and owner.id == target.id
+        ):
             raise serializers.ValidationError({
-                "error": "You cannot create Stillness or Boundary with yourself.",
+                "error": BOUNDARY_SELF_ACTION_MESSAGE,
                 "code": "self_boundary_not_allowed",
             })
 

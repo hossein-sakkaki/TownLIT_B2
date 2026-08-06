@@ -21,7 +21,9 @@ from .serializers_owner_min import build_owner_dto_from_content_object
 
 from apps.media_conversion.services.serializer_gate import gate_media_payload
 from apps.core.ownership.utils import resolve_owner_from_request
-
+from apps.sanctuary.services.held_content_access import (
+    held_representation_or_none,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -263,7 +265,11 @@ class PrayerResponseSerializer(
                 include_job_target=True,
             )
 
-        return data
+        return held_representation_or_none(
+            target=obj,
+            viewer=viewer,
+            data=data,
+        )
 
 
 # -------------------------------------------------
@@ -575,7 +581,11 @@ class PrayerSerializer(
             data.pop("is_hidden", None)
             data.pop("reactions_breakdown", None)
 
-        return data
+        return held_representation_or_none(
+            target=obj,
+            viewer=viewer,
+            data=data,
+        )
 
     # -------------------------------------------------
     # Asset delivery targets
@@ -697,7 +707,11 @@ class PrayerResponseProfileGridSerializer(serializers.ModelSerializer):
                 include_job_target=True,
             )
 
-        return data
+        return held_representation_or_none(
+            target=obj,
+            viewer=viewer,
+            data=data,
+        )
 
 
 # -------------------------------------------------
@@ -858,7 +872,11 @@ class PrayerProfileGridSerializer(serializers.ModelSerializer):
                 include_job_target=True,
             )
 
-        return data
+        return held_representation_or_none(
+            target=obj,
+            viewer=viewer,
+            data=data,
+        )
     
     
     
@@ -935,6 +953,16 @@ class PrayerResponseStreamPayloadSerializer(serializers.ModelSerializer):
 
         return _build_asset_cdn_url(key)
 
+    def to_representation(self, obj):
+        request = self.context.get("request")
+        viewer = request.user if request and request.user.is_authenticated else None
+        data = super().to_representation(obj)
+
+        return held_representation_or_none(
+            target=obj,
+            viewer=viewer,
+            data=data,
+        )
 
 # -------------------------------------------------
 # Lightweight Prayer serializer for Stream payload
@@ -1046,3 +1074,19 @@ class PrayerStreamPayloadSerializer(
         )
 
         return _build_asset_cdn_url(key)
+    
+    def to_representation(self, obj):
+        request = self.context.get("request")
+        viewer = (
+            request.user
+            if request and request.user.is_authenticated
+            else None
+        )
+
+        data = super().to_representation(obj)
+
+        return held_representation_or_none(
+            target=obj,
+            viewer=viewer,
+            data=data,
+        )

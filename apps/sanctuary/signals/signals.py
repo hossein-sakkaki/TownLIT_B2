@@ -24,11 +24,15 @@ from apps.sanctuary.realtime.utils import (
     normalize_content_type,
     sanitize_group_part,
 )
+from apps.sanctuary.services.safety_hold import (
+    apply_sanctuary_safety_hold,
+    close_sanctuary_safety_hold,
+)
+from apps.sanctuary.services.moderation_enforcement import (
+    enforce_confirmed_sanctuary_outcome,
+)
 from apps.sanctuary.services.counter_resolver import (
     resolve_active_report_count,
-)
-from apps.sanctuary.services.threshold_resolver import (
-    resolve_ui_threshold,
 )
 
 
@@ -45,8 +49,11 @@ from apps.sanctuary.constants.states import (
 )
 
 from apps.sanctuary.services.decision_engine import (
-    should_form_council,
     should_admin_fast_track,
+    should_form_council,
+)
+from apps.sanctuary.services.severe_counter import (
+    resolve_active_severe_request_count,
 )
 
 logger = logging.getLogger(__name__)
@@ -120,45 +127,35 @@ def _ws_broadcast_request(request_id: int, event: str, data: dict):
 # ---------------------------------------------------------------------
 # WS helper: broadcast to sanctuary TARGET group (counter sync)
 # ---------------------------------------------------------------------
-
 def _ws_broadcast_target(
     *,
     request_type: str,
     content_type,
     object_id: int,
-    count: int,
-    threshold: int,
+    count: int = 0,
+    threshold: int = 0,
 ):
     """
-    Broadcast sanctuary counter update to a SAFE Channels group.
+    Broadcast only a privacy-safe target invalidation event.
 
-    Group format:
-      sanctuary.target.{request_type}.{app_label.model}.{object_id}
+    Shared realtime groups must never receive aggregate counts,
+    thresholds, requester state, or request IDs.
     """
-
     try:
         layer = get_channel_layer()
         if not layer:
             return
 
-        # ----------------------------------------
-        # Normalize + sanitize group name parts
-        # ----------------------------------------
-        rt = sanitize_group_part(request_type)
-
-        # content_type may be string OR ContentType object
         normalized_ct = normalize_content_type(content_type)
-        ct = sanitize_group_part(normalized_ct)
+        group = (
+            f"sanctuary.target."
+            f"{sanitize_group_part(request_type)}."
+            f"{sanitize_group_part(normalized_ct)}."
+            f"{int(object_id)}"
+        )
 
-        oid = int(object_id)
-
-        group = f"sanctuary.target.{rt}.{ct}.{oid}"
-
-        # ----------------------------------------
-        # Send unified WS event
-        # ----------------------------------------
         async_to_sync(layer.group_send)(
-            "sanctuary_global",
+            group,
             {
                 "type": "dispatch_event",
                 "app": "sanctuary",
@@ -166,18 +163,19 @@ def _ws_broadcast_target(
                 "data": {
                     "request_type": request_type,
                     "content_type": normalized_ct,
-                    "object_id": oid,
-                    "count": int(count),
-                    "threshold": int(threshold),
+                    "object_id": int(object_id),
+                    "count": 0,
+                    "threshold": 0,
+                    "has_reported": False,
+                    "request_id": None,
+                    "refresh_required": True,
                 },
             },
         )
-
-
-    except Exception as e:
+    except Exception as exc:
         logger.warning(
-            "[Sanctuary][WS] broadcast target counter failed: %s",
-            e,
+            "[Sanctuary][WS] target invalidation failed: %s",
+            exc,
             exc_info=True,
         )
 
@@ -695,12 +693,15 @@ def finalize_sanctuary_outcome(outcome: SanctuaryOutcome):
 
         # Apply effects (best-effort)
         if outcome.outcome_status == OUTCOME_CONFIRMED:
-            _set_active(target, False)
-            _set_suspended(target, True)
+            enforce_confirmed_sanctuary_outcome(
+                target,
+                reason="sanctuary_outcome_confirmed",
+            )
             _reset_reports_count(target)
+            close_sanctuary_safety_hold(outcome)
             new_req_status = RESOLVED
-        else:  # OUTCOME_REJECTED
-            _set_suspended(target, False)
+        else:
+            close_sanctuary_safety_hold(outcome)
             _reset_reports_count(target)
             new_req_status = REJECTED
 
@@ -791,22 +792,60 @@ def on_sanctuary_request_created(sender, instance: SanctuaryRequest, created: bo
             instance.report_count_snapshot = active_count
             instance.save(update_fields=["report_count_snapshot"])
 
-            # 🔥 UI threshold (NOT admin fast-track)
-            ui_threshold = resolve_ui_threshold(instance.request_type)
-
             _ws_broadcast_target(
                 request_type=instance.request_type,
                 content_type=instance.content_type,
                 object_id=instance.object_id,
-                count=active_count,
-                threshold=ui_threshold,
             )
 
-            # Routing logic (separate concern)
-            if should_admin_fast_track(instance.request_type, active_count):
-                notify_admins(instance)
-            elif should_form_council(instance.request_type, active_count):
-                distribute_to_verified_members(instance)
+            # Count only active requests that contain at least one
+            # configured severe reason.
+            active_severe_count = (
+                resolve_active_severe_request_count(
+                    request_type=instance.request_type,
+                    content_type=instance.content_type,
+                    object_id=instance.object_id,
+                )
+            )
+
+            # Routing logic:
+            # - severe reasons may enter admin flow
+            # - standard/theological requests may form a council
+            # - lower counts remain pending for later triage
+            if should_admin_fast_track(
+                target_type=instance.request_type,
+                reasons=instance.reasons,
+                severe_request_count=active_severe_count,
+            ):
+                assigned_admin = notify_admins(instance)
+
+                try:
+                    hold = apply_sanctuary_safety_hold(instance)
+
+                    if hold:
+                        _ws_broadcast_request(
+                            instance.id,
+                            "safety_hold_applied",
+                            {
+                                "request_id": instance.id,
+                                "hold_id": hold.id,
+                                "status": hold.status,
+                                "assigned_admin_id": getattr(assigned_admin, "id", None),
+                            },
+                        )
+                except Exception:
+                    logger.exception(
+                        "[Sanctuary] Failed to apply temporary safety hold request=%s",
+                        instance.id,
+                    )
+
+            elif should_form_council(
+                instance.request_type,
+                active_count,
+            ):
+                distribute_to_verified_members(
+                    instance
+                )
 
         except Exception as e:
             logger.warning(

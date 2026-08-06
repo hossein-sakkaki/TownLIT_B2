@@ -1,10 +1,57 @@
 # apps/posts/utils/content_router.py
 
+from __future__ import annotations
+
 from urllib.parse import urlencode
 
-# =====================================================
-# UNIVERSAL CONTENT ROUTER (TownLIT)
-# =====================================================
+
+CONTENT_ENDPOINTS = {
+    "testimony": "/posts/me/testimonies",
+    "witness": "/posts/me/testimonies",
+    "moment": "/posts/me/moments",
+    "prayer": "/posts/me/prayers",
+    "pray": "/posts/me/prayers",
+    "journey": "/posts/me/journeys",
+    "journeyentry": "/posts/me/journeys",
+    "lesson": "/posts/me/lessons",
+    "preach": "/posts/me/lessons",
+    "announcement": "/posts/me/lessons",
+    "worship": "/posts/me/worships",
+    "library": "/posts/me/library",
+}
+
+
+VIDEO_SUBTYPES = {"video", "film", "media"}
+AUDIO_SUBTYPES = {"voice", "audio", "sound"}
+WRITTEN_SUBTYPES = {"written", "text", "read"}
+
+
+def _resolve_viewer_type(model_name: str, subtype: str) -> str:
+    """
+    Resolve the universal content viewer mode.
+    """
+    if subtype in VIDEO_SUBTYPES:
+        return "video"
+
+    if subtype in AUDIO_SUBTYPES:
+        return "voice"
+
+    if subtype in WRITTEN_SUBTYPES:
+        return "read"
+
+    if model_name in {"moment", "worship", "media", "journey", "journeyentry"}:
+        return "media"
+
+    if model_name in {"library", "echo"}:
+        return "voice"
+
+    # Prayer always has an image and may also include video.
+    if model_name in {"prayer", "pray"}:
+        return "media"
+
+    return "read"
+
+
 def resolve_content_path(
     model_name: str,
     slug: str,
@@ -13,53 +60,37 @@ def resolve_content_path(
     endpoint: str | None = None,
 ) -> str:
     """
-    Build a universal frontend URL for any content type.
+    Build a universal TownLIT content URL.
 
     Examples:
-      /content/<slug>?type=video&e=/posts/me/testimonies&focus=comment-4
-      /content/<slug>?type=video&e=/posts/me/testimonies&focus=reply-12:parent-4
+      /content/<slug>?type=media&e=/posts/me/moments&focus=comment-4
+      /content/<slug>?type=voice&e=/posts/me/testimonies&focus=reply-12:parent-4
     """
-
+    slug = str(slug or "").strip()
     if not slug:
         return "#"
 
-    # ------------------------------
-    # Normalize identifiers
-    # ------------------------------
-    name = (model_name or "").lower().strip()
-    subtype = (subtype or "").lower().strip()
+    name = str(model_name or "").strip().lower()
+    normalized_subtype = str(subtype or "").strip().lower()
 
-    # ------------------------------
-    # Smart content-type detection
-    # ------------------------------
-    if subtype in {"video", "film", "media"} or name in {"worship", "witness", "moment", "media"}:
-        content_type = "video"
-    elif subtype in {"voice", "audio", "sound"} or name in {"library", "prayer", "pray", "echo"}:
-        content_type = "voice"
-    else:
-        content_type = "read"
+    viewer_type = _resolve_viewer_type(
+        model_name=name,
+        subtype=normalized_subtype,
+    )
 
-    # ------------------------------
-    # Smart endpoint inference
-    # ------------------------------
-    if not endpoint:
-        if name in {"testimony", "witness", "moment"}:
-            endpoint = "/posts/me/testimonies"
-        elif name in {"lesson", "preach", "announcement"}:
-            endpoint = "/posts/me/lessons"
-        elif name in {"worship"}:
-            endpoint = "/posts/me/worships"
-        elif name in {"library"}:
-            endpoint = "/posts/me/library"
-        else:
-            endpoint = "/posts/me/posts"
+    resolved_endpoint = (
+        str(endpoint).strip()
+        if endpoint
+        else CONTENT_ENDPOINTS.get(name, "/posts/me/posts")
+    )
 
-    # ------------------------------
-    # Assemble query parameters
-    # ------------------------------
-    params = {"type": content_type, "e": endpoint}
-    if focus:
-        params["focus"] = focus
+    params = {
+        "type": viewer_type,
+        "e": resolved_endpoint,
+    }
 
-    query = urlencode(params, doseq=True)
-    return f"/content/{slug}?{query}"
+    normalized_focus = str(focus or "").strip()
+    if normalized_focus:
+        params["focus"] = normalized_focus
+
+    return f"/content/{slug}?{urlencode(params)}"

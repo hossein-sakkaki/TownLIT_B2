@@ -1,7 +1,9 @@
 # apps/main/views.py
+
 from rest_framework import viewsets, status
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, AllowAny, IsAdminUser
+from rest_framework.permissions import IsAuthenticated, AllowAny
+from apps.accounts.permissions import IsAdminUserStrict, is_platform_admin
 from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.exceptions import ValidationError
@@ -54,7 +56,7 @@ logger = logging.getLogger(__name__)
 class TermsAndPolicyViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = TermsAndPolicy.objects.all()
     serializer_class = TermsAndPolicySerializer
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsAdminUserStrict]
 
     def get_permissions(self):
         
@@ -63,7 +65,7 @@ class TermsAndPolicyViewSet(viewsets.ReadOnlyModelViewSet):
             permission_classes = [AllowAny]
         else:
             # Restrict write operations to admin users only
-            permission_classes = [IsAdminUser]
+            permission_classes = [IsAdminUserStrict]
         return [permission() for permission in permission_classes]
 
 
@@ -98,7 +100,7 @@ class UserAgreementViewSet(viewsets.ModelViewSet):
 class FAQViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = FAQ.objects.all()
     serializer_class = FAQSerializer
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsAdminUserStrict]
 
     def get_permissions(self):
         
@@ -107,7 +109,7 @@ class FAQViewSet(viewsets.ReadOnlyModelViewSet):
             permission_classes = [AllowAny]
         else:
             # Restrict write operations to admin users only
-            permission_classes = [IsAdminUser]
+            permission_classes = [IsAdminUserStrict]
         return [permission() for permission in permission_classes]
 
 
@@ -115,7 +117,7 @@ class FAQViewSet(viewsets.ReadOnlyModelViewSet):
 class SiteAnnouncementViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = SiteAnnouncement.objects.all()
     serializer_class = SiteAnnouncementSerializer
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsAdminUserStrict]
 
     def get_permissions(self):
         
@@ -124,7 +126,7 @@ class SiteAnnouncementViewSet(viewsets.ReadOnlyModelViewSet):
             permission_classes = [AllowAny]
         else:
             # Restrict write operations to admin users only
-            permission_classes = [IsAdminUser]
+            permission_classes = [IsAdminUserStrict]
         return [permission() for permission in permission_classes]
 
 
@@ -133,16 +135,17 @@ class UserFeedbackViewSet(viewsets.ModelViewSet):
     serializer_class = UserFeedbackSerializer
 
     def get_permissions(self):
-        if self.action in ['submit_feedback']:
+        if self.action == "submit_feedback":
             return [IsAuthenticated()]
-        if self.action in ['list', 'retrieve', 'update', 'partial_update', 'destroy']:
-            return [IsAdminUser()]
-        return [IsAdminUser()]
+
+        return [IsAdminUserStrict()]
 
     def get_queryset(self):
         user = self.request.user
-        if user.is_staff:
+
+        if is_platform_admin(user):
             return UserFeedback.objects.all()
+
         return UserFeedback.objects.filter(user=user)
 
     @action(detail=False, methods=['post'], url_path='submit-feedback', permission_classes=[IsAuthenticated])
@@ -189,16 +192,16 @@ class UserFeedbackViewSet(viewsets.ModelViewSet):
 class UserActionLogViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = UserActionLog.objects.all()
     serializer_class = UserActionLogSerializer
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsAdminUserStrict]
 
     def get_permissions(self):
         
         if self.action in ['list', 'retrieve']:
             # Restrict read-only access to admin users
-            permission_classes = [IsAdminUser]
+            permission_classes = [IsAdminUserStrict]
         else:
             # Restrict write operations to admin users only
-            permission_classes = [IsAdminUser]
+            permission_classes = [IsAdminUserStrict]
         return [permission() for permission in permission_classes]
     
 
@@ -287,7 +290,7 @@ class PrayerViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action == 'respond':
-            return [IsAdminUser()]
+            return [IsAdminUserStrict()]
         elif self.action in ['list']:
             return [AllowAny()]
         return [AllowAny()]  # create allowed for everyone
@@ -318,7 +321,7 @@ class PrayerViewSet(viewsets.ModelViewSet):
             headers=headers
         )
 
-    @action(detail=True, methods=['post'], permission_classes=[IsAdminUser])
+    @action(detail=True, methods=['post'], permission_classes=[IsAdminUserStrict])
     def respond(self, request, pk=None):
         prayer = self.get_object()
         response_text = request.data.get("admin_response")
@@ -404,7 +407,7 @@ class OfficialVideoViewSet(viewsets.ModelViewSet):
 class VideoViewLogViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = VideoViewLog.objects.all()
     serializer_class = VideoViewLogSerializer
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsAdminUserStrict]
 
 
 # -----------------------------------------------------------------------------

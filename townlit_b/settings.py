@@ -879,3 +879,31 @@ CREATIVE_EDITOR_EMOJI_FONT_FILE = os.getenv(
         "NotoColorEmoji.ttf"
     ),
 ).strip()
+
+
+# ---------------------------------------------------------------------
+# Account deletion
+# ---------------------------------------------------------------------
+ACCOUNT_DELETION_GRACE_DAYS = env_int(
+    "ACCOUNT_DELETION_GRACE_DAYS",
+    default=30,
+    minimum=1,
+    maximum=90,
+)
+
+ACCOUNT_DELETION_BATCH_SIZE = env_int(
+    "ACCOUNT_DELETION_BATCH_SIZE",
+    default=50,
+    minimum=1,
+    maximum=500,
+)
+
+# Every registered handler must run before final anonymization.
+ACCOUNT_DELETION_REQUIRED_HANDLERS = [
+    "communication",
+    "payments",
+    "conversation",
+    "organizations",
+    "profiles",
+    "posts",
+]

@@ -4,19 +4,24 @@ from django.db import transaction, IntegrityError
 from django.utils import timezone
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
+from rest_framework import serializers
+from django.contrib.contenttypes.models import ContentType
 
 from rest_framework import viewsets, status, mixins
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, IsAdminUser
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import NotFound, PermissionDenied
+
+from apps.accounts.permissions import IsAdminUserStrict, is_platform_admin
 
 from apps.sanctuary.models import (
+    SanctuaryOutcome,
+    SanctuaryParticipantProfile,
+    SanctuaryProtectionLabel,
     SanctuaryRequest,
     SanctuaryReview,
-    SanctuaryOutcome,
-    SanctuaryProtectionLabel,
-    SanctuaryParticipantProfile, 
+    SanctuarySafetyHold,
 )
 
 from apps.sanctuary.serializers import (
@@ -25,11 +30,23 @@ from apps.sanctuary.serializers import (
     SanctuaryOutcomeSerializer,
     SanctuaryParticipationStatusSerializer,
     SanctuaryOptInSerializer,
-    SanctuaryCounterSerializer
+    SanctuaryCounterSerializer,
+    SanctuaryTargetStatusSerializer,
+)
+from apps.sanctuary.constants.target_models import (
+    content_type_key,
+    is_allowed_target_model,
+)
+from apps.sanctuary.services.safety_hold_status import (
+    get_sanctuary_target_status,
 )
 from apps.sanctuary.realtime.utils import (
     normalize_content_type,
     sanitize_group_part,
+)
+from apps.sanctuary.services.target_access import (
+    assert_sanctuary_target_access,
+    resolve_content_type_key,
 )
 
 from apps.sanctuary.constants.states import NO_OPINION
@@ -103,54 +120,129 @@ def _safe_sanctuary_global_broadcast(
     )
 
 
-def _content_type_key(content_type) -> str:
+def _content_type_key(
+    content_type,
+) -> str:
     if not content_type:
         return ""
 
-    app_label = getattr(content_type, "app_label", None)
-    model = getattr(content_type, "model", None)
+    app_label = getattr(
+        content_type,
+        "app_label",
+        None,
+    )
+
+    model = getattr(
+        content_type,
+        "model",
+        None,
+    )
 
     if app_label and model:
-        return f"{app_label}.{model}"
+        return (
+            f"{str(app_label).lower()}."
+            f"{str(model).lower()}"
+        )
 
-    return str(content_type)
+    return str(
+        content_type
+    ).strip().lower()
 
 
 def _counter_payload_for_request(
     *,
     request_obj: SanctuaryRequest,
     user,
+    expose_internal_counts: bool = False,
 ) -> dict:
-    content_type_key = _content_type_key(request_obj.content_type)
+    """
+    Build a counter payload.
+
+    Shared target broadcasts must always call this with:
+        expose_internal_counts=False
+    """
+    content_type_key_value = (
+        _content_type_key(
+            request_obj.content_type
+        )
+    )
 
     try:
         counter = get_sanctuary_counter(
             user=user,
-            request_type=request_obj.request_type,
-            content_type_str=content_type_key,
-            object_id=int(request_obj.object_id),
+            request_type=(
+                request_obj.request_type
+            ),
+            content_type_str=(
+                content_type_key_value
+            ),
+            object_id=int(
+                request_obj.object_id
+            ),
+            expose_internal_counts=(
+                expose_internal_counts
+            ),
         )
 
         return {
-            "request_type": counter.get("request_type", request_obj.request_type),
-            "content_type": counter.get("content_type", content_type_key),
-            "object_id": int(counter.get("object_id", request_obj.object_id)),
-            "count": int(counter.get("count", 0)),
-            "threshold": int(counter.get("threshold", 0)),
-            "has_reported": bool(counter.get("has_reported", False)),
-            "request_id": counter.get("request_id"),
+            "request_type": counter.get(
+                "request_type",
+                request_obj.request_type,
+            ),
+            "content_type": counter.get(
+                "content_type",
+                content_type_key_value,
+            ),
+            "object_id": int(
+                counter.get(
+                    "object_id",
+                    request_obj.object_id,
+                )
+            ),
+            "count": int(
+                counter.get(
+                    "count",
+                    0,
+                )
+            ),
+            "threshold": int(
+                counter.get(
+                    "threshold",
+                    0,
+                )
+            ),
+            "has_reported": bool(
+                counter.get(
+                    "has_reported",
+                    False,
+                )
+            ),
+            "request_id": (
+                counter.get(
+                    "request_id"
+                )
+            ),
         }
+
     except Exception:
-        logger.exception("Failed to build Sanctuary counter payload.")
+        logger.exception(
+            "Failed to build Sanctuary counter payload."
+        )
 
         return {
-            "request_type": request_obj.request_type,
-            "content_type": content_type_key,
-            "object_id": int(request_obj.object_id),
-            "count": int(getattr(request_obj, "report_count_snapshot", 0) or 0),
+            "request_type": (
+                request_obj.request_type
+            ),
+            "content_type": (
+                content_type_key_value
+            ),
+            "object_id": int(
+                request_obj.object_id
+            ),
+            "count": 0,
             "threshold": 0,
             "has_reported": False,
-            "request_id": request_obj.id,
+            "request_id": None,
         }
 
 
@@ -159,16 +251,40 @@ def _broadcast_sanctuary_counter_updated(
     request_obj: SanctuaryRequest,
     user,
 ):
-    content_type_key = _content_type_key(request_obj.content_type)
-    payload = _counter_payload_for_request(
-        request_obj=request_obj,
-        user=user,
+    """
+    Broadcast only a privacy-safe invalidation payload.
+
+    The target group may contain multiple visitors, so it must never
+    receive aggregate counts, threshold values, requester state, or
+    request IDs belonging to another user.
+    """
+    content_type_key_value = (
+        _content_type_key(
+            request_obj.content_type
+        )
     )
+
+    payload = {
+        "request_type": (
+            request_obj.request_type
+        ),
+        "content_type": (
+            content_type_key_value
+        ),
+        "object_id": int(
+            request_obj.object_id
+        ),
+        "count": 0,
+        "threshold": 0,
+        "has_reported": False,
+        "request_id": None,
+        "refresh_required": True,
+    }
 
     _safe_sanctuary_broadcast(
         _sanctuary_target_group_name(
             request_obj.request_type,
-            content_type_key,
+            content_type_key_value,
             request_obj.object_id,
         ),
         "counter_updated",
@@ -247,12 +363,31 @@ class SanctuaryRequestViewSet(
     def get_queryset(self):
         qs = SanctuaryRequest.objects.all().order_by("-created_at")
         user = self.request.user
-        if getattr(user, "is_staff", False):
+
+        if is_platform_admin(user):
             return qs
+
         return qs.filter(requester=user)
 
     def perform_create(self, serializer):
-        request_obj = serializer.save(requester=self.request.user)
+        try:
+            with transaction.atomic():
+                request_obj = serializer.save(requester=self.request.user)
+        except IntegrityError as exc:
+            constraint_name = getattr(
+                getattr(exc, "__cause__", None),
+                "diag",
+                None,
+            )
+            constraint_name = getattr(constraint_name, "constraint_name", None)
+
+            if constraint_name == "uniq_open_sanctuary_request_per_user_target":
+                raise serializers.ValidationError({
+                    "detail": "You already have an active Sanctuary request for this target.",
+                    "code": "active_sanctuary_request_already_exists",
+                })
+
+            raise
 
         transaction.on_commit(lambda: _broadcast_sanctuary_counter_updated(
             request_obj=request_obj,
@@ -270,37 +405,242 @@ class SanctuaryRequestViewSet(
             include_global=True,
         ))
 
-    @action(detail=False, methods=["get"], url_path="counter", permission_classes=[IsAuthenticated])
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="counter",
+        permission_classes=[IsAuthenticated],
+    )
     def counter(self, request):
         """
-        Returns sanctuary counter for a given target.
+        Return privacy-safe Sanctuary state for one target.
+
+        Aggregate counts are visible only to:
+        - staff
+        - target account/content owner
+        - organization owner or approved admin
+        - Messenger group founder or elder
         """
 
-        request_type = request.query_params.get("request_type")
-        content_type = request.query_params.get("content_type")
-        object_id = request.query_params.get("object_id")
+        request_type = str(
+            request.query_params.get(
+                "request_type"
+            )
+            or ""
+        ).strip()
 
-        if not all([request_type, content_type, object_id]):
+        content_type_value = str(
+            request.query_params.get(
+                "content_type"
+            )
+            or ""
+        ).strip()
+
+        object_id_value = (
+            request.query_params.get(
+                "object_id"
+            )
+        )
+
+        if (
+            not request_type
+            or not content_type_value
+            or object_id_value in (
+                None,
+                "",
+            )
+        ):
             return Response(
-                {"detail": "Missing required query params"},
+                {
+                    "detail": (
+                        "request_type, content_type, "
+                        "and object_id are required."
+                    ),
+                    "code": (
+                        "missing_target_parameters"
+                    ),
+                },
+                status=(
+                    status.HTTP_400_BAD_REQUEST
+                ),
+            )
+
+        try:
+            object_id = int(
+                object_id_value
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            return Response(
+                {
+                    "detail": (
+                        "object_id must be a positive "
+                        "integer."
+                    ),
+                    "code": (
+                        "invalid_target_object_id"
+                    ),
+                },
+                status=(
+                    status.HTTP_400_BAD_REQUEST
+                ),
+            )
+
+        if object_id < 1:
+            return Response(
+                {
+                    "detail": (
+                        "object_id must be a positive "
+                        "integer."
+                    ),
+                    "code": (
+                        "invalid_target_object_id"
+                    ),
+                },
+                status=(
+                    status.HTTP_400_BAD_REQUEST
+                ),
+            )
+
+        try:
+            content_type = (
+                resolve_content_type_key(
+                    content_type_value
+                )
+            )
+
+            access = (
+                assert_sanctuary_target_access(
+                    user=request.user,
+                    request_type=request_type,
+                    content_type=content_type,
+                    object_id=object_id,
+                    allow_self_target=True,
+                )
+            )
+
+            expose_internal_counts = bool(
+                is_platform_admin(request.user)
+                or access.is_owner
+            )
+
+            data = get_sanctuary_counter(
+                user=request.user,
+                request_type=request_type,
+                content_type_str=(
+                    content_type_key(
+                        content_type
+                    )
+                ),
+                object_id=object_id,
+                expose_internal_counts=(
+                    expose_internal_counts
+                ),
+            )
+
+        except serializers.ValidationError as exc:
+            return Response(
+                exc.detail,
+                status=(
+                    status.HTTP_400_BAD_REQUEST
+                ),
+            )
+
+        except ValueError as exc:
+            return Response(
+                {
+                    "detail": str(
+                        exc
+                    ),
+                    "code": (
+                        "invalid_sanctuary_counter_request"
+                    ),
+                },
+                status=(
+                    status.HTTP_400_BAD_REQUEST
+                ),
+            )
+
+        serializer = SanctuaryCounterSerializer(
+            data
+        )
+
+        return Response(
+            serializer.data,
+            status=status.HTTP_200_OK,
+        )
+
+
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="target-status",
+        permission_classes=[IsAuthenticated],
+    )
+    def target_status(self, request):
+        request_type = str(request.query_params.get("request_type") or "").strip()
+        content_type_value = str(request.query_params.get("content_type") or "").strip()
+        object_id_value = request.query_params.get("object_id")
+
+        if not request_type or not content_type_value or object_id_value in (None, ""):
+            return Response(
+                {
+                    "detail": "request_type, content_type, and object_id are required.",
+                    "code": "missing_target_parameters",
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         try:
-            data = get_sanctuary_counter(
-                user=request.user,
-                request_type=request_type,
-                content_type_str=content_type,
-                object_id=int(object_id),
-            )
-        except ValueError as e:
+            object_id = int(object_id_value)
+        except (TypeError, ValueError):
             return Response(
-                {"detail": str(e)},
+                {
+                    "detail": "object_id must be a positive integer.",
+                    "code": "invalid_target_object_id",
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        serializer = SanctuaryCounterSerializer(data)
+        if object_id < 1:
+            return Response(
+                {
+                    "detail": "object_id must be a positive integer.",
+                    "code": "invalid_target_object_id",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            target_content_type = resolve_content_type_key(content_type_value)
+
+            if not is_allowed_target_model(
+                request_type=request_type,
+                content_type=target_content_type,
+            ):
+                return Response(
+                    {
+                        "detail": "This target model is not allowed for the selected request type.",
+                        "code": "invalid_target_model",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            payload = get_sanctuary_target_status(
+                user=request.user,
+                request_type=request_type,
+                content_type=target_content_type,
+                object_id=object_id,
+            )
+
+        except serializers.ValidationError as exc:
+            return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = SanctuaryTargetStatusSerializer(payload)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
 
     @action(
         detail=False,
@@ -362,9 +702,12 @@ class SanctuaryReviewViewSet(
             .select_related("sanctuary_request")
             .order_by("-assigned_at")
         )
+
         user = self.request.user
-        if getattr(user, "is_staff", False):
+
+        if is_platform_admin(user):
             return qs
+
         return qs.filter(reviewer=user)
 
     def perform_update(self, serializer):
@@ -421,63 +764,198 @@ class SanctuaryOutcomeViewSet(
     serializer_class = SanctuaryOutcomeSerializer
     permission_classes = [IsAuthenticated]
 
+    def _base_queryset(self):
+        return (
+            SanctuaryOutcome.objects
+            .select_related(
+                "content_type",
+                "assigned_admin",
+            )
+            .prefetch_related(
+                "sanctuary_requests",
+                "sanctuary_requests__requester",
+            )
+            .order_by("-created_at")
+        )
+
     def get_queryset(self):
-        qs = SanctuaryOutcome.objects.all().order_by("-created_at")
+        qs = self._base_queryset()
         user = self.request.user
 
-        if getattr(user, "is_staff", False):
+        if is_platform_admin(user):
             return qs
 
-        # Safe ORM filter: only outcomes linked to requests made by this user
-        # (Owners/admins of target can still access via direct retrieve if you want — see retrieve override below.)
-        return qs.filter(sanctuary_requests__requester=user).distinct()
+        return qs.filter(
+            sanctuary_requests__requester=user,
+        ).distinct()
+
+    def _get_outcome_for_access_check(self):
+        lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
+        lookup_value = self.kwargs.get(lookup_url_kwarg)
+
+        if lookup_value is None:
+            raise NotFound("Sanctuary outcome not found.")
+
+        try:
+            outcome = self._base_queryset().get(
+                **{self.lookup_field: lookup_value}
+            )
+        except (
+            SanctuaryOutcome.DoesNotExist,
+            ValueError,
+            TypeError,
+        ):
+            raise NotFound("Sanctuary outcome not found.")
+
+        try:
+            assert_can_appeal(
+                outcome,
+                self.request.user,
+            )
+        except PermissionDenied:
+            raise
+        except Exception:
+            logger.exception(
+                "Sanctuary outcome access check failed.",
+                extra={
+                    "outcome_id": getattr(outcome, "pk", None),
+                    "user_id": getattr(self.request.user, "pk", None),
+                },
+            )
+            raise PermissionDenied(
+                "You are not allowed to access this Sanctuary outcome."
+            )
+
+        return outcome
 
     def retrieve(self, request, *args, **kwargs):
-        """
-        Optional but recommended:
-        Allow target owners/admins to access the outcome detail via direct link,
-        even if they weren't the requester.
-        """
-        outcome = self.get_object()
-        try:
-            assert_can_appeal(outcome, request.user)  # requester OR target owner/admin OR staff
-        except Exception:
-            raise PermissionDenied("You are not allowed to view this Sanctuary outcome.")
-        return super().retrieve(request, *args, **kwargs)
+        outcome = self._get_outcome_for_access_check()
 
-    @action(detail=True, methods=["post"])
+        serializer = self.get_serializer(
+            outcome,
+        )
+
+        return Response(
+            serializer.data,
+            status=status.HTTP_200_OK,
+        )
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="appeal",
+    )
     def appeal(self, request, pk=None):
-        outcome = self.get_object()
-
-        # Permission: requester OR target owner/admin
-        assert_can_appeal(outcome, request.user)
+        outcome = self._get_outcome_for_access_check()
 
         if outcome.is_appealed:
-            return Response({"detail": "Already appealed."}, status=status.HTTP_400_BAD_REQUEST)
-
-        if outcome.appeal_deadline and timezone.now() > outcome.appeal_deadline:
-            return Response({"detail": "Appeal deadline passed."}, status=status.HTTP_400_BAD_REQUEST)
-
-        outcome.is_appealed = True
-        outcome.appeal_message = (request.data.get("appeal_message") or "").strip()
-        outcome.save(update_fields=["is_appealed", "appeal_message"])
-
-        linked_requests = list(outcome.sanctuary_requests.all())
-
-        for request_obj in linked_requests:
-            transaction.on_commit(lambda request_obj=request_obj: _broadcast_sanctuary_request_event(
-                request_obj=request_obj,
-                event_name="outcome_appealed",
-                extra={
-                    "outcome_id": outcome.id,
-                    "is_appealed": True,
+            return Response(
+                {
+                    "detail": "An appeal has already been submitted.",
+                    "code": "sanctuary_outcome_already_appealed",
                 },
-                include_request_group=True,
-                include_global=True,
-            ))
-            
-        # NOTE: admin assignment is done by SanctuaryOutcome post_save signal.
-        return Response({"detail": "Appeal submitted."}, status=status.HTTP_200_OK)
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if (
+            outcome.appeal_deadline
+            and timezone.now() > outcome.appeal_deadline
+        ):
+            return Response(
+                {
+                    "detail": "The appeal deadline has passed.",
+                    "code": "sanctuary_appeal_deadline_passed",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        appeal_message = str(
+            request.data.get("appeal_message") or ""
+        ).strip()
+
+        if not appeal_message:
+            return Response(
+                {
+                    "appeal_message": "An appeal explanation is required.",
+                    "code": "sanctuary_appeal_message_required",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if len(appeal_message) > 4000:
+            return Response(
+                {
+                    "appeal_message": "Appeal explanation cannot exceed 4000 characters.",
+                    "code": "sanctuary_appeal_message_too_long",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            locked_outcome = (
+                SanctuaryOutcome.objects
+                .select_for_update()
+                .get(pk=outcome.pk)
+            )
+
+            if locked_outcome.is_appealed:
+                return Response(
+                    {
+                        "detail": "An appeal has already been submitted.",
+                        "code": "sanctuary_outcome_already_appealed",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if (
+                locked_outcome.appeal_deadline
+                and timezone.now() > locked_outcome.appeal_deadline
+            ):
+                return Response(
+                    {
+                        "detail": "The appeal deadline has passed.",
+                        "code": "sanctuary_appeal_deadline_passed",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            locked_outcome.is_appealed = True
+            locked_outcome.appeal_message = appeal_message
+            locked_outcome.save(
+                update_fields=[
+                    "is_appealed",
+                    "appeal_message",
+                ]
+            )
+
+            linked_requests = list(
+                locked_outcome.sanctuary_requests.all()
+            )
+
+            for request_obj in linked_requests:
+                transaction.on_commit(
+                    lambda request_obj=request_obj: (
+                        _broadcast_sanctuary_request_event(
+                            request_obj=request_obj,
+                            event_name="outcome_appealed",
+                            extra={
+                                "outcome_id": locked_outcome.id,
+                                "is_appealed": True,
+                            },
+                            include_request_group=True,
+                            include_global=True,
+                        )
+                    )
+                )
+
+        return Response(
+            {
+                "detail": "Appeal submitted.",
+                "outcome_id": locked_outcome.id,
+                "is_appealed": True,
+            },
+            status=status.HTTP_200_OK,
+        )
     
 
 # Sanctuary History ViewSet ----------------------------------------------------------------
@@ -530,7 +1008,7 @@ class SanctuaryHistoryViewSet(viewsets.ViewSet):
         detail=False,
         methods=["get"],
         url_path="target",
-        permission_classes=[IsAdminUser],
+        permission_classes=[IsAdminUserStrict],
     )
     def target_history(self, request):
         """
@@ -579,6 +1057,12 @@ class SanctuaryHistoryViewSet(viewsets.ViewSet):
             .order_by("-applied_at")[:200]
         )
 
+        holds = (
+            SanctuarySafetyHold.objects
+            .filter(content_type_id=ct_id_int, object_id=obj_id_int)
+            .order_by("-applied_at")[:200]
+        )
+
         items = []
 
         for r in reqs:
@@ -619,12 +1103,30 @@ class SanctuaryHistoryViewSet(viewsets.ViewSet):
                 "created_by_id": l.created_by_id,
             })
 
+        for hold in holds:
+            items.append({
+                "type": "safety_hold",
+                "id": hold.id,
+                "status": hold.status,
+                "request_type": hold.request_type,
+                "reason_codes": hold.reason_codes,
+                "trigger_request_id": hold.trigger_request_id,
+                "did_deactivate_target": hold.did_deactivate_target,
+                "previous_is_active": hold.previous_is_active,
+                "previous_is_suspended": hold.previous_is_suspended,
+                "applied_at": hold.applied_at.isoformat() if hold.applied_at else None,
+                "ended_at": hold.ended_at.isoformat() if hold.ended_at else None,
+                "ended_by_id": hold.ended_by_id,
+                "release_note": hold.release_note,
+            })
+    
         # Sort newest-first by best available timestamp
-        def _ts(x):
+        def _ts(item):
             return (
-                x.get("created_at")
-                or x.get("finalized_at")
-                or x.get("applied_at")
+                item.get("created_at")
+                or item.get("finalized_at")
+                or item.get("applied_at")
+                or item.get("ended_at")
                 or ""
             )
 
@@ -868,17 +1370,24 @@ class SanctuaryParticipationViewSet(viewsets.ViewSet):
         )
 
     # ----------------------------
-    # POST /sanctuary/participation/opt-out/
-    # ----------------------------    @action(detail=False, methods=["post"], url_path="opt-out")
-    @action(detail=False, methods=["get"])
+    # GET /sanctuary-participation/status/
+    # ----------------------------
+    @action(detail=False, methods=["get"], url_path="status")
     def participation_status(self, request):
         data = get_participation_status(request.user)
-        return Response(data)
 
+        return Response(
+            data,
+            status=status.HTTP_200_OK,
+        )
 
+    # ----------------------------
+    # POST /sanctuary-participation/opt-out/
+    # ----------------------------
     @action(detail=False, methods=["post"], url_path="opt-out")
     def opt_out(self, request):
         user_opt_out(request.user)
+
         return Response(
             get_participation_status(request.user),
             status=status.HTTP_200_OK,

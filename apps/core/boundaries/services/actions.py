@@ -13,6 +13,7 @@ from apps.core.boundaries.constants import (
     BOUNDARY_STILLNESS,
     BOUNDARY_BOUNDARY,
     BOUNDARY_SOURCE_PROFILE,
+    BOUNDARY_SOURCE_VALUES,
     BOUNDARY_SELF_ACTION_MESSAGE,
 )
 from apps.core.boundaries.models import UserBoundary
@@ -49,10 +50,14 @@ class BoundaryActionService:
         source: str = BOUNDARY_SOURCE_PROFILE,
         reason: str = "",
         note: str = "",
-    ) -> tuple[UserBoundary, BoundaryCleanupResult]:
+    ) -> tuple[
+        UserBoundary,
+        BoundaryCleanupResult,
+    ]:
         if not owner or not target:
             raise serializers.ValidationError({
-                "error": "Owner and target are required."
+                "error": "Owner and target are required.",
+                "code": "boundary_participants_required",
             })
 
         if owner.id == target.id:
@@ -61,52 +66,100 @@ class BoundaryActionService:
                 "code": "self_boundary_not_allowed",
             })
 
-        if boundary_type not in {BOUNDARY_STILLNESS, BOUNDARY_BOUNDARY}:
+        if boundary_type not in {
+            BOUNDARY_STILLNESS,
+            BOUNDARY_BOUNDARY,
+        }:
             raise serializers.ValidationError({
                 "error": "Invalid boundary type.",
                 "code": "invalid_boundary_type",
             })
 
+        normalized_source = (
+            str(
+                source
+                or BOUNDARY_SOURCE_PROFILE
+            )
+            .strip()
+            .lower()
+        )
+
+        if (
+            normalized_source
+            not in BOUNDARY_SOURCE_VALUES
+        ):
+            raise serializers.ValidationError({
+                "error": "Invalid Boundary source.",
+                "code": "invalid_boundary_source",
+            })
+
+        normalized_reason = (
+            str(reason or "")
+            .strip()
+        )[:120]
+
+        normalized_note = (
+            str(note or "")
+            .strip()
+        )[:2000]
+
         with transaction.atomic():
-            obj, created = UserBoundary.objects.select_for_update().get_or_create(
-                owner=owner,
-                target=target,
-                boundary_type=boundary_type,
-                defaults={
-                    "source": source,
-                    "reason": reason or "",
-                    "note": note or "",
-                    "is_active": True,
-                },
+            obj, created = (
+                UserBoundary.objects
+                .select_for_update()
+                .get_or_create(
+                    owner=owner,
+                    target=target,
+                    boundary_type=boundary_type,
+                    defaults={
+                        "source": normalized_source,
+                        "reason": normalized_reason,
+                        "note": normalized_note,
+                        "is_active": True,
+                    },
+                )
             )
 
             if not created:
-                obj.source = source or obj.source
-                obj.reason = reason or obj.reason
-                obj.note = note or obj.note
+                obj.source = normalized_source
+                obj.reason = normalized_reason
+                obj.note = normalized_note
                 obj.is_active = True
-                obj.save(update_fields=[
-                    "source",
-                    "reason",
-                    "note",
-                    "is_active",
-                    "updated_at",
-                ])
+
+                obj.save(
+                    update_fields=[
+                        "source",
+                        "reason",
+                        "note",
+                        "is_active",
+                        "updated_at",
+                    ]
+                )
 
             cleanup = BoundaryCleanupResult()
 
-            # Boundary supersedes Stillness and also removes direct relationships.
             if boundary_type == BOUNDARY_BOUNDARY:
-                UserBoundary.objects.filter(
-                    owner=owner,
-                    target=target,
-                    boundary_type=BOUNDARY_STILLNESS,
-                    is_active=True,
-                ).update(is_active=False)
+                (
+                    UserBoundary.objects
+                    .filter(
+                        owner=owner,
+                        target=target,
+                        boundary_type=(
+                            BOUNDARY_STILLNESS
+                        ),
+                        is_active=True,
+                    )
+                    .update(
+                        is_active=False
+                    )
+                )
 
-                cleanup = BoundaryActionService._cleanup_relationships_for_boundary(
-                    owner=owner,
-                    target=target,
+                cleanup = (
+                    BoundaryActionService
+                    ._cleanup_relationships_for_boundary(
+                        owner=owner,
+                        target=target,
+                    )
                 )
 
             return obj, cleanup

@@ -22,7 +22,9 @@ from apps.posts.serializers.serializers_owner_min import (
 from apps.posts.services.journeys.profile_ring import JourneyProfileRingResult
 from apps.posts.services.journeys.publish import publish_journey_entry
 from apps.posts.services.journeys.views import record_journey_entry_view
-
+from apps.sanctuary.services.held_content_access import (
+    held_representation_or_none,
+)
 
 # -------------------------------------------------
 # Cached identities
@@ -383,7 +385,22 @@ class JourneyEntryBaseSerializer(serializers.ModelSerializer):
             context=self.context,
         )
 
+    def to_representation(self, obj):
+        request = self.context.get("request")
+        viewer = (
+            request.user
+            if request and request.user.is_authenticated
+            else None
+        )
 
+        data = super().to_representation(obj)
+
+        return held_representation_or_none(
+            target=obj,
+            viewer=viewer,
+            data=data,
+        )
+    
 # -------------------------------------------------
 # Standalone detail Entry serializer
 # -------------------------------------------------
@@ -500,11 +517,17 @@ class JourneySerializer(serializers.ModelSerializer):
                 "id",
             )
 
-        return JourneyNestedEntrySerializer(
+        payload = JourneyNestedEntrySerializer(
             entries,
             many=True,
             context=self.context,
         ).data
+
+        return [
+            item
+            for item in payload
+            if item is not None
+        ]
 
     def get_owner(self, obj):
         return build_owner_dto_from_content_object(
@@ -642,6 +665,21 @@ class JourneyStreamEntrySerializer(serializers.ModelSerializer):
             "object_id": obj.pk,
         }
 
+    def to_representation(self, obj):
+        request = self.context.get("request")
+        viewer = (
+            request.user
+            if request and request.user.is_authenticated
+            else None
+        )
+
+        data = super().to_representation(obj)
+
+        return held_representation_or_none(
+            target=obj,
+            viewer=viewer,
+            data=data,
+        )
 
 # -------------------------------------------------
 # Ultra-light Stream Journey serializer
@@ -706,13 +744,30 @@ class JourneyStreamPayloadSerializer(serializers.ModelSerializer):
         return len(self._entries(obj))
 
     def get_latest_thumbnail_target(self, obj):
-        entries = self._entries(obj)
+        request = self.context.get("request")
+        viewer = (
+            request.user
+            if request and request.user.is_authenticated
+            else None
+        )
 
-        if not entries:
+        visible_entries = []
+
+        for entry in self._entries(obj):
+            probe = held_representation_or_none(
+                target=entry,
+                viewer=viewer,
+                data=True,
+            )
+
+            if probe is not None:
+                visible_entries.append(entry)
+
+        if not visible_entries:
             return None
 
         latest = max(
-            entries,
+            visible_entries,
             key=lambda item: (
                 item.published_at,
                 item.sequence,
@@ -821,13 +876,17 @@ class JourneyProfileMapSerializer(
         self,
         obj,
     ):
-        return JourneyStreamEntrySerializer(
-            self._entries(
-                obj
-            ),
+        payload = JourneyStreamEntrySerializer(
+            self._entries(obj),
             many=True,
             context=self.context,
         ).data
+
+        return [
+            item
+            for item in payload
+            if item is not None
+        ]
 
     def get_entry_count(
         self,
@@ -853,18 +912,37 @@ class JourneyProfileMapSerializer(
             else None
         )
 
-    def get_latest_thumbnail_target(
-        self,
-        obj,
-    ) -> dict | None:
-        latest = self._latest_entry(
-            obj
+    def get_latest_thumbnail_target(self, obj) -> dict | None:
+        request = self.context.get("request")
+        viewer = (
+            request.user
+            if request and request.user.is_authenticated
+            else None
         )
 
-        if (
-            latest is None
-            or not latest.thumbnail
-        ):
+        visible_entries = [
+            entry
+            for entry in self._entries(obj)
+            if held_representation_or_none(
+                target=entry,
+                viewer=viewer,
+                data=True,
+            ) is not None
+        ]
+
+        if not visible_entries:
+            return None
+
+        latest = max(
+            visible_entries,
+            key=lambda entry: (
+                entry.published_at,
+                entry.sequence,
+                entry.pk,
+            ),
+        )
+
+        if not latest.thumbnail:
             return None
 
         return asset_target(

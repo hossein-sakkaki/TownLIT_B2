@@ -5,14 +5,13 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.exceptions import PermissionDenied
 from django.contrib.contenttypes.models import ContentType
-from django.db.models import Prefetch
 from django.db import transaction
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 import logging
 from django.core.exceptions import ObjectDoesNotExist
 
-from django.db.models import Prefetch, Count
+from django.db.models import Prefetch, Count, Q
 from apps.core.pagination import ConfigurablePagination
 from apps.posts.models.comment import Comment
 from apps.posts.serializers.comments import (
@@ -35,7 +34,16 @@ def comment_group_name(ct_id: int, obj_id: int) -> str:
     """Group name for comment WebSocket broadcasts."""
     return f"comments.{ct_id}.{obj_id}"
 
-
+# ---------------------------------------------------------------------
+def _sanctuary_target_payload(instance: Comment) -> dict:
+    return {
+        "request_type": "content",
+        "content_type": "posts.comment",
+        "object_id": instance.pk,
+        "is_reply": bool(instance.recomment_id),
+        "parent_comment_id": instance.recomment_id,
+    }
+    
 # ---------------------------------------------------------------------
 def _resolve_content_type(ct: str):
     """
@@ -102,6 +110,7 @@ def _comment_realtime_payload(instance: Comment, serialized: dict | None = None)
     data["recomment"] = instance.recomment_id
     data["parent_id"] = instance.recomment_id
     data["is_reply"] = instance.recomment_id is not None
+    data["sanctuary_target"] = _sanctuary_target_payload(instance)
 
     return data
 
@@ -123,6 +132,13 @@ def _deleted_comment_realtime_payload(
         "recomment": parent_id,
         "parent_id": parent_id,
         "is_reply": parent_id is not None,
+        "sanctuary_target": {
+            "request_type": "content",
+            "content_type": "posts.comment",
+            "object_id": comment_id,
+            "is_reply": parent_id is not None,
+            "parent_comment_id": parent_id,
+        },
     }
 
 # ---------------------------------------------------------------------
@@ -137,7 +153,8 @@ class CommentViewSet(viewsets.ModelViewSet):
     - GET    /posts/comments/summary/?content_type=...&object_id=...
     """
     queryset = (
-        Comment.objects.all()
+        Comment.objects
+        .filter(is_active=True)
         .select_related("name", "content_type")
         .order_by("-published_at")
     )
@@ -462,15 +479,22 @@ class CommentViewSet(viewsets.ModelViewSet):
             oid_int = oid
 
         roots = (
-            Comment.objects.filter(
-                content_type=cto, object_id=oid_int, recomment__isnull=True
+            Comment.objects
+            .filter(
+                content_type=cto,
+                object_id=oid_int,
+                recomment__isnull=True,
+                is_active=True,
             )
             .select_related("name", "content_type")
             .prefetch_related(
                 Prefetch(
                     "responses",
-                    queryset=Comment.objects.select_related("name").order_by(
-                        "published_at"
+                    queryset=(
+                        Comment.objects
+                        .filter(is_active=True)
+                        .select_related("name")
+                        .order_by("published_at")
                     ),
                 )
             )
@@ -523,6 +547,7 @@ class CommentViewSet(viewsets.ModelViewSet):
         base_qs = Comment.objects.filter(
             content_type=cto,
             object_id=oid_int,
+            is_active=True,
         )
 
         root_comments = base_qs.filter(
@@ -589,9 +614,15 @@ class CommentViewSet(viewsets.ModelViewSet):
                 content_type=cto,
                 object_id=oid_int,
                 recomment__isnull=True,
+                is_active=True,
             )
             .select_related("name", "content_type")
-            .annotate(replies_count=Count("responses"))
+            .annotate(
+                replies_count=Count(
+                    "responses",
+                    filter=Q(responses__is_active=True),
+                )
+            )
             .order_by("-published_at")
         )
 
@@ -643,7 +674,11 @@ class CommentViewSet(viewsets.ModelViewSet):
         # ------------------------------------------------------------
         qs = (
             Comment.objects
-            .filter(recomment_id=parent_id)
+            .filter(
+                recomment_id=parent_id,
+                recomment__is_active=True,
+                is_active=True,
+            )
             .select_related("name")
             .order_by("published_at")
         )

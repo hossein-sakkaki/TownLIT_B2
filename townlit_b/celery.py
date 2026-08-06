@@ -34,12 +34,16 @@ app.conf.task_routes = {
 # Define all beat schedules in one dictionary.
 app.conf.beat_schedule = {
 
-    # Delete inactive users daily.
-    "delete-inactive-users-every-day": {
-        "task": "apps.profiles.tasks.delete_inactive_entities",
+    # Permanently purge expired account deletions hourly.
+    "purge-scheduled-account-deletions-hourly": {
+        "task": (
+            "apps.accounts.tasks."
+            "maintenance_tasks."
+            "purge_scheduled_account_deletions"
+        ),
         "schedule": crontab(
-            hour=0,
-            minute=0,
+            minute=20,
+            hour="*",
         ),
     },
 

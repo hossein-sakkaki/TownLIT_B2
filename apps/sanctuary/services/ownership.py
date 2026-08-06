@@ -56,14 +56,21 @@ def get_owner_user_ids(target_obj) -> Set[int]:
             ids.add(uid)
 
     # Common many-owner relations (organizations, teams)
-    for attr in ["owners", "org_owners", "admins", "moderators"]:
+    for attr in ("owners", "org_owners", "admins", "moderators"):
         rel = getattr(target_obj, attr, None)
         if rel is None:
             continue
 
-        # ManyToMany manager typically has .values_list
         try:
-            ids.update(set(rel.values_list("id", flat=True)))
+            related_model = rel.model
+            field_names = {field.name for field in related_model._meta.get_fields()}
+
+            if "user" in field_names:
+                values = rel.values_list("user_id", flat=True)
+            else:
+                values = rel.values_list("id", flat=True)
+
+            ids.update(int(value) for value in values if value)
         except Exception:
             pass
 
@@ -84,19 +91,31 @@ def get_owner_user_ids(target_obj) -> Set[int]:
 # -------------------------------------------------------------------
 
 def register_default_resolvers():
-    """
-    Call this from apps.sanctuary.apps.SanctuaryConfig.ready()
-    to avoid import side effects.
-    """
-
-    # Example: Organization -> org_owners
     def org_resolver(org) -> Set[int]:
+        user_ids: Set[int] = set()
+
         try:
-            return set(org.org_owners.values_list("id", flat=True))
+            user_ids.update(
+                org.org_owners.filter(is_active=True)
+                .values_list("user_id", flat=True)
+            )
         except Exception:
-            return set()
+            pass
 
-    register_owner_resolver("profilesorg", "organization", org_resolver)
+        try:
+            user_ids.update(
+                org.admin_relationships.filter(
+                    is_approved=True,
+                    member__is_active=True,
+                ).values_list("member__user_id", flat=True)
+            )
+        except Exception:
+            pass
 
-    # Example: Dialogue/Group -> admins (adjust to your real group model)
-    # register_owner_resolver("conversation", "dialogue", lambda d: set(d.admins.values_list("id", flat=True)))
+        return {int(user_id) for user_id in user_ids if user_id}
+
+    register_owner_resolver(
+        "profilesOrg",
+        "organization",
+        org_resolver,
+    )

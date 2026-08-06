@@ -5,61 +5,116 @@ from django.contrib.contenttypes.models import ContentType
 from apps.posts.models.comment import Comment
 from apps.accounts.serializers.user_serializers import SimpleCustomUserSerializer 
 
+
+def _sanctuary_target(obj: Comment) -> dict:
+    return {
+        "request_type": "content",
+        "content_type": "posts.comment",
+        "object_id": obj.pk,
+        "is_reply": bool(obj.recomment_id),
+        "parent_comment_id": obj.recomment_id,
+    }
+    
+    
 class SimpleCommentReadSerializer(serializers.ModelSerializer):
     name = SimpleCustomUserSerializer(read_only=True)
-    class Meta:
-        model = Comment
-        fields = ["id", "name", "comment", "published_at", "is_active"]
-
-class RootCommentReadSerializer(serializers.ModelSerializer):
-    """
-    Lightweight root comment serializer for paginated 'thread_page' endpoint.
-    - DOES NOT include 'responses'
-    - Includes 'replies_count' for "Show replies (N)" button
-    """
-    name = SimpleCustomUserSerializer(read_only=True)
-    content_type = serializers.SerializerMethodField()
-    object_id = serializers.IntegerField(read_only=True)
-    replies_count = serializers.IntegerField(read_only=True)  # will be annotated in queryset
+    sanctuary_target = serializers.SerializerMethodField()
 
     class Meta:
         model = Comment
         fields = [
-            "id", "name", "comment", "published_at", "is_active",
-            "content_type", "object_id", "recomment", "replies_count",
+            "id",
+            "name",
+            "comment",
+            "published_at",
+            "is_active",
+            "sanctuary_target",
+        ]
+
+    def get_sanctuary_target(self, obj):
+        return _sanctuary_target(obj)
+
+class RootCommentReadSerializer(serializers.ModelSerializer):
+    name = SimpleCustomUserSerializer(read_only=True)
+    content_type = serializers.SerializerMethodField()
+    object_id = serializers.IntegerField(read_only=True)
+    replies_count = serializers.IntegerField(read_only=True)
+    sanctuary_target = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Comment
+        fields = [
+            "id",
+            "name",
+            "comment",
+            "published_at",
+            "is_active",
+            "content_type",
+            "object_id",
+            "recomment",
+            "replies_count",
+            "sanctuary_target",
         ]
 
     def get_content_type(self, obj):
         ct = getattr(obj, "content_type", None)
         return f"{ct.app_label}.{ct.model}" if ct else None
 
+    def get_sanctuary_target(self, obj):
+        return _sanctuary_target(obj)
+
 
 class CommentReadSerializer(serializers.ModelSerializer):
-    """
-    Full serializer (used by existing endpoints). Keeps prior behavior,
-    still returns 'responses' as list (1-level replies).
-    """
     name = SimpleCustomUserSerializer(read_only=True)
     responses = serializers.SerializerMethodField()
     content_type = serializers.SerializerMethodField()
     object_id = serializers.IntegerField(read_only=True)
+    sanctuary_target = serializers.SerializerMethodField()
 
     class Meta:
         model = Comment
         fields = [
-            "id", "name", "comment", "published_at", "is_active",
-            "content_type", "object_id", "recomment", "responses"
+            "id",
+            "name",
+            "comment",
+            "published_at",
+            "is_active",
+            "content_type",
+            "object_id",
+            "recomment",
+            "responses",
+            "sanctuary_target",
         ]
 
     def get_content_type(self, obj):
         ct = getattr(obj, "content_type", None)
         return f"{ct.app_label}.{ct.model}" if ct else None
 
+    def get_sanctuary_target(self, obj):
+        return _sanctuary_target(obj)
+
     def get_responses(self, obj):
-        qs = obj.responses.all().select_related("name").order_by("published_at")
-        if not qs.exists():
-            return []
-        return SimpleCommentReadSerializer(qs, many=True, context=self.context).data
+        prefetched = getattr(obj, "_prefetched_objects_cache", {}).get("responses")
+
+        if prefetched is not None:
+            replies = [
+                reply
+                for reply in prefetched
+                if reply.is_active
+            ]
+        else:
+            replies = (
+                obj.responses
+                .filter(is_active=True)
+                .select_related("name")
+                .order_by("published_at")
+            )
+
+        return SimpleCommentReadSerializer(
+            replies,
+            many=True,
+            context=self.context,
+        ).data
 
 
 class CommentWriteSerializer(serializers.ModelSerializer):
@@ -68,7 +123,9 @@ class CommentWriteSerializer(serializers.ModelSerializer):
     # ✅ do not allow changing these on update (we'll drop them in update())
     object_id = serializers.IntegerField(required=False)
     recomment = serializers.PrimaryKeyRelatedField(
-        queryset=Comment.objects.all(), required=False, allow_null=True
+        queryset=Comment.objects.filter(is_active=True),
+        required=False,
+        allow_null=True,
     )
 
     class Meta:
@@ -107,12 +164,38 @@ class CommentWriteSerializer(serializers.ModelSerializer):
                 attrs.pop("content_type", None)
 
         # one-level nesting check only when recomment explicitly provided (or on create)
-        parent = attrs.get("recomment", None)
+        parent = attrs.get("recomment")
+
         if parent:
+            if not parent.is_active:
+                raise serializers.ValidationError({
+                    "recomment": "This comment is no longer available."
+                })
+
             if parent.recomment_id:
-                raise serializers.ValidationError(
-                    {"recomment": "Reply nesting is limited to one level."}
-                )
+                raise serializers.ValidationError({
+                    "recomment": "Reply nesting is limited to one level."
+                })
+
+            if is_create:
+                target_content_type = attrs.get("content_type")
+                target_object_id = attrs.get("object_id")
+
+                if (
+                    target_content_type
+                    and parent.content_type_id != target_content_type.id
+                ):
+                    raise serializers.ValidationError({
+                        "recomment": "Reply target does not match the parent comment."
+                    })
+
+                if (
+                    target_object_id is not None
+                    and parent.object_id != target_object_id
+                ):
+                    raise serializers.ValidationError({
+                        "recomment": "Reply target does not match the parent comment."
+                    })
 
         return attrs
 

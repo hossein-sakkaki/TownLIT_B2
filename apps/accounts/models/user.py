@@ -248,11 +248,48 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     user_active_code = models.CharField(max_length=200, null=True, blank=True)
     user_active_code_expiry = models.DateTimeField(null=True, blank=True)
     register_date = models.DateField(default=timezone.localdate, verbose_name='Register Date')
+    
+    # Deletion -------
+    deletion_requested_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+        verbose_name="Deletion Requested At",
+    )
 
-    deletion_requested_at = models.DateTimeField(null=True, blank=True, verbose_name='Deletion Requested At')
-    is_deleted = models.BooleanField(default=False, verbose_name="Is Deleted")
-    reactivated_at = models.DateTimeField(null=True, blank=True, verbose_name='Reactivated Date')
+    deletion_scheduled_for = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+        verbose_name="Deletion Scheduled For",
+    )
 
+    deletion_canceled_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Deletion Canceled At",
+    )
+
+    deletion_completed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+        verbose_name="Deletion Completed At",
+    )
+
+    is_deleted = models.BooleanField(
+        default=False,
+        db_index=True,
+        verbose_name="Is Deleted",
+    )
+
+    reactivated_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Reactivated Date",
+    )
+    
+    # Reset token -------
     reset_token = models.CharField(max_length=255, null=True, blank=True)
     reset_token_expiration = models.DateTimeField(null=True, blank=True)
 
@@ -453,9 +490,37 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
         return settings.DEFAULT_USER_AVATAR_URL
 
     @property
-    def is_staff(self):
-        return self.is_admin
+    def is_staff(self) -> bool:
+        """
+        Django/DRF compatibility flag.
 
+        TownLIT stores platform administration in is_admin/is_superuser,
+        while Django and DRF expect user.is_staff.
+        """
+        return bool(self.is_admin or self.is_superuser)
+
+    @property
+    def is_deletion_pending(self) -> bool:
+        return bool(
+            self.is_deleted
+            and self.deletion_scheduled_for
+            and not self.deletion_completed_at
+        )
+
+    @property
+    def is_deletion_completed(self) -> bool:
+        return bool(
+            self.is_deleted
+            and self.deletion_completed_at
+        )
+
+    @property
+    def can_cancel_deletion(self) -> bool:
+        if not self.is_deletion_pending:
+            return False
+
+        return timezone.now() < self.deletion_scheduled_for
+    
     def __str__(self):
         return f'{self.username}'
 

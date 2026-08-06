@@ -1,3 +1,5 @@
+# apps/profiles/signals/signals.py
+
 # signals.py
 from django.db.models.signals import pre_save, post_delete
 from django.dispatch import receiver

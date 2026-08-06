@@ -1,23 +1,31 @@
 {% extends "base_email.html" %}
 
 {% block subject %}
-Welcome Back to TownLIT!
+Your Account Deletion Request Was Canceled
 {% endblock %}
 
 {% block content %}
 
-<h1>Welcome Back, {{ user.name|default:"there" }}!</h1>
+<h1>Account Deletion Canceled</h1>
 
-<p>We’re so happy to see you again. Your TownLIT account has been successfully reactivated as of <strong>{{ reactivated_at }}</strong>.</p>
+<p>Hello {{ user.name|default:"there" }},</p>
 
-<p>Everything is just as you left it — your community, your profile, and your journey with us.</p>
-
-<p>You can now log in and reconnect with the people, content, and purpose that matter to you.</p>
-
-<p class="email-reflection">
-  The true Light never fades — and it has been shining, even while you were away. Now that you’re back, we’re honored to reflect that Light with you once again, walking together in grace, faith, and community.
+<p>
+  Your request to permanently delete your TownLIT account was successfully
+  canceled on <strong>{{ reactivated_at }}</strong>.
 </p>
 
-<p class="email-signature">With love and light,<br />TownLIT</p>
+<p>
+  Your profile and normal account access have been restored.
+</p>
+
+<p>
+  You can now sign in and continue using TownLIT.
+</p>
+
+<p class="email-signature">
+  With care,<br />
+  TownLIT
+</p>
 
 {% endblock %}
