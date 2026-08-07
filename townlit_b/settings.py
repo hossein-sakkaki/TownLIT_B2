@@ -801,86 +801,6 @@ AUDIO_ANALYTICS = {
 }
 
 
-# Creative Editor server-side fonts ----------------------------------------------------------------
-CREATIVE_EDITOR_DEFAULT_FONT_FILE = (
-    "/usr/share/fonts/truetype/"
-    "dejavu/DejaVuSans.ttf"
-)
-
-
-CREATIVE_EDITOR_FONT_FILES = {
-    "townlit-sans-regular": (
-        "/usr/share/fonts/truetype/"
-        "dejavu/DejaVuSans.ttf"
-    ),
-
-    "townlit-sans-bold": (
-        "/usr/share/fonts/truetype/"
-        "dejavu/DejaVuSans-Bold.ttf"
-    ),
-
-    "townlit-serif": (
-        "/usr/share/fonts/truetype/"
-        "dejavu/DejaVuSerif.ttf"
-    ),
-
-    "townlit-serif-bold": (
-        "/usr/share/fonts/truetype/"
-        "dejavu/DejaVuSerif-Bold.ttf"
-    ),
-
-    "townlit-display": (
-        "/usr/share/fonts/truetype/"
-        "dejavu/DejaVuSerif-Bold.ttf"
-    ),
-
-    "townlit-mono": (
-        "/usr/share/fonts/truetype/"
-        "dejavu/DejaVuSansMono.ttf"
-    ),
-
-    "townlit-mono-bold": (
-        "/usr/share/fonts/truetype/"
-        "dejavu/DejaVuSansMono-Bold.ttf"
-    ),
-
-    "townlit-mono-italic": (
-        "/usr/share/fonts/truetype/"
-        "dejavu/DejaVuSansMono-Oblique.ttf"
-    ),
-
-    # DejaVu Sans supports Persian and Arabic.
-    "townlit-arabic": (
-        "/usr/share/fonts/truetype/"
-        "dejavu/DejaVuSans.ttf"
-    ),
-}
-
-
-# Creative Editor render configuration ----------------------------------------------------------------
-CREATIVE_RENDER_QUEUED_TIMEOUT_MINUTES = env_int(
-    "CREATIVE_RENDER_QUEUED_TIMEOUT_MINUTES",
-    default=10,
-    minimum=1,
-    maximum=24 * 60,
-)
-
-CREATIVE_RENDER_PROCESSING_TIMEOUT_MINUTES = env_int(
-    "CREATIVE_RENDER_PROCESSING_TIMEOUT_MINUTES",
-    default=15,
-    minimum=1,
-    maximum=24 * 60,
-)
-
-CREATIVE_EDITOR_EMOJI_FONT_FILE = os.getenv(
-    "CREATIVE_EDITOR_EMOJI_FONT_FILE",
-    (
-        "/usr/share/fonts/truetype/noto/"
-        "NotoColorEmoji.ttf"
-    ),
-).strip()
-
-
 # ---------------------------------------------------------------------
 # Account deletion
 # ---------------------------------------------------------------------
@@ -907,3 +827,47 @@ ACCOUNT_DELETION_REQUIRED_HANDLERS = [
     "profiles",
     "posts",
 ]
+
+
+# ---------------------------------------------------------------------
+# Creative Editor Fonts
+# ---------------------------------------------------------------------
+
+CREATIVE_EDITOR_FONT_DIR = (
+    BASE_DIR
+    / "apps"
+    / "creative_editor"
+    / "assets"
+    / "fonts"
+)
+
+CREATIVE_EDITOR_DEFAULT_FONT_KEY = (
+    "marcellus-regular"
+)
+
+CREATIVE_EDITOR_EMOJI_FONT_FILE = os.getenv(
+    "CREATIVE_EDITOR_EMOJI_FONT_FILE",
+    (
+        "/usr/share/fonts/truetype/noto/"
+        "NotoColorEmoji.ttf"
+    ),
+).strip()
+
+
+# ---------------------------------------------------------------------
+# Creative Editor Render Configuration
+# ---------------------------------------------------------------------
+
+CREATIVE_RENDER_QUEUED_TIMEOUT_MINUTES = env_int(
+    "CREATIVE_RENDER_QUEUED_TIMEOUT_MINUTES",
+    default=10,
+    minimum=1,
+    maximum=24 * 60,
+)
+
+CREATIVE_RENDER_PROCESSING_TIMEOUT_MINUTES = env_int(
+    "CREATIVE_RENDER_PROCESSING_TIMEOUT_MINUTES",
+    default=15,
+    minimum=1,
+    maximum=24 * 60,
+)

@@ -172,8 +172,7 @@ class CreativeMixedTextRenderer:
         max_text_width = max(
             1,
             options.box_width
-            - options.stroke_width * 2
-            - 8,
+            - options.stroke_width * 2,
         )
 
         layout = self._build_layout(
@@ -1096,14 +1095,13 @@ class CreativeMixedTextRenderer:
         line_width: int,
     ) -> int:
         if alignment == "leading":
-            return 4
+            return 0
 
         if alignment == "trailing":
             return max(
-                4,
+                0,
                 box_width
-                - line_width
-                - 4,
+                - line_width,
             )
 
         return max(
