@@ -1,7 +1,13 @@
 # apps/translations/services/base.py
+#
+# TownLIT
+#
+# Created by Hossein Sakkaki.
+# Last Update by Hossein Sakkaki on 2026-08-08.
 
 from __future__ import annotations
 
+import logging
 import re
 
 from django.conf import settings
@@ -23,22 +29,22 @@ from apps.translations.services.hashing import (
     hash_text,
 )
 from apps.translations.services.language import (
-    DEFAULT_SOURCE_LANGUAGE,
     language_codes_match,
     resolve_target_language,
 )
 from apps.translations.services.llm_humanize import (
     humanize_translation,
 )
-import logging
 
-logger = logging.getLogger(
-    __name__
-)
+
+logger = logging.getLogger(__name__)
 
 _PARAGRAPH_SEPARATOR = "\n\n"
 
 
+# ---------------------------------------------------------------------
+# Humanization
+# ---------------------------------------------------------------------
 def humanize_enabled() -> bool:
     """
     Check whether LLM humanization is globally enabled.
@@ -68,6 +74,9 @@ def _current_prompt_version() -> str:
     )
 
 
+# ---------------------------------------------------------------------
+# Text normalization
+# ---------------------------------------------------------------------
 def _normalize_line_endings(
     value: str,
 ) -> str:
@@ -130,6 +139,9 @@ def _normalize_cache_field_name(
     return field_name
 
 
+# ---------------------------------------------------------------------
+# Paragraph helpers
+# ---------------------------------------------------------------------
 def _split_paragraphs(
     value: str,
 ) -> list[str]:
@@ -203,6 +215,9 @@ def _cached_structure_is_valid(
     return translated_count == source_count
 
 
+# ---------------------------------------------------------------------
+# AWS translation
+# ---------------------------------------------------------------------
 def _translate_paragraphs_with_aws(
     *,
     source_text: str,
@@ -254,6 +269,7 @@ def _translate_paragraphs_with_aws(
             or ""
         ).strip()
 
+        # Keep the first detected source language.
         if (
             not detected_source_language
             and result_source_language
@@ -273,6 +289,9 @@ def _translate_paragraphs_with_aws(
     }
 
 
+# ---------------------------------------------------------------------
+# LLM humanization
+# ---------------------------------------------------------------------
 def _humanize_paragraphs(
     *,
     source_paragraphs: list[str],
@@ -362,6 +381,9 @@ def _rehumanize_cached_translation(
     )
 
 
+# ---------------------------------------------------------------------
+# Cache results
+# ---------------------------------------------------------------------
 def _translation_result_from_cache(
     cached: TranslationCache,
 ) -> dict:
@@ -442,6 +464,7 @@ def _upgrade_cached_translation_if_needed(
                 "humanized_at",
             ]
         )
+
     except Exception:
         logger.exception(
             "[translation] cached humanization upgrade failed "
@@ -450,7 +473,6 @@ def _upgrade_cached_translation_if_needed(
             cached.field_name,
             target_language,
         )
-        return
 
 
 def _find_valid_cached_translation(
@@ -537,9 +559,6 @@ def _create_translation_cache_safely(
 ) -> tuple[TranslationCache, bool]:
     """
     Create one cache row with race protection.
-
-    Returns:
-        cache_row, created
     """
 
     try:
@@ -576,6 +595,9 @@ def _create_translation_cache_safely(
         return cached, False
 
 
+# ---------------------------------------------------------------------
+# Public translation service
+# ---------------------------------------------------------------------
 def translate_text_cached(
     *,
     obj,
@@ -589,10 +611,8 @@ def translate_text_cached(
     """
     Translate arbitrary text with model-backed cache support.
 
-    humanize:
-    - None: follow the global setting.
-    - True: humanize when globally enabled.
-    - False: return the base/cache translation without individual humanization.
+    A missing source language is intentionally treated as unknown so AWS
+    can detect it automatically.
     """
 
     if obj is None:
@@ -617,14 +637,15 @@ def translate_text_cached(
         source_text
     )
 
+    # Unknown source must remain unknown for AWS auto-detection.
     resolved_source_language = str(
         source_language
-        or DEFAULT_SOURCE_LANGUAGE
+        or ""
     ).strip()
 
     resolved_target_language = resolve_target_language(
         user=user,
-        source_language=resolved_source_language,
+        source_language=resolved_source_language or None,
         override_language=target_language,
     )
 
@@ -635,9 +656,13 @@ def translate_text_cached(
         and bool(humanize)
     )
 
-    if language_codes_match(
-        resolved_source_language,
-        resolved_target_language,
+    # Skip translation only when the source language is explicitly known.
+    if (
+        resolved_source_language
+        and language_codes_match(
+            resolved_source_language,
+            resolved_target_language,
+        )
     ):
         return _same_language_result(
             source_text=normalized_source_text,
@@ -669,10 +694,11 @@ def translate_text_cached(
             cached
         )
 
+    # Let AWS detect the source language when it is unknown.
     aws_result = _translate_paragraphs_with_aws(
         source_text=normalized_source_text,
         target_language=resolved_target_language,
-        source_language=resolved_source_language,
+        source_language=resolved_source_language or None,
     )
 
     source_paragraphs = aws_result[
@@ -719,7 +745,7 @@ def translate_text_cached(
                 content_type.model,
                 obj.pk,
                 normalized_field_name,
-                resolved_source_language,
+                resolved_source_language or "auto",
                 resolved_target_language,
             )
 
@@ -752,6 +778,7 @@ def translate_text_cached(
         "cache_id": cached.pk,
     }
 
+
 def translate_cached(
     *,
     obj,
@@ -763,8 +790,6 @@ def translate_cached(
 ) -> dict:
     """
     Translate a real model text field.
-
-    Existing callers remain backward-compatible.
     """
 
     raw_source_text = getattr(
@@ -782,7 +807,7 @@ def translate_cached(
         source_language=source_language,
         humanize=humanize,
     )
-    
+
 
 def update_cached_translation_humanization(
     *,
