@@ -22,6 +22,9 @@ from apps.creative_editor.models import (
 from apps.creative_editor.services.font_resolver import (
     clear_font_caches,
 )
+from apps.creative_editor.services.font_coverage import (
+    clear_font_coverage_caches,
+)
 
 
 # ---------------------------------------------------------------------
@@ -59,7 +62,7 @@ OFL_LICENSE_REFERENCE = (
 # Authoritative Creative Font Catalog
 # ---------------------------------------------------------------------
 
-FONT_SEEDS = [
+CREATIVE_FONT_SEEDS = [
     {
         "key": "alfa-slab-one-regular",
         "display_name": "Alfa Slab One",
@@ -267,6 +270,264 @@ FONT_SEEDS = [
     },
 ]
 
+# ---------------------------------------------------------------------
+# Hidden Global Font Fallback Catalog
+# ---------------------------------------------------------------------
+
+FALLBACK_FONT_SEEDS = [
+    {
+        "key": "noto-sans-regular",
+        "display_name": "Noto Sans",
+        "binary_filename": "NotoSans-Regular.ttf",
+        "category": CreativeFont.Category.SANS_SERIF,
+        "supports_ltr": True,
+        "supports_rtl": False,
+        "preview_text": "TownLIT",
+        "is_user_selectable": False,
+        "sort_order": 1990,
+    },
+    {
+        "key": "noto-sans-arabic-regular",
+        "display_name": "Noto Sans Arabic",
+        "binary_filename": "NotoSansArabic-Regular.ttf",
+        "category": CreativeFont.Category.SANS_SERIF,
+        "supports_ltr": True,
+        "supports_rtl": True,
+        "preview_text": "خدا محبت است",
+        "is_user_selectable": False,
+        "sort_order": 1010,
+    },
+    {
+        "key": "noto-sans-hebrew-regular",
+        "display_name": "Noto Sans Hebrew",
+        "binary_filename": "NotoSansHebrew-Regular.ttf",
+        "category": CreativeFont.Category.SANS_SERIF,
+        "supports_ltr": False,
+        "supports_rtl": True,
+        "preview_text": "שלום",
+        "is_user_selectable": False,
+        "sort_order": 1020,
+    },
+    {
+        "key": "noto-sans-devanagari-regular",
+        "display_name": "Noto Sans Devanagari",
+        "binary_filename": "NotoSansDevanagari-Regular.ttf",
+        "category": CreativeFont.Category.SANS_SERIF,
+        "supports_ltr": True,
+        "supports_rtl": False,
+        "preview_text": "नमस्ते",
+        "is_user_selectable": False,
+        "sort_order": 1030,
+    },
+    {
+        "key": "noto-sans-bengali-regular",
+        "display_name": "Noto Sans Bengali",
+        "binary_filename": "NotoSansBengali-Regular.ttf",
+        "category": CreativeFont.Category.SANS_SERIF,
+        "supports_ltr": True,
+        "supports_rtl": False,
+        "preview_text": "বাংলা",
+        "is_user_selectable": False,
+        "sort_order": 1040,
+    },
+    {
+        "key": "noto-sans-gurmukhi-regular",
+        "display_name": "Noto Sans Gurmukhi",
+        "binary_filename": "NotoSansGurmukhi-Regular.ttf",
+        "category": CreativeFont.Category.SANS_SERIF,
+        "supports_ltr": True,
+        "supports_rtl": False,
+        "preview_text": "ਪੰਜਾਬੀ",
+        "is_user_selectable": False,
+        "sort_order": 1050,
+    },
+    {
+        "key": "noto-sans-gujarati-regular",
+        "display_name": "Noto Sans Gujarati",
+        "binary_filename": "NotoSansGujarati-Regular.ttf",
+        "category": CreativeFont.Category.SANS_SERIF,
+        "supports_ltr": True,
+        "supports_rtl": False,
+        "preview_text": "ગુજરાતી",
+        "is_user_selectable": False,
+        "sort_order": 1060,
+    },
+    {
+        "key": "noto-sans-oriya-regular",
+        "display_name": "Noto Sans Oriya",
+        "binary_filename": "NotoSansOriya-Regular.ttf",
+        "category": CreativeFont.Category.SANS_SERIF,
+        "supports_ltr": True,
+        "supports_rtl": False,
+        "preview_text": "ଓଡ଼ିଆ",
+        "is_user_selectable": False,
+        "sort_order": 1070,
+    },
+    {
+        "key": "noto-sans-tamil-regular",
+        "display_name": "Noto Sans Tamil",
+        "binary_filename": "NotoSansTamil-Regular.ttf",
+        "category": CreativeFont.Category.SANS_SERIF,
+        "supports_ltr": True,
+        "supports_rtl": False,
+        "preview_text": "தமிழ்",
+        "is_user_selectable": False,
+        "sort_order": 1080,
+    },
+    {
+        "key": "noto-sans-telugu-regular",
+        "display_name": "Noto Sans Telugu",
+        "binary_filename": "NotoSansTelugu-Regular.ttf",
+        "category": CreativeFont.Category.SANS_SERIF,
+        "supports_ltr": True,
+        "supports_rtl": False,
+        "preview_text": "తెలుగు",
+        "is_user_selectable": False,
+        "sort_order": 1090,
+    },
+    {
+        "key": "noto-sans-kannada-regular",
+        "display_name": "Noto Sans Kannada",
+        "binary_filename": "NotoSansKannada_SemiCondensed-Regular.ttf",
+        "category": CreativeFont.Category.SANS_SERIF,
+        "supports_ltr": True,
+        "supports_rtl": False,
+        "preview_text": "ಕನ್ನಡ",
+        "is_user_selectable": False,
+        "sort_order": 1100,
+    },
+    {
+        "key": "noto-sans-malayalam-regular",
+        "display_name": "Noto Sans Malayalam",
+        "binary_filename": "NotoSansMalayalam-Regular.ttf",
+        "category": CreativeFont.Category.SANS_SERIF,
+        "supports_ltr": True,
+        "supports_rtl": False,
+        "preview_text": "മലയാളം",
+        "is_user_selectable": False,
+        "sort_order": 1110,
+    },
+    {
+        "key": "noto-sans-sinhala-regular",
+        "display_name": "Noto Sans Sinhala",
+        "binary_filename": "NotoSansSinhala-Regular.ttf",
+        "category": CreativeFont.Category.SANS_SERIF,
+        "supports_ltr": True,
+        "supports_rtl": False,
+        "preview_text": "සිංහල",
+        "is_user_selectable": False,
+        "sort_order": 1120,
+    },
+    {
+        "key": "noto-sans-thai-regular",
+        "display_name": "Noto Sans Thai",
+        "binary_filename": "NotoSansThai-Regular.ttf",
+        "category": CreativeFont.Category.SANS_SERIF,
+        "supports_ltr": True,
+        "supports_rtl": False,
+        "preview_text": "ภาษาไทย",
+        "is_user_selectable": False,
+        "sort_order": 1130,
+    },
+    {
+        "key": "noto-sans-lao-regular",
+        "display_name": "Noto Sans Lao",
+        "binary_filename": "NotoSansLao-Regular.ttf",
+        "category": CreativeFont.Category.SANS_SERIF,
+        "supports_ltr": True,
+        "supports_rtl": False,
+        "preview_text": "ພາສາລາວ",
+        "is_user_selectable": False,
+        "sort_order": 1140,
+    },
+    {
+        "key": "noto-sans-khmer-regular",
+        "display_name": "Noto Sans Khmer",
+        "binary_filename": "NotoSansKhmer-Regular.ttf",
+        "category": CreativeFont.Category.SANS_SERIF,
+        "supports_ltr": True,
+        "supports_rtl": False,
+        "preview_text": "ភាសាខ្មែរ",
+        "is_user_selectable": False,
+        "sort_order": 1150,
+    },
+    {
+        "key": "noto-sans-myanmar-regular",
+        "display_name": "Noto Sans Myanmar",
+        "binary_filename": "NotoSansMyanmar-Regular.ttf",
+        "category": CreativeFont.Category.SANS_SERIF,
+        "supports_ltr": True,
+        "supports_rtl": False,
+        "preview_text": "မြန်မာ",
+        "is_user_selectable": False,
+        "sort_order": 1160,
+    },
+    {
+        "key": "noto-sans-armenian-regular",
+        "display_name": "Noto Sans Armenian",
+        "binary_filename": "NotoSansArmenian-Regular.ttf",
+        "category": CreativeFont.Category.SANS_SERIF,
+        "supports_ltr": True,
+        "supports_rtl": False,
+        "preview_text": "Հայերեն",
+        "is_user_selectable": False,
+        "sort_order": 1170,
+    },
+    {
+        "key": "noto-sans-georgian-regular",
+        "display_name": "Noto Sans Georgian",
+        "binary_filename": "NotoSansGeorgian-Regular.ttf",
+        "category": CreativeFont.Category.SANS_SERIF,
+        "supports_ltr": True,
+        "supports_rtl": False,
+        "preview_text": "ქართული",
+        "is_user_selectable": False,
+        "sort_order": 1180,
+    },
+    {
+        "key": "noto-sans-ethiopic-regular",
+        "display_name": "Noto Sans Ethiopic",
+        "binary_filename": "NotoSansEthiopic-Regular.ttf",
+        "category": CreativeFont.Category.SANS_SERIF,
+        "supports_ltr": True,
+        "supports_rtl": False,
+        "preview_text": "አማርኛ",
+        "is_user_selectable": False,
+        "sort_order": 1190,
+    },
+    {
+        "key": "noto-sans-cjk-sc-regular",
+        "display_name": "Noto Sans CJK SC",
+        "binary_filename": "NotoSansCJKsc-Regular.otf",
+        "category": CreativeFont.Category.SANS_SERIF,
+        "supports_ltr": True,
+        "supports_rtl": False,
+        "preview_text": "中文 日本語 한국어",
+        "is_user_selectable": False,
+        "sort_order": 1200,
+    },
+    {
+        "key": "noto-sans-symbols-2-regular",
+        "display_name": "Noto Sans Symbols 2",
+        "binary_filename": "NotoSansSymbols2-Regular.ttf",
+        "category": CreativeFont.Category.OTHER,
+        "supports_ltr": True,
+        "supports_rtl": False,
+        "preview_text": "★ → ✓ ∞",
+        "is_user_selectable": False,
+        "sort_order": 2000,
+    },
+]
+
+# ---------------------------------------------------------------------
+# Complete Authoritative Font Catalog
+# ---------------------------------------------------------------------
+
+FONT_SEEDS = [
+    *CREATIVE_FONT_SEEDS,
+    *FALLBACK_FONT_SEEDS,
+]
+
 
 # ---------------------------------------------------------------------
 # Sticker Packs
@@ -338,12 +599,28 @@ class Command(
             self._seed_packs()
 
         clear_font_caches()
+        clear_font_coverage_caches()
+
+        selectable_count = sum(
+            1
+            for item in validated_fonts
+            if item.get(
+                "is_user_selectable",
+                True,
+            )
+        )
+
+        fallback_count = (
+            len(validated_fonts)
+            - selectable_count
+        )
 
         self.stdout.write(
             self.style.SUCCESS(
                 (
                     "Creative Editor seed completed. "
-                    f"{len(validated_fonts)} fonts active."
+                    f"{selectable_count} selectable fonts, "
+                    f"{fallback_count} hidden fallback fonts."
                 )
             )
         )
@@ -404,6 +681,24 @@ class Command(
                 seed["binary_filename"]
             ).strip()
 
+            is_user_selectable = bool(
+                seed.get(
+                    "is_user_selectable",
+                    True,
+                )
+            )
+
+            if (
+                not is_user_selectable
+                and not filename
+            ):
+                raise CommandError(
+                    (
+                        "Hidden Creative Font fallback "
+                        f"'{key}' requires a bundled binary."
+                    )
+                )
+    
             if key in seen_keys:
                 raise CommandError(
                     (
@@ -687,22 +982,18 @@ class Command(
                     item[
                         "asset_sha256"
                     ],
-                "supports_ltr":
-                    item[
-                        "supports_ltr"
-                    ],
-                "supports_rtl":
-                    item[
-                        "supports_rtl"
-                    ],
-                "supports_bold":
-                    False,
-                "supports_italic":
-                    False,
-                "minimum_size":
-                    12,
-                "maximum_size":
-                    160,
+                    
+                "supports_ltr": item["supports_ltr"],
+                "supports_rtl": item["supports_rtl"],
+                "supports_bold": False,
+                "supports_italic": False,
+                "is_user_selectable": item.get(
+                    "is_user_selectable",
+                    True,
+                ),
+                "minimum_size": 12,
+                "maximum_size": 160,
+                    
                 "preview_text":
                     item[
                         "preview_text"
@@ -789,4 +1080,4 @@ class Command(
                 )
             )
 
-# docker compose exec backend python manage.py seed_creative_editor
+# sudo docker compose exec backend python manage.py seed_creative_editor

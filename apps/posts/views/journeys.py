@@ -6,7 +6,7 @@ import logging
 
 from django.contrib.contenttypes.models import ContentType
 from django.db import transaction
-from django.db.models import Prefetch
+from django.db.models import Avg, Count, Prefetch, Q
 from django.utils import timezone
 from django.core.exceptions import ValidationError as DjangoValidationError
 
@@ -27,6 +27,7 @@ from apps.core.visibility.query import VisibilityQuery
 from apps.posts.models.journey import Journey, JourneyEntry
 from apps.posts.constants.journeys import JourneyViewSource
 from apps.posts.serializers.journeys import (
+    JourneyAnalyticsSerializer,
     JourneyCloseSerializer,
     JourneyCreationStatusSerializer,
     JourneyEntrySerializer,
@@ -48,6 +49,19 @@ from apps.posts.services.journeys.profile_ring import (
 from apps.profiles.models.member import Member
 from apps.posts.services.journeys.creation_status import (
     get_journey_creation_status,
+)
+from apps.creative_editor.models import CreativeComposition
+from apps.media_conversion.models import (
+    MediaConversionJob,
+    MediaJobStatus,
+)
+from apps.media_conversion.serializers import (
+    MediaConversionJobSerializer,
+)
+from apps.posts.serializers.journeys import JourneySubmitSerializer
+from apps.posts.services.journeys.processing import (
+    JOURNEY_WORKFLOW_FIELD,
+    submit_journey_workflow,
 )
 
 logger = logging.getLogger(__name__)
@@ -987,6 +1001,110 @@ class JourneyViewSet(
             status=status.HTTP_200_OK,
         )
 
+    @action(
+        detail=False,
+        methods=["post"],
+        permission_classes=[IsAuthenticated],
+        url_path="submit",
+    )
+    def submit(self, request):
+        serializer = JourneySubmitSerializer(
+            data=request.data,
+        )
+        serializer.is_valid(raise_exception=True)
+
+        owner = self._request_member()
+
+        try:
+            job, created = submit_journey_workflow(
+                user=request.user,
+                owner=owner,
+                validated_data=dict(
+                    serializer.validated_data
+                ),
+            )
+        except DjangoValidationError as exc:
+            return Response(
+                {
+                    "detail": "Journey submission is unavailable.",
+                    "code": "journey_submission_invalid",
+                    "errors": (
+                        exc.message_dict
+                        if hasattr(exc, "message_dict")
+                        else exc.messages
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(
+            MediaConversionJobSerializer(
+                job,
+                context={"request": request},
+            ).data,
+            status=(
+                status.HTTP_201_CREATED
+                if created
+                else status.HTTP_200_OK
+            ),
+        )
+
+
+    @action(
+        detail=False,
+        methods=["get"],
+        permission_classes=[IsAuthenticated],
+        url_path="processing-jobs",
+    )
+    def processing_jobs(self, request):
+        member = self._request_member()
+
+        composition_ids = (
+            CreativeComposition.objects
+            .filter(
+                owner=request.user,
+                is_active=True,
+            )
+            .values_list(
+                "pk",
+                flat=True,
+            )
+        )
+
+        content_type = ContentType.objects.get_for_model(
+            CreativeComposition,
+            for_concrete_model=False,
+        )
+
+        jobs = (
+            MediaConversionJob.objects
+            .filter(
+                content_type=content_type,
+                object_id__in=composition_ids,
+                field_name=JOURNEY_WORKFLOW_FIELD,
+                status__in=[
+                    MediaJobStatus.QUEUED,
+                    MediaJobStatus.PROCESSING,
+                    MediaJobStatus.FAILED,
+                    MediaJobStatus.CANCELED,
+                ],
+            )
+            .select_related("content_type")
+            .order_by("-updated_at")[:20]
+        )
+
+        return Response(
+            MediaConversionJobSerializer(
+                jobs,
+                many=True,
+                context={"request": request},
+            ).data,
+            status=status.HTTP_200_OK,
+        )
+
+class JourneyViewerPagination(ConfigurablePagination):
+    page_size = 30
+    max_page_size = 100
 
 class JourneyEntryViewSet(
     OwnerGateMixin,
@@ -1000,10 +1118,16 @@ class JourneyEntryViewSet(
 
     serializer_class = JourneyEntrySerializer
     permission_classes = [AllowAny]
+    pagination_class = JourneyViewerPagination
     lookup_field = "slug"
 
     def get_permissions(self):
-        if self.action in {"destroy", "record_view", "analytics"}:
+        if self.action in {
+            "destroy",
+            "record_view",
+            "analytics",
+            "viewers",
+        }:
             return [IsAuthenticated()]
 
         return super().get_permissions()
@@ -1069,7 +1193,10 @@ class JourneyEntryViewSet(
     ):
         entry = self.get_object()
 
-        self.apply_hard_owner_gate(request, entry)
+        self.apply_hard_owner_gate(
+            request,
+            entry,
+        )
 
         is_owner = self._is_owner(
             request=request,
@@ -1130,7 +1257,7 @@ class JourneyEntryViewSet(
             entry=entry,
         )
 
-        # Owner views are never counted.
+        # Owner views do not count.
         if is_owner:
             return Response(
                 {
@@ -1153,13 +1280,10 @@ class JourneyEntryViewSet(
             raise_exception=True
         )
 
-        source = serializer.validated_data[
-            "source"
-        ]
-
+        source = serializer.validated_data["source"]
         now = timezone.now()
 
-        # Basic availability applies to every source.
+        # Basic availability.
         if (
             not entry.is_active
             or entry.is_hidden
@@ -1171,11 +1295,10 @@ class JourneyEntryViewSet(
             )
 
         is_profile_archive_view = (
-            source
-            == JourneyViewSource.PROFILE_ARCHIVE
+            source == JourneyViewSource.PROFILE_ARCHIVE
         )
 
-        # Live surfaces must only record live Entries.
+        # Live surfaces require a live Entry.
         if not is_profile_archive_view:
             if (
                 entry.archived_at is not None
@@ -1218,6 +1341,11 @@ class JourneyEntryViewSet(
     ):
         entry = self.get_object()
 
+        self.apply_hard_owner_gate(
+            request,
+            entry,
+        )
+
         if not self._is_owner(
             request=request,
             entry=entry,
@@ -1226,41 +1354,145 @@ class JourneyEntryViewSet(
                 "Journey analytics are owner-only."
             )
 
-        viewers = (
-            entry.viewer_records.select_related("viewer")
-            .only(
+        viewers = entry.viewer_records.all()
+
+        metrics = viewers.aggregate(
+            returning_viewers=Count(
                 "id",
-                "entry_id",
-                "viewer_id",
-                "first_viewed_at",
-                "last_viewed_at",
-                "view_count",
-                "max_progress_ms",
-                "completed",
-                "source",
-                "viewer__id",
-                "viewer__username",
-                "viewer__name",
-                "viewer__family",
-                "viewer__is_verified_identity",
-                "viewer__avatar_version",
+                filter=Q(view_count__gt=1),
+            ),
+            completed_viewers=Count(
+                "id",
+                filter=Q(completed=True),
+            ),
+            average_max_progress_ms=Avg(
+                "max_progress_ms"
+            ),
+        )
+
+        unique_viewers = int(
+            entry.unique_viewers_count or 0
+        )
+
+        completed_viewers = int(
+            metrics["completed_viewers"] or 0
+        )
+
+        completion_rate = (
+            completed_viewers / unique_viewers
+            if unique_viewers > 0
+            else 0.0
+        )
+
+        source_breakdown = list(
+            viewers.values("source")
+            .annotate(
+                viewers=Count("id")
             )
-            .order_by("-last_viewed_at", "-id")
+            .order_by(
+                "-viewers",
+                "source",
+            )
+        )
+
+        payload = {
+            "entry_id": entry.pk,
+            "total_views": int(
+                entry.view_count_internal or 0
+            ),
+            "unique_viewers": unique_viewers,
+            "returning_viewers": int(
+                metrics["returning_viewers"] or 0
+            ),
+            "completed_viewers": completed_viewers,
+            "completion_rate": completion_rate,
+            "average_max_progress_ms": float(
+                metrics["average_max_progress_ms"] or 0
+            ),
+            "viewer_source_breakdown":
+                source_breakdown,
+            "reactions_count": int(
+                entry.reactions_count or 0
+            ),
+            "reactions_breakdown":
+                entry.reactions_breakdown or {},
+        }
+
+        serializer = JourneyAnalyticsSerializer(
+            instance=payload
         )
 
         return Response(
-            {
-                "entry_id": entry.pk,
-                "total_views": entry.view_count_internal,
-                "unique_viewers": entry.unique_viewers_count,
-                "reactions_count": entry.reactions_count,
-                "reactions_breakdown": entry.reactions_breakdown or {},
-                "viewers": JourneyViewerSerializer(
-                    viewers,
-                    many=True,
-                    context={"request": request},
-                ).data,
-            },
+            serializer.data,
+            status=status.HTTP_200_OK,
+        )
+
+    @action(
+        detail=True,
+        methods=["get"],
+        permission_classes=[IsAuthenticated],
+        url_path="viewers",
+    )
+    def viewers(
+        self,
+        request,
+        slug=None,
+    ):
+        entry = self.get_object()
+
+        self.apply_hard_owner_gate(
+            request,
+            entry,
+        )
+
+        if not self._is_owner(
+            request=request,
+            entry=entry,
+        ):
+            raise PermissionDenied(
+                "Journey viewers are owner-only."
+            )
+
+        queryset = (
+            entry.viewer_records
+            .select_related(
+                "viewer",
+                "viewer__label",
+                "viewer__member_profile",
+                "viewer__identity_verification",
+            )
+            .prefetch_related(
+                "viewer__identity_grants",
+            )
+            .order_by(
+                "-last_viewed_at",
+                "-id",
+            )
+        )
+
+        page = self.paginate_queryset(
+            queryset
+        )
+
+        if page is not None:
+            serializer = JourneyViewerSerializer(
+                page,
+                many=True,
+                context={"request": request},
+            )
+
+            return self.get_paginated_response(
+                serializer.data
+            )
+
+        serializer = JourneyViewerSerializer(
+            queryset,
+            many=True,
+            context={"request": request},
+        )
+
+        return Response(
+            serializer.data,
             status=status.HTTP_200_OK,
         )
 

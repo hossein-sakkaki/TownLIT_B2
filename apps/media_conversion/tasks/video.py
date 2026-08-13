@@ -261,6 +261,7 @@ def convert_video_to_multi_hls_task(
             field_name=field_name,
             relative_path=relative_output_path,
             mark_converted=False,
+            expected_source_path=source_path,
         )
 
         refreshed_instance = get_instance(

@@ -26,7 +26,9 @@ def asset_target(obj, field_name: str, kind: str) -> dict:
 
 
 class CreativeFontSerializer(serializers.ModelSerializer):
-    id = serializers.UUIDField(source="public_id")
+    id = serializers.UUIDField(
+        source="public_id"
+    )
 
     class Meta:
         model = CreativeFont
@@ -42,6 +44,7 @@ class CreativeFontSerializer(serializers.ModelSerializer):
             "supports_rtl",
             "supports_bold",
             "supports_italic",
+            "is_user_selectable",
             "minimum_size",
             "maximum_size",
             "preview_text",
@@ -143,7 +146,13 @@ class CreativeBackgroundPresetSerializer(
     
 
 class CreativeEditorBootstrapSerializer(serializers.Serializer):
-    fonts = CreativeFontSerializer(many=True)
+    fonts = CreativeFontSerializer(
+        many=True,
+    )
+
+    fallback_fonts = CreativeFontSerializer(
+        many=True,
+    )
 
     sticker_packs = StickerPackSerializer(
         many=True,

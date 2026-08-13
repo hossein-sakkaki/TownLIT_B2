@@ -49,6 +49,11 @@ class CreativeComposition(
         "renders",
         "compositions",
     )
+    RENDERED_VIDEO = FileUpload(
+        "creative_editor",
+        "renders",
+        "compositions",
+    )
     THUMBNAIL_IMAGE = FileUpload(
         "creative_editor",
         "thumbnails",
@@ -172,6 +177,17 @@ class CreativeComposition(
             validate_no_executable_file,
         ],
     )
+
+    rendered_video = models.FileField(
+        upload_to=RENDERED_VIDEO.dir_upload,
+        max_length=700,
+        null=True,
+        blank=True,
+        validators=[
+            validate_no_executable_file,
+        ],
+    )
+
     thumbnail = models.ImageField(
         upload_to=THUMBNAIL_IMAGE.dir_upload,
         max_length=700,
@@ -182,6 +198,7 @@ class CreativeComposition(
             validate_no_executable_file,
         ],
     )
+
     rendered_revision = models.PositiveIntegerField(
         null=True,
         blank=True,
@@ -321,11 +338,46 @@ class CreativeComposition(
 
     def has_current_render(self) -> bool:
         return bool(
-            self.rendered_image
+            (self.rendered_image or self.rendered_video)
             and self.rendered_revision == self.revision
             and self.status == self.Status.READY
         )
 
+    @property
+    def rendered_media_type(self) -> str | None:
+        if self.rendered_video:
+            return "video"
+
+        if self.rendered_image:
+            return "image"
+
+        return None
+
+
+    @property
+    def rendered_field_name(self) -> str | None:
+        if self.rendered_video:
+            return "rendered_video"
+
+        if self.rendered_image:
+            return "rendered_image"
+
+        return None
+
+
+    @property
+    def rendered_file(self):
+        field_name = self.rendered_field_name
+
+        if not field_name:
+            return None
+
+        return getattr(
+            self,
+            field_name,
+            None,
+        )
+        
     def is_available(self) -> bool:
         return bool(
             self.is_active
@@ -346,6 +398,7 @@ class CreativeComposition(
         if field_name not in {
             "source_image",
             "rendered_image",
+            "rendered_video",
             "thumbnail",
         }:
             return False

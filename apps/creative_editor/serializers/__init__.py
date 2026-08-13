@@ -12,6 +12,8 @@ from .compositions import (
     CreativeCompositionWriteSerializer,
     CreativeRenderJobSerializer,
     CreativeSourceReferenceSerializer,
+    CreativeCompositionMediaSerializer,
+    CreativeCompositionMediaWriteSerializer,
 )
 
 __all__ = [
@@ -24,4 +26,6 @@ __all__ = [
     "CreativeBackgroundPresetSerializer",
     "StickerAssetSerializer",
     "StickerPackSerializer",
+    "CreativeCompositionMediaSerializer",
+    "CreativeCompositionMediaWriteSerializer",
 ]

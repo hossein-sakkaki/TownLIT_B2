@@ -1,4 +1,8 @@
 # apps/creative_editor/models/font.py
+# TownLIT
+#
+# Created by Hossein Sakkaki on 2026-07-21.
+# Last Update by Hossein Sakkaki on 2026-08-10.
 
 from __future__ import annotations
 
@@ -13,9 +17,7 @@ from utils.mixins.slug_mixin import SlugMixin
 from .base import PublicIDTimestampedModel
 
 
-_SHA256_RE = re.compile(
-    r"^[0-9a-f]{64}$"
-)
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 class CreativeFont(
@@ -23,7 +25,7 @@ class CreativeFont(
     PublicIDTimestampedModel,
 ):
     """
-    An approved font available to creative editors.
+    An approved font available to Creative Editor rendering.
     """
 
     SLUG_ALLOW_UNICODE = False
@@ -107,6 +109,15 @@ class CreativeFont(
         default=False,
     )
 
+    #  User-selectable fonts appear in the Creative Editor picker.
+
+    #  Hidden fallback fonts remain active for glyph resolution and
+    #  rendering but are not exposed as creative style choices.
+    is_user_selectable = models.BooleanField(
+        default=True,
+        db_index=True,
+    )
+
     minimum_size = models.PositiveSmallIntegerField(
         default=12,
     )
@@ -163,37 +174,29 @@ class CreativeFont(
         super().clean()
 
         self.key = str(
-            self.key
-            or ""
+            self.key or ""
         ).strip()
 
         self.postscript_name = str(
-            self.postscript_name
-            or ""
+            self.postscript_name or ""
         ).strip()
 
         self.binary_filename = str(
-            self.binary_filename
-            or ""
+            self.binary_filename or ""
         ).strip()
 
         self.asset_version = str(
-            self.asset_version
-            or ""
+            self.asset_version or ""
         ).strip()
 
         self.asset_sha256 = str(
-            self.asset_sha256
-            or ""
+            self.asset_sha256 or ""
         ).strip().lower()
 
         if self.binary_filename:
-            if (
-                os.path.basename(
-                    self.binary_filename
-                )
-                != self.binary_filename
-            ):
+            if os.path.basename(
+                self.binary_filename
+            ) != self.binary_filename:
                 raise ValidationError(
                     {
                         "binary_filename":
@@ -231,30 +234,22 @@ class CreativeFont(
             missing = {}
 
             if not self.binary_filename:
-                missing[
-                    "binary_filename"
-                ] = (
+                missing["binary_filename"] = (
                     "Bundled fonts require a binary filename."
                 )
 
             if not self.postscript_name:
-                missing[
-                    "postscript_name"
-                ] = (
+                missing["postscript_name"] = (
                     "Bundled fonts require a PostScript name."
                 )
 
             if not self.asset_sha256:
-                missing[
-                    "asset_sha256"
-                ] = (
+                missing["asset_sha256"] = (
                     "Bundled fonts require a SHA-256 checksum."
                 )
 
             if not self.license_name:
-                missing[
-                    "license_name"
-                ] = (
+                missing["license_name"] = (
                     "Bundled fonts require license information."
                 )
 
@@ -264,10 +259,7 @@ class CreativeFont(
                 )
 
     def get_slug_source(self) -> str:
-        return (
-            self.key
-            or self.display_name
-        )
+        return self.key or self.display_name
 
     def __str__(self) -> str:
         return self.display_name
@@ -283,6 +275,14 @@ class CreativeFont(
         )
 
         indexes = [
+            models.Index(
+                fields=(
+                    "is_active",
+                    "is_user_selectable",
+                    "sort_order",
+                ),
+                name="creative_font_picker_idx",
+            ),
             models.Index(
                 fields=(
                     "is_active",

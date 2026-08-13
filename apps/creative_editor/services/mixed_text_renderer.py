@@ -1,4 +1,8 @@
 # apps/creative_editor/services/mixed_text_renderer.py
+# TownLIT
+#
+# Created by Hossein Sakkaki on 2026-07-21.
+# Last Update by Hossein Sakkaki on 2026-08-10.
 
 from __future__ import annotations
 
@@ -17,10 +21,16 @@ from apps.creative_editor.services.emoji_text import (
     CreativeTextCluster,
     build_text_clusters,
 )
+from apps.creative_editor.services.font_coverage import (
+    CreativeFontCoverageError,
+    font_supports_text,
+    resolve_compatible_font_key,
+)
 from apps.creative_editor.services.font_resolver import (
     ResolvedCreativeEmojiFont,
     ResolvedCreativeFont,
     load_creative_emoji_font,
+    load_creative_font,
 )
 
 
@@ -32,6 +42,7 @@ class CreativeTextRun:
 
     text: str
     is_emoji: bool
+    font_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -42,6 +53,9 @@ class CreativeMeasuredRun:
 
     run: CreativeTextRun
     width: int
+    font: ResolvedCreativeFont | None
+    ascent: int
+    descent: int
 
 
 @dataclass(frozen=True)
@@ -88,10 +102,11 @@ class CreativeTextRenderOptions:
 
 class CreativeMixedTextRenderer:
     """
-    Render mixed normal text and Unicode Emoji.
+    Render mixed text using verified Creative Fonts.
 
-    Normal text uses the selected CreativeFont.
-    Emoji uses the configured Noto Color Emoji font.
+    The selected font remains primary. Unsupported text
+    clusters use compatible bundled TownLIT fonts.
+    Emoji continues through the dedicated Emoji renderer.
     """
 
     def __init__(
@@ -107,6 +122,10 @@ class CreativeMixedTextRenderer:
             )
         )
 
+        self._resolved_fonts: dict[str, ResolvedCreativeFont] = {
+            text_font.key: text_font,
+        }
+
         self._measurement_surface = Image.new(
             "RGBA",
             (8, 8),
@@ -117,37 +136,9 @@ class CreativeMixedTextRenderer:
             self._measurement_surface
         )
 
-        text_ascent, text_descent = (
-            self.text_font.font.getmetrics()
-        )
-
-        self.text_ascent = max(
-            1,
-            int(text_ascent),
-        )
-
-        self.text_descent = max(
-            0,
-            int(text_descent),
-        )
-
-        self.base_line_height = max(
-            1,
-            self.text_ascent
-            + self.text_descent,
-        )
-
-        
-        #  Emoji should visually match the selected text size,
-        #  not the fixed 109-pixel bitmap strike.
         self.emoji_visual_height = max(
             8,
-            int(
-                round(
-                    self.text_font.size
-                    * 1.04
-                )
-            ),
+            int(round(self.text_font.size * 1.04)),
         )
 
     def render(
@@ -156,10 +147,6 @@ class CreativeMixedTextRenderer:
         text: str,
         options: CreativeTextRenderOptions,
     ) -> Image.Image:
-        """
-        Render one complete mixed text layer.
-        """
-
         layer = Image.new(
             "RGBA",
             (
@@ -171,8 +158,7 @@ class CreativeMixedTextRenderer:
 
         max_text_width = max(
             1,
-            options.box_width
-            - options.stroke_width * 2,
+            options.box_width - options.stroke_width * 2,
         )
 
         layout = self._build_layout(
@@ -184,17 +170,10 @@ class CreativeMixedTextRenderer:
 
         origin_y = max(
             0,
-            (
-                options.box_height
-                - layout.height
-            )
-            // 2,
+            (options.box_height - layout.height) // 2,
         )
 
-        if isinstance(
-            options.shadow,
-            dict,
-        ):
+        if isinstance(options.shadow, dict):
             self._render_shadow(
                 target=layer,
                 layout=layout,
@@ -222,19 +201,13 @@ class CreativeMixedTextRenderer:
         spacing: int,
         requested_direction: str,
     ) -> CreativeTextLayout:
-        """
-        Build wrapped mixed-font lines.
-        """
-
         paragraphs = text.split("\n")
         lines: list[CreativeTextLine] = []
 
         for paragraph in paragraphs:
-            paragraph_direction = (
-                self._resolve_direction(
-                    requested=requested_direction,
-                    text=paragraph,
-                )
+            paragraph_direction = self._resolve_direction(
+                requested=requested_direction,
+                text=paragraph,
             )
 
             if paragraph == "":
@@ -246,21 +219,17 @@ class CreativeMixedTextRenderer:
                 )
                 continue
 
-            paragraph_clusters = (
-                build_text_clusters(
-                    paragraph
-                )
+            clusters = build_text_clusters(
+                paragraph
             )
 
-            wrapped_clusters = (
-                self._wrap_clusters(
-                    clusters=paragraph_clusters,
-                    max_width=max_width,
-                    direction=paragraph_direction,
-                )
+            wrapped = self._wrap_clusters(
+                clusters=clusters,
+                max_width=max_width,
+                direction=paragraph_direction,
             )
 
-            for line_clusters in wrapped_clusters:
+            for line_clusters in wrapped:
                 lines.append(
                     self._build_line(
                         clusters=line_clusters,
@@ -290,16 +259,10 @@ class CreativeMixedTextRenderer:
         return CreativeTextLayout(
             lines=tuple(lines),
             width=max(
-                (
-                    line.width
-                    for line in lines
-                ),
+                (line.width for line in lines),
                 default=1,
             ),
-            height=max(
-                1,
-                total_height,
-            ),
+            height=max(1, total_height),
         )
 
     def _wrap_clusters(
@@ -309,58 +272,31 @@ class CreativeMixedTextRenderer:
         max_width: int,
         direction: str,
     ) -> list[list[CreativeTextCluster]]:
-        """
-        Wrap by grapheme cluster while preferring whitespace.
-
-        This also handles long unbroken Emoji sequences and
-        languages that do not use spaces.
-        """
-
         if not clusters:
             return [[]]
 
-        output: list[
-            list[CreativeTextCluster]
-        ] = []
-
-        current: list[
-            CreativeTextCluster
-        ] = []
+        output: list[list[CreativeTextCluster]] = []
+        current: list[CreativeTextCluster] = []
 
         for cluster in clusters:
-            candidate = [
-                *current,
-                cluster,
-            ]
+            candidate = [*current, cluster]
 
-            candidate_width = (
-                self._measure_clusters(
-                    candidate,
-                    direction=direction,
-                )
+            width = self._measure_clusters(
+                candidate,
+                direction=direction,
             )
 
-            if (
-                candidate_width <= max_width
-                or not current
-            ):
+            if width <= max_width or not current:
                 current = candidate
                 continue
 
-            break_index = (
-                self._last_break_index(
-                    current
-                )
+            break_index = self._last_break_index(
+                current
             )
 
             if break_index is not None:
-                head = current[
-                    :break_index
-                ]
-
-                tail = current[
-                    break_index + 1:
-                ]
+                head = current[:break_index]
+                tail = current[break_index + 1:]
 
                 if head:
                     output.append(
@@ -369,13 +305,8 @@ class CreativeMixedTextRenderer:
                         )
                     )
 
-                current = (
-                    self._trim_leading_whitespace(
-                        [
-                            *tail,
-                            cluster,
-                        ]
-                    )
+                current = self._trim_leading_whitespace(
+                    [*tail, cluster]
                 )
 
                 if (
@@ -383,16 +314,13 @@ class CreativeMixedTextRenderer:
                     and self._measure_clusters(
                         current,
                         direction=direction,
-                    )
-                    > max_width
+                    ) > max_width
                 ):
-                    current = (
-                        self._split_oversized_clusters(
-                            clusters=current,
-                            output=output,
-                            max_width=max_width,
-                            direction=direction,
-                        )
+                    current = self._split_oversized_clusters(
+                        clusters=current,
+                        output=output,
+                        max_width=max_width,
+                        direction=direction,
                     )
 
                 continue
@@ -403,10 +331,8 @@ class CreativeMixedTextRenderer:
                 )
             )
 
-            current = (
-                self._trim_leading_whitespace(
-                    [cluster]
-                )
+            current = self._trim_leading_whitespace(
+                [cluster]
             )
 
         if current:
@@ -426,29 +352,17 @@ class CreativeMixedTextRenderer:
         max_width: int,
         direction: str,
     ) -> list[CreativeTextCluster]:
-        """
-        Split an oversized token by grapheme cluster.
-        """
-
-        current: list[
-            CreativeTextCluster
-        ] = []
+        current: list[CreativeTextCluster] = []
 
         for cluster in clusters:
-            candidate = [
-                *current,
-                cluster,
-            ]
+            candidate = [*current, cluster]
 
             width = self._measure_clusters(
                 candidate,
                 direction=direction,
             )
 
-            if (
-                width <= max_width
-                or not current
-            ):
+            if width <= max_width or not current:
                 current = candidate
                 continue
 
@@ -458,36 +372,28 @@ class CreativeMixedTextRenderer:
                 )
             )
 
-            current = (
-                self._trim_leading_whitespace(
-                    [cluster]
-                )
+            current = self._trim_leading_whitespace(
+                [cluster]
             )
 
         return current
 
+    @staticmethod
     def _last_break_index(
-        self,
         clusters: list[CreativeTextCluster],
     ) -> int | None:
-        """
-        Find the last whitespace wrap point.
-        """
-
         for index in range(
             len(clusters) - 1,
             -1,
             -1,
         ):
-            if clusters[
-                index
-            ].text.isspace():
+            if clusters[index].text.isspace():
                 return index
 
         return None
 
+    @staticmethod
     def _trim_leading_whitespace(
-        self,
         clusters: list[CreativeTextCluster],
     ) -> list[CreativeTextCluster]:
         index = 0
@@ -500,8 +406,8 @@ class CreativeMixedTextRenderer:
 
         return clusters[index:]
 
+    @staticmethod
     def _trim_trailing_whitespace(
-        self,
         clusters: list[CreativeTextCluster],
     ) -> list[CreativeTextCluster]:
         index = len(clusters)
@@ -520,21 +426,14 @@ class CreativeMixedTextRenderer:
         clusters: list[CreativeTextCluster],
         direction: str,
     ) -> CreativeTextLine:
-        """
-        Build one measured line.
-        """
-
         runs = self._build_runs(
             clusters
         )
 
         measured_runs = [
-            CreativeMeasuredRun(
-                run=run,
-                width=self._measure_run(
-                    run,
-                    direction=direction,
-                ),
+            self._measure_run(
+                run,
+                direction=direction,
             )
             for run in runs
         ]
@@ -543,97 +442,172 @@ class CreativeMixedTextRenderer:
             measured_runs.reverse()
 
         line_width = sum(
-            run.width
-            for run in measured_runs
+            item.width
+            for item in measured_runs
+        )
+
+        default_ascent, default_descent = (
+            self.text_font.font.getmetrics()
         )
 
         line_ascent = max(
-            self.text_ascent,
-            int(
-                round(
-                    self.emoji_visual_height
-                    * 0.86
-                )
-            ),
+            [
+                int(default_ascent),
+                int(
+                    round(
+                        self.emoji_visual_height * 0.86
+                    )
+                ),
+                *[
+                    item.ascent
+                    for item in measured_runs
+                ],
+            ]
         )
 
         line_descent = max(
-            self.text_descent,
-            self.emoji_visual_height
-            - line_ascent,
+            [
+                int(default_descent),
+                self.emoji_visual_height - line_ascent,
+                *[
+                    item.descent
+                    for item in measured_runs
+                ],
+            ]
+        )
+
+        line_descent = max(
+            0,
+            line_descent,
         )
 
         return CreativeTextLine(
             runs=tuple(measured_runs),
-            width=max(
-                0,
-                line_width,
-            ),
+            width=max(0, line_width),
             height=max(
                 1,
-                line_ascent
-                + line_descent,
+                line_ascent + line_descent,
             ),
             ascent=line_ascent,
             descent=line_descent,
             direction=direction,
         )
 
+    # MARK: - Font Runs
+
     def _build_runs(
         self,
         clusters: list[CreativeTextCluster],
     ) -> list[CreativeTextRun]:
-        """
-        Merge adjacent clusters using the same renderer.
-        """
-
         if not clusters:
             return []
 
-        output: list[
-            CreativeTextRun
-        ] = []
+        output: list[CreativeTextRun] = []
 
         current_text = ""
         current_is_emoji: bool | None = None
+        current_font_key: str | None = None
+
+        def flush() -> None:
+            nonlocal current_text
+            nonlocal current_is_emoji
+            nonlocal current_font_key
+
+            if not current_text:
+                return
+
+            output.append(
+                CreativeTextRun(
+                    text=current_text,
+                    is_emoji=bool(current_is_emoji),
+                    font_key=current_font_key,
+                )
+            )
+
+            current_text = ""
+            current_is_emoji = None
+            current_font_key = None
 
         for cluster in clusters:
+            if cluster.is_emoji:
+                run_is_emoji = True
+                run_font_key = None
+
+            elif cluster.text.isspace():
+                run_is_emoji = False
+                run_font_key = (
+                    current_font_key
+                    if current_is_emoji is False
+                    and current_font_key
+                    else self.text_font.key
+                )
+
+            else:
+                run_is_emoji = False
+                run_font_key = self._font_key_for_text(
+                    cluster.text
+                )
+
+            same_renderer = (
+                current_is_emoji == run_is_emoji
+                and current_font_key == run_font_key
+            )
+
             if (
                 current_is_emoji is None
-                or cluster.is_emoji
-                == current_is_emoji
+                or same_renderer
             ):
                 current_text += cluster.text
-                current_is_emoji = (
-                    cluster.is_emoji
-                )
+                current_is_emoji = run_is_emoji
+                current_font_key = run_font_key
                 continue
 
-            output.append(
-                CreativeTextRun(
-                    text=current_text,
-                    is_emoji=bool(
-                        current_is_emoji
-                    ),
-                )
-            )
+            flush()
 
             current_text = cluster.text
-            current_is_emoji = (
-                cluster.is_emoji
-            )
+            current_is_emoji = run_is_emoji
+            current_font_key = run_font_key
 
-        if current_text:
-            output.append(
-                CreativeTextRun(
-                    text=current_text,
-                    is_emoji=bool(
-                        current_is_emoji
-                    ),
-                )
-            )
+        flush()
 
         return output
+
+    def _font_key_for_text(
+        self,
+        text: str,
+    ) -> str:
+        if font_supports_text(
+            font_key=self.text_font.key,
+            text=text,
+        ):
+            return self.text_font.key
+
+        return resolve_compatible_font_key(
+            text=text,
+            preferred_font_key=self.text_font.key,
+        )
+
+    def _font_for_key(
+        self,
+        font_key: str,
+    ) -> ResolvedCreativeFont:
+        cached = self._resolved_fonts.get(
+            font_key
+        )
+
+        if cached is not None:
+            return cached
+
+        resolved = load_creative_font(
+            font_key=font_key,
+            size=self.text_font.size,
+        )
+
+        self._resolved_fonts[
+            font_key
+        ] = resolved
+
+        return resolved
 
     # MARK: - Measurement
 
@@ -643,16 +617,14 @@ class CreativeMixedTextRenderer:
         *,
         direction: str,
     ) -> int:
-        runs = self._build_runs(
-            clusters
-        )
-
         return sum(
             self._measure_run(
                 run,
                 direction=direction,
+            ).width
+            for run in self._build_runs(
+                clusters
             )
-            for run in runs
         )
 
     def _measure_run(
@@ -660,44 +632,80 @@ class CreativeMixedTextRenderer:
         run: CreativeTextRun,
         *,
         direction: str,
-    ) -> int:
+    ) -> CreativeMeasuredRun:
         if not run.text:
-            return 0
+            return CreativeMeasuredRun(
+                run=run,
+                width=0,
+                font=None,
+                ascent=0,
+                descent=0,
+            )
 
         if run.is_emoji:
-            return self._measure_emoji_run(
+            width = self._measure_emoji_run(
                 run.text
             )
+
+            ascent = int(
+                round(
+                    self.emoji_visual_height * 0.86
+                )
+            )
+
+            return CreativeMeasuredRun(
+                run=run,
+                width=width,
+                font=None,
+                ascent=ascent,
+                descent=max(
+                    0,
+                    self.emoji_visual_height - ascent,
+                ),
+            )
+
+        if not run.font_key:
+            raise CreativeFontCoverageError(
+                "A non-Emoji text run has no font key."
+            )
+
+        resolved_font = self._font_for_key(
+            run.font_key
+        )
 
         bbox = self._measurement_draw.textbbox(
             (0, 0),
             run.text,
-            font=self.text_font.font,
+            font=resolved_font.font,
             direction=direction,
         )
 
-        return max(
-            0,
-            int(
-                math.ceil(
-                    bbox[2] - bbox[0]
-                )
+        ascent, descent = (
+            resolved_font.font.getmetrics()
+        )
+
+        return CreativeMeasuredRun(
+            run=run,
+            width=max(
+                0,
+                int(
+                    math.ceil(
+                        bbox[2] - bbox[0]
+                    )
+                ),
             ),
+            font=resolved_font,
+            ascent=max(1, int(ascent)),
+            descent=max(0, int(descent)),
         )
 
     def _measure_emoji_run(
         self,
         text: str,
     ) -> int:
-        """
-        Measure Emoji after scaling from the 109px strike.
-        """
-
-        emoji_image = self._render_emoji_run(
+        return self._render_emoji_run(
             text
-        )
-
-        return emoji_image.width
+        ).width
 
     # MARK: - Drawing
 
@@ -712,6 +720,9 @@ class CreativeMixedTextRenderer:
         origin_x_offset: int = 0,
     ) -> None:
         current_y = origin_y
+        draw = ImageDraw.Draw(
+            target
+        )
 
         for line in layout.lines:
             line_x = (
@@ -729,18 +740,14 @@ class CreativeMixedTextRenderer:
                 run = measured.run
 
                 if run.is_emoji:
-                    emoji_image = (
-                        self._render_emoji_run(
-                            run.text
-                        )
+                    emoji_image = self._render_emoji_run(
+                        run.text
                     )
 
                     if shadow_color is not None:
-                        emoji_image = (
-                            self._colorize_alpha(
-                                emoji_image,
-                                shadow_color,
-                            )
+                        emoji_image = self._colorize_alpha(
+                            emoji_image,
+                            shadow_color,
                         )
 
                     emoji_y = (
@@ -758,14 +765,15 @@ class CreativeMixedTextRenderer:
                     )
 
                 else:
-                    draw = ImageDraw.Draw(
-                        target
-                    )
+                    if measured.font is None:
+                        raise CreativeFontCoverageError(
+                            "A text run has no resolved font."
+                        )
 
                     text_y = (
                         current_y
                         + line.ascent
-                        - self.text_ascent
+                        - measured.ascent
                     )
 
                     fill = (
@@ -780,7 +788,7 @@ class CreativeMixedTextRenderer:
                             int(text_y),
                         ),
                         run.text,
-                        font=self.text_font.font,
+                        font=measured.font.font,
                         fill=fill,
                         direction=line.direction,
                         stroke_width=(
@@ -795,16 +803,11 @@ class CreativeMixedTextRenderer:
                         ),
                     )
 
-                current_x += (
-                    measured.width
-                )
+                current_x += measured.width
 
             current_y += (
                 line.height
-                + max(
-                    0,
-                    options.spacing,
-                )
+                + max(0, options.spacing)
             )
 
     def _render_shadow(
@@ -866,20 +869,15 @@ class CreativeMixedTextRenderer:
             target=shadow_layer,
             layout=layout,
             options=options,
-            origin_y=(
-                origin_y
-                + offset_y
-            ),
+            origin_y=origin_y + offset_y,
             shadow_color=shadow_color,
             origin_x_offset=offset_x,
         )
 
         if radius > 0:
-            shadow_layer = (
-                shadow_layer.filter(
-                    ImageFilter.GaussianBlur(
-                        radius=radius
-                    )
+            shadow_layer = shadow_layer.filter(
+                ImageFilter.GaussianBlur(
+                    radius=radius
                 )
             )
 
@@ -893,41 +891,29 @@ class CreativeMixedTextRenderer:
         self,
         text: str,
     ) -> Image.Image:
-        """
-        Render a color Emoji run using the valid 109px
-        Noto Color Emoji bitmap strike, then resize it to
-        match the selected text font.
-        """
-
         padding = 20
 
-        raw_bbox = (
-            self._measurement_draw.textbbox(
-                (0, 0),
-                text,
-                font=self.emoji_font.font,
-            )
+        raw_bbox = self._measurement_draw.textbbox(
+            (0, 0),
+            text,
+            font=self.emoji_font.font,
         )
 
         raw_width = max(
             1,
-            raw_bbox[2]
-            - raw_bbox[0],
+            raw_bbox[2] - raw_bbox[0],
         )
 
         raw_height = max(
             1,
-            raw_bbox[3]
-            - raw_bbox[1],
+            raw_bbox[3] - raw_bbox[1],
         )
 
         surface = Image.new(
             "RGBA",
             (
-                raw_width
-                + padding * 2,
-                raw_height
-                + padding * 2,
+                raw_width + padding * 2,
+                raw_height + padding * 2,
             ),
             (0, 0, 0, 0),
         )
@@ -938,10 +924,8 @@ class CreativeMixedTextRenderer:
 
         draw.text(
             (
-                padding
-                - raw_bbox[0],
-                padding
-                - raw_bbox[1],
+                padding - raw_bbox[0],
+                padding - raw_bbox[1],
             ),
             text,
             font=self.emoji_font.font,
@@ -955,18 +939,14 @@ class CreativeMixedTextRenderer:
         crop_box = alpha.getbbox()
 
         if crop_box is None:
+            size = max(
+                1,
+                self.emoji_visual_height,
+            )
+
             return Image.new(
                 "RGBA",
-                (
-                    max(
-                        1,
-                        self.emoji_visual_height,
-                    ),
-                    max(
-                        1,
-                        self.emoji_visual_height,
-                    ),
-                ),
+                (size, size),
                 (0, 0, 0, 0),
             )
 
@@ -981,18 +961,14 @@ class CreativeMixedTextRenderer:
 
         scale = (
             target_height
-            / max(
-                1,
-                cropped.height,
-            )
+            / max(1, cropped.height)
         )
 
         target_width = max(
             1,
             int(
                 round(
-                    cropped.width
-                    * scale
+                    cropped.width * scale
                 )
             ),
         )
@@ -1005,15 +981,11 @@ class CreativeMixedTextRenderer:
             resample=Image.Resampling.LANCZOS,
         )
 
+    @staticmethod
     def _colorize_alpha(
-        self,
         image: Image.Image,
         color: tuple[int, int, int, int],
     ) -> Image.Image:
-        """
-        Convert Emoji alpha into a monochrome shadow.
-        """
-
         alpha = image.getchannel(
             "A"
         )
@@ -1029,9 +1001,7 @@ class CreativeMixedTextRenderer:
         if color_alpha < 255:
             alpha = alpha.point(
                 lambda value: int(
-                    value
-                    * color_alpha
-                    / 255
+                    value * color_alpha / 255
                 )
             )
 
@@ -1054,8 +1024,8 @@ class CreativeMixedTextRenderer:
 
     # MARK: - Direction
 
+    @staticmethod
     def _resolve_direction(
-        self,
         *,
         requested: str,
         text: str,
@@ -1067,10 +1037,8 @@ class CreativeMixedTextRenderer:
             return "ltr"
 
         for character in text:
-            bidi_class = (
-                unicodedata.bidirectional(
-                    character
-                )
+            bidi_class = unicodedata.bidirectional(
+                character
             )
 
             if bidi_class in {
@@ -1087,8 +1055,8 @@ class CreativeMixedTextRenderer:
 
     # MARK: - Alignment
 
+    @staticmethod
     def _aligned_line_x(
-        self,
         *,
         alignment: str,
         box_width: int,
@@ -1100,30 +1068,24 @@ class CreativeMixedTextRenderer:
         if alignment == "trailing":
             return max(
                 0,
-                box_width
-                - line_width,
+                box_width - line_width,
             )
 
         return max(
             0,
-            (
-                box_width
-                - line_width
-            )
-            // 2,
+            (box_width - line_width) // 2,
         )
 
     # MARK: - Color
 
+    @staticmethod
     def _parse_shadow_color(
-        self,
         value,
     ) -> tuple[int, int, int, int]:
         from PIL import ImageColor
 
         raw = str(
-            value
-            or "#00000088"
+            value or "#00000088"
         ).strip()
 
         if len(raw) == 7:

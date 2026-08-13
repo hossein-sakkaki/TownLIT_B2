@@ -26,7 +26,10 @@ from apps.media_conversion.tasks.image import (
     convert_image_to_jpg_task,
     convert_moment_image_item_to_jpg_task,
 )
-
+from apps.media_conversion.services.workflows import (
+    cancel_workflow_job,
+    retry_workflow_job,
+)
 from utils.common.utils import FileUpload
 
 
@@ -46,6 +49,9 @@ def cancel_media_job(
     - Deletes MediaConversionJob row after cleanup, but returns the last snapshot.
     """
     job.refresh_from_db()
+
+    if job.kind == MediaJobKind.WORKFLOW:
+        return cancel_workflow_job(job)
 
     if job.status == MediaJobStatus.DONE:
         raise ValidationError("Completed jobs cannot be canceled.")
@@ -110,22 +116,23 @@ def retry_media_job(
     job: MediaConversionJob,
 ) -> MediaConversionJob:
     """
-    Retry a failed/canceled media conversion job by dispatching the real Celery task.
+    Retry a failed/canceled processing job.
 
-    This is NOT only a status reset:
-    - validates retry eligibility
-    - validates target/source
-    - resets lifecycle/stage/timeline fields
-    - dispatches the correct task
-    - attaches the new Celery task id to the job
+    Workflow jobs use their workflow retry lifecycle.
+    Media jobs keep the existing source-based retry path.
     """
     job.refresh_from_db()
+
+    if job.kind == MediaJobKind.WORKFLOW:
+        return retry_workflow_job(job)
 
     if job.status not in {
         MediaJobStatus.FAILED,
         MediaJobStatus.CANCELED,
     }:
-        raise ValidationError("Only failed or canceled jobs can be retried.")
+        raise ValidationError(
+            "Only failed or canceled jobs can be retried."
+        )
 
     if job.max_attempts is not None and job.attempt >= job.max_attempts:
         raise ValidationError("This job has reached the maximum retry attempts.")

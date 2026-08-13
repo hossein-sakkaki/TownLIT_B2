@@ -1,4 +1,5 @@
 # apps/accounts/mixins.py
+
 from rest_framework.reverse import reverse
 from django.conf import settings
 

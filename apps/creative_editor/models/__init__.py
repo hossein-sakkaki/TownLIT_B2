@@ -8,6 +8,7 @@ from .sticker import (
     StickerPack,
 )
 from .background import CreativeBackgroundPreset
+from .media import CreativeCompositionMedia
 
 __all__ = [
     "CreativeComposition",
@@ -15,5 +16,6 @@ __all__ = [
     "CreativeRenderJob",
     "StickerAsset",
     "StickerPack",
-    "CreativeBackgroundPreset"
+    "CreativeBackgroundPreset",
+    "CreativeCompositionMedia",
 ]

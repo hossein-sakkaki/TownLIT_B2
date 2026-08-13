@@ -434,4 +434,62 @@ class MediaConversionJobViewSet(viewsets.ReadOnlyModelViewSet):
             return Response(
                 {"detail": "Internal error."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )          
+
+    # --------------------------------------------------------
+    # Discard
+    # --------------------------------------------------------
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="discard",
+    )
+    def discard(self, request, pk=None):
+        try:
+            job, error_response = (
+                self._get_owned_job_or_response(
+                    request,
+                    pk,
+                )
+            )
+
+            if error_response:
+                return error_response
+
+            if job.kind != "workflow":
+                return Response(
+                    {"detail": "Discard is only available for workflow jobs."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if job.status not in {
+                MediaJobStatus.FAILED,
+                MediaJobStatus.CANCELED,
+            }:
+                return Response(
+                    {
+                        "detail": (
+                            "Only failed or canceled workflow jobs "
+                            "can be discarded."
+                        ),
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            job.delete()
+
+            return Response(
+                status=status.HTTP_204_NO_CONTENT,
+            )
+
+        except Exception:
+            logger.exception(
+                "media_jobs.discard failed job=%s user=%s",
+                pk,
+                getattr(request.user, "pk", None),
+            )
+
+            return Response(
+                {"detail": "Internal error."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal, ROUND_HALF_UP
 from functools import lru_cache
 
 from django.contrib.contenttypes.models import ContentType
@@ -25,6 +26,8 @@ from apps.posts.services.journeys.views import record_journey_entry_view
 from apps.sanctuary.services.held_content_access import (
     held_representation_or_none,
 )
+from apps.accounts.serializers.user_serializers import UserMiniSerializer
+
 
 # -------------------------------------------------
 # Cached identities
@@ -53,6 +56,29 @@ def asset_target(obj, field_name: str, kind: str) -> dict:
         "field_name": field_name,
         "kind": kind,
     }
+
+
+def journey_rendered_asset_target(
+    obj: JourneyEntry,
+) -> dict | None:
+    if (
+        obj.media_type == "video"
+        and obj.rendered_video
+    ):
+        return asset_target(
+            obj,
+            "rendered_video",
+            "video",
+        )
+
+    if obj.rendered_image:
+        return asset_target(
+            obj,
+            "rendered_image",
+            "image",
+        )
+
+    return None
 
 
 def _request_owner_identity(
@@ -321,6 +347,11 @@ class JourneyEntryBaseSerializer(serializers.ModelSerializer):
     thumbnail_asset = serializers.SerializerMethodField()
     reaction_target = serializers.SerializerMethodField()
 
+    view_count = serializers.IntegerField(
+        source="view_count_internal",
+        read_only=True,
+    )
+
     is_live = serializers.BooleanField(read_only=True)
     is_archived = serializers.BooleanField(read_only=True)
     is_owner = serializers.SerializerMethodField()
@@ -344,6 +375,7 @@ class JourneyEntryBaseSerializer(serializers.ModelSerializer):
             "archived_at",
             "is_live",
             "is_archived",
+            "view_count",
             "reactions_count",
             "reactions_breakdown",
             "reaction_target",
@@ -353,13 +385,8 @@ class JourneyEntryBaseSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_rendered_asset(self, obj):
-        if not obj.rendered_image:
-            return None
-
-        return asset_target(
-            obj,
-            "rendered_image",
-            "image",
+        return journey_rendered_asset_target(
+            obj
         )
 
     def get_thumbnail_asset(self, obj):
@@ -599,13 +626,18 @@ class JourneyProfileRingSerializer(serializers.Serializer):
 # -------------------------------------------------
 class JourneyStreamEntrySerializer(serializers.ModelSerializer):
     """
-    Compact entry for Universal Stream.
+    Compact Journey entry payload.
     """
 
     rendered_asset = serializers.SerializerMethodField()
     thumbnail_asset = serializers.SerializerMethodField()
     music = serializers.SerializerMethodField()
     reaction_target = serializers.SerializerMethodField()
+
+    view_count = serializers.IntegerField(
+        source="view_count_internal",
+        read_only=True,
+    )
 
     class Meta:
         model = JourneyEntry
@@ -620,6 +652,7 @@ class JourneyStreamEntrySerializer(serializers.ModelSerializer):
             "thumbnail_asset",
             "display_duration_ms",
             "music",
+            "view_count",
             "reactions_count",
             "reactions_breakdown",
             "reaction_target",
@@ -630,13 +663,8 @@ class JourneyStreamEntrySerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_rendered_asset(self, obj):
-        if not obj.rendered_image:
-            return None
-
-        return asset_target(
-            obj,
-            "rendered_image",
-            "image",
+        return journey_rendered_asset_target(
+            obj
         )
 
     def get_thumbnail_asset(self, obj):
@@ -983,12 +1011,9 @@ class JourneyProfileMapSerializer(
 # -------------------------------------------------
 # Write serializers
 # -------------------------------------------------
-class JourneyPublishSerializer(serializers.Serializer):
+class JourneyPublishInputSerializer(serializers.Serializer):
     composition_id = serializers.UUIDField()
-    render_job_id = serializers.UUIDField()
-
     composition_revision = serializers.IntegerField(min_value=1)
-
     visibility = serializers.CharField(max_length=20)
 
     retention_policy = serializers.ChoiceField(
@@ -1024,13 +1049,21 @@ class JourneyPublishSerializer(serializers.Serializer):
         min_value=1,
     )
 
-    music_volume = serializers.DecimalField(
-        max_digits=4,
-        decimal_places=3,
-        min_value=0,
-        max_value=1,
-        default=1,
+    music_volume = serializers.FloatField(
+        min_value=0.0,
+        max_value=1.0,
+        default=1.0,
     )
+
+    def validate_music_volume(self, value):
+        return Decimal(str(value)).quantize(
+            Decimal("0.01"),
+            rounding=ROUND_HALF_UP,
+        )
+
+
+class JourneyPublishSerializer(JourneyPublishInputSerializer):
+    render_job_id = serializers.UUIDField()
 
     def create(self, validated_data):
         request = self.context["request"]
@@ -1053,6 +1086,10 @@ class JourneyPublishSerializer(serializers.Serializer):
                 if hasattr(exc, "message_dict")
                 else exc.messages
             )
+
+
+class JourneySubmitSerializer(JourneyPublishInputSerializer):
+    pass
 
 
 class JourneyCloseSerializer(serializers.Serializer):
@@ -1081,8 +1118,18 @@ class JourneyViewWriteSerializer(serializers.Serializer):
         )
 
 
+# -------------------------------------------------
+# Read serializers
+# -------------------------------------------------
+# -------------------------------------------------
+# Journey viewer analytics
+# -------------------------------------------------
 class JourneyViewerSerializer(serializers.ModelSerializer):
-    viewer = serializers.SerializerMethodField()
+    viewer = UserMiniSerializer(read_only=True)
+
+    is_returning_viewer = (
+        serializers.SerializerMethodField()
+    )
 
     class Meta:
         model = JourneyEntryView
@@ -1096,29 +1143,40 @@ class JourneyViewerSerializer(serializers.ModelSerializer):
             "max_progress_ms",
             "completed",
             "source",
+            "is_returning_viewer",
         )
 
         read_only_fields = fields
 
-    def get_viewer(self, obj):
-        user = obj.viewer
+    def get_is_returning_viewer(
+        self,
+        obj,
+    ) -> bool:
+        return obj.view_count > 1
 
-        full_name = " ".join(
-            part
-            for part in (
-                user.name,
-                user.family,
-            )
-            if part
-        ).strip()
 
-        return {
-            "id": user.pk,
-            "username": user.username,
-            "full_name": full_name or user.username,
-            "is_verified_identity": user.is_verified_identity,
-            "avatar_version": user.avatar_version,
-        }
+class JourneyAnalyticsSourceSerializer(serializers.Serializer):
+    source = serializers.CharField()
+    viewers = serializers.IntegerField(min_value=0)
+
+
+class JourneyAnalyticsSerializer(serializers.Serializer):
+    entry_id = serializers.IntegerField(min_value=1)
+
+    total_views = serializers.IntegerField(min_value=0)
+    unique_viewers = serializers.IntegerField(min_value=0)
+    returning_viewers = serializers.IntegerField(min_value=0)
+    completed_viewers = serializers.IntegerField(min_value=0)
+
+    completion_rate = serializers.FloatField(min_value=0, max_value=1)
+    average_max_progress_ms = serializers.FloatField(min_value=0)
+
+    viewer_source_breakdown = JourneyAnalyticsSourceSerializer(
+        many=True
+    )
+
+    reactions_count = serializers.IntegerField(min_value=0)
+    reactions_breakdown = serializers.JSONField()
         
 
 class JourneyCreationStatusSerializer(serializers.Serializer):

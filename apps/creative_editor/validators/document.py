@@ -1,4 +1,10 @@
 # apps/creative_editor/validators/document.py
+#
+# TownLIT
+#
+# Created by Hossein Sakkaki on 2026-07-21.
+# Last Update by Hossein Sakkaki on 2026-08-10.
+#
 
 from __future__ import annotations
 
@@ -10,12 +16,20 @@ from collections.abc import Mapping
 from django.core.exceptions import ValidationError
 
 
-DOCUMENT_VERSION = 1
+LEGACY_DOCUMENT_VERSION = 1
+DOCUMENT_VERSION = 2
+
+SUPPORTED_DOCUMENT_VERSIONS = {
+    LEGACY_DOCUMENT_VERSION,
+    DOCUMENT_VERSION,
+}
 
 MAX_DOCUMENT_BYTES = 96 * 1024
 MAX_LAYERS = 30
 MAX_TEXT_LAYERS = 12
 MAX_STICKER_LAYERS = 20
+MAX_IMAGE_LAYERS = 12
+MAX_MEDIA_LAYERS = 12
 
 MAX_TEXT_CHARACTERS = 500
 MAX_ENTITIES_PER_TEXT = 50
@@ -35,14 +49,11 @@ MAX_OPACITY = 1.0
 MIN_FONT_SIZE = 8.0
 MAX_FONT_SIZE = 240.0
 
+MAX_VIDEO_LAYERS = 12
+
 HEX_COLOR_PATTERN = re.compile(
     r"^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$"
 )
-
-ALLOWED_LAYER_TYPES = {
-    "text",
-    "sticker",
-}
 
 ALLOWED_TEXT_ALIGNMENTS = {
     "leading",
@@ -62,17 +73,40 @@ ALLOWED_ENTITY_TYPES = {
     "mention",
 }
 
-ALLOWED_CANVAS_BACKGROUND_TYPES = {
+ALLOWED_IMAGE_CONTENT_MODES = {
+    "fill",
+    "fit",
+}
+
+V1_LAYER_TYPES = {
+    "text",
+    "sticker",
+}
+
+V2_LAYER_TYPES = {
+    "text",
+    "sticker",
+    "image",
+    "video",
+}
+
+V1_CANVAS_BACKGROUND_TYPES = {
     "transparent",
     "color",
     "gradient",
     "image",
 }
 
+V2_CANVAS_BACKGROUND_TYPES = {
+    "transparent",
+    "color",
+    "gradient",
+}
+
 
 def validate_creative_document(value) -> None:
     """
-    Validate a versioned creative editor document.
+    Validate a supported Creative Editor document.
     """
 
     if not isinstance(value, Mapping):
@@ -84,13 +118,13 @@ def validate_creative_document(value) -> None:
 
     version = value.get("version")
 
-    if version != DOCUMENT_VERSION:
+    if version not in SUPPORTED_DOCUMENT_VERSIONS:
         raise ValidationError(
             {
                 "version": (
-                    f"Unsupported creative document version: "
+                    "Unsupported creative document version: "
                     f"{version!r}."
-                )
+                ),
             }
         )
 
@@ -103,7 +137,10 @@ def validate_creative_document(value) -> None:
             }
         )
 
-    _validate_canvas(canvas)
+    _validate_canvas(
+        canvas,
+        version=version,
+    )
 
     layers = value.get("layers")
 
@@ -126,7 +163,16 @@ def validate_creative_document(value) -> None:
 
     text_count = 0
     sticker_count = 0
+    image_count = 0
+    video_count = 0
+
     seen_layer_ids: set[str] = set()
+
+    allowed_layer_types = (
+        V1_LAYER_TYPES
+        if version == LEGACY_DOCUMENT_VERSION
+        else V2_LAYER_TYPES
+    )
 
     for index, layer in enumerate(layers):
         if not isinstance(layer, Mapping):
@@ -156,7 +202,7 @@ def validate_creative_document(value) -> None:
 
         layer_type = layer.get("type")
 
-        if layer_type not in ALLOWED_LAYER_TYPES:
+        if layer_type not in allowed_layer_types:
             raise ValidationError(
                 {
                     "layers": (
@@ -194,6 +240,22 @@ def validate_creative_document(value) -> None:
                 index=index,
             )
 
+        elif layer_type == "image":
+            image_count += 1
+
+            _validate_image_content(
+                content,
+                index=index,
+            )
+
+        elif layer_type == "video":
+            video_count += 1
+
+            _validate_video_content(
+                content,
+                index=index,
+            )
+
     if text_count > MAX_TEXT_LAYERS:
         raise ValidationError(
             {
@@ -214,10 +276,38 @@ def validate_creative_document(value) -> None:
             }
         )
 
+    if image_count > MAX_IMAGE_LAYERS:
+        raise ValidationError(
+            {
+                "layers": (
+                    f"Creative document supports up to "
+                    f"{MAX_IMAGE_LAYERS} image layers."
+                ),
+            }
+        )
 
-def _validate_document_size(
-    value,
-) -> None:
+    if video_count > MAX_VIDEO_LAYERS:
+        raise ValidationError(
+            {
+                "layers": (
+                    f"Creative document supports up to "
+                    f"{MAX_VIDEO_LAYERS} video layers."
+                ),
+            }
+        )
+
+    if image_count + video_count > MAX_MEDIA_LAYERS:
+        raise ValidationError(
+            {
+                "layers": (
+                    f"Creative document supports up to "
+                    f"{MAX_MEDIA_LAYERS} media layers."
+                ),
+            }
+        )
+
+
+def _validate_document_size(value) -> None:
     try:
         payload = json.dumps(
             value,
@@ -225,6 +315,7 @@ def _validate_document_size(
             separators=(",", ":"),
             sort_keys=True,
         ).encode("utf-8")
+
     except (TypeError, ValueError) as exc:
         raise ValidationError(
             "Creative document is not valid JSON."
@@ -241,6 +332,8 @@ def _validate_document_size(
 
 def _validate_canvas(
     canvas: Mapping,
+    *,
+    version: int,
 ) -> None:
     width = _positive_integer(
         canvas.get("width"),
@@ -283,14 +376,18 @@ def _validate_canvas(
         "transparent",
     )
 
-    if (
-        background_type
-        not in ALLOWED_CANVAS_BACKGROUND_TYPES
-    ):
+    allowed_types = (
+        V1_CANVAS_BACKGROUND_TYPES
+        if version == LEGACY_DOCUMENT_VERSION
+        else V2_CANVAS_BACKGROUND_TYPES
+    )
+
+    if background_type not in allowed_types:
         raise ValidationError(
             {
                 "canvas.background.type": (
-                    "Unsupported background type."
+                    "Unsupported background type "
+                    f"for document v{version}."
                 ),
             }
         )
@@ -302,17 +399,17 @@ def _validate_canvas(
             required=True,
         )
 
-    if background_type == "gradient":
+    elif background_type == "gradient":
         colors = background.get("colors")
 
         if (
             not isinstance(colors, list)
-            or not 2 <= len(colors) <= 4
+            or not 2 <= len(colors) <= 5
         ):
             raise ValidationError(
                 {
                     "canvas.background.colors": (
-                        "Gradient requires 2 to 4 colors."
+                        "Gradient requires 2 to 5 colors."
                     ),
                 }
             )
@@ -324,19 +421,17 @@ def _validate_canvas(
                 required=True,
             )
 
-        angle = background.get(
-            "angle",
-            0,
-        )
-
         _number_in_range(
-            angle,
+            background.get(
+                "angle",
+                0,
+            ),
             minimum=-360,
             maximum=360,
             field="canvas.background.angle",
         )
 
-    if background_type == "image":
+    elif background_type == "image":
         source = background.get("source")
 
         if source not in {
@@ -346,7 +441,7 @@ def _validate_canvas(
             raise ValidationError(
                 {
                     "canvas.background.source": (
-                        "Invalid image background source."
+                        "Invalid legacy image background source."
                     ),
                 }
             )
@@ -362,7 +457,8 @@ def _validate_layer_identity(
     ).strip()
 
     try:
-        uuid.UUID(value)
+        return str(uuid.UUID(value))
+
     except (TypeError, ValueError, AttributeError):
         raise ValidationError(
             {
@@ -372,8 +468,6 @@ def _validate_layer_identity(
                 ),
             }
         )
-
-    return value.lower()
 
 
 def _validate_common_layer_fields(
@@ -400,13 +494,11 @@ def _validate_common_layer_fields(
             }
         )
 
-    opacity = layer.get(
-        "opacity",
-        1,
-    )
-
     _number_in_range(
-        opacity,
+        layer.get(
+            "opacity",
+            1,
+        ),
         minimum=MIN_OPACITY,
         maximum=MAX_OPACITY,
         field=f"layers[{index}].opacity",
@@ -497,30 +589,237 @@ def _validate_transform(
         field=f"layers[{index}].transform.rotation",
     )
 
-    flip_x = transform.get(
+    for field in (
         "flip_x",
-        False,
-    )
-
-    flip_y = transform.get(
         "flip_y",
-        False,
-    )
+    ):
+        value = transform.get(
+            field,
+            False,
+        )
 
-    if not isinstance(flip_x, bool):
+        if not isinstance(value, bool):
+            raise ValidationError(
+                {
+                    "layers": (
+                        f"Layer {index} {field} must be boolean."
+                    ),
+                }
+            )
+
+
+def _validate_image_content(
+    content,
+    *,
+    index: int,
+) -> None:
+    if not isinstance(content, Mapping):
         raise ValidationError(
             {
                 "layers": (
-                    f"Layer {index} flip_x must be boolean."
+                    f"Image layer {index} content must "
+                    "be an object."
                 ),
             }
         )
 
-    if not isinstance(flip_y, bool):
+    media_id = str(
+        content.get("media_id") or ""
+    ).strip()
+
+    try:
+        uuid.UUID(media_id)
+
+    except (TypeError, ValueError, AttributeError):
         raise ValidationError(
             {
                 "layers": (
-                    f"Layer {index} flip_y must be boolean."
+                    f"Image layer {index} requires "
+                    "a valid media_id."
+                ),
+            }
+        )
+
+    content_mode = content.get(
+        "content_mode",
+        "fill",
+    )
+
+    if content_mode not in ALLOWED_IMAGE_CONTENT_MODES:
+        raise ValidationError(
+            {
+                "layers": (
+                    f"Image layer {index} contains an "
+                    "invalid content_mode."
+                ),
+            }
+        )
+
+    crop = content.get("crop")
+
+    if crop is not None:
+        _validate_media_crop(
+            crop,
+            index=index,
+        )
+
+    for forbidden_key in (
+        "url",
+        "image_url",
+        "source_url",
+        "asset_url",
+        "storage_key",
+        "s3_key",
+    ):
+        if content.get(forbidden_key):
+            raise ValidationError(
+                {
+                    "layers": (
+                        f"Image layer {index} cannot contain "
+                        "an external media location."
+                    ),
+                }
+            )
+
+
+def _validate_video_content(
+    content,
+    *,
+    index: int,
+) -> None:
+    if not isinstance(content, Mapping):
+        raise ValidationError(
+            {
+                "layers": (
+                    f"Video layer {index} content must "
+                    "be an object."
+                ),
+            }
+        )
+
+    media_id = str(
+        content.get("media_id") or ""
+    ).strip()
+
+    try:
+        uuid.UUID(media_id)
+
+    except (
+        TypeError,
+        ValueError,
+        AttributeError,
+    ):
+        raise ValidationError(
+            {
+                "layers": (
+                    f"Video layer {index} requires "
+                    "a valid media_id."
+                ),
+            }
+        )
+
+    content_mode = content.get(
+        "content_mode",
+        "fill",
+    )
+
+    if content_mode not in ALLOWED_IMAGE_CONTENT_MODES:
+        raise ValidationError(
+            {
+                "layers": (
+                    f"Video layer {index} contains an "
+                    "invalid content_mode."
+                ),
+            }
+        )
+
+    crop = content.get("crop")
+
+    if crop is not None:
+        _validate_media_crop(
+            crop,
+            index=index,
+        )
+
+    for forbidden_key in (
+        "url",
+        "video_url",
+        "source_url",
+        "asset_url",
+        "storage_key",
+        "s3_key",
+    ):
+        if content.get(forbidden_key):
+            raise ValidationError(
+                {
+                    "layers": (
+                        f"Video layer {index} cannot contain "
+                        "an external media location."
+                    ),
+                }
+            )
+            
+def _validate_media_crop(
+    crop,
+    *,
+    index: int,
+) -> None:
+    if not isinstance(crop, Mapping):
+        raise ValidationError(
+            {
+                "layers": (
+                    f"Image crop at layer {index} must "
+                    "be an object."
+                ),
+            }
+        )
+
+    x = _number_in_range(
+        crop.get("x"),
+        minimum=0,
+        maximum=1,
+        field=f"layers[{index}].content.crop.x",
+    )
+
+    y = _number_in_range(
+        crop.get("y"),
+        minimum=0,
+        maximum=1,
+        field=f"layers[{index}].content.crop.y",
+    )
+
+    width = _number_in_range(
+        crop.get("width"),
+        minimum=0.0001,
+        maximum=1,
+        field=f"layers[{index}].content.crop.width",
+    )
+
+    height = _number_in_range(
+        crop.get("height"),
+        minimum=0.0001,
+        maximum=1,
+        field=f"layers[{index}].content.crop.height",
+    )
+
+    tolerance = 0.000001
+
+    if x + width > 1 + tolerance:
+        raise ValidationError(
+            {
+                "layers": (
+                    f"Image crop at layer {index} exceeds "
+                    "the source width."
+                ),
+            }
+        )
+
+    if y + height > 1 + tolerance:
+        raise ValidationError(
+            {
+                "layers": (
+                    f"Image crop at layer {index} exceeds "
+                    "the source height."
                 ),
             }
         )
@@ -631,9 +930,7 @@ def _validate_text_content(
 
     _validate_optional_color(
         content.get("background_color"),
-        field=(
-            f"layers[{index}].content.background_color"
-        ),
+        field=f"layers[{index}].content.background_color",
     )
 
     _validate_optional_color(
@@ -659,13 +956,11 @@ def _validate_text_content(
             index=index,
         )
 
-    entities = content.get(
-        "entities",
-        [],
-    )
-
     _validate_text_entities(
-        entities,
+        content.get(
+            "entities",
+            [],
+        ),
         text=text,
         index=index,
     )
@@ -810,8 +1105,6 @@ def _validate_text_entities(
                 }
             )
 
-        # Current phase keeps entities empty.
-        # Resolved mentions and hashtags are enabled later.
         resolved = entity.get(
             "resolved",
             False,
@@ -849,6 +1142,7 @@ def _validate_sticker_content(
 
     try:
         uuid.UUID(sticker_id)
+
     except (TypeError, ValueError, AttributeError):
         raise ValidationError(
             {
@@ -859,7 +1153,6 @@ def _validate_sticker_content(
             }
         )
 
-    # External sticker URLs are forbidden.
     for forbidden_key in (
         "url",
         "image_url",

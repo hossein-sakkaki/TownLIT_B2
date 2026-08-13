@@ -10,6 +10,7 @@ class MediaJobKind(models.TextChoices):
     VIDEO = "video", "Video"
     AUDIO = "audio", "Audio"
     IMAGE = "image", "Image"
+    WORKFLOW = "workflow", "Workflow"
 
 
 class MediaJobStatus(models.TextChoices):
@@ -45,6 +46,17 @@ class MediaConversionJob(models.Model):
     task_id = models.CharField(max_length=64, null=True, blank=True, db_index=True)
     queue = models.CharField(max_length=32, null=True, blank=True)
 
+    workflow_handler = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+    )
+
+    payload = models.JSONField(
+        default=dict,
+        blank=True,
+    )
+    
     # ---- io paths ----
     source_path = models.TextField(null=True, blank=True)
     output_path = models.TextField(null=True, blank=True)

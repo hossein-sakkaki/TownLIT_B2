@@ -1,4 +1,10 @@
 # apps/creative_editor/services/render_resources.py
+#
+# TownLIT
+#
+# Created by Hossein Sakkaki on 2026-07-21.
+# Last Update by Hossein Sakkaki on 2026-08-10.
+#
 
 from __future__ import annotations
 
@@ -7,6 +13,8 @@ import uuid
 from dataclasses import dataclass
 
 from apps.creative_editor.models import (
+    CreativeComposition,
+    CreativeCompositionMedia,
     StickerAsset,
 )
 
@@ -28,133 +36,211 @@ class CreativeRenderResources:
         StickerAsset,
     ]
 
+    media: dict[
+        str,
+        CreativeCompositionMedia,
+    ]
 
-def extract_sticker_ids(
+
+def extract_resource_ids(
     document: dict,
-) -> set[str]:
+) -> tuple[
+    set[str],
+    set[str],
+]:
     """
-    Extract canonical sticker UUIDs.
+    Extract sticker and media UUIDs.
     """
 
-    values: set[str] = set()
+    sticker_ids: set[str] = set()
+    media_ids: set[str] = set()
 
-    for layer in (
-        document.get(
-            "layers"
-        )
-        or []
-    ):
-        if not isinstance(
-            layer,
-            dict,
-        ):
+    for layer in document.get("layers") or []:
+        if not isinstance(layer, dict):
             continue
 
-        if (
-            layer.get("type")
-            != "sticker"
-        ):
+        layer_type = layer.get("type")
+        content = layer.get("content") or {}
+
+        if not isinstance(content, dict):
             continue
 
-        content = (
-            layer.get(
-                "content"
-            )
-            or {}
-        )
-
-        raw_value = str(
-            content.get(
-                "sticker_id",
-                "",
-            )
-        ).strip()
-
-        if not raw_value:
-            continue
-
-        try:
-            normalized_value = str(
-                uuid.UUID(
-                    raw_value
+        if layer_type == "sticker":
+            raw_value = str(
+                content.get(
+                    "sticker_id",
+                    "",
                 )
-            )
-        except (
-            TypeError,
-            ValueError,
-            AttributeError,
-        ) as exc:
-            raise CreativeResourceError(
-                (
-                    "Document contains an invalid "
-                    f"sticker id: {raw_value}"
-                )
-            ) from exc
+            ).strip()
 
-        values.add(
-            normalized_value
+            if raw_value:
+                sticker_ids.add(
+                    _canonical_uuid(
+                        raw_value,
+                        resource_name="sticker",
+                    )
+                )
+
+        elif layer_type in {
+            "image",
+            "video",
+        }:
+            raw_value = str(
+                content.get(
+                    "media_id",
+                    "",
+                )
+            ).strip()
+
+            if raw_value:
+                media_ids.add(
+                    _canonical_uuid(
+                        raw_value,
+                        resource_name="media",
+                    )
+                )
+
+    return (
+        sticker_ids,
+        media_ids,
+    )
+
+
+def _canonical_uuid(
+    value: str,
+    *,
+    resource_name: str,
+) -> str:
+    try:
+        return str(
+            uuid.UUID(value)
         )
 
-    return values
+    except (
+        TypeError,
+        ValueError,
+        AttributeError,
+    ) as exc:
+        raise CreativeResourceError(
+            (
+                "Document contains an invalid "
+                f"{resource_name} id: {value}"
+            )
+        ) from exc
 
 
 def resolve_render_resources(
+    *,
     document: dict,
+    composition: CreativeComposition,
 ) -> CreativeRenderResources:
     """
-    Resolve all database resources once.
+    Resolve database resources once.
     """
 
-    raw_ids = extract_sticker_ids(
+    (
+        sticker_ids,
+        media_ids,
+    ) = extract_resource_ids(
         document
     )
 
-    if not raw_ids:
-        return CreativeRenderResources(
-            stickers={},
-        )
+    stickers: dict[
+        str,
+        StickerAsset,
+    ] = {}
 
-    normalized_ids = {
-        uuid.UUID(value)
-        for value in raw_ids
-    }
+    if sticker_ids:
+        normalized_ids = {
+            uuid.UUID(value)
+            for value in sticker_ids
+        }
 
-    stickers = (
-        StickerAsset.objects
-        .select_related(
-            "pack"
-        )
-        .filter(
-            public_id__in=normalized_ids,
-            is_active=True,
-            is_converted=True,
-            pack__is_active=True,
-        )
-    )
-
-    mapping = {
-        str(sticker.public_id):
-            sticker
-        for sticker in stickers
-    }
-
-    missing = sorted(
-        raw_ids
-        - set(
-            mapping.keys()
-        )
-    )
-
-    if missing:
-        raise CreativeResourceError(
-            (
-                "Unavailable sticker resources: "
-                + ", ".join(
-                    missing
-                )
+        queryset = (
+            StickerAsset.objects
+            .select_related("pack")
+            .filter(
+                public_id__in=normalized_ids,
+                is_active=True,
+                is_converted=True,
+                pack__is_active=True,
             )
         )
 
+        stickers = {
+            str(item.public_id): item
+            for item in queryset
+        }
+
+        missing = sorted(
+            sticker_ids
+            - set(stickers.keys())
+        )
+
+        if missing:
+            raise CreativeResourceError(
+                (
+                    "Unavailable sticker resources: "
+                    + ", ".join(missing)
+                )
+            )
+
+    media: dict[
+        str,
+        CreativeCompositionMedia,
+    ] = {}
+
+    if media_ids:
+        normalized_ids = {
+            uuid.UUID(value)
+            for value in media_ids
+        }
+
+        queryset = (
+            CreativeCompositionMedia.objects
+            .select_related(
+                "source_content_type"
+            )
+            .filter(
+                composition=composition,
+                public_id__in=normalized_ids,
+                is_active=True,
+            )
+        )
+
+        media = {
+            str(item.public_id): item
+            for item in queryset
+        }
+
+        missing = sorted(
+            media_ids
+            - set(media.keys())
+        )
+
+        if missing:
+            raise CreativeResourceError(
+                (
+                    "Unavailable composition media: "
+                    + ", ".join(missing)
+                )
+            )
+
+        unavailable = sorted(
+            public_id
+            for public_id, item in media.items()
+            if not item.is_available()
+        )
+
+        if unavailable:
+            raise CreativeResourceError(
+                (
+                    "Composition media is not ready: "
+                    + ", ".join(unavailable)
+                )
+            )
+
     return CreativeRenderResources(
-        stickers=mapping,
+        stickers=stickers,
+        media=media,
     )

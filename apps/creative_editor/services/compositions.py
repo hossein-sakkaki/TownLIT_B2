@@ -91,7 +91,8 @@ def create_composition(
     )
 
     validate_document_references(
-        document
+        document,
+        composition=None,
     )
 
     composition = CreativeComposition(
@@ -149,7 +150,9 @@ def update_composition(
         )
 
         validate_document_references(
-            incoming_document
+            incoming_document,
+            composition=locked,
+            require_media_ready=False,
         )
 
         incoming_hash = (
@@ -231,11 +234,40 @@ def _enqueue_render_job(
         updated_at=timezone.now(),
     )
 
+def _reset_render_job_for_queue(
+    job: CreativeRenderJob,
+) -> None:
+    job.status = CreativeRenderJob.Status.QUEUED
+    job.progress = 0
+    job.stage = "queued"
+    job.message = "Queued for rendering"
+    job.error = ""
+    job.task_id = ""
+    job.finished_at = None
+    job.duration_ms = None
+    job.heartbeat_at = timezone.now()
 
+    job.save(
+        update_fields=[
+            "status",
+            "progress",
+            "stage",
+            "message",
+            "error",
+            "task_id",
+            "finished_at",
+            "duration_ms",
+            "heartbeat_at",
+            "updated_at",
+        ]
+    )
+    
+    
 @transaction.atomic
 def request_render(
     *,
     composition: CreativeComposition,
+    allow_requeue_canceled: bool = False,
 ) -> RenderRequestResult:
     """
     Create or return a render job for the current revision.
@@ -256,7 +288,8 @@ def request_render(
         )
 
     validate_document_references(
-        locked.document
+        locked.document,
+        composition=locked,
     )
 
     existing = (
@@ -272,38 +305,26 @@ def request_render(
 
     if existing is not None:
         should_requeue = (
-            existing.status
-            == CreativeRenderJob.Status.FAILED
-            and existing.attempt
-            < existing.max_attempts
+            existing.status == CreativeRenderJob.Status.FAILED
+            and existing.attempt < existing.max_attempts
         )
 
-        if should_requeue:
-            existing.status = (
-                CreativeRenderJob.Status.QUEUED
-            )
-            existing.progress = 0
-            existing.stage = "queued"
-            existing.message = (
-                "Queued for rendering"
-            )
-            existing.error = ""
-            existing.finished_at = None
-            existing.duration_ms = None
-            existing.heartbeat_at = (
-                timezone.now()
-            )
+        should_requeue_canceled = (
+            allow_requeue_canceled
+            and existing.status == CreativeRenderJob.Status.CANCELED
+            and existing.attempt < existing.max_attempts
+        )
 
-            existing.save(
+        if should_requeue or should_requeue_canceled:
+            _reset_render_job_for_queue(existing)
+
+            locked.status = CreativeComposition.Status.RENDERING
+            locked.render_error = ""
+
+            locked.save(
                 update_fields=[
                     "status",
-                    "progress",
-                    "stage",
-                    "message",
-                    "error",
-                    "finished_at",
-                    "duration_ms",
-                    "heartbeat_at",
+                    "render_error",
                     "updated_at",
                 ]
             )

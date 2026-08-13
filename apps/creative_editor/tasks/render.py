@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from celery import shared_task
 from django.core.files.storage import default_storage
@@ -20,12 +21,18 @@ from apps.creative_editor.models import (
 )
 from apps.creative_editor.services.render_output import (
     CreativeRenderOutput,
+    CreativeVideoRenderOutput,
     delete_render_output,
+    delete_video_render_output,
     persist_render_output,
+    persist_video_render_output,
 )
 from apps.creative_editor.services.renderer import (
     CreativeCompositionRenderer,
     CreativeRenderContext,
+)
+from apps.creative_editor.services.video_renderer import (
+    CreativeCompositionVideoRenderer,
 )
 
 
@@ -34,8 +41,12 @@ logger = logging.getLogger(__name__)
 
 class StaleCreativeRender(Exception):
     """
-    Raised when a newer composition revision exists.
+    Raised when a render can no longer be published.
     """
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
 
 
 def _safe_delete_key(key: str) -> None:
@@ -60,25 +71,38 @@ def _safe_delete_key(key: str) -> None:
 def _replace_old_render_files(
     *,
     old_rendered_image: str,
+    old_rendered_video: str,
     old_thumbnail: str,
-    new_output: CreativeRenderOutput,
+    new_output_paths: set[str],
 ) -> None:
-    """
-    Remove previous canonical files after replacement.
-    """
-
     for key in (
         old_rendered_image,
+        old_rendered_video,
         old_thumbnail,
     ):
         normalized = str(key or "").lstrip("/")
 
-        if normalized and normalized not in {
-            new_output.output_path,
-            new_output.thumbnail_path,
-        }:
+        if (
+            normalized
+            and normalized not in new_output_paths
+        ):
             _safe_delete_key(normalized)
+            
 
+def _document_has_video_layers(
+    document: dict,
+) -> bool:
+    for layer in (document or {}).get("layers") or []:
+        if not isinstance(layer, dict):
+            continue
+
+        if layer.get("is_hidden", False):
+            continue
+
+        if layer.get("type") == "video":
+            return True
+
+    return False
 
 @shared_task(
     bind=True,
@@ -127,7 +151,8 @@ def render_creative_composition_task(
     ):
         return
 
-    output: CreativeRenderOutput | None = None
+    output: CreativeRenderOutput | CreativeVideoRenderOutput | None = None
+    local_video_output_path: str | None = None
 
     try:
         job.attempt = min(
@@ -155,8 +180,6 @@ def render_creative_composition_task(
             job.mark_canceled("Composition is archived")
             return
 
-        renderer = CreativeCompositionRenderer()
-
         def progress(
             percent: int,
             stage: str,
@@ -168,26 +191,73 @@ def render_creative_composition_task(
                 message=message,
             )
 
-        rendered_image = renderer.render(
-            context=CreativeRenderContext(
-                composition=composition,
-                document=job.document_snapshot,
+
+        has_video = _document_has_video_layers(
+            job.document_snapshot
+        )
+
+        if has_video:
+            renderer = CreativeCompositionVideoRenderer()
+
+            video_result = renderer.render(
+                context=CreativeRenderContext(
+                    composition=composition,
+                    document=job.document_snapshot,
+                    revision=job.requested_revision,
+                ),
+                progress_callback=progress,
+            )
+
+            local_video_output_path = (
+                video_result.local_video_path
+            )
+
+            job.mark_progress(
+                progress=92,
+                stage="encoding",
+                message="Persisting video render output",
+            )
+
+            output = persist_video_render_output(
+                local_video_path=
+                    video_result.local_video_path,
+                poster=
+                    video_result.poster,
+                composition_id=
+                    composition.pk,
+                revision=
+                    job.requested_revision,
+                width=
+                    video_result.width,
+                height=
+                    video_result.height,
+                duration_ms=
+                    video_result.duration_ms,
+            )
+
+        else:
+            renderer = CreativeCompositionRenderer()
+
+            rendered_image = renderer.render(
+                context=CreativeRenderContext(
+                    composition=composition,
+                    document=job.document_snapshot,
+                    revision=job.requested_revision,
+                ),
+                progress_callback=progress,
+            )
+
+            job.mark_progress(
+                progress=92,
+                stage="encoding",
+                message="Encoding render output",
+            )
+
+            output = persist_render_output(
+                image=rendered_image,
+                composition_id=composition.pk,
                 revision=job.requested_revision,
-            ),
-            progress_callback=progress,
-        )
-
-        job.mark_progress(
-            progress=92,
-            stage="encoding",
-            message="Encoding render output",
-        )
-
-        output = persist_render_output(
-            image=rendered_image,
-            composition_id=composition.pk,
-            revision=job.requested_revision,
-        )
+            )
 
         job.mark_progress(
             progress=97,
@@ -212,19 +282,11 @@ def render_creative_composition_task(
                 )
 
             if locked_composition.revision != job.requested_revision:
-                locked_job.mark_canceled(
-                    "A newer composition revision exists"
-                )
-
                 raise StaleCreativeRender(
                     "A newer composition revision exists."
                 )
 
             if locked_composition.document_sha256 != job.document_sha256:
-                locked_job.mark_canceled(
-                    "Composition document changed"
-                )
-
                 raise StaleCreativeRender(
                     "Composition document changed."
                 )
@@ -232,6 +294,15 @@ def render_creative_composition_task(
             old_rendered_image = str(
                 getattr(
                     locked_composition.rendered_image,
+                    "name",
+                    "",
+                )
+                or ""
+            )
+
+            old_rendered_video = str(
+                getattr(
+                    locked_composition.rendered_video,
                     "name",
                     "",
                 )
@@ -247,36 +318,77 @@ def render_creative_composition_task(
                 or ""
             )
 
-            locked_composition.rendered_image = output.output_path
-            locked_composition.thumbnail = output.thumbnail_path
-            locked_composition.rendered_revision = job.requested_revision
-            locked_composition.rendered_at = timezone.now()
-            locked_composition.status = CreativeComposition.Status.READY
-            locked_composition.render_error = ""
-
             media_assets = dict(
                 locked_composition.media_assets or {}
             )
 
-            media_assets["rendered_image"] = {
-                "key": output.output_path,
-                "mime_type": "image/jpeg",
-                "width": output.width,
-                "height": output.height,
-                "revision": job.requested_revision,
-            }
+            if isinstance(
+                output,
+                CreativeVideoRenderOutput,
+            ):
+                locked_composition.rendered_image = None
+                locked_composition.rendered_video = output.video_path
+                locked_composition.thumbnail = output.thumbnail_path
 
-            media_assets["thumbnail"] = {
-                "key": output.thumbnail_path,
-                "mime_type": "image/jpeg",
-                "revision": job.requested_revision,
-            }
+                media_assets.pop(
+                    "rendered_image",
+                    None,
+                )
 
+                media_assets["rendered_video"] = {
+                    "key": output.video_path,
+                    "mime_type": "video/mp4",
+                    "width": output.width,
+                    "height": output.height,
+                    "duration_ms": output.duration_ms,
+                    "revision": job.requested_revision,
+                }
+
+                media_assets["thumbnail"] = {
+                    "key": output.thumbnail_path,
+                    "mime_type": "image/jpeg",
+                    "revision": job.requested_revision,
+                }
+
+                job_output_path = output.video_path
+
+            else:
+                locked_composition.rendered_video = None
+                locked_composition.rendered_image = output.output_path
+                locked_composition.thumbnail = output.thumbnail_path
+
+                media_assets.pop(
+                    "rendered_video",
+                    None,
+                )
+
+                media_assets["rendered_image"] = {
+                    "key": output.output_path,
+                    "mime_type": "image/jpeg",
+                    "width": output.width,
+                    "height": output.height,
+                    "revision": job.requested_revision,
+                }
+
+                media_assets["thumbnail"] = {
+                    "key": output.thumbnail_path,
+                    "mime_type": "image/jpeg",
+                    "revision": job.requested_revision,
+                }
+
+                job_output_path = output.output_path
+                        
+            
+            locked_composition.rendered_revision = job.requested_revision
+            locked_composition.rendered_at = timezone.now()
+            locked_composition.status = CreativeComposition.Status.READY
+            locked_composition.render_error = ""
             locked_composition.media_assets = media_assets
 
             locked_composition.save(
                 update_fields=[
                     "rendered_image",
+                    "rendered_video",
                     "thumbnail",
                     "rendered_revision",
                     "rendered_at",
@@ -288,18 +400,46 @@ def render_creative_composition_task(
             )
 
             locked_job.mark_done(
-                output_path=output.output_path,
+                output_path=job_output_path,
                 thumbnail_path=output.thumbnail_path,
             )
 
+            new_output_paths = {
+                job_output_path,
+                output.thumbnail_path,
+            }
+
             transaction.on_commit(
                 lambda: _replace_old_render_files(
-                    old_rendered_image=old_rendered_image,
-                    old_thumbnail=old_thumbnail,
-                    new_output=output,
+                    old_rendered_image=
+                        old_rendered_image,
+                    old_rendered_video=
+                        old_rendered_video,
+                    old_thumbnail=
+                        old_thumbnail,
+                    new_output_paths=
+                        new_output_paths,
                 )
             )
 
+        if (
+            local_video_output_path
+            and os.path.exists(
+                local_video_output_path
+            )
+        ):
+            try:
+                os.remove(
+                    local_video_output_path
+                )
+            except OSError:
+                logger.warning(
+                    "creative_editor.video_temp_cleanup.failed",
+                    extra={
+                        "path": local_video_output_path,
+                    },
+                )
+        
         logger.info(
             "creative_editor.render.completed",
             extra={
@@ -309,23 +449,87 @@ def render_creative_composition_task(
             },
         )
 
-    except StaleCreativeRender:
-        if output is not None:
+    except StaleCreativeRender as exc:
+        if isinstance(
+            output,
+            CreativeVideoRenderOutput,
+        ):
+            delete_video_render_output(output)
+
+        elif isinstance(
+            output,
+            CreativeRenderOutput,
+        ):
             delete_render_output(output)
+
+        if (
+            local_video_output_path
+            and os.path.exists(local_video_output_path)
+        ):
+            try:
+                os.remove(local_video_output_path)
+            except OSError:
+                pass
+
+        refreshed_job = (
+            CreativeRenderJob.objects
+            .filter(pk=job.pk)
+            .first()
+        )
+
+        if (
+            refreshed_job is not None
+            and refreshed_job.status
+            != CreativeRenderJob.Status.CANCELED
+        ):
+            refreshed_job.mark_canceled(
+                str(exc)
+            )
 
         logger.info(
             "creative_editor.render.stale",
             extra={
                 "render_job_id": job.pk,
                 "revision": job.requested_revision,
+                "reason": str(exc),
             },
         )
 
         return
 
     except Exception as exc:
-        if output is not None:
-            delete_render_output(output)
+        if isinstance(
+            output,
+            CreativeVideoRenderOutput,
+        ):
+            delete_video_render_output(
+                output
+            )
+        elif isinstance(
+            output,
+            CreativeRenderOutput,
+        ):
+            delete_render_output(
+                output
+            )
+        if (
+            local_video_output_path
+            and os.path.exists(
+                local_video_output_path
+            )
+        ):
+            try:
+                os.remove(
+                    local_video_output_path
+                )
+            except OSError:
+                logger.warning(
+                    "creative_editor.video_temp_cleanup.failed",
+                    extra={
+                        "path":
+                            local_video_output_path,
+                    },
+                )
 
         logger.exception(
             "creative_editor.render.failed",

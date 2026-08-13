@@ -5,7 +5,9 @@ from __future__ import annotations
 import logging
 
 from django.db.models import Prefetch
-
+from django.core.exceptions import (
+    ValidationError as DjangoValidationError,
+)
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import (
@@ -18,6 +20,7 @@ from rest_framework.response import Response
 from apps.creative_editor.models import (
     CreativeBackgroundPreset,
     CreativeComposition,
+    CreativeCompositionMedia,
     CreativeFont,
     CreativeRenderJob,
     StickerAsset,
@@ -25,6 +28,8 @@ from apps.creative_editor.models import (
 )
 from apps.creative_editor.serializers import (
     CreativeBackgroundPresetSerializer,
+    CreativeCompositionMediaSerializer,
+    CreativeCompositionMediaWriteSerializer,
     CreativeCompositionSerializer,
     CreativeCompositionWriteSerializer,
     CreativeEditorBootstrapSerializer,
@@ -32,18 +37,28 @@ from apps.creative_editor.serializers import (
     CreativeRenderJobSerializer,
     StickerPackSerializer,
 )
+from apps.creative_editor.services.media import (
+    archive_composition_media,
+)
 from apps.creative_editor.services.compositions import (
     CreativeRevisionConflict,
     archive_composition,
     request_render,
 )
+from apps.creative_editor.services.video_policy import (
+    get_creative_video_policy,
+)
 from apps.creative_editor.validators.document import (
     DOCUMENT_VERSION,
+    LEGACY_DOCUMENT_VERSION,
     MAX_DOCUMENT_BYTES,
+    MAX_IMAGE_LAYERS,
     MAX_LAYERS,
+    MAX_MEDIA_LAYERS,
     MAX_STICKER_LAYERS,
     MAX_TEXT_CHARACTERS,
     MAX_TEXT_LAYERS,
+    MAX_VIDEO_LAYERS,
 )
 
 
@@ -269,8 +284,20 @@ class CreativeCompositionViewSet(
             .lower()
         )
 
+        video_policy = get_creative_video_policy()
         fonts = CreativeFont.objects.filter(
             is_active=True,
+            is_user_selectable=True,
+        ).order_by(
+            "sort_order",
+            "display_name",
+            "id",
+        )
+
+        fallback_fonts = CreativeFont.objects.filter(
+            is_active=True,
+            is_user_selectable=False,
+            source=CreativeFont.Source.BUNDLED,
         ).order_by(
             "sort_order",
             "display_name",
@@ -332,6 +359,11 @@ class CreativeCompositionViewSet(
                 many=True,
                 context={"request": request},
             ).data,
+            "fallback_fonts": CreativeFontSerializer(
+                fallback_fonts,
+                many=True,
+                context={"request": request},
+            ).data,
             "sticker_packs": StickerPackSerializer(
                 packs,
                 many=True,
@@ -348,27 +380,52 @@ class CreativeCompositionViewSet(
             ),
             "limits": {
                 "document_version": DOCUMENT_VERSION,
+                "legacy_document_version": LEGACY_DOCUMENT_VERSION,
                 "max_document_bytes": MAX_DOCUMENT_BYTES,
                 "max_layers": MAX_LAYERS,
                 "max_text_layers": MAX_TEXT_LAYERS,
                 "max_sticker_layers": MAX_STICKER_LAYERS,
+                "max_image_layers": MAX_IMAGE_LAYERS,
+                "max_media_layers": MAX_MEDIA_LAYERS,
                 "max_text_characters": MAX_TEXT_CHARACTERS,
                 "max_canvas_width": 8192,
                 "max_canvas_height": 8192,
+                "max_video_layers": MAX_VIDEO_LAYERS,
+                "min_video_duration_ms": video_policy.minimum_duration_ms,
+                "max_video_duration_ms": video_policy.maximum_duration_ms,
             },
             "capabilities": {
+                "document_v2": True,
                 "text": True,
                 "stickers": True,
                 "solid_background": True,
                 "gradient_background": True,
                 "server_background_catalog": True,
+
+                # Legacy v1 source support.
                 "uploaded_image": True,
                 "content_reference": True,
+
+                # Media Architecture v2.
+                "composition_media": True,
+                "image_layers": True,
+                "multiple_images": True,
+                "media_crop": True,
+                "media_fit": True,
+
+                "font_fallbacks": True,
+                "mixed_script_text": True,
+                "emoji_text": True,
                 "hashtags": False,
                 "mentions": False,
                 "animated_stickers": False,
                 "drawing": False,
                 "shapes": False,
+                
+                "video_layers": True,
+                "video_upload": True,
+                "video_trim": True,
+                "video_render": True,
             },
         }
 
@@ -418,7 +475,7 @@ class CreativeCompositionViewSet(
                 },
                 status=status.HTTP_409_CONFLICT,
             )
-
+    
         result = request_render(
             composition=composition,
         )
@@ -487,6 +544,289 @@ class CreativeCompositionViewSet(
             status=status.HTTP_200_OK,
         )
 
+    @action(
+        detail=True,
+        methods=["get", "post"],
+        url_path="media-assets",
+    )
+    def media_assets(
+        self,
+        request,
+        public_id=None,
+    ):
+        """
+        List or idempotently create composition media.
+
+        A client-supplied media UUID allows the editor to
+        establish stable layer identity before upload finishes.
+        """
+
+        composition = self.get_object()
+
+        if request.method == "GET":
+            queryset = (
+                CreativeCompositionMedia.objects
+                .filter(
+                    composition=composition,
+                    is_active=True,
+                )
+                .select_related(
+                    "source_content_type"
+                )
+                .order_by(
+                    "created_at",
+                    "id",
+                )
+            )
+
+            return Response(
+                CreativeCompositionMediaSerializer(
+                    queryset,
+                    many=True,
+                    context={
+                        "request": request,
+                    },
+                ).data,
+                status=status.HTTP_200_OK,
+            )
+
+        serializer = CreativeCompositionMediaWriteSerializer(
+            data=request.data,
+            context={
+                "request": request,
+                "composition": composition,
+            },
+        )
+
+        serializer.is_valid(
+            raise_exception=True
+        )
+
+        client_public_id = serializer.validated_data.get(
+            "public_id"
+        )
+
+        if client_public_id is not None:
+            existing = (
+                CreativeCompositionMedia.objects
+                .filter(
+                    public_id=client_public_id,
+                )
+                .select_related(
+                    "source_content_type",
+                    "composition",
+                )
+                .first()
+            )
+
+            if existing is not None:
+                if existing.composition_id != composition.pk:
+                    return Response(
+                        {
+                            "detail": (
+                                "Creative media id is already "
+                                "owned by another composition."
+                            ),
+                            "code": "creative_media_id_conflict",
+                        },
+                        status=status.HTTP_409_CONFLICT,
+                    )
+
+                requested_media_type = (
+                    serializer.validated_data.get(
+                        "media_type",
+                        CreativeCompositionMedia.MediaType.IMAGE,
+                    )
+                )
+
+                requested_source_mode = (
+                    serializer.validated_data.get(
+                        "source_mode",
+                        CreativeCompositionMedia.SourceMode.UPLOAD,
+                    )
+                )
+
+                if (
+                    existing.media_type != requested_media_type
+                    or existing.source_mode != requested_source_mode
+                ):
+                    return Response(
+                        {
+                            "detail": (
+                                "Creative media id was already used "
+                                "for a different media source."
+                            ),
+                            "code": "creative_media_id_conflict",
+                        },
+                        status=status.HTTP_409_CONFLICT,
+                    )
+
+                if not existing.is_active:
+                    return Response(
+                        {
+                            "detail": (
+                                "Creative media id belongs to "
+                                "an archived media asset."
+                            ),
+                            "code": "creative_media_archived",
+                        },
+                        status=status.HTTP_409_CONFLICT,
+                    )
+
+                return Response(
+                    CreativeCompositionMediaSerializer(
+                        existing,
+                        context={
+                            "request": request,
+                        },
+                    ).data,
+                    status=status.HTTP_200_OK,
+                )
+
+        media = serializer.save()
+
+        return Response(
+            CreativeCompositionMediaSerializer(
+                media,
+                context={
+                    "request": request,
+                },
+            ).data,
+            status=status.HTTP_201_CREATED,
+        )
+        
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=(
+            r"media-assets/"
+            r"(?P<media_id>[0-9a-fA-F-]{36})"
+        ),
+    )
+    def media_asset_detail(
+        self,
+        request,
+        public_id=None,
+        media_id=None,
+    ):
+        """
+        Retrieve one composition media item.
+        """
+
+        composition = self.get_object()
+
+        media = (
+            CreativeCompositionMedia.objects
+            .filter(
+                composition=composition,
+                public_id=media_id,
+            )
+            .select_related(
+                "source_content_type"
+            )
+            .first()
+        )
+
+        if media is None:
+            return Response(
+                {
+                    "detail": (
+                        "Creative composition media "
+                        "was not found."
+                    ),
+                    "code": "creative_media_not_found",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        return Response(
+            CreativeCompositionMediaSerializer(
+                media,
+                context={
+                    "request": request,
+                },
+            ).data,
+            status=status.HTTP_200_OK,
+        )
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=(
+            r"media-assets/"
+            r"(?P<media_id>[0-9a-fA-F-]{36})/"
+            r"archive"
+        ),
+    )
+    def media_asset_archive(
+        self,
+        request,
+        public_id=None,
+        media_id=None,
+    ):
+        """
+        Archive unreferenced composition media.
+        """
+
+        composition = self.get_object()
+
+        media = (
+            CreativeCompositionMedia.objects
+            .filter(
+                composition=composition,
+                public_id=media_id,
+            )
+            .select_related(
+                "composition"
+            )
+            .first()
+        )
+
+        if media is None:
+            return Response(
+                {
+                    "detail": (
+                        "Creative composition media "
+                        "was not found."
+                    ),
+                    "code": "creative_media_not_found",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            archived = archive_composition_media(
+                media=media
+            )
+
+        except DjangoValidationError as exc:
+            return Response(
+                {
+                    "detail": (
+                        "Creative media cannot be archived."
+                    ),
+                    "code": "creative_media_in_use",
+                    "errors": (
+                        exc.message_dict
+                        if hasattr(
+                            exc,
+                            "message_dict",
+                        )
+                        else exc.messages
+                    ),
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        return Response(
+            CreativeCompositionMediaSerializer(
+                archived,
+                context={
+                    "request": request,
+                },
+            ).data,
+            status=status.HTTP_200_OK,
+        )
 
 class CreativeRenderJobViewSet(
     mixins.RetrieveModelMixin,

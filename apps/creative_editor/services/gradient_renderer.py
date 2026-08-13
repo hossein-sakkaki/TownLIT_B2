@@ -7,8 +7,12 @@ import math
 from PIL import (
     Image,
     ImageColor,
-    ImageOps,
 )
+
+
+GRADIENT_STRIP_RESOLUTION = 4096
+GRADIENT_EXTENDED_MIN = -0.25
+GRADIENT_EXTENDED_MAX = 1.25
 
 
 def parse_gradient_color(
@@ -17,12 +21,10 @@ def parse_gradient_color(
     default: str = "#000000FF",
 ) -> tuple[int, int, int, int]:
     """
-    Parse one RGBA color.
+    Parse one #RRGGBB or #RRGGBBAA color.
     """
 
-    raw = str(
-        value or default
-    ).strip()
+    raw = str(value or default).strip()
 
     if len(raw) == 7:
         raw = f"{raw}FF"
@@ -32,7 +34,6 @@ def parse_gradient_color(
             raw,
             "RGBA",
         )
-
     except Exception:
         return ImageColor.getcolor(
             default,
@@ -72,13 +73,67 @@ def interpolate_color(
     )
 
 
+def resolve_gradient_color(
+    *,
+    colors: list[tuple[int, int, int, int]],
+    position: float,
+) -> tuple[int, int, int, int]:
+    """
+    Resolve one multi-stop gradient color.
+    """
+
+    if not colors:
+        return (
+            0,
+            0,
+            0,
+            255,
+        )
+
+    if len(colors) == 1:
+        return colors[0]
+
+    safe_position = max(
+        0.0,
+        min(
+            1.0,
+            float(position),
+        ),
+    )
+
+    segment_count = len(colors) - 1
+    scaled_position = safe_position * segment_count
+
+    segment_index = min(
+        segment_count - 1,
+        int(
+            math.floor(
+                scaled_position
+            )
+        ),
+    )
+
+    local_ratio = (
+        scaled_position
+        - segment_index
+    )
+
+    return interpolate_color(
+        colors[segment_index],
+        colors[segment_index + 1],
+        local_ratio,
+    )
+
+
 def build_gradient_strip(
     *,
     length: int,
     colors: list,
+    minimum_position: float = 0.0,
+    maximum_position: float = 1.0,
 ) -> Image.Image:
     """
-    Build one horizontal multi-stop strip.
+    Build one high-resolution horizontal multi-stop strip.
     """
 
     safe_length = max(
@@ -101,22 +156,48 @@ def build_gradient_strip(
             ),
         ]
 
+    minimum_position = float(
+        minimum_position
+    )
+
+    maximum_position = float(
+        maximum_position
+    )
+
+    if not math.isfinite(
+        minimum_position
+    ):
+        minimum_position = 0.0
+
+    if not math.isfinite(
+        maximum_position
+    ):
+        maximum_position = 1.0
+
+    if (
+        maximum_position
+        <= minimum_position
+    ):
+        minimum_position = 0.0
+        maximum_position = 1.0
+
     image = Image.new(
         "RGBA",
         (
             safe_length,
-            1,
+            2,
         ),
     )
 
     pixels = image.load()
 
-    segment_count = (
-        len(parsed_colors) - 1
+    position_span = (
+        maximum_position
+        - minimum_position
     )
 
     for x in range(safe_length):
-        global_ratio = (
+        ratio = (
             x
             / max(
                 1,
@@ -124,38 +205,52 @@ def build_gradient_strip(
             )
         )
 
-        scaled_ratio = (
-            global_ratio
-            * segment_count
+        position = (
+            minimum_position
+            + ratio * position_span
         )
 
-        segment_index = min(
-            segment_count - 1,
-            int(
-                math.floor(
-                    scaled_ratio
-                )
-            ),
+        color = resolve_gradient_color(
+            colors=parsed_colors,
+            position=position,
         )
 
-        local_ratio = (
-            scaled_ratio
-            - segment_index
-        )
-
-        pixels[x, 0] = (
-            interpolate_color(
-                parsed_colors[
-                    segment_index
-                ],
-                parsed_colors[
-                    segment_index + 1
-                ],
-                local_ratio,
-            )
-        )
+        pixels[x, 0] = color
+        pixels[x, 1] = color
 
     return image
+
+
+def normalized_gradient_angle(
+    angle: float,
+) -> float:
+    """
+    Normalize one gradient angle in degrees.
+    """
+
+    try:
+        value = float(angle)
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return 0.0
+
+    if not math.isfinite(value):
+        return 0.0
+
+    value = math.fmod(
+        value,
+        360.0,
+    )
+
+    if value > 180.0:
+        value -= 360.0
+
+    elif value < -180.0:
+        value += 360.0
+
+    return value
 
 
 def build_linear_gradient(
@@ -166,7 +261,12 @@ def build_linear_gradient(
     angle: float,
 ) -> Image.Image:
     """
-    Build an efficient angled gradient.
+    Render a linear gradient using the same vector geometry
+    as CreativeCanvasBackgroundView on iOS.
+
+    The gradient is projected directly into final canvas
+    coordinates. No bitmap rotation or post-rotation crop
+    is performed.
     """
 
     safe_width = max(
@@ -179,46 +279,97 @@ def build_linear_gradient(
         int(height),
     )
 
-    diagonal = max(
-        2,
-        int(
-            math.ceil(
-                math.hypot(
-                    safe_width,
-                    safe_height,
-                )
-            )
-        ),
+    angle_degrees = (
+        normalized_gradient_angle(
+            angle
+        )
+    )
+
+    angle_radians = math.radians(
+        angle_degrees
+    )
+
+    direction_x = math.cos(
+        angle_radians
+    )
+
+    direction_y = math.sin(
+        angle_radians
     )
 
     strip = build_gradient_strip(
-        length=diagonal,
-        colors=colors,
-    )
-
-    gradient = strip.resize(
-        (
-            diagonal,
-            diagonal,
+        length=(
+            GRADIENT_STRIP_RESOLUTION
         ),
-        resample=Image.Resampling.BILINEAR,
+        colors=colors,
+        minimum_position=(
+            GRADIENT_EXTENDED_MIN
+        ),
+        maximum_position=(
+            GRADIENT_EXTENDED_MAX
+        ),
     )
 
-    rotated = gradient.rotate(
-        -float(angle),
-        resample=Image.Resampling.BICUBIC,
-        expand=True,
+    strip_span = (
+        GRADIENT_EXTENDED_MAX
+        - GRADIENT_EXTENDED_MIN
     )
 
-    return ImageOps.fit(
-        rotated,
+    strip_max_x = float(
+        strip.width - 1
+    )
+
+    x_denominator = max(
+        1,
+        safe_width - 1,
+    )
+
+    y_denominator = max(
+        1,
+        safe_height - 1,
+    )
+
+    source_scale = (
+        strip_max_x
+        / strip_span
+    )
+
+    coefficient_x = (
+        source_scale
+        * direction_x
+        / x_denominator
+    )
+
+    coefficient_y = (
+        source_scale
+        * direction_y
+        / y_denominator
+    )
+
+    offset = source_scale * (
+        0.5
+        - 0.5 * direction_x
+        - 0.5 * direction_y
+        - GRADIENT_EXTENDED_MIN
+    )
+
+    return strip.transform(
         (
             safe_width,
             safe_height,
         ),
-        method=Image.Resampling.LANCZOS,
-        centering=(
-            0.5,
+        Image.Transform.AFFINE,
+        (
+            coefficient_x,
+            coefficient_y,
+            offset,
+            0.0,
+            0.0,
             0.5,
         ),
+        resample=(
+            Image.Resampling.BICUBIC
+        ),
+    ).convert(
+        "RGBA"
     )

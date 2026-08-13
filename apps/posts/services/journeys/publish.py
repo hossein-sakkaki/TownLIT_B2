@@ -20,7 +20,9 @@ from apps.creative_editor.models import (
 from apps.posts.constants.journeys import (
     JOURNEY_ACTIVE_DURATION_HOURS,
     JOURNEY_DEFAULT_DURATION_MS,
+    JOURNEY_MAX_DURATION_MS,
     JOURNEY_MAX_ENTRIES_PER_DAY,
+    JOURNEY_MIN_DURATION_MS,
     JourneyEntryMediaType,
     JourneyPaletteMode,
     JourneyVisualSourceType,
@@ -28,6 +30,7 @@ from apps.posts.constants.journeys import (
 from apps.posts.models.journey import Journey, JourneyEntry
 from apps.posts.services.journeys.music import (
     prepare_journey_music_selection,
+    validate_journey_music_video_compatibility,
 )
 from apps.posts.services.journeys.storage import (
     build_journey_asset_key,
@@ -47,6 +50,14 @@ class JourneyPublishResult:
     entry: JourneyEntry
     created_journey: bool
 
+@dataclass(frozen=True)
+class JourneyRenderAsset:
+    media_type: str
+    field_name: str
+    source_key: str
+    destination_kind: str
+    mime_type: str
+    duration_ms: int | None
 
 def _resolve_visual_source_type(
     composition: CreativeComposition,
@@ -222,6 +233,38 @@ def _validate_render(
             }
         )
 
+    if not composition.thumbnail:
+        raise ValidationError(
+            {
+                "composition_id": (
+                    "Composition thumbnail is unavailable."
+                ),
+            }
+        )
+
+    composition_thumbnail_key = _normalize_storage_key(
+        composition.thumbnail.name
+    )
+
+    render_thumbnail_key = _normalize_storage_key(
+        render_job.thumbnail_path
+    )
+
+    if composition_thumbnail_key != render_thumbnail_key:
+        raise ValidationError(
+            {
+                "render_job_id": (
+                    "Render job thumbnail does not match "
+                    "the current composition thumbnail."
+                ),
+            }
+        )
+
+    _resolve_render_asset(
+        composition=composition,
+        render_job=render_job,
+    )
+
 
 def _get_composition(
     *,
@@ -258,6 +301,152 @@ def _get_render_job(
             }
         ) from exc
 
+def _normalize_storage_key(value) -> str:
+    return str(value or "").strip().lstrip("/")
+
+
+def _resolve_render_asset(
+    *,
+    composition: CreativeComposition,
+    render_job: CreativeRenderJob,
+) -> JourneyRenderAsset:
+    has_image = bool(composition.rendered_image)
+    has_video = bool(composition.rendered_video)
+
+    if has_image == has_video:
+        raise ValidationError(
+            {
+                "composition_id": (
+                    "Composition must have exactly one current "
+                    "rendered media asset."
+                ),
+            }
+        )
+
+    job_output_key = _normalize_storage_key(
+        render_job.output_path
+    )
+
+    if has_video:
+        source_key = _normalize_storage_key(
+            composition.rendered_video.name
+        )
+
+        metadata = (
+            composition.media_assets
+            or {}
+        ).get(
+            "rendered_video",
+            {},
+        )
+
+        duration_ms = int(
+            metadata.get("duration_ms")
+            or 0
+        )
+
+        if not source_key:
+            raise ValidationError(
+                {
+                    "composition_id": (
+                        "Rendered video is unavailable."
+                    ),
+                }
+            )
+
+        if source_key != job_output_key:
+            raise ValidationError(
+                {
+                    "render_job_id": (
+                        "Render job output does not match "
+                        "the current rendered video."
+                    ),
+                }
+            )
+
+        if not (
+            JOURNEY_MIN_DURATION_MS
+            <= duration_ms
+            <= JOURNEY_MAX_DURATION_MS
+        ):
+            raise ValidationError(
+                {
+                    "composition_id": (
+                        "Rendered video duration is outside "
+                        "the Journey duration range."
+                    ),
+                }
+            )
+
+        return JourneyRenderAsset(
+            media_type=JourneyEntryMediaType.VIDEO,
+            field_name="rendered_video",
+            source_key=source_key,
+            destination_kind="videos",
+            mime_type="video/mp4",
+            duration_ms=duration_ms,
+        )
+
+    source_key = _normalize_storage_key(
+        composition.rendered_image.name
+    )
+
+    if not source_key:
+        raise ValidationError(
+            {
+                "composition_id": (
+                    "Rendered image is unavailable."
+                ),
+            }
+        )
+
+    if source_key != job_output_key:
+        raise ValidationError(
+            {
+                "render_job_id": (
+                    "Render job output does not match "
+                    "the current rendered image."
+                ),
+            }
+        )
+
+    return JourneyRenderAsset(
+        media_type=JourneyEntryMediaType.IMAGE,
+        field_name="rendered_image",
+        source_key=source_key,
+        destination_kind="images",
+        mime_type="image/jpeg",
+        duration_ms=None,
+    )
+
+
+def _resolve_display_duration_ms(
+    *,
+    render_asset: JourneyRenderAsset,
+    music_selection,
+) -> int:
+    """
+    Resolve the authoritative Journey display duration.
+
+    Video duration always wins when video exists.
+    Music controls duration only for image Journeys.
+    """
+
+    if (
+        render_asset.media_type
+        == JourneyEntryMediaType.VIDEO
+    ):
+        return int(
+            render_asset.duration_ms
+            or 0
+        )
+
+    if music_selection:
+        return int(
+            music_selection.clip_duration_ms
+        )
+
+    return JOURNEY_DEFAULT_DURATION_MS
 
 def _prepare_music_selection(
     *,
@@ -266,6 +455,7 @@ def _prepare_music_selection(
     music_clip_start_ms,
     music_clip_end_ms,
     music_volume,
+    required_duration_ms: int | None = None,
 ):
     music_values = (
         music_track_id,
@@ -284,7 +474,10 @@ def _prepare_music_selection(
         for value in music_values
     )
 
-    if has_music_input and not has_complete_music_input:
+    if (
+        has_music_input
+        and not has_complete_music_input
+    ):
         raise ValidationError(
             {
                 "music": (
@@ -306,24 +499,37 @@ def _prepare_music_selection(
             .prefetch_related(
                 "contributor_links__contributor",
             )
-            .get(public_id=music_track_id)
+            .get(
+                public_id=music_track_id
+            )
         )
+
     except MusicTrack.DoesNotExist as exc:
         raise ValidationError(
             {
-                "music_track_id": "Music track was not found.",
+                "music_track_id": (
+                    "Music track was not found."
+                ),
             }
         ) from exc
 
     try:
         variant = (
-            MusicTrackVariant.objects.select_related("track")
-            .get(public_id=music_variant_id)
+            MusicTrackVariant.objects
+            .select_related(
+                "track"
+            )
+            .get(
+                public_id=music_variant_id
+            )
         )
+
     except MusicTrackVariant.DoesNotExist as exc:
         raise ValidationError(
             {
-                "music_variant_id": "Music variant was not found.",
+                "music_variant_id": (
+                    "Music variant was not found."
+                ),
             }
         ) from exc
 
@@ -333,12 +539,14 @@ def _prepare_music_selection(
         clip_start_ms=music_clip_start_ms,
         clip_end_ms=music_clip_end_ms,
         music_volume=music_volume,
+        required_duration_ms=required_duration_ms,
     )
 
 
 def _build_media_assets(
     *,
     composition: CreativeComposition,
+    render_asset: JourneyRenderAsset,
     rendered_key: str,
     thumbnail_key: str,
     revision: int,
@@ -347,16 +555,28 @@ def _build_media_assets(
         composition.media_assets or {}
     )
 
-    source_render = source_assets.get("rendered_image") or {}
-    source_thumbnail = source_assets.get("thumbnail") or {}
+    source_render = source_assets.get(
+        render_asset.field_name
+    ) or {}
+
+    source_thumbnail = source_assets.get(
+        "thumbnail"
+    ) or {}
+
+    rendered_payload = {
+        **source_render,
+        "key": rendered_key,
+        "mime_type": render_asset.mime_type,
+        "revision": revision,
+    }
+
+    if render_asset.duration_ms is not None:
+        rendered_payload["duration_ms"] = (
+            render_asset.duration_ms
+        )
 
     return {
-        "rendered_image": {
-            **source_render,
-            "key": rendered_key,
-            "mime_type": "image/jpeg",
-            "revision": revision,
-        },
+        render_asset.field_name: rendered_payload,
         "thumbnail": {
             **source_thumbnail,
             "key": thumbnail_key,
@@ -454,14 +674,37 @@ def publish_journey_entry(
         requested_revision=requested_revision,
     )
 
+    render_asset = _resolve_render_asset(
+        composition=composition,
+        render_job=render_job,
+    )
+    
+    required_music_duration_ms = (
+        int(
+            render_asset.duration_ms
+            or 0
+        )
+        if (
+            render_asset.media_type
+            == JourneyEntryMediaType.VIDEO
+        )
+        else None
+    )
+
     music_selection = _prepare_music_selection(
         music_track_id=music_track_id,
         music_variant_id=music_variant_id,
         music_clip_start_ms=music_clip_start_ms,
         music_clip_end_ms=music_clip_end_ms,
         music_volume=music_volume,
+        required_duration_ms=required_music_duration_ms,
     )
 
+    display_duration_ms = _resolve_display_duration_ms(
+        render_asset=render_asset,
+        music_selection=music_selection,
+    )
+    
     copied_rendered_key = None
     copied_thumbnail_key = None
 
@@ -518,6 +761,48 @@ def publish_journey_entry(
                 requested_revision=requested_revision,
             )
 
+            # Idempotency guard:
+            # The same immutable composition revision must never
+            # create more than one JourneyEntry.
+            existing_entry = (
+                JourneyEntry.objects
+                .select_related("journey")
+                .filter(
+                    composition_public_id_snapshot=composition.public_id,
+                    composition_revision=requested_revision,
+                )
+                .first()
+            )
+
+            if existing_entry is not None:
+                return JourneyPublishResult(
+                    journey=existing_entry.journey,
+                    entry=existing_entry,
+                    created_journey=False,
+                )
+
+            render_asset = _resolve_render_asset(
+                composition=composition,
+                render_job=render_job,
+            )
+
+            if (
+                music_selection
+                and render_asset.media_type
+                    == JourneyEntryMediaType.VIDEO
+            ):
+                validate_journey_music_video_compatibility(
+                    music_duration_ms=music_selection.clip_duration_ms,
+                    video_duration_ms=int(
+                        render_asset.duration_ms or 0
+                    ),
+                )
+
+            display_duration_ms = _resolve_display_duration_ms(
+                render_asset=render_asset,
+                music_selection=music_selection,
+            )
+            
             owner_ct = ContentType.objects.get_for_model(
                 Member,
                 for_concrete_model=False,
@@ -561,7 +846,7 @@ def publish_journey_entry(
                 content_type=owner_ct,
                 object_id=locked_member.pk,
                 sequence=sequence,
-                media_type=JourneyEntryMediaType.IMAGE,
+                media_type=render_asset.media_type,
                 visual_source_type=_resolve_visual_source_type(
                     composition
                 ),
@@ -582,11 +867,7 @@ def publish_journey_entry(
                         hours=JOURNEY_ACTIVE_DURATION_HOURS
                     )
                 ),
-                display_duration_ms=(
-                    music_selection.clip_duration_ms
-                    if music_selection
-                    else JOURNEY_DEFAULT_DURATION_MS
-                ),
+                display_duration_ms=display_duration_ms,
                 music_track=(
                     music_selection.track
                     if music_selection
@@ -619,14 +900,15 @@ def publish_journey_entry(
                 ),
 
                 # Filled after immutable promotion.
-                rendered_image="",
+                rendered_image=None,
+                rendered_video=None,
                 thumbnail="",
             )
 
             rendered_destination = build_journey_asset_key(
                 entry_id=entry.pk,
-                kind="images",
-                source_key=render_job.output_path,
+                kind=render_asset.destination_kind,
+                source_key=render_asset.source_key,
             )
 
             thumbnail_destination = build_journey_asset_key(
@@ -636,7 +918,7 @@ def publish_journey_entry(
             )
 
             copied_rendered_key = copy_storage_asset(
-                source_key=render_job.output_path,
+                source_key=render_asset.source_key,
                 destination_key=rendered_destination,
             )
 
@@ -645,11 +927,18 @@ def publish_journey_entry(
                 destination_key=thumbnail_destination,
             )
 
-            entry.rendered_image = copied_rendered_key
+            if render_asset.media_type == JourneyEntryMediaType.VIDEO:
+                entry.rendered_image = None
+                entry.rendered_video = copied_rendered_key
+            else:
+                entry.rendered_video = None
+                entry.rendered_image = copied_rendered_key
+
             entry.thumbnail = copied_thumbnail_key
 
             entry.media_assets = _build_media_assets(
                 composition=composition,
+                render_asset=render_asset,
                 rendered_key=copied_rendered_key,
                 thumbnail_key=copied_thumbnail_key,
                 revision=requested_revision,
@@ -660,6 +949,7 @@ def publish_journey_entry(
             entry.save(
                 update_fields=[
                     "rendered_image",
+                    "rendered_video",
                     "thumbnail",
                     "media_assets",
                     "slug",

@@ -871,3 +871,15 @@ CREATIVE_RENDER_PROCESSING_TIMEOUT_MINUTES = env_int(
     minimum=1,
     maximum=24 * 60,
 )
+
+# ---------------------------------------------------------------------
+# Creative Editor video policy
+# ---------------------------------------------------------------------
+CREATIVE_VIDEO_MIN_DURATION_SECONDS = 15
+CREATIVE_VIDEO_MAX_DURATION_SECONDS = 60
+
+# Container timestamps may differ slightly after local export.
+CREATIVE_VIDEO_DURATION_TOLERANCE_MS = 250
+
+# Bound ffprobe work before expensive conversion is accepted.
+CREATIVE_VIDEO_PROBE_TIMEOUT_SECONDS = 15

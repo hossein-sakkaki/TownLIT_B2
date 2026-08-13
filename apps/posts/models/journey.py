@@ -35,6 +35,9 @@ from apps.posts.constants.journeys import (
 from utils.common.utils import FileUpload
 from utils.mixins.media_assets import MediaAssetsMixin
 from utils.mixins.slug_mixin import SlugMixin
+from validators.security_validators import (
+    validate_no_executable_file,
+)
 
 
 class Journey(SlugMixin, models.Model):
@@ -189,6 +192,7 @@ class JourneyEntry(
     """
 
     IMAGE = FileUpload("posts", "images", "journey")
+    VIDEO = FileUpload("posts", "videos", "journey")
     THUMBNAIL = FileUpload("posts", "thumbnails", "journey")
 
     id = models.BigAutoField(primary_key=True)
@@ -271,7 +275,19 @@ class JourneyEntry(
     rendered_image = models.ImageField(
         upload_to=IMAGE.dir_upload,
         max_length=700,
+        null=True,
+        blank=True,
         validators=[],
+    )
+
+    rendered_video = models.FileField(
+        upload_to=VIDEO.dir_upload,
+        max_length=700,
+        null=True,
+        blank=True,
+        validators=[
+            validate_no_executable_file,
+        ],
     )
     thumbnail = models.ImageField(
         upload_to=THUMBNAIL.dir_upload,
@@ -343,18 +359,51 @@ class JourneyEntry(
     def clean(self):
         super().clean()
 
-        if self.media_type != JourneyEntryMediaType.IMAGE:
+        if self.media_type == JourneyEntryMediaType.IMAGE:
+            if not self.rendered_image:
+                raise ValidationError(
+                    {
+                        "rendered_image": (
+                            "Image Journey requires a rendered image."
+                        ),
+                    }
+                )
+
+            if self.rendered_video:
+                raise ValidationError(
+                    {
+                        "rendered_video": (
+                            "Image Journey cannot contain a rendered video."
+                        ),
+                    }
+                )
+
+        elif self.media_type == JourneyEntryMediaType.VIDEO:
+            if not self.rendered_video:
+                raise ValidationError(
+                    {
+                        "rendered_video": (
+                            "Video Journey requires a rendered video."
+                        ),
+                    }
+                )
+
+            if self.rendered_image:
+                raise ValidationError(
+                    {
+                        "rendered_image": (
+                            "Video Journey cannot contain a rendered image."
+                        ),
+                    }
+                )
+
+        else:
             raise ValidationError(
                 {
                     "media_type": (
-                        "Only image Journey entries are currently supported."
+                        "Unsupported Journey media type."
                     ),
                 }
-            )
-
-        if not self.rendered_image:
-            raise ValidationError(
-                {"rendered_image": "Journey requires a rendered image."}
             )
 
         if not self.thumbnail:
@@ -471,11 +520,17 @@ class JourneyEntry(
         return bool(self.music_track_id and self.music_variant_id)
 
     def is_available(self) -> bool:
+        has_rendered_media = (
+            bool(self.rendered_video)
+            if self.media_type == JourneyEntryMediaType.VIDEO
+            else bool(self.rendered_image)
+        )
+
         return bool(
             self.is_active
             and not self.is_hidden
             and not self.is_suspended
-            and self.rendered_image
+            and has_rendered_media
             and self.thumbnail
         )
 
@@ -513,7 +568,11 @@ class JourneyEntry(
         Authorize immutable Journey assets.
         """
 
-        if field_name not in {"rendered_image", "thumbnail"}:
+        if field_name not in {
+            "rendered_image",
+            "rendered_video",
+            "thumbnail",
+        }:
             return False
 
         field = getattr(self, field_name, None)
@@ -603,6 +662,13 @@ class JourneyEntry(
             models.CheckConstraint(
                 check=Q(expires_at__gt=models.F("published_at")),
                 name="journey_entry_expiry_after_publish",
+            ),
+            models.UniqueConstraint(
+                fields=(
+                    "composition_public_id_snapshot",
+                    "composition_revision",
+                ),
+                name="journey_unique_composition_revision",
             ),
         ]
 

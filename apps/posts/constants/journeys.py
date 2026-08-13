@@ -14,12 +14,13 @@ JOURNEY_ACTIVE_DURATION_HOURS = 24
 JOURNEY_CANVAS_WIDTH = 1080
 JOURNEY_CANVAS_HEIGHT = 1920
 
+JOURNEY_MEDIA_DURATION_TOLERANCE_MS = 250
 
 class JourneyEntryMediaType(models.TextChoices):
     IMAGE = "image", "Image"
-
-    # Reserved for future releases.
     VIDEO = "video", "Video"
+    
+    # Reserved for future releases.
     SHARED_CONTENT = "shared_content", "Shared Content"
 
 

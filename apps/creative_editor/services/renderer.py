@@ -41,6 +41,13 @@ from apps.creative_editor.services.render_resources import (
     CreativeRenderResources,
     resolve_render_resources,
 )
+from apps.creative_editor.services.font_coverage import (
+    CreativeFontCoverageError,
+)
+from apps.creative_editor.services.media_loader import (
+    CreativeMediaLoadError,
+    load_composition_media_image,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -295,10 +302,9 @@ class CreativeCompositionRenderer:
             or {}
         )
 
-        resources = (
-            resolve_render_resources(
-                document
-            )
+        resources = resolve_render_resources(
+            document=document,
+            composition=context.composition,
         )
 
         canvas = (
@@ -423,6 +429,13 @@ class CreativeCompositionRenderer:
 
             elif layer_type == "sticker":
                 self._render_sticker_layer(
+                    output=output,
+                    layer=layer,
+                    resources=resources,
+                )
+
+            elif layer_type == "image":
+                self._render_image_layer(
                     output=output,
                     layer=layer,
                     resources=resources,
@@ -768,8 +781,8 @@ class CreativeCompositionRenderer:
             )
         )
 
-        rendered_text = (
-            text_renderer.render(
+        try:
+            rendered_text = text_renderer.render(
                 text=text,
                 options=CreativeTextRenderOptions(
                     box_width=box_width,
@@ -782,15 +795,18 @@ class CreativeCompositionRenderer:
                     stroke_width=stroke_width,
                     shadow=(
                         shadow
-                        if isinstance(
-                            shadow,
-                            dict,
-                        )
+                        if isinstance(shadow, dict)
                         else None
                     ),
                 ),
             )
-        )
+        except CreativeFontCoverageError as exc:
+            raise CreativeRenderError(
+                (
+                    "No bundled TownLIT font can render "
+                    "all characters in this text layer."
+                )
+            ) from exc
 
         layer_canvas.alpha_composite(
             rendered_text
@@ -938,6 +954,276 @@ class CreativeCompositionRenderer:
             top=top,
         )
 
+    def _render_image_layer(
+        self,
+        *,
+        output: Image.Image,
+        layer: dict,
+        resources: CreativeRenderResources,
+    ) -> None:
+        """
+        Render one composition image layer.
+        """
+
+        transform = layer.get(
+            "transform"
+        ) or {}
+
+        content = layer.get(
+            "content"
+        ) or {}
+
+        raw_media_id = str(
+            content.get(
+                "media_id",
+                "",
+            )
+        ).strip()
+
+        try:
+            media_id = str(
+                uuid.UUID(
+                    raw_media_id
+                )
+            )
+
+        except (
+            TypeError,
+            ValueError,
+            AttributeError,
+        ) as exc:
+            raise CreativeRenderError(
+                (
+                    "Image layer contains an invalid "
+                    f"media identifier: {raw_media_id!r}"
+                )
+            ) from exc
+
+        media = resources.media.get(
+            media_id
+        )
+
+        if media is None:
+            raise CreativeRenderError(
+                (
+                    "Image media resource is unavailable: "
+                    f"{media_id}"
+                )
+            )
+
+        try:
+            loaded = load_composition_media_image(
+                media
+            )
+
+        except CreativeMediaLoadError as exc:
+            raise CreativeRenderError(
+                (
+                    "Image media resource could not "
+                    f"be loaded: {media_id}"
+                )
+            ) from exc
+
+        source_image = self._apply_media_crop(
+            image=loaded.image,
+            crop=content.get("crop"),
+        )
+
+        (
+            left,
+            top,
+            width,
+            height,
+        ) = normalized_box(
+            transform=transform,
+            canvas_width=output.width,
+            canvas_height=output.height,
+        )
+
+        content_mode = str(
+            content.get(
+                "content_mode",
+                "fill",
+            )
+        )
+
+        if content_mode == "fill":
+            layer_canvas = ImageOps.fit(
+                source_image.convert("RGBA"),
+                (
+                    width,
+                    height,
+                ),
+                method=Image.Resampling.LANCZOS,
+                centering=(
+                    0.5,
+                    0.5,
+                ),
+            )
+
+        elif content_mode == "fit":
+            contained = ImageOps.contain(
+                source_image.convert("RGBA"),
+                (
+                    width,
+                    height,
+                ),
+                method=Image.Resampling.LANCZOS,
+            )
+
+            layer_canvas = Image.new(
+                "RGBA",
+                (
+                    width,
+                    height,
+                ),
+                (
+                    0,
+                    0,
+                    0,
+                    0,
+                ),
+            )
+
+            layer_canvas.alpha_composite(
+                contained,
+                (
+                    (
+                        width
+                        - contained.width
+                    ) // 2,
+                    (
+                        height
+                        - contained.height
+                    ) // 2,
+                ),
+            )
+
+        else:
+            raise CreativeRenderError(
+                (
+                    "Unsupported image content mode: "
+                    f"{content_mode!r}"
+                )
+            )
+
+        self._composite_transformed_layer(
+            output=output,
+            layer_image=layer_canvas,
+            layer=layer,
+            left=left,
+            top=top,
+        )
+
+    def _apply_media_crop(
+        self,
+        *,
+        image: Image.Image,
+        crop,
+    ) -> Image.Image:
+        """
+        Apply a normalized source crop.
+        """
+
+        if not isinstance(crop, dict):
+            return image
+
+        x = float(
+            crop.get(
+                "x",
+                0,
+            )
+        )
+
+        y = float(
+            crop.get(
+                "y",
+                0,
+            )
+        )
+
+        width = float(
+            crop.get(
+                "width",
+                1,
+            )
+        )
+
+        height = float(
+            crop.get(
+                "height",
+                1,
+            )
+        )
+
+        source_width = image.width
+        source_height = image.height
+
+        left = max(
+            0,
+            min(
+                source_width - 1,
+                int(
+                    round(
+                        source_width * x
+                    )
+                ),
+            ),
+        )
+
+        top = max(
+            0,
+            min(
+                source_height - 1,
+                int(
+                    round(
+                        source_height * y
+                    )
+                ),
+            ),
+        )
+
+        right = max(
+            left + 1,
+            min(
+                source_width,
+                int(
+                    round(
+                        source_width
+                        * (
+                            x
+                            + width
+                        )
+                    )
+                ),
+            ),
+        )
+
+        bottom = max(
+            top + 1,
+            min(
+                source_height,
+                int(
+                    round(
+                        source_height
+                        * (
+                            y
+                            + height
+                        )
+                    )
+                ),
+            ),
+        )
+
+        return image.crop(
+            (
+                left,
+                top,
+                right,
+                bottom,
+            )
+        )
+        
     def _composite_transformed_layer(
         self,
         *,

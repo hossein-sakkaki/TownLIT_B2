@@ -8,6 +8,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
+from django.core.files import File
 from django.core.files.base import (
     ContentFile,
 )
@@ -36,7 +37,15 @@ class CreativeRenderOutput:
     width: int
     height: int
 
-
+@dataclass(frozen=True)
+class CreativeVideoRenderOutput:
+    video_path: str
+    thumbnail_path: str
+    width: int
+    height: int
+    duration_ms: int
+    
+        
 def build_render_storage_key(
     *,
     composition_id: int,
@@ -220,3 +229,120 @@ def delete_render_output(
 
         except Exception:
             pass
+        
+
+def build_video_render_storage_key(
+    *,
+    composition_id: int,
+    revision: int,
+) -> str:
+    today = datetime.utcnow().strftime(
+        "%Y/%m/%d"
+    )
+
+    return (
+        "creative_editor/"
+        "renders/compositions/"
+        f"{composition_id}/"
+        f"revision-{revision}/"
+        f"{today}/"
+        f"{uuid.uuid4().hex}.mp4"
+    )
+    
+def persist_video_render_output(
+    *,
+    local_video_path: str,
+    poster: Image.Image,
+    composition_id: int,
+    revision: int,
+    width: int,
+    height: int,
+    duration_ms: int,
+) -> CreativeVideoRenderOutput:
+    video_key = build_video_render_storage_key(
+        composition_id=composition_id,
+        revision=revision,
+    )
+
+    thumbnail_key = build_render_storage_key(
+        composition_id=composition_id,
+        revision=revision,
+        kind="thumbnails",
+    )
+
+    thumbnail = build_thumbnail(
+        poster
+    )
+
+    thumbnail_bytes = image_to_jpeg_bytes(
+        thumbnail,
+        quality=CREATIVE_RENDER_THUMBNAIL_QUALITY,
+    )
+
+    with open(
+        local_video_path,
+        "rb",
+    ) as source:
+        saved_video_key = default_storage.save(
+            video_key,
+            File(source),
+        )
+
+    try:
+        saved_thumbnail_key = default_storage.save(
+            thumbnail_key,
+            ContentFile(
+                thumbnail_bytes
+            ),
+        )
+
+    except Exception:
+        try:
+            if default_storage.exists(
+                saved_video_key
+            ):
+                default_storage.delete(
+                    saved_video_key
+                )
+        except Exception:
+            pass
+
+        raise
+
+    return CreativeVideoRenderOutput(
+        video_path=str(
+            saved_video_key
+        ).lstrip("/"),
+        thumbnail_path=str(
+            saved_thumbnail_key
+        ).lstrip("/"),
+        width=int(width),
+        height=int(height),
+        duration_ms=int(duration_ms),
+    )
+    
+def delete_video_render_output(
+    output: CreativeVideoRenderOutput,
+) -> None:
+    for key in (
+        output.video_path,
+        output.thumbnail_path,
+    ):
+        try:
+            normalized = str(
+                key or ""
+            ).lstrip("/")
+
+            if (
+                normalized
+                and default_storage.exists(
+                    normalized
+                )
+            ):
+                default_storage.delete(
+                    normalized
+                )
+
+        except Exception:
+            pass
+        
