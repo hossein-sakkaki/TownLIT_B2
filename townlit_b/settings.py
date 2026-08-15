@@ -600,17 +600,89 @@ if not FIREBASE_PROJECT_ID:
 # Real-Time Notification --------------------------------------------------------------
 ASGI_APPLICATION = 'townlit_b.asgi.application'
 
+
 # --------------------------------------------------------------------
 # APNs / Apple Push Notifications
 # --------------------------------------------------------------------
-APNS_ENABLED = os.getenv("APNS_ENABLED", "false").lower() == "true"
 
-APNS_KEY_ID = os.getenv("APNS_KEY_ID", "")
-APNS_TEAM_ID = os.getenv("APNS_TEAM_ID", "")
-APNS_TOPIC = os.getenv("APNS_TOPIC", "com.townlit.TownLIT")
-APNS_AUTH_KEY_PATH = os.getenv("APNS_AUTH_KEY_PATH", "")
+APNS_ENABLED = env_bool(
+    "APNS_ENABLED",
+    default=False,
+)
 
-APNS_USE_SANDBOX = os.getenv("APNS_USE_SANDBOX", "true").lower() == "true"
+APNS_KEY_ID = os.getenv(
+    "APNS_KEY_ID",
+    "",
+).strip()
+
+APNS_TEAM_ID = os.getenv(
+    "APNS_TEAM_ID",
+    "",
+).strip()
+
+# Must exactly match the iOS app's APNs topic / Bundle Identifier.
+APNS_TOPIC = os.getenv(
+    "APNS_TOPIC",
+    "",
+).strip()
+
+APNS_AUTH_KEY_PATH = os.getenv(
+    "APNS_AUTH_KEY_PATH",
+    "",
+).strip()
+
+# True:
+#   Xcode / development APNs environment
+#
+# False:
+#   TestFlight / App Store / production APNs environment
+APNS_USE_SANDBOX = env_bool(
+    "APNS_USE_SANDBOX",
+    default=True,
+)
+
+
+# Fail fast when APNs is explicitly enabled but configuration is incomplete.
+if APNS_ENABLED:
+    _apns_missing_settings = []
+
+    if not APNS_KEY_ID:
+        _apns_missing_settings.append(
+            "APNS_KEY_ID"
+        )
+
+    if not APNS_TEAM_ID:
+        _apns_missing_settings.append(
+            "APNS_TEAM_ID"
+        )
+
+    if not APNS_TOPIC:
+        _apns_missing_settings.append(
+            "APNS_TOPIC"
+        )
+
+    if not APNS_AUTH_KEY_PATH:
+        _apns_missing_settings.append(
+            "APNS_AUTH_KEY_PATH"
+        )
+
+    if _apns_missing_settings:
+        raise ImproperlyConfigured(
+            "APNs is enabled but required settings are missing: "
+            + ", ".join(
+                _apns_missing_settings
+            )
+        )
+
+    _apns_key_path = Path(
+        APNS_AUTH_KEY_PATH
+    )
+
+    if not _apns_key_path.is_file():
+        raise ImproperlyConfigured(
+            "APNS_AUTH_KEY_PATH does not point to an existing file: "
+            f"{APNS_AUTH_KEY_PATH}"
+        )
 
 
 

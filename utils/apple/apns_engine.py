@@ -59,46 +59,128 @@ class APNsEngine:
             use_sandbox=getattr(settings, "APNS_USE_SANDBOX", True),
         )
 
-    def _jwt(self, config: APNsConfig) -> str:
+    def _jwt(
+        self,
+        config: APNsConfig,
+    ) -> str:
         """
-        APNs JWT can be reused for up to 60 minutes.
-        We refresh after 45 minutes.
-        """
-        now = int(time.time())
+        Build the ES256 provider authentication JWT required by APNs.
 
-        if self._cached_jwt and (now - self._cached_jwt_iat) < 45 * 60:
+        APNs provider tokens may be reused, but must remain fresh.
+        We cache the token for 45 minutes.
+        """
+        now = int(
+            time.time()
+        )
+
+        # Reuse a still-fresh provider token.
+        if (
+            self._cached_jwt
+            and self._cached_jwt_iat
+            and (
+                now
+                - self._cached_jwt_iat
+            )
+            < 45 * 60
+        ):
             return self._cached_jwt
 
         header = {
             "alg": "ES256",
             "kid": config.key_id,
         }
+
         claims = {
             "iss": config.team_id,
             "iat": now,
         }
 
-        signing_input = (
-            _b64url(json.dumps(header, separators=(",", ":")).encode())
-            + "."
-            + _b64url(json.dumps(claims, separators=(",", ":")).encode())
+        header_json = json.dumps(
+            header,
+            separators=(",", ":"),
+        ).encode(
+            "utf-8"
         )
 
-        with open(config.auth_key_path, "rb") as f:
-            private_key = serialization.load_pem_private_key(
-                f.read(),
-                password=None,
+        claims_json = json.dumps(
+            claims,
+            separators=(",", ":"),
+        ).encode(
+            "utf-8"
+        )
+
+        header_segment = _b64url(
+            header_json
+        )
+
+        claims_segment = _b64url(
+            claims_json
+        )
+
+        signing_input = (
+            f"{header_segment}."
+            f"{claims_segment}"
+        )
+
+        with open(
+            config.auth_key_path,
+            "rb",
+        ) as key_file:
+            private_key = (
+                serialization
+                .load_pem_private_key(
+                    key_file.read(),
+                    password=None,
+                )
             )
 
-        signature_der = private_key.sign(
-            signing_input.encode("ascii"),
-            ec.ECDSA(hashes.SHA256()),
+        if not isinstance(
+            private_key,
+            ec.EllipticCurvePrivateKey,
+        ):
+            raise ValueError(
+                "APNs authentication key is not "
+                "an EC private key."
+            )
+
+        signature_der = (
+            private_key.sign(
+                signing_input.encode(
+                    "ascii"
+                ),
+                ec.ECDSA(
+                    hashes.SHA256()
+                ),
+            )
         )
 
-        r, s = crypto_utils.decode_dss_signature(signature_der)
-        signature_raw = r.to_bytes(32, "big") + s.to_bytes(32, "big")
+        # cryptography returns an ASN.1 DER ECDSA signature.
+        # JWS / ES256 requires raw R || S.
+        r, s = (
+            crypto_utils
+            .decode_dss_signature(
+                signature_der
+            )
+        )
 
-        token = signing_input + "." + _b64url(signature_raw)
+        signature_raw = (
+            r.to_bytes(
+                32,
+                "big",
+            )
+            + s.to_bytes(
+                32,
+                "big",
+            )
+        )
+
+        token = (
+            signing_input
+            + "."
+            + _b64url(
+                signature_raw
+            )
+        )
 
         self._cached_jwt = token
         self._cached_jwt_iat = now

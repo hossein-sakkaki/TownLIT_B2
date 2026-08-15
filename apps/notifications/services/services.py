@@ -636,28 +636,51 @@ def _send_firebase_push_safely(
     notif_type: str,
 ) -> bool:
     """
-    Send Firebase/Web push and log the real result.
+    Send FCM push to eligible Android/Web devices.
+
+    Returns True only when at least one FCM delivery succeeds.
     """
     try:
-        result = push_engine.send_to_user(
+        sent_count = push_engine.send_to_user(
             recipient,
             title=title,
             body=body,
             data=data,
         )
 
-        # Some engines return None on success.
-        return True
+        if sent_count > 0:
+            logger.info(
+                "[Notif][Push][Firebase] success "
+                "context=%s user=%s type=%s sent_count=%s",
+                context,
+                getattr(
+                    recipient,
+                    "id",
+                    None,
+                ),
+                notif_type,
+                sent_count,
+            )
 
-    except Exception as e:
+            return True
+
+        return False
+
+    except Exception as error:
         logger.warning(
-            "[Notif][Push][Firebase] failed context=%s user=%s type=%s error=%s",
+            "[Notif][Push][Firebase] exception "
+            "context=%s user=%s type=%s error=%s",
             context,
-            getattr(recipient, "id", None),
+            getattr(
+                recipient,
+                "id",
+                None,
+            ),
             notif_type,
-            e,
+            error,
             exc_info=True,
         )
+
         return False
 
 
@@ -673,10 +696,16 @@ def _send_apns_push_safely(
     notif_type: str,
 ) -> bool:
     """
-    Send APNs push and retry once without custom sound if sound payload fails.
+    Send APNs push and report the real aggregate result.
+
+    True:
+        At least one eligible iOS device was accepted by APNs.
+
+    False:
+        No eligible iOS device was accepted by APNs.
     """
     try:
-        result = apns_engine.send_to_user(
+        sent_count = apns_engine.send_to_user(
             recipient,
             title=title,
             body=body,
@@ -685,41 +714,37 @@ def _send_apns_push_safely(
             sound=sound,
         )
 
-        return True
+        if sent_count > 0:
+            logger.info(
+                "[Notif][Push][APNs] success "
+                "context=%s user=%s type=%s sent_count=%s",
+                context,
+                getattr(recipient, "id", None),
+                notif_type,
+                sent_count,
+            )
+            return True
 
-    except Exception as first_error:
         logger.warning(
-            "[Notif][Push][APNs] failed context=%s user=%s type=%s sound=%s error=%s",
+            "[Notif][Push][APNs] no successful sends "
+            "context=%s user=%s type=%s",
             context,
             getattr(recipient, "id", None),
             notif_type,
-            sound,
-            first_error,
-            exc_info=True,
         )
 
-        if sound and _should_retry_push_without_sound(first_error):
-            try:
-                result = apns_engine.send_to_user(
-                    recipient,
-                    title=title,
-                    body=body,
-                    data=data,
-                    badge=badge,
-                    sound=None,
-                )
+        return False
 
-                return True
-
-            except Exception as retry_error:
-                logger.warning(
-                    "[Notif][Push][APNs] retry without sound failed context=%s user=%s type=%s error=%s",
-                    context,
-                    getattr(recipient, "id", None),
-                    notif_type,
-                    retry_error,
-                    exc_info=True,
-                )
+    except Exception as error:
+        logger.warning(
+            "[Notif][Push][APNs] exception "
+            "context=%s user=%s type=%s error=%s",
+            context,
+            getattr(recipient, "id", None),
+            notif_type,
+            error,
+            exc_info=True,
+        )
 
         return False
     
