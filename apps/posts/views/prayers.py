@@ -16,6 +16,14 @@ from rest_framework.exceptions import PermissionDenied, NotFound, ValidationErro
 
 from apps.posts.models.pray import Prayer, PrayerResponse, PrayerStatus
 from apps.posts.serializers.prayers import PrayerProfileGridSerializer, PrayerSerializer, PrayerResponseSerializer
+from apps.posts.services.prayer_content_safety import (
+    enforce_prayer_content_safety,
+    enforce_prayer_response_content_safety,
+)
+from apps.posts.services.prayer_media_content_safety import (
+    enforce_prayer_media_content_safety,
+    enforce_prayer_response_media_content_safety,
+)
 
 from apps.core.visibility.query import VisibilityQuery
 from apps.core.visibility.policy import VisibilityPolicy
@@ -38,6 +46,7 @@ class PrayViewSet(OwnerGateMixin, viewsets.ModelViewSet):
     -------------------------
     - visibility-aware
     - owner-safe
+    - Content Safety protected for Prayer/Response text and media
     - response: one-to-one lifecycle
     - feed/trending: cursor-based
     - explore/me: page pagination
@@ -115,24 +124,72 @@ class PrayViewSet(OwnerGateMixin, viewsets.ModelViewSet):
     # Create / Update / Delete
     # -------------------------------------------------------------------------
     def perform_create(self, serializer):
+        """
+        Attach the active owner and enforce Prayer Content Safety
+        before any Prayer or media persistence.
+
+        Safety order:
+        1. Prayer text
+        2. Prayer image / thumbnail / video
+        3. persistence
+        """
         owner = self._get_request_owner()
+
         if not owner:
-            raise PermissionDenied("Only members or guest users can create prayers.")
+            raise PermissionDenied(
+                "Only members or guest users can create prayers."
+            )
+
+        # Cheapest gate first.
+        enforce_prayer_content_safety(
+            validated_data=serializer.validated_data,
+            actor=self.request.user,
+        )
+
+        # All newly supplied media must pass before save().
+        enforce_prayer_media_content_safety(
+            validated_data=serializer.validated_data,
+            actor=self.request.user,
+        )
 
         serializer.save(
-            content_type=ContentType.objects.get_for_model(owner.__class__),
+            content_type=ContentType.objects.get_for_model(
+                owner.__class__
+            ),
             object_id=owner.id,
         )
 
     def perform_update(self, serializer):
-        obj = self.get_object()
-        self._assert_is_owner(obj)
-        serializer.save(updated_at=timezone.now())
+        """
+        Owner-safe Prayer update.
 
-    def perform_destroy(self, instance):
-        """Hard delete cascade (response/comments/reactions/media...)."""
-        self._assert_is_owner(instance)
-        instance.delete()
+        Content Safety:
+        - caption is rechecked only when supplied and changed
+        - only newly supplied/replaced media is inspected
+        - existing unchanged media is not redundantly reprocessed
+        """
+        obj = self.get_object()
+
+        self._assert_is_owner(
+            obj
+        )
+
+        # Text gate first.
+        enforce_prayer_content_safety(
+            validated_data=serializer.validated_data,
+            actor=self.request.user,
+            instance=obj,
+        )
+
+        # Only fields present in validated_data are inspected.
+        enforce_prayer_media_content_safety(
+            validated_data=serializer.validated_data,
+            actor=self.request.user,
+        )
+
+        serializer.save(
+            updated_at=timezone.now()
+        )
 
     # -------------------------------------------------------------------------
     # Feed (cursor-based)
@@ -301,87 +358,157 @@ class PrayViewSet(OwnerGateMixin, viewsets.ModelViewSet):
     # -------------------------------------------------------------------------
     # Respond (create/update response)
     # -------------------------------------------------------------------------
-    @action(detail=True, methods=["post", "patch"], permission_classes=[IsAuthenticated])
+    @action(
+        detail=True,
+        methods=["post", "patch"],
+        permission_classes=[IsAuthenticated],
+    )
     def respond(self, request, slug=None):
         """
         Create or update PrayerResponse.
-        Entire lifecycle runs inside one transaction.
-        Media conversion triggers AFTER commit.
+
+        Validation and Content Safety run before the database transaction.
+        Persistence and parent lifecycle synchronization remain atomic.
         """
         prayer: Prayer = self.get_object()
+
         self._assert_is_owner(prayer)
 
-        existing = getattr(prayer, "response", None)
+        existing = getattr(
+            prayer,
+            "response",
+            None,
+        )
 
-        result_status = request.data.get("result_status")
-        if result_status not in (PrayerStatus.ANSWERED, PrayerStatus.NOT_ANSWERED):
+        result_status = request.data.get(
+            "result_status"
+        )
+
+        if result_status not in (
+            PrayerStatus.ANSWERED,
+            PrayerStatus.NOT_ANSWERED,
+        ):
             logger.warning(
                 "[PrayerRespond] invalid result_status prayer_id=%s slug=%s result_status=%r allowed=%s",
                 getattr(prayer, "id", None),
                 getattr(prayer, "slug", None),
                 result_status,
-                [PrayerStatus.ANSWERED, PrayerStatus.NOT_ANSWERED],
+                [
+                    PrayerStatus.ANSWERED,
+                    PrayerStatus.NOT_ANSWERED,
+                ],
             )
+
             raise ValidationError({
-                "result_status": "Must be 'answered' or 'not_answered'."
+                "result_status": (
+                    "Must be 'answered' or 'not_answered'."
+                )
             })
 
-        with transaction.atomic():
-            if existing is None:
-                serializer = PrayerResponseSerializer(
-                    data=request.data,
-                    context={"request": request},
-                )
-
-                if not serializer.is_valid():
-                    logger.warning(
-                        "[PrayerRespond] create serializer invalid prayer_id=%s slug=%s errors=%s data_keys=%s file_keys=%s",
-                        getattr(prayer, "id", None),
-                        getattr(prayer, "slug", None),
-                        serializer.errors,
-                        list(request.data.keys()),
-                        list(request.FILES.keys()),
-                    )
-                    raise ValidationError(serializer.errors)
-
-                response_obj = serializer.save(prayer=prayer)
-
-                return Response(
-                    PrayerResponseSerializer(
-                        response_obj,
-                        context={"request": request},
-                    ).data,
-                    status=status.HTTP_201_CREATED,
-                )
-
+        # -----------------------------------------------------------------
+        # Create response
+        # -----------------------------------------------------------------
+        if existing is None:
             serializer = PrayerResponseSerializer(
-                existing,
                 data=request.data,
-                partial=(request.method == "PATCH"),
-                context={"request": request},
+                context={
+                    "request": request,
+                },
             )
 
             if not serializer.is_valid():
                 logger.warning(
-                    "[PrayerRespond] update serializer invalid prayer_id=%s response_id=%s slug=%s errors=%s data_keys=%s file_keys=%s",
+                    "[PrayerRespond] create serializer invalid prayer_id=%s slug=%s errors=%s data_keys=%s file_keys=%s",
                     getattr(prayer, "id", None),
-                    getattr(existing, "id", None),
                     getattr(prayer, "slug", None),
                     serializer.errors,
                     list(request.data.keys()),
                     list(request.FILES.keys()),
                 )
-                raise ValidationError(serializer.errors)
 
-            response_obj = serializer.save(updated_at=timezone.now())
+                raise ValidationError(
+                    serializer.errors
+                )
+
+            enforce_prayer_response_content_safety(
+                validated_data=serializer.validated_data,
+                actor=request.user,
+            )
+
+            enforce_prayer_response_media_content_safety(
+                validated_data=serializer.validated_data,
+                actor=request.user,
+            )
+
+            with transaction.atomic():
+                response_obj = serializer.save(
+                    prayer=prayer
+                )
 
             return Response(
                 PrayerResponseSerializer(
                     response_obj,
-                    context={"request": request},
+                    context={
+                        "request": request,
+                    },
                 ).data,
-                status=status.HTTP_200_OK,
+                status=status.HTTP_201_CREATED,
             )
+
+        # -----------------------------------------------------------------
+        # Update response
+        # -----------------------------------------------------------------
+        serializer = PrayerResponseSerializer(
+            existing,
+            data=request.data,
+            partial=(
+                request.method == "PATCH"
+            ),
+            context={
+                "request": request,
+            },
+        )
+
+        if not serializer.is_valid():
+            logger.warning(
+                "[PrayerRespond] update serializer invalid prayer_id=%s response_id=%s slug=%s errors=%s data_keys=%s file_keys=%s",
+                getattr(prayer, "id", None),
+                getattr(existing, "id", None),
+                getattr(prayer, "slug", None),
+                serializer.errors,
+                list(request.data.keys()),
+                list(request.FILES.keys()),
+            )
+
+            raise ValidationError(
+                serializer.errors
+            )
+
+        enforce_prayer_response_content_safety(
+            validated_data=serializer.validated_data,
+            actor=request.user,
+            instance=existing,
+        )
+
+        enforce_prayer_response_media_content_safety(
+            validated_data=serializer.validated_data,
+            actor=request.user,
+        )
+
+        with transaction.atomic():
+            response_obj = serializer.save(
+                updated_at=timezone.now()
+            )
+
+        return Response(
+            PrayerResponseSerializer(
+                response_obj,
+                context={
+                    "request": request,
+                },
+            ).data,
+            status=status.HTTP_200_OK,
+        )
             
     # -------------------------------------------------------------------------
     # Delete response (optional endpoint)

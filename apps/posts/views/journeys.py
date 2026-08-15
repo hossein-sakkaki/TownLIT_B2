@@ -38,6 +38,10 @@ from apps.posts.serializers.journeys import (
     JourneyViewerSerializer,
     JourneyViewWriteSerializer,
 )
+from apps.posts.services.journeys.journey_content_safety import (
+    enforce_journey_close_content_safety,
+    enforce_owned_journey_composition_content_safety,
+)
 from apps.journey_insights.services.daily_prompt import (
     DailyReflectionPromptResult,
     resolve_daily_reflection_after_publish,
@@ -372,6 +376,13 @@ class JourneyViewSet(
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        enforce_owned_journey_composition_content_safety(
+            composition_id=serializer.validated_data[
+                "composition_id"
+            ],
+            actor=request.user,
+        )
 
         publish_context = {
             "user_id": getattr(request.user, "pk", None),
@@ -982,9 +993,23 @@ class JourneyViewSet(
         serializer = JourneyCloseSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        close_text = serializer.validated_data[
+            "text"
+        ]
+
+        close_is_private = serializer.validated_data[
+            "is_private"
+        ]
+
+        enforce_journey_close_content_safety(
+            text=close_text,
+            is_private=close_is_private,
+            actor=request.user,
+        )
+
         journey.close(
-            text=serializer.validated_data["text"],
-            is_private=serializer.validated_data["is_private"],
+            text=close_text,
+            is_private=close_is_private,
         )
 
         journey.ordered_entries = list(
@@ -1011,9 +1036,21 @@ class JourneyViewSet(
         serializer = JourneySubmitSerializer(
             data=request.data,
         )
-        serializer.is_valid(raise_exception=True)
+
+        serializer.is_valid(
+            raise_exception=True
+        )
 
         owner = self._request_member()
+
+        # Content Safety runs synchronously before Journey enters
+        # the asynchronous render/publish workflow.
+        enforce_owned_journey_composition_content_safety(
+            composition_id=serializer.validated_data[
+                "composition_id"
+            ],
+            actor=request.user,
+        )
 
         try:
             job, created = submit_journey_workflow(
@@ -1023,6 +1060,7 @@ class JourneyViewSet(
                     serializer.validated_data
                 ),
             )
+
         except DjangoValidationError as exc:
             return Response(
                 {
@@ -1030,7 +1068,10 @@ class JourneyViewSet(
                     "code": "journey_submission_invalid",
                     "errors": (
                         exc.message_dict
-                        if hasattr(exc, "message_dict")
+                        if hasattr(
+                            exc,
+                            "message_dict",
+                        )
                         else exc.messages
                     ),
                 },
@@ -1040,7 +1081,9 @@ class JourneyViewSet(
         return Response(
             MediaConversionJobSerializer(
                 job,
-                context={"request": request},
+                context={
+                    "request": request,
+                },
             ).data,
             status=(
                 status.HTTP_201_CREATED
@@ -1101,6 +1144,173 @@ class JourneyViewSet(
             ).data,
             status=status.HTTP_200_OK,
         )
+
+    @action(
+        detail=False,
+        methods=["get"],
+        permission_classes=[IsAuthenticated],
+        url_path=r"processing-jobs/(?P<job_id>[0-9]+)",
+    )
+    def processing_job(
+        self,
+        request,
+        job_id=None,
+    ):
+        """
+        Return one owner-scoped Journey workflow job.
+
+        Content Safety failures are re-exposed using TownLIT's
+        normal structured API error envelope so all clients use
+        the same error contract for synchronous and asynchronous
+        moderation.
+        """
+
+        try:
+            normalized_job_id = int(
+                job_id
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            raise NotFound(
+                "Journey processing job not found."
+            )
+
+        composition_ids = (
+            CreativeComposition.objects
+            .filter(
+                owner=request.user,
+                is_active=True,
+            )
+            .values_list(
+                "pk",
+                flat=True,
+            )
+        )
+
+        content_type = (
+            ContentType.objects.get_for_model(
+                CreativeComposition,
+                for_concrete_model=False,
+            )
+        )
+
+        job = (
+            MediaConversionJob.objects
+            .filter(
+                pk=normalized_job_id,
+                content_type=content_type,
+                object_id__in=composition_ids,
+                field_name=JOURNEY_WORKFLOW_FIELD,
+            )
+            .first()
+        )
+
+        if job is None:
+            raise NotFound(
+                "Journey processing job not found."
+            )
+
+        payload = (
+            job.payload
+            if isinstance(
+                job.payload,
+                dict,
+            )
+            else {}
+        )
+
+        failure = payload.get(
+            "content_safety_failure"
+        )
+
+        if (
+            job.status == MediaJobStatus.FAILED
+            and isinstance(
+                failure,
+                dict,
+            )
+        ):
+            code = str(
+                failure.get(
+                    "code"
+                )
+                or ""
+            ).strip()
+
+            if code.startswith(
+                "content_safety_"
+            ):
+                retryable_value = failure.get(
+                    "retryable",
+                    False,
+                )
+
+                retryable = (
+                    retryable_value is True
+                    or str(
+                        retryable_value
+                    )
+                    .strip()
+                    .lower()
+                    in {
+                        "1",
+                        "true",
+                        "yes",
+                        "on",
+                    }
+                )
+
+                decision = str(
+                    failure.get(
+                        "decision"
+                    )
+                    or (
+                        "review"
+                        if retryable
+                        else "block"
+                    )
+                ).strip()
+
+                reason_code = str(
+                    failure.get(
+                        "reason_code"
+                    )
+                    or (
+                        "provider_unavailable"
+                        if retryable
+                        else "provider_flagged"
+                    )
+                ).strip()
+
+                return Response(
+                    {
+                        "message": "Request failed.",
+                        "error": {
+                            "code": code,
+                            "decision": decision,
+                            "reason_code": reason_code,
+                            "retryable": retryable,
+                        },
+                    },
+                    status=(
+                        status.HTTP_503_SERVICE_UNAVAILABLE
+                        if retryable
+                        else status.HTTP_422_UNPROCESSABLE_ENTITY
+                    ),
+                )
+
+        return Response(
+            MediaConversionJobSerializer(
+                job,
+                context={
+                    "request": request,
+                },
+            ).data,
+            status=status.HTTP_200_OK,
+        )
+        
 
 class JourneyViewerPagination(ConfigurablePagination):
     page_size = 30

@@ -1,11 +1,12 @@
 # apps/conversation/views.py
 
-from rest_framework import viewsets, status
+from rest_framework import request, viewsets, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.utils import timezone
+from rest_framework.exceptions import APIException
 from django.db.models import (
     Max,
     Q,
@@ -59,6 +60,13 @@ from apps.accounts.models.devices import UserDeviceKey
 from apps.conversation.utils import get_websocket_url
 from common.mime_type_validator import validate_file_type, is_unsafe_file
 from apps.core.security.decorators import require_litshield_access
+
+from apps.conversation.services.content_safety import (
+    enforce_group_metadata_content_safety,
+)
+from apps.conversation.services.media_content_safety import (
+    enforce_group_image_content_safety,
+)
 
 # Services
 from apps.conversation.services.read_delivery import (
@@ -487,7 +495,29 @@ class DialogueViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         group_name = serializer.validated_data["group_name"]
-        group_image = serializer.validated_data.get("group_image")
+
+        enforce_group_metadata_content_safety(
+            text=group_name,
+            actor=request.user,
+            field_name="group_name",
+        )
+
+        group_image = serializer.validated_data.get(
+            "group_image"
+        )
+
+        if group_image:
+            enforce_group_image_content_safety(
+                file_obj=group_image,
+                actor=request.user,
+                field_name="group_image",
+                validation_field_name="group_image",
+                mime_type=getattr(
+                    group_image,
+                    "content_type",
+                    None,
+                ),
+            )
 
         result = create_group_dialogue(
             acting_user=request.user,
@@ -545,9 +575,27 @@ class DialogueViewSet(viewsets.ModelViewSet):
 
         if not group_image:
             return Response(
-                {"detail": "No image uploaded."},
-                status=status.HTTP_400_BAD_REQUEST
+                {
+                    "detail": (
+                        "No image uploaded."
+                    )
+                },
+                status=(
+                    status.HTTP_400_BAD_REQUEST
+                ),
             )
+
+        enforce_group_image_content_safety(
+            file_obj=group_image,
+            actor=request.user,
+            field_name="group_image",
+            validation_field_name="group_image",
+            mime_type=getattr(
+                group_image,
+                "content_type",
+                None,
+            ),
+        )
 
         dialogue.group_image = group_image
         dialogue.group_avatar_version = (dialogue.group_avatar_version or 0) + 1
@@ -587,6 +635,26 @@ class DialogueViewSet(viewsets.ModelViewSet):
         serializer = UpdateGroupInfoSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         payload = serializer.validated_data
+
+        if "group_name" in payload:
+            incoming_group_name = (
+                payload.get(
+                    "group_name"
+                )
+                or ""
+            ).strip()
+
+            if (
+                incoming_group_name
+                and incoming_group_name
+                != dialogue.group_name
+            ):
+                enforce_group_metadata_content_safety(
+                    text=incoming_group_name,
+                    actor=request.user,
+                    field_name="group_name",
+                )
+        
         field_map = {
             "group_name": "group_name",
         }
@@ -1775,11 +1843,21 @@ class MessageViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_200_OK
             )
 
+        except APIException:
+            raise
+
         except Exception as e:
-            logger.exception("‼️ ERROR DURING edit_message(): %s", e)
+            logger.exception(
+                "‼️ ERROR DURING edit_message(): %s",
+                e,
+            )
+
             return Response(
-                {"error": "Internal server error", "details": str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                {
+                    "error": "Internal server error",
+                    "details": str(e),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
         
 

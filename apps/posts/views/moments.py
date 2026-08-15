@@ -1,4 +1,9 @@
 # apps/posts/views/moments.py
+#
+# TownLIT
+#
+# Created by Hossein Sakkaki on 2026-08-14.
+# Last Update by Hossein Sakkaki on 2026-08-14.
 
 from django.contrib.contenttypes.models import ContentType
 from django.utils import timezone
@@ -16,6 +21,13 @@ from apps.posts.serializers.moments import (
     MomentProfileGridSerializer,
     MomentSerializer,
 )
+from apps.posts.services.moment_content_safety import (
+    enforce_moment_content_safety,
+)
+from apps.posts.services.moment_media_content_safety import (
+    enforce_moment_media_content_safety,
+)
+
 from apps.core.visibility.query import VisibilityQuery
 from apps.core.visibility.policy import VisibilityPolicy
 from apps.core.pagination import ConfigurablePagination, FeedCursorPagination
@@ -39,6 +51,7 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
     -------------------------
     - visibility-aware
     - owner-safe
+    - Content Safety protected for captions, images, thumbnails, and videos
     - supports legacy single image/video Moments
     - supports JSON-backed multi-photo Moments
     - feed: cursor-based pagination
@@ -116,16 +129,23 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
         Ensure the active owner owns this Moment.
         """
         owner = self._get_request_owner()
-        if not owner:
-            raise PermissionDenied("Invalid owner context.")
 
-        owner_ct = ContentType.objects.get_for_model(owner.__class__)
+        if not owner:
+            raise PermissionDenied(
+                "Invalid owner context."
+            )
+
+        owner_ct = ContentType.objects.get_for_model(
+            owner.__class__
+        )
 
         if (
             obj.content_type_id != owner_ct.id
             or obj.object_id != owner.id
         ):
-            raise PermissionDenied("You do not own this Moment.")
+            raise PermissionDenied(
+                "You do not own this Moment."
+            )
 
     # -------------------------------------------------
     # Create
@@ -133,6 +153,10 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
     def perform_create(self, serializer):
         """
         Attach active owner to the new Moment.
+
+        Content Safety is enforced before any Moment/media persistence:
+        1. caption
+        2. uploaded images / thumbnail / video
         """
         owner = self._get_request_owner()
 
@@ -141,11 +165,26 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
                 "Only members or guest users can create moments."
             )
 
-        serializer.save(
-            content_type=ContentType.objects.get_for_model(owner.__class__),
-            object_id=owner.id,
+        # Cheap text gate first.
+        enforce_moment_content_safety(
+            validated_data=serializer.validated_data,
+            actor=self.request.user,
         )
 
+        # Media gate before serializer.save().
+        enforce_moment_media_content_safety(
+            validated_data=serializer.validated_data,
+            request=self.request,
+            actor=self.request.user,
+        )
+
+        serializer.save(
+            content_type=ContentType.objects.get_for_model(
+                owner.__class__
+            ),
+            object_id=owner.id,
+        )
+    
     # -------------------------------------------------
     # Update
     # -------------------------------------------------
@@ -158,9 +197,32 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
         - visibility
         - cover_image_id
         - video thumbnail
+
+        Content Safety:
+        - caption is rechecked only when changed
+        - newly supplied thumbnail is checked before persistence
+        - existing image/video media is never redundantly reprocessed
         """
         obj = self.get_object()
-        self._assert_is_owner(obj)
+
+        self._assert_is_owner(
+            obj
+        )
+
+        # Cheap text gate first.
+        enforce_moment_content_safety(
+            validated_data=serializer.validated_data,
+            actor=self.request.user,
+            instance=obj,
+        )
+
+        # Only newly supplied media is inspected.
+        # MomentSerializer already prohibits image/video replacement.
+        enforce_moment_media_content_safety(
+            validated_data=serializer.validated_data,
+            request=self.request,
+            actor=self.request.user,
+        )
 
         serializer.save(
             updated_at=timezone.now()
@@ -174,7 +236,10 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
         Owner-safe delete.
         Cleanup signal removes media files.
         """
-        self._assert_is_owner(instance)
+        self._assert_is_owner(
+            instance
+        )
+
         instance.delete()
 
     # -------------------------------------------------
@@ -191,10 +256,18 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
             viewer=request.user,
         )
 
-        page = self.paginate_queryset(qs)
-        serializer = self.get_serializer(page, many=True)
+        page = self.paginate_queryset(
+            qs
+        )
 
-        return self.get_paginated_response(serializer.data)
+        serializer = self.get_serializer(
+            page,
+            many=True
+        )
+
+        return self.get_paginated_response(
+            serializer.data
+        )
 
     # -------------------------------------------------
     # Trending for me
@@ -210,10 +283,18 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
             viewer=request.user,
         )
 
-        page = self.paginate_queryset(qs)
-        serializer = self.get_serializer(page, many=True)
+        page = self.paginate_queryset(
+            qs
+        )
 
-        return self.get_paginated_response(serializer.data)
+        serializer = self.get_serializer(
+            page,
+            many=True
+        )
+
+        return self.get_paginated_response(
+            serializer.data
+        )
 
     # -------------------------------------------------
     # Trending
@@ -230,21 +311,37 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
             window_seconds=24 * 60 * 60,
         )
 
-        page = self.paginate_queryset(qs)
-        serializer = self.get_serializer(page, many=True)
+        page = self.paginate_queryset(
+            qs
+        )
 
-        return self.get_paginated_response(serializer.data)
+        serializer = self.get_serializer(
+            page,
+            many=True
+        )
+
+        return self.get_paginated_response(
+            serializer.data
+        )
 
     # -------------------------------------------------
     # My moments
     # -------------------------------------------------
-    @action(detail=False, methods=["get"])
+    @action(
+        detail=False,
+        methods=["get"],
+    )
     def me(self, request):
         owner = self._get_request_owner()
-        if not owner:
-            raise PermissionDenied("Invalid owner type.")
 
-        owner_ct = ContentType.objects.get_for_model(owner.__class__)
+        if not owner:
+            raise PermissionDenied(
+                "Invalid owner type."
+            )
+
+        owner_ct = ContentType.objects.get_for_model(
+            owner.__class__
+        )
 
         qs = (
             Moment.objects
@@ -263,7 +360,7 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
                 "image",
                 "video",
                 "thumbnail",
-                
+
                 "media_assets",
 
                 # Multi-photo metadata
@@ -285,11 +382,16 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
                 "content_type_id",
                 "object_id",
             )
-            .order_by("-published_at", "-id")
+            .order_by(
+                "-published_at",
+                "-id"
+            )
         )
 
         try:
-            page = self.paginate_queryset(qs)
+            page = self.paginate_queryset(
+                qs
+            )
         except NotFound:
             return Response(
                 {
@@ -303,11 +405,15 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
         serializer = MomentProfileGridSerializer(
             page,
             many=True,
-            context={"request": request},
+            context={
+                "request": request,
+            },
         )
 
-        return self.get_paginated_response(serializer.data)
-    
+        return self.get_paginated_response(
+            serializer.data
+        )
+
     # -------------------------------------------------
     # Explore
     # -------------------------------------------------
@@ -319,13 +425,23 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
     def explore(self, request):
         qs = (
             self.get_queryset()
-            .filter(visibility=VISIBILITY_GLOBAL)
+            .filter(
+                visibility=VISIBILITY_GLOBAL
+            )
         )
 
-        page = self.paginate_queryset(qs)
-        serializer = self.get_serializer(page, many=True)
+        page = self.paginate_queryset(
+            qs
+        )
 
-        return self.get_paginated_response(serializer.data)
+        serializer = self.get_serializer(
+            page,
+            many=True
+        )
+
+        return self.get_paginated_response(
+            serializer.data
+        )
 
     # -------------------------------------------------
     # Retrieve
@@ -334,27 +450,39 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
         obj = self.get_object()
 
         # Hard owner-level gate.
-        self.apply_hard_owner_gate(request, obj)
+        self.apply_hard_owner_gate(
+            request,
+            obj
+        )
 
         # Not-yet-converted video is owner-only.
         if obj.video and obj.is_converted is not True:
             owner = (
-                resolve_owner_from_request(request)
+                resolve_owner_from_request(
+                    request
+                )
                 if request.user.is_authenticated
                 else None
             )
 
             if not owner:
-                raise NotFound("Moment not found.")
+                raise NotFound(
+                    "Moment not found."
+                )
 
-            owner_ct = ContentType.objects.get_for_model(owner.__class__)
+            owner_ct = ContentType.objects.get_for_model(
+                owner.__class__
+            )
+
             is_owner = (
                 obj.content_type_id == owner_ct.id
                 and obj.object_id == owner.id
             )
 
             if not is_owner:
-                raise NotFound("Moment not found.")
+                raise NotFound(
+                    "Moment not found."
+                )
 
         # Visibility gate.
         reason = VisibilityPolicy.gate_reason(
@@ -375,13 +503,23 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
 
         # Analytics.
         try:
-            Moment.objects.filter(pk=obj.pk).update(
-                view_count_internal=F("view_count_internal") + 1,
+            Moment.objects.filter(
+                pk=obj.pk
+            ).update(
+                view_count_internal=F(
+                    "view_count_internal"
+                ) + 1,
                 last_viewed_at=timezone.now(),
             )
         except Exception:
-            logger.exception("moment analytics update failed")
+            logger.exception(
+                "moment analytics update failed"
+            )
 
-        serializer = self.get_serializer(obj)
+        serializer = self.get_serializer(
+            obj
+        )
 
-        return Response(serializer.data)
+        return Response(
+            serializer.data
+        )

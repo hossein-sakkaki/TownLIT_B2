@@ -10,6 +10,7 @@ urlpatterns = [
     path('profiles_org/', include('apps.profilesOrg.urls')),
     path('posts/', include('apps.posts.urls')),
     path('sanctuary/', include('apps.sanctuary.urls')),
+    path("help-support/", include("apps.help_support.urls")),
     path('conversations/', include('apps.conversation.urls')),
     path('communication/', include('apps.communication.urls')),
     path('moderation/', include('apps.moderation.urls')),

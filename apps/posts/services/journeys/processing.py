@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 import json
 
+from collections.abc import Mapping
+
 from django.core.serializers.json import DjangoJSONEncoder
 from celery import current_app
 from django.contrib.contenttypes.models import ContentType
@@ -84,6 +86,325 @@ def _json_safe(value):
             cls=DjangoJSONEncoder,
         )
     )
+    
+def _content_safety_scalar_text(
+    value,
+) -> str:
+    """
+    Resolve DRF ErrorDetail / nested full-detail values
+    into one plain string.
+    """
+
+    if value is None:
+        return ""
+
+    if isinstance(
+        value,
+        Mapping,
+    ):
+        for key in (
+            "message",
+            "value",
+            "detail",
+        ):
+            if key in value:
+                resolved = (
+                    _content_safety_scalar_text(
+                        value[key]
+                    )
+                )
+
+                if resolved:
+                    return resolved
+
+        return ""
+
+    if isinstance(
+        value,
+        (
+            list,
+            tuple,
+        ),
+    ):
+        for item in value:
+            resolved = (
+                _content_safety_scalar_text(
+                    item
+                )
+            )
+
+            if resolved:
+                return resolved
+
+        return ""
+
+    return str(
+        value
+    ).strip()
+
+
+def _content_safety_bool(
+    value,
+) -> bool:
+    if isinstance(
+        value,
+        bool,
+    ):
+        return value
+
+    normalized = (
+        _content_safety_scalar_text(
+            value
+        )
+        .strip()
+        .lower()
+    )
+
+    return normalized in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _find_content_safety_payload(
+    value,
+) -> Mapping | None:
+    """
+    Find TownLIT's structured Content Safety payload
+    inside a DRF exception detail tree.
+    """
+
+    if isinstance(
+        value,
+        Mapping,
+    ):
+        code = (
+            _content_safety_scalar_text(
+                value.get(
+                    "code"
+                )
+            )
+        )
+
+        if code.startswith(
+            "content_safety_"
+        ):
+            return value
+
+        error_payload = value.get(
+            "error"
+        )
+
+        found = (
+            _find_content_safety_payload(
+                error_payload
+            )
+        )
+
+        if found is not None:
+            return found
+
+        for nested in value.values():
+            found = (
+                _find_content_safety_payload(
+                    nested
+                )
+            )
+
+            if found is not None:
+                return found
+
+        return None
+
+    if isinstance(
+        value,
+        (
+            list,
+            tuple,
+        ),
+    ):
+        for nested in value:
+            found = (
+                _find_content_safety_payload(
+                    nested
+                )
+            )
+
+            if found is not None:
+                return found
+
+    return None
+
+
+def _extract_content_safety_failure(
+    exc: Exception,
+) -> dict | None:
+    """
+    Extract TownLIT's normal structured Content Safety error
+    without parsing exception strings.
+
+    This keeps async Journey failures compatible with the same
+    iOS ContentSafetyErrorResolver used by synchronous requests.
+    """
+
+    candidates = []
+
+    detail = getattr(
+        exc,
+        "detail",
+        None,
+    )
+
+    if detail is not None:
+        candidates.append(
+            detail
+        )
+
+    full_details = getattr(
+        exc,
+        "get_full_details",
+        None,
+    )
+
+    if callable(
+        full_details
+    ):
+        try:
+            candidates.append(
+                full_details()
+            )
+        except Exception:
+            pass
+
+    for candidate in candidates:
+        payload = (
+            _find_content_safety_payload(
+                candidate
+            )
+        )
+
+        if payload is None:
+            continue
+
+        code = (
+            _content_safety_scalar_text(
+                payload.get(
+                    "code"
+                )
+            )
+        )
+
+        if not code.startswith(
+            "content_safety_"
+        ):
+            continue
+
+        retryable = (
+            _content_safety_bool(
+                payload.get(
+                    "retryable"
+                )
+            )
+        )
+
+        decision = (
+            _content_safety_scalar_text(
+                payload.get(
+                    "decision"
+                )
+            )
+            .strip()
+            .lower()
+        )
+
+        if not decision:
+            decision = (
+                "review"
+                if retryable
+                else "block"
+            )
+
+        reason_code = (
+            _content_safety_scalar_text(
+                payload.get(
+                    "reason_code"
+                )
+            )
+            .strip()
+            .lower()
+        )
+
+        if not reason_code:
+            reason_code = (
+                "provider_unavailable"
+                if retryable
+                else "provider_flagged"
+            )
+
+        return {
+            "code": code,
+            "decision": decision,
+            "reason_code": reason_code,
+            "retryable": retryable,
+        }
+
+    return None
+
+
+def _mark_journey_content_safety_failure(
+    *,
+    job: MediaConversionJob,
+    payload: dict,
+    exc: Exception,
+) -> bool:
+    """
+    Convert an async Content Safety rejection into a terminal
+    Journey workflow failure while preserving its structured
+    error payload for iOS.
+
+    Returns True only when the exception was a Content Safety
+    failure and was handled here.
+    """
+
+    failure = (
+        _extract_content_safety_failure(
+            exc
+        )
+    )
+
+    if failure is None:
+        return False
+
+    updated_payload = dict(
+        payload
+        or {}
+    )
+
+    updated_payload[
+        "content_safety_failure"
+    ] = failure
+
+    job.payload = _json_safe(
+        updated_payload
+    )
+
+    job.save(
+        update_fields=[
+            "payload",
+            "updated_at",
+        ]
+    )
+
+    
+    #  Content Safety rejection is terminal for this revision.
+    #  The draft/composition itself remains intact and editable.
+    job.mark_failed(
+        "Journey did not pass TownLIT Content Safety."
+    )
+
+    return True
     
 @transaction.atomic
 def submit_journey_workflow(
@@ -449,21 +770,58 @@ def run_workflow(job: MediaConversionJob) -> None:
         message="Publishing Journey",
     )
 
-    result = publish_journey_entry(
-        user=composition.owner,
-        owner=owner,
-        composition_id=composition.public_id,
-        render_job_id=render_job.public_id,
-        composition_revision=revision,
-        visibility=payload["visibility"],
-        retention_policy=payload["retention_policy"],
-        requested_timezone=payload.get("timezone"),
-        music_track_id=payload.get("music_track_id"),
-        music_variant_id=payload.get("music_variant_id"),
-        music_clip_start_ms=payload.get("music_clip_start_ms"),
-        music_clip_end_ms=payload.get("music_clip_end_ms"),
-        music_volume=payload.get("music_volume", "1"),
-    )
+    try:
+        result = publish_journey_entry(
+            user=composition.owner,
+            owner=owner,
+            composition_id=composition.public_id,
+            render_job_id=render_job.public_id,
+            composition_revision=revision,
+            visibility=payload["visibility"],
+            retention_policy=payload["retention_policy"],
+            requested_timezone=payload.get(
+                "timezone"
+            ),
+            music_track_id=payload.get(
+                "music_track_id"
+            ),
+            music_variant_id=payload.get(
+                "music_variant_id"
+            ),
+            music_clip_start_ms=payload.get(
+                "music_clip_start_ms"
+            ),
+            music_clip_end_ms=payload.get(
+                "music_clip_end_ms"
+            ),
+            music_volume=payload.get(
+                "music_volume",
+                "1",
+            ),
+        )
+
+    except Exception as exc:
+        handled_content_safety = (
+            _mark_journey_content_safety_failure(
+                job=job,
+                payload=payload,
+                exc=exc,
+            )
+        )
+
+        if handled_content_safety:
+            logger.info(
+                "journey.workflow.content_safety_rejected",
+                extra={
+                    "job_id": job.pk,
+                    "composition_id": composition.pk,
+                    "revision": revision,
+                },
+            )
+
+            return
+
+        raise
 
     reflection = None
 

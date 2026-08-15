@@ -32,6 +32,9 @@ from apps.posts.services.journeys.music import (
     prepare_journey_music_selection,
     validate_journey_music_video_compatibility,
 )
+from apps.posts.services.journeys.journey_media_content_safety import (
+    enforce_journey_render_media_content_safety,
+)
 from apps.posts.services.journeys.storage import (
     build_journey_asset_key,
     copy_storage_asset,
@@ -704,7 +707,26 @@ def publish_journey_entry(
         render_asset=render_asset,
         music_selection=music_selection,
     )
-    
+
+    # -------------------------------------------------
+    # Content Safety — final rendered Journey media
+    # -------------------------------------------------
+    # Run after all cheap render/music validation has succeeded,
+    # but before opening the publication transaction or copying
+    # immutable Journey assets.
+    #
+    # This is the authoritative media publication gate for both:
+    # - POST /journeys/publish/
+    # - POST /journeys/submit/ asynchronous workflow
+    #
+    # Provider calls intentionally remain outside transaction.atomic().
+    enforce_journey_render_media_content_safety(
+        media_type=render_asset.media_type,
+        rendered_key=render_asset.source_key,
+        thumbnail_key=render_job.thumbnail_path,
+        actor=user,
+    )
+
     copied_rendered_key = None
     copied_thumbnail_key = None
 

@@ -3,7 +3,7 @@
 #  TownLIT
 #
 #  Created by Hossein Sakkaki on 2026-04-01.
-#  Last Update by Hossein Sakkaki on 2026-07-30.
+#  Last Update by Hossein Sakkaki on 2026-08-14.
 #
 
 from django.contrib.auth import get_user_model
@@ -23,6 +23,9 @@ from apps.profiles.serializers.guest import (
     PublicGuestUserSerializer,
     LimitedGuestUserSerializer,
 )
+from apps.profiles.services.profile_avatar_content_safety import (
+    enforce_profile_avatar_content_safety,
+)
 from apps.accounts.serializers.user_serializers import CustomUserSerializer
 from apps.posts.models.moment import Moment
 from apps.posts.serializers.moments import MomentSerializer
@@ -30,6 +33,9 @@ from apps.posts.services.feed_access import get_visible_posts
 from utils.api.error_response import build_validation_error_response
 from apps.accounts.services.username_resolution import (
     resolve_username,
+)
+from apps.profiles.services.profile_content_safety import (
+    enforce_guest_profile_content_safety,
 )
 
 CustomUser = get_user_model()
@@ -187,6 +193,12 @@ class GuestUserViewSet(viewsets.ModelViewSet):
                 serializer.errors
             )
 
+        enforce_guest_profile_content_safety(
+            validated_data=serializer.validated_data,
+            actor=request.user,
+            instance=guest,
+        )
+
         try:
             with transaction.atomic():
                 updated_guest = serializer.save()
@@ -274,46 +286,101 @@ class GuestUserViewSet(viewsets.ModelViewSet):
             status=status.HTTP_200_OK,
         )
         
-        
-    @action(detail=False, methods=["post"], url_path="update-profile-image", permission_classes=[IsAuthenticated])
-    def update_profile_image(self, request):
-        # Block deleted accounts
-        if getattr(request.user, "is_deleted", False):
+    # Update profile image ------------------------------------------------------------------
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="update-profile-image",
+        permission_classes=[IsAuthenticated],
+    )
+    def update_profile_image(
+        self,
+        request,
+    ):
+        if getattr(
+            request.user,
+            "is_deleted",
+            False,
+        ):
             return Response(
-                {"error": "Your account is deactivated. Reactivate first to change your profile image."},
+                {
+                    "error": (
+                        "Your account is deactivated. "
+                        "Reactivate first to change your profile image."
+                    ),
+                },
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        profile_image = request.FILES.get("profile_image")
+        profile_image = request.FILES.get(
+            "profile_image"
+        )
+
         if not profile_image:
             return Response(
-                {"error": "No profile image uploaded."},
+                {
+                    "error": (
+                        "No profile image uploaded."
+                    ),
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Resolve profile before doing provider-backed safety work.
         try:
             guest = request.user.guest_profile
-        except (GuestUser.DoesNotExist, AttributeError):
+
+        except (
+            GuestUser.DoesNotExist,
+            AttributeError,
+        ):
             return Response(
-                {"error": "Guest profile not found."},
+                {
+                    "error": (
+                        "Guest profile not found."
+                    ),
+                },
                 status=status.HTTP_404_NOT_FOUND,
             )
 
         custom_user = guest.user
+
+        # Content Safety MUST complete before the existing avatar
+        # or avatar version is mutated.
+        enforce_profile_avatar_content_safety(
+            file_obj=profile_image,
+            actor=request.user,
+        )
+
         custom_user.image_name = profile_image
-        custom_user.avatar_version = (custom_user.avatar_version or 1) + 1
-        custom_user.save(update_fields=["image_name", "avatar_version"])
+        custom_user.avatar_version = (
+            custom_user.avatar_version
+            or 1
+        ) + 1
+
+        custom_user.save(
+            update_fields=[
+                "image_name",
+                "avatar_version",
+            ]
+        )
 
         guest_data = GuestUserSerializer(
             guest,
-            context={"request": request},
+            context={
+                "request": request,
+            },
         ).data
 
         return Response(
             {
-                "message": "Profile image updated successfully.",
+                "message": (
+                    "Profile image updated successfully."
+                ),
                 "guest": guest_data,
-                "user": guest_data.get("user"),
+                "user": guest_data.get(
+                    "user"
+                ),
             },
             status=status.HTTP_200_OK,
         )

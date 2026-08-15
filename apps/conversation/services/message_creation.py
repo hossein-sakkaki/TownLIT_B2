@@ -9,6 +9,12 @@ from apps.conversation.models import Dialogue, Message, MessageEncryption
 from common.mime_type_validator import validate_file_type, is_unsafe_file
 from apps.conversation.services.message_reply import validate_reply_target
 from apps.conversation.services.boundary_access import check_private_dialogue_boundary
+from apps.conversation.services.content_safety import (
+    enforce_group_message_content_safety,
+)
+from apps.conversation.services.media_content_safety import (
+    enforce_group_message_media_content_safety,
+)
 
 def _error(code: str, message: str, status_code: int):
     """Build a stable service error payload."""
@@ -198,14 +204,42 @@ def create_text_message(
         
     if dialogue.is_group:
         if is_encrypted:
-            return _error("BAD_REQUEST", "Group messages should not be encrypted.", 400)
+            return _error(
+                "BAD_REQUEST",
+                "Group messages should not be encrypted.",
+                400,
+            )
 
-        plain_text = (content or "").strip()
+        plain_text = (
+            content
+            or ""
+        ).strip()
+
         if not plain_text:
-            return _error("BAD_REQUEST", "Message content is required for group chat.", 400)
+            return _error(
+                "BAD_REQUEST",
+                "Message content is required for group chat.",
+                400,
+            )
 
-        base64_str = base64.b64encode(plain_text.encode("utf-8")).decode("utf-8")
-        content_bytes = base64_str.encode("utf-8")
+        enforce_group_message_content_safety(
+            dialogue=dialogue,
+            text=plain_text,
+            actor=sender,
+            field_name="content",
+        )
+
+        base64_str = base64.b64encode(
+            plain_text.encode(
+                "utf-8"
+            )
+        ).decode(
+            "utf-8"
+        )
+
+        content_bytes = base64_str.encode(
+            "utf-8"
+        )
 
         message = Message.objects.create(
             dialogue=dialogue,
@@ -215,7 +249,11 @@ def create_text_message(
         )
 
         dialogue.last_message = message
-        dialogue.save(update_fields=["last_message"])
+        dialogue.save(
+            update_fields=[
+                "last_message",
+            ]
+        )
 
         return _success({
             "message": message,
@@ -223,7 +261,10 @@ def create_text_message(
             "message_id": message.id,
             "is_group": True,
             "is_encrypted": False,
-            "reply_to_message_id": reply_to_message.id if reply_to_message else None,
+            "reply_to_message_id":
+                reply_to_message.id
+                if reply_to_message
+                else None,
         })
 
     # DM flow
@@ -328,12 +369,19 @@ def create_file_message(
     - Group non-encrypted file messages
     - DM encrypted file messages
     - Forward metadata for client-side media forwarding
+
+    Content Safety:
+    - Backend-readable Group image/video/audio is inspected before
+      Message creation.
+    - Private E2EE media is never decrypted or inspected here.
     """
+
     reply_validation = validate_reply_target(
         dialogue=dialogue,
         acting_user=sender,
         reply_to_message_id=reply_to_message_id,
     )
+
     if not reply_validation.get("ok"):
         return _error(
             reply_validation["code"],
@@ -341,7 +389,9 @@ def create_file_message(
             400,
         )
 
-    reply_to_message = reply_validation["message_obj"]
+    reply_to_message = (
+        reply_validation["message_obj"]
+    )
 
     boundary_check = check_private_dialogue_boundary(
         dialogue=dialogue,
@@ -354,14 +404,38 @@ def create_file_message(
             boundary_check.message,
             403,
         )
-        
-    # Forward metadata is only a relation marker.
-    # Actual file bytes are still created through the normal upload path.
-    is_forwarded = forwarded_from_message is not None
+
+    is_forwarded = (
+        forwarded_from_message
+        is not None
+    )
+
+    # --------------------------------------------------------------
+    # Group media
+    # --------------------------------------------------------------
 
     if dialogue.is_group:
         if is_encrypted_file:
-            return _error("BAD_REQUEST", "Group files must not be client-encrypted.", 400)
+            return _error(
+                "BAD_REQUEST",
+                "Group files must not be client-encrypted.",
+                400,
+            )
+
+        # Safety runs before Message creation/storage.
+        enforce_group_message_media_content_safety(
+            dialogue=dialogue,
+            file_obj=uploaded_file,
+            media_field_name=field_name,
+            actor=sender,
+            audit_field_name=field_name,
+            validation_field_name="file",
+            mime_type=getattr(
+                uploaded_file,
+                "content_type",
+                None,
+            ),
+        )
 
         message = Message.objects.create(
             dialogue=dialogue,
@@ -369,77 +443,174 @@ def create_file_message(
             is_encrypted_file=False,
             reply_to=reply_to_message,
             is_forwarded=is_forwarded,
-            forwarded_from=forwarded_from_message,
-            **{field_name: uploaded_file},
+            forwarded_from=(
+                forwarded_from_message
+            ),
+            **{
+                field_name:
+                    uploaded_file
+            },
         )
 
         dialogue.last_message = message
-        dialogue.save(update_fields=["last_message"])
 
-        return _success({
-            "message": message,
-            "dialogue_slug": dialogue.slug,
-            "message_id": message.id,
-            "is_group": True,
-            "is_encrypted_file": False,
-            "field_name": field_name,
-            "reply_to_message_id": reply_to_message.id if reply_to_message else None,
-            "is_forwarded": is_forwarded,
-            "forwarded_from_message_id": forwarded_from_message.id if forwarded_from_message else None,
-        })
+        dialogue.save(
+            update_fields=[
+                "last_message"
+            ]
+        )
 
-    # DM flow
+        return _success(
+            {
+                "message":
+                    message,
+                "dialogue_slug":
+                    dialogue.slug,
+                "message_id":
+                    message.id,
+                "is_group":
+                    True,
+                "is_encrypted_file":
+                    False,
+                "field_name":
+                    field_name,
+                "reply_to_message_id":
+                    (
+                        reply_to_message.id
+                        if reply_to_message
+                        else None
+                    ),
+                "is_forwarded":
+                    is_forwarded,
+                "forwarded_from_message_id":
+                    (
+                        forwarded_from_message.id
+                        if forwarded_from_message
+                        else None
+                    ),
+            }
+        )
+
+    # --------------------------------------------------------------
+    # Private E2EE media
+    # --------------------------------------------------------------
+
     if not is_encrypted_file:
-        return _error("BAD_REQUEST", "DM file uploads must be end-to-end encrypted.", 400)
-
-    if not aes_key_encrypted_bytes or not encrypted_for_device:
         return _error(
             "BAD_REQUEST",
-            "Missing E2EE fields: aes_key_encrypted and encrypted_for_device.",
+            "DM file uploads must be end-to-end encrypted.",
             400,
         )
 
-    clean_items = _normalize_encrypted_contents(encrypted_keys_per_device or [])
+    if (
+        not aes_key_encrypted_bytes
+        or not encrypted_for_device
+    ):
+        return _error(
+            "BAD_REQUEST",
+            (
+                "Missing E2EE fields: "
+                "aes_key_encrypted and encrypted_for_device."
+            ),
+            400,
+        )
 
+    clean_items = _normalize_encrypted_contents(
+        encrypted_keys_per_device
+        or []
+    )
+
+    # Private media is E2EE ciphertext.
+    # Never send these bytes through Content Safety.
     with transaction.atomic():
         message = Message.objects.create(
             dialogue=dialogue,
             sender=sender,
             is_encrypted_file=True,
-            encrypted_for_device=encrypted_for_device,
-            aes_key_encrypted=aes_key_encrypted_bytes,
+            encrypted_for_device=(
+                encrypted_for_device
+            ),
+            aes_key_encrypted=(
+                aes_key_encrypted_bytes
+            ),
             reply_to=reply_to_message,
             is_forwarded=is_forwarded,
-            forwarded_from=forwarded_from_message,
-            **{field_name: uploaded_file},
+            forwarded_from=(
+                forwarded_from_message
+            ),
+            **{
+                field_name:
+                    uploaded_file
+            },
         )
 
-        if recipient_hidden_on_incoming and recipient:
-            message.deleted_by_users.add(recipient)
+        if (
+            recipient_hidden_on_incoming
+            and recipient
+        ):
+            message.deleted_by_users.add(
+                recipient
+            )
 
         to_create = [
             MessageEncryption(
                 message=message,
-                device_id=item["device_id"],
-                encrypted_content=item["encrypted_content"],
+                device_id=(
+                    item[
+                        "device_id"
+                    ]
+                ),
+                encrypted_content=(
+                    item[
+                        "encrypted_content"
+                    ]
+                ),
             )
-            for item in clean_items[:500]
+            for item in clean_items[
+                :500
+            ]
         ]
 
         if to_create:
-            MessageEncryption.objects.bulk_create(to_create)
+            MessageEncryption.objects.bulk_create(
+                to_create
+            )
 
         dialogue.last_message = message
-        dialogue.save(update_fields=["last_message"])
 
-    return _success({
-        "message": message,
-        "dialogue_slug": dialogue.slug,
-        "message_id": message.id,
-        "is_group": False,
-        "is_encrypted_file": True,
-        "field_name": field_name,
-        "reply_to_message_id": reply_to_message.id if reply_to_message else None,
-        "is_forwarded": is_forwarded,
-        "forwarded_from_message_id": forwarded_from_message.id if forwarded_from_message else None,
-    })
+        dialogue.save(
+            update_fields=[
+                "last_message"
+            ]
+        )
+
+    return _success(
+        {
+            "message":
+                message,
+            "dialogue_slug":
+                dialogue.slug,
+            "message_id":
+                message.id,
+            "is_group":
+                False,
+            "is_encrypted_file":
+                True,
+            "field_name":
+                field_name,
+            "reply_to_message_id":
+                (
+                    reply_to_message.id
+                    if reply_to_message
+                    else None
+                ),
+            "is_forwarded":
+                is_forwarded,
+            "forwarded_from_message_id":
+                (
+                    forwarded_from_message.id
+                    if forwarded_from_message
+                    else None
+                ),
+        }
+    )

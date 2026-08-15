@@ -3,7 +3,7 @@
 #  TownLIT
 #
 #  Created by Hossein Sakkaki on 2023-01-01.
-#  Last Update by Hossein Sakkaki on 2026-07-30.
+#  Last Update by Hossein Sakkaki on 2026-08-14.
 #
 
 from datetime import timedelta
@@ -28,6 +28,9 @@ from apps.profiles.serializers.member import (
     MemberSerializer,
     LimitedMemberSerializer,
 )
+from apps.profiles.services.profile_avatar_content_safety import (
+    enforce_profile_avatar_content_safety,
+)
 from apps.accounts.serializers.user_serializers import CustomUserSerializer
 from apps.posts.serializers.testimonies import TestimonyProfileHeaderSerializer
 from apps.media_conversion.services.readiness import get_media_ready_state
@@ -37,7 +40,9 @@ from validators.user_validators import validate_phone_number
 from utils.common.utils import create_active_code, send_sms, mask_phone
 from utils.email.email_tools import send_custom_email
 from django.contrib.auth import get_user_model
-
+from apps.profiles.services.profile_content_safety import (
+    enforce_member_profile_content_safety,
+)
 
 CustomUser = get_user_model()
 logger = logging.getLogger(__name__)
@@ -207,6 +212,12 @@ class MemberViewSet(viewsets.ModelViewSet):
                 serializer.errors
             )
 
+        enforce_member_profile_content_safety(
+            validated_data=serializer.validated_data,
+            actor=request.user,
+            instance=member,
+        )
+
         try:
             with transaction.atomic():
                 updated_member = serializer.save()
@@ -292,52 +303,112 @@ class MemberViewSet(viewsets.ModelViewSet):
             status=status.HTTP_200_OK,
         )
 
-    # Update profile image ------------------------------------------------------------------
+    # Update profile avatar ------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='update-profile-image', permission_classes=[IsAuthenticated])
-    def update_profile_image(self, request):
-
-        if getattr(request.user, "is_deleted", False):
+    def update_profile_image(
+        self,
+        request,
+    ):
+        if getattr(
+            request.user,
+            "is_deleted",
+            False,
+        ):
             return Response(
-                {"error": "Your account is deactivated. Reactivate first to change your profile image."},
-                status=status.HTTP_403_FORBIDDEN
+                {
+                    "error": (
+                        "Your account is deactivated. "
+                        "Reactivate first to change your profile image."
+                    ),
+                },
+                status=status.HTTP_403_FORBIDDEN,
             )
 
-        profile_image = request.FILES.get('profile_image')
-        if not profile_image:
-            return Response({"error": "No profile image uploaded"}, status=status.HTTP_400_BAD_REQUEST)
+        profile_image = request.FILES.get(
+            "profile_image"
+        )
 
-        # Load Member + CustomUser
+        if not profile_image:
+            return Response(
+                {
+                    "error": "No profile image uploaded",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Resolve profile and permissions before performing any
+        # provider-backed Content Safety work.
         try:
             member = request.user.member_profile
-        except (Member.DoesNotExist, AttributeError):
-            return Response({"error": "Profile not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        except (
+            Member.DoesNotExist,
+            AttributeError,
+        ):
+            return Response(
+                {
+                    "error": "Profile not found",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         if member.is_hidden_by_confidants:
             return Response(
                 {
                     "code": "profile_temporarily_unavailable",
-                    "detail": "Your profile is currently unavailable. Please contact TownLIT Support for more information.",
+                    "detail": (
+                        "Your profile is currently unavailable. "
+                        "Please contact TownLIT Support for more information."
+                    ),
                 },
                 status=status.HTTP_403_FORBIDDEN,
             )
 
         custom_user = member.user
 
-        # --- Save image & bump version ---
-        custom_user.image_name = profile_image
-        custom_user.avatar_version = (custom_user.avatar_version or 1) + 1
-        custom_user.save(update_fields=["image_name", "avatar_version"])
+        # Content Safety MUST run before mutating CustomUser.
+        #
+        # BLOCK / REVIEW / provider-unavailable:
+        # - existing avatar remains untouched
+        # - avatar_version remains untouched
+        # - standard Content Safety exception propagates to the client
+        enforce_profile_avatar_content_safety(
+            file_obj=profile_image,
+            actor=request.user,
+        )
 
-        # --- Return updated serializers ---
-        member_data = MemberSerializer(member, context={'request': request}).data
+        # Persist only after Content Safety allows publication.
+        custom_user.image_name = profile_image
+        custom_user.avatar_version = (
+            custom_user.avatar_version
+            or 1
+        ) + 1
+
+        custom_user.save(
+            update_fields=[
+                "image_name",
+                "avatar_version",
+            ]
+        )
+
+        member_data = MemberSerializer(
+            member,
+            context={
+                "request": request,
+            },
+        ).data
 
         return Response(
             {
-                "message": "Profile image updated successfully.",
+                "message": (
+                    "Profile image updated successfully."
+                ),
                 "member": member_data,
-                "user": member_data.get("user"),   # nested CustomUser
+                "user": member_data.get(
+                    "user"
+                ),
             },
-            status=status.HTTP_200_OK
+            status=status.HTTP_200_OK,
         )
 
     # Request Email Actions -------------------------------------------------------------------------------------------------

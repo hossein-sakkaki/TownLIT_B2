@@ -189,6 +189,8 @@ INSTALLED_APPS = [
     'apps.notifications.apps.NotificationsConfig',
     'apps.conversation.apps.ConversationConfig',
     'apps.communication.apps.CommunicationConfig',
+    "apps.help_support.apps.HelpSupportConfig",
+    
     'apps.moderation.apps.ModerationConfig',
     'apps.store.apps.StoreConfig',
     'apps.products.apps.ProductsConfig',
@@ -221,6 +223,7 @@ INSTALLED_APPS = [
     
     "apps.audio_catalog.apps.AudioCatalogConfig",
     "apps.creative_editor.apps.CreativeEditorConfig",
+    "apps.content_safety.apps.ContentSafetyConfig",
 ]
 
 MIDDLEWARE = [
@@ -476,22 +479,6 @@ AWS_SNS_REGION = os.getenv('AWS_SNS_REGION')
 # AWS S3 Settings for Translater --------------------------------------------------------
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 
-
-# OpenAI --------------------------------------------------------------------------------
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_TRANSLATION_MODEL = os.getenv("OPENAI_TRANSLATION_MODEL", "gpt-4.1")
-TRANSLATIONS_HUMANIZE_ENABLED = env_bool("TRANSLATIONS_HUMANIZE_ENABLED", default=False)
-TRANSLATIONS_HUMANIZE_ALL = env_bool("TRANSLATIONS_HUMANIZE_ALL", default=False)
-TRANSLATIONS_HUMANIZE_PROMPT_VERSION = os.getenv("TRANSLATIONS_HUMANIZE_PROMPT_VERSION", "v1.1")
-
-OPENAI_TTS_MODEL = os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
-VOICE_HUMANIZE_ENABLED = env_bool("VOICE_HUMANIZE_ENABLED", default=True)
-VOICE_HUMANIZE_PROMPT_VERSION = os.getenv("VOICE_HUMANIZE_PROMPT_VERSION", "v1")
-
-TRANSLATIONS_STRUCTURED_PROMPT_VERSION = os.getenv(
-    "TRANSLATIONS_STRUCTURED_PROMPT_VERSION",
-    "structured-v1.0",
-)
 
 # Subtitles -----------------------------------------------------------------------------
 SUBTITLES_DEFAULT_LANGUAGES = []
@@ -883,3 +870,297 @@ CREATIVE_VIDEO_DURATION_TOLERANCE_MS = 250
 
 # Bound ffprobe work before expensive conversion is accepted.
 CREATIVE_VIDEO_PROBE_TIMEOUT_SECONDS = 15
+
+
+# ---------------------------------------------------------------------
+# Support email
+# ---------------------------------------------------------------------
+TOWNLIT_SUPPORT_EMAIL = os.getenv(
+    "TOWNLIT_SUPPORT_EMAIL",
+    "support@townlit.com",
+)
+
+
+
+# OpenAI --------------------------------------------------------------------------------
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_TRANSLATION_MODEL = os.getenv("OPENAI_TRANSLATION_MODEL", "gpt-4.1")
+TRANSLATIONS_HUMANIZE_ENABLED = env_bool("TRANSLATIONS_HUMANIZE_ENABLED", default=False)
+TRANSLATIONS_HUMANIZE_ALL = env_bool("TRANSLATIONS_HUMANIZE_ALL", default=False)
+TRANSLATIONS_HUMANIZE_PROMPT_VERSION = os.getenv("TRANSLATIONS_HUMANIZE_PROMPT_VERSION", "v1.1")
+
+OPENAI_TTS_MODEL = os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
+VOICE_HUMANIZE_ENABLED = env_bool("VOICE_HUMANIZE_ENABLED", default=True)
+VOICE_HUMANIZE_PROMPT_VERSION = os.getenv("VOICE_HUMANIZE_PROMPT_VERSION", "v1")
+
+TRANSLATIONS_STRUCTURED_PROMPT_VERSION = os.getenv(
+    "TRANSLATIONS_STRUCTURED_PROMPT_VERSION",
+    "structured-v1.0",
+)
+
+
+# Content Safety -------------------------------------------------------------------------
+CONTENT_SAFETY_ENABLED = env_bool(
+    "CONTENT_SAFETY_ENABLED",
+    default=True,
+)
+
+CONTENT_SAFETY_POLICY_VERSION = os.getenv(
+    "CONTENT_SAFETY_POLICY_VERSION",
+    "text-v1.5",
+)
+
+CONTENT_SAFETY_MODERATION_MODEL = os.getenv(
+    "CONTENT_SAFETY_MODERATION_MODEL",
+    "omni-moderation-latest",
+)
+
+CONTENT_SAFETY_ADJUDICATION_ENABLED = env_bool(
+    "CONTENT_SAFETY_ADJUDICATION_ENABLED",
+    default=True,
+)
+
+CONTENT_SAFETY_ADJUDICATION_MODEL = os.getenv(
+    "CONTENT_SAFETY_ADJUDICATION_MODEL",
+    "gpt-5-mini",
+)
+
+CONTENT_SAFETY_STRICT_CIVILITY_ENABLED = env_bool(
+    "CONTENT_SAFETY_STRICT_CIVILITY_ENABLED",
+    default=False,
+)
+
+CONTENT_SAFETY_STRICT_CIVILITY_CONTEXTS = os.getenv(
+    "CONTENT_SAFETY_STRICT_CIVILITY_CONTEXTS",
+    "comment,reply",
+)
+
+CONTENT_SAFETY_CACHE_TTL_DAYS = int(
+    os.getenv(
+        "CONTENT_SAFETY_CACHE_TTL_DAYS",
+        "30",
+    )
+)
+
+CONTENT_SAFETY_MAX_TEXT_CHARS = int(
+    os.getenv(
+        "CONTENT_SAFETY_MAX_TEXT_CHARS",
+        "20000",
+    )
+)
+
+CONTENT_SAFETY_OPENAI_TIMEOUT_SECONDS = float(
+    os.getenv(
+        "CONTENT_SAFETY_OPENAI_TIMEOUT_SECONDS",
+        "4.0",
+    )
+)
+
+CONTENT_SAFETY_ADJUDICATION_TIMEOUT_SECONDS = float(
+    os.getenv(
+        "CONTENT_SAFETY_ADJUDICATION_TIMEOUT_SECONDS",
+        "8.0",
+    )
+)
+
+CONTENT_SAFETY_OPENAI_MAX_RETRIES = int(
+    os.getenv(
+        "CONTENT_SAFETY_OPENAI_MAX_RETRIES",
+        "1",
+    )
+)
+
+CONTENT_SAFETY_ADJUDICATION_CACHE_TTL_DAYS = int(
+    os.getenv(
+        "CONTENT_SAFETY_ADJUDICATION_CACHE_TTL_DAYS",
+        "30",
+    )
+)
+
+
+# Content Safety Image -------------------------------------------------------------------------
+CONTENT_SAFETY_MAX_IMAGE_BYTES = int(
+    os.getenv(
+        "CONTENT_SAFETY_MAX_IMAGE_BYTES",
+        str(20 * 1024 * 1024),
+    )
+)
+
+CONTENT_SAFETY_MEDIA_POLICY_VERSION = os.getenv(
+    "CONTENT_SAFETY_MEDIA_POLICY_VERSION",
+    "media-v1.0",
+)
+
+CONTENT_SAFETY_IMAGE_GUARD_ENABLED = (
+    os.getenv(
+        "CONTENT_SAFETY_IMAGE_GUARD_ENABLED",
+        "1",
+    )
+    .strip()
+    .lower()
+    in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+)
+
+CONTENT_SAFETY_IMAGE_GUARD_MODEL = os.getenv(
+    "CONTENT_SAFETY_IMAGE_GUARD_MODEL",
+    "gpt-5-nano",
+)
+
+CONTENT_SAFETY_IMAGE_GUARD_DETAIL = os.getenv(
+    "CONTENT_SAFETY_IMAGE_GUARD_DETAIL",
+    "low",
+)
+
+CONTENT_SAFETY_IMAGE_ADJUDICATION_DETAIL = os.getenv(
+    "CONTENT_SAFETY_IMAGE_ADJUDICATION_DETAIL",
+    "high",
+)
+
+CONTENT_SAFETY_IMAGE_GUARD_TIMEOUT_SECONDS = float(
+    os.getenv(
+        "CONTENT_SAFETY_IMAGE_GUARD_TIMEOUT_SECONDS",
+        "6",
+    )
+)
+
+
+# Content Safety Video -------------------------------------------------------------------------
+CONTENT_SAFETY_MAX_VIDEO_BYTES = int(
+    os.getenv(
+        "CONTENT_SAFETY_MAX_VIDEO_BYTES",
+        str(500 * 1024 * 1024),
+    )
+)
+
+CONTENT_SAFETY_VIDEO_PIPELINE_VERSION = os.getenv(
+    "CONTENT_SAFETY_VIDEO_PIPELINE_VERSION",
+    "video-v1.0",
+)
+
+CONTENT_SAFETY_MAX_VIDEO_DURATION_SECONDS = float(
+    os.getenv(
+        "CONTENT_SAFETY_MAX_VIDEO_DURATION_SECONDS",
+        str(20 * 60),
+    )
+)
+
+CONTENT_SAFETY_FFMPEG_BINARY = os.getenv(
+    "CONTENT_SAFETY_FFMPEG_BINARY",
+    "ffmpeg",
+)
+
+CONTENT_SAFETY_FFPROBE_BINARY = os.getenv(
+    "CONTENT_SAFETY_FFPROBE_BINARY",
+    "ffprobe",
+)
+
+CONTENT_SAFETY_VIDEO_FFMPEG_TIMEOUT_SECONDS = float(
+    os.getenv(
+        "CONTENT_SAFETY_VIDEO_FFMPEG_TIMEOUT_SECONDS",
+        "60",
+    )
+)
+
+CONTENT_SAFETY_VIDEO_FRAME_WIDTH = int(
+    os.getenv(
+        "CONTENT_SAFETY_VIDEO_FRAME_WIDTH",
+        "768",
+    )
+)
+
+CONTENT_SAFETY_VIDEO_MAX_FRAMES = int(
+    os.getenv(
+        "CONTENT_SAFETY_VIDEO_MAX_FRAMES",
+        "16",
+    )
+)
+
+CONTENT_SAFETY_VIDEO_SCENE_SAMPLING_ENABLED = (
+    os.getenv(
+        "CONTENT_SAFETY_VIDEO_SCENE_SAMPLING_ENABLED",
+        "1",
+    )
+    .strip()
+    .lower()
+    in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+)
+
+CONTENT_SAFETY_VIDEO_SCENE_THRESHOLD = float(
+    os.getenv(
+        "CONTENT_SAFETY_VIDEO_SCENE_THRESHOLD",
+        "0.35",
+    )
+)
+
+CONTENT_SAFETY_VIDEO_MAX_SCENE_FRAMES = int(
+    os.getenv(
+        "CONTENT_SAFETY_VIDEO_MAX_SCENE_FRAMES",
+        "4",
+    )
+)
+
+CONTENT_SAFETY_VIDEO_FRAME_CONCURRENCY = int(
+    os.getenv(
+        "CONTENT_SAFETY_VIDEO_FRAME_CONCURRENCY",
+        "4",
+    )
+)
+
+CONTENT_SAFETY_VIDEO_VISUAL_GUARD_MODEL = os.getenv(
+    "CONTENT_SAFETY_VIDEO_VISUAL_GUARD_MODEL",
+    "gpt-5-nano",
+)
+
+CONTENT_SAFETY_VIDEO_VISUAL_GUARD_DETAIL = os.getenv(
+    "CONTENT_SAFETY_VIDEO_VISUAL_GUARD_DETAIL",
+    "low",
+)
+
+CONTENT_SAFETY_VIDEO_VISUAL_ADJUDICATION_MODEL = os.getenv(
+    "CONTENT_SAFETY_VIDEO_VISUAL_ADJUDICATION_MODEL",
+    "gpt-5-mini",
+)
+
+CONTENT_SAFETY_VIDEO_VISUAL_ADJUDICATION_DETAIL = os.getenv(
+    "CONTENT_SAFETY_VIDEO_VISUAL_ADJUDICATION_DETAIL",
+    "high",
+)
+
+CONTENT_SAFETY_VIDEO_MAX_FINAL_VISUAL_FRAMES = int(
+    os.getenv(
+        "CONTENT_SAFETY_VIDEO_MAX_FINAL_VISUAL_FRAMES",
+        "6",
+    )
+)
+
+CONTENT_SAFETY_VIDEO_TRANSCRIPTION_MODEL = os.getenv(
+    "CONTENT_SAFETY_VIDEO_TRANSCRIPTION_MODEL",
+    "gpt-4o-mini-transcribe",
+)
+
+CONTENT_SAFETY_VIDEO_TRANSCRIPTION_TIMEOUT_SECONDS = float(
+    os.getenv(
+        "CONTENT_SAFETY_VIDEO_TRANSCRIPTION_TIMEOUT_SECONDS",
+        "30",
+    )
+)
+
+CONTENT_SAFETY_VIDEO_AUDIO_BITRATE = os.getenv(
+    "CONTENT_SAFETY_VIDEO_AUDIO_BITRATE",
+    "32k",
+)
+
+CONTENT_SAFETY_VIDEO_RESULT_CACHE_MODEL = os.getenv(
+    "CONTENT_SAFETY_VIDEO_RESULT_CACHE_MODEL",
+    "townlit-video-safety-v1",
+)

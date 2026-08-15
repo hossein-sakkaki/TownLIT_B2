@@ -34,6 +34,13 @@ from apps.posts.serializers.testimonies import (
     TestimonyProfileHeaderSerializer,
     TestimonySerializer,
 )
+from apps.posts.services.testimony_content_safety import (
+    enforce_testimony_content_safety,
+)
+from apps.posts.services.testimony_media_content_safety import (
+    enforce_testimony_image_asset_safety,
+    enforce_testimony_media_content_safety,
+)
 from apps.profiles.models.member import Member
 from utils.common.image_utils import convert_image_to_jpg
 from validators.mediaValidators.image_validators import (
@@ -247,18 +254,35 @@ class TestimonyViewSet(OwnerGateMixin, viewsets.ModelViewSet):
     # -------------------------------------------------
     # Create
     # -------------------------------------------------
-    @transaction.atomic
     def perform_create(self, serializer):
+        """
+        Create a Testimony after ownership, uniqueness and Content Safety checks.
+
+        Safety provider calls intentionally run outside the DB transaction.
+
+        Safety order:
+        1. title / written content
+        2. image-like media
+        3. audio transcription or video safety
+        4. persistence
+        """
+
         owner = self._get_owner()
 
         if not owner:
-            raise PermissionDenied("Invalid owner type.")
+            raise PermissionDenied(
+                "Invalid owner type."
+            )
 
-        ttype = serializer.validated_data.get("type")
+        ttype = serializer.validated_data.get(
+            "type"
+        )
 
-        owner_ct = ContentType.objects.get_for_model(owner.__class__)
+        owner_ct = ContentType.objects.get_for_model(
+            owner.__class__
+        )
 
-        # Enforce: one testimony per type per owner.
+        # Cheap duplicate check before external Safety calls.
         exists = Testimony.objects.filter(
             content_type=owner_ct,
             object_id=owner.id,
@@ -270,18 +294,69 @@ class TestimonyViewSet(OwnerGateMixin, viewsets.ModelViewSet):
                 f"You already have a '{ttype}' testimony."
             )
 
-        serializer.save(
-            content_type=owner_ct,
-            object_id=owner.id,
+        # Text/title Safety first.
+        enforce_testimony_content_safety(
+            validated_data=serializer.validated_data,
+            actor=self.request.user,
         )
 
+        # Media Safety before any Testimony/media persistence.
+        enforce_testimony_media_content_safety(
+            validated_data=serializer.validated_data,
+            actor=self.request.user,
+        )
+
+        # Re-check uniqueness after external provider calls.
+        with transaction.atomic():
+            exists = Testimony.objects.filter(
+                content_type=owner_ct,
+                object_id=owner.id,
+                type=ttype,
+            ).exists()
+
+            if exists:
+                raise PermissionDenied(
+                    f"You already have a '{ttype}' testimony."
+                )
+
+            serializer.save(
+                content_type=owner_ct,
+                object_id=owner.id,
+            )
+            
     # -------------------------------------------------
     # Update
     # -------------------------------------------------
     def perform_update(self, serializer):
+        """
+        Owner-safe Testimony update.
+
+        Content Safety:
+        - supplied changed text fields are rechecked
+        - only newly supplied media is inspected
+        - unchanged existing media is not redundantly processed
+        """
+
         obj = self.get_object()
-        self._assert_is_owner(obj)
-        serializer.save(updated_at=timezone.now())
+
+        self._assert_is_owner(
+            obj
+        )
+
+        enforce_testimony_content_safety(
+            validated_data=serializer.validated_data,
+            actor=self.request.user,
+            instance=obj,
+        )
+
+        enforce_testimony_media_content_safety(
+            validated_data=serializer.validated_data,
+            actor=self.request.user,
+        )
+
+        serializer.save(
+            updated_at=timezone.now()
+        )
 
     # -------------------------------------------------
     # Delete
@@ -349,6 +424,25 @@ class TestimonyViewSet(OwnerGateMixin, viewsets.ModelViewSet):
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        # -------------------------------------------------
+        # Content Safety
+        # -------------------------------------------------
+        # Safety exceptions intentionally propagate unchanged.
+        # No storage write has happened yet.
+        self._rewind_uploaded_file(
+            uploaded
+        )
+
+        enforce_testimony_image_asset_safety(
+            file_obj=uploaded,
+            actor=request.user,
+            field_name="thumbnail",
+        )
+
+        self._rewind_uploaded_file(
+            uploaded
+        )
 
         old_thumbnail_key = getattr(
             getattr(obj, "thumbnail", None),
@@ -527,6 +621,25 @@ class TestimonyViewSet(OwnerGateMixin, viewsets.ModelViewSet):
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        # -------------------------------------------------
+        # Content Safety
+        # -------------------------------------------------
+        # Safety exceptions intentionally propagate unchanged.
+        # No persistent storage write has happened yet.
+        self._rewind_uploaded_file(
+            uploaded
+        )
+
+        enforce_testimony_image_asset_safety(
+            file_obj=uploaded,
+            actor=request.user,
+            field_name="audio_artwork",
+        )
+
+        self._rewind_uploaded_file(
+            uploaded
+        )
 
         old_artwork_key = getattr(
             getattr(obj, "audio_artwork", None),

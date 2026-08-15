@@ -10,6 +10,12 @@ from django.db import transaction
 from apps.conversation.models import Dialogue, Message, MessageEncryption
 from apps.conversation.services.message_reply import build_reply_preview
 from apps.conversation.services.boundary_access import check_private_dialogue_boundary
+from apps.conversation.services.content_safety import (
+    enforce_group_message_content_safety,
+)
+from apps.conversation.services.media_content_safety import (
+    enforce_group_message_media_content_safety,
+)
 
 FORWARD_MODE_BACKEND_ASSISTED = "backend_assisted"
 FORWARD_MODE_CLIENT_REENCRYPT = "client_reencrypt"
@@ -239,7 +245,12 @@ def build_forward_preview(*, message):
     return preview
 
 
-def create_forwarded_message_backend_assisted(*, source_message_id, target_dialogue_slug, acting_user):
+def create_forwarded_message_backend_assisted(
+    *,
+    source_message_id,
+    target_dialogue_slug,
+    acting_user,
+):
     """
     Backend-assisted forward.
 
@@ -248,99 +259,282 @@ def create_forwarded_message_backend_assisted(*, source_message_id, target_dialo
 
     Not supported now:
     - Any forward touching DM/E2EE
+
+    Content Safety:
+    - Group text is rechecked for the target publication.
+    - Group image/video/audio is rechecked before any copied file
+      is written to storage.
     """
+
     validation = validate_forward_request(
-        source_message_id=source_message_id,
-        target_dialogue_slug=target_dialogue_slug,
+        source_message_id=(
+            source_message_id
+        ),
+        target_dialogue_slug=(
+            target_dialogue_slug
+        ),
         acting_user=acting_user,
     )
 
-    if not validation.get("ok"):
+    if not validation.get(
+        "ok"
+    ):
         return validation
 
-    source_message = validation["payload"]["source_message"]
-    target_dialogue = validation["payload"]["target_dialogue"]
-    forward_mode = validation["payload"]["forward_mode"]
+    source_message = (
+        validation[
+            "payload"
+        ][
+            "source_message"
+        ]
+    )
 
-    if forward_mode != FORWARD_MODE_BACKEND_ASSISTED:
+    target_dialogue = (
+        validation[
+            "payload"
+        ][
+            "target_dialogue"
+        ]
+    )
+
+    forward_mode = (
+        validation[
+            "payload"
+        ][
+            "forward_mode"
+        ]
+    )
+
+    if (
+        forward_mode
+        != FORWARD_MODE_BACKEND_ASSISTED
+    ):
         return _error(
-            "SECURE_FORWARD_REQUIRES_CLIENT_REENCRYPT",
-            "This forward target requires client-side decrypt and re-encrypt.",
+            (
+                "SECURE_FORWARD_REQUIRES_"
+                "CLIENT_REENCRYPT"
+            ),
+            (
+                "This forward target requires "
+                "client-side decrypt and re-encrypt."
+            ),
             409,
             extra={
-                "forward_mode": forward_mode,
-                "source_message_id": source_message.id,
-                "target_dialogue_slug": target_dialogue.slug,
+                "forward_mode":
+                    forward_mode,
+                "source_message_id":
+                    source_message.id,
+                "target_dialogue_slug":
+                    target_dialogue.slug,
             },
         )
 
-    with transaction.atomic():
-        # Forward plaintext text message
-        if _has_plaintext_content(source_message):
-            plain_text = _decode_group_plaintext(source_message)
+    # --------------------------------------------------------------
+    # Group -> Group plaintext forward
+    # --------------------------------------------------------------
 
-            forwarded = Message.objects.create(
-                dialogue=target_dialogue,
-                sender=acting_user,
-                content_encrypted=_encode_group_plaintext(plain_text),
-                reply_to=None,
-                is_forwarded=True,
-                forwarded_from=source_message,
+    if _has_plaintext_content(
+        source_message
+    ):
+        plain_text = (
+            _decode_group_plaintext(
+                source_message
+            )
+            or ""
+        ).strip()
+
+        if not plain_text:
+            return _error(
+                "INVALID_FORWARD_SOURCE",
+                (
+                    "Forwarded message has "
+                    "no readable content."
+                ),
+                400,
             )
 
-            target_dialogue.last_message = forwarded
-            target_dialogue.save(update_fields=["last_message"])
+        # External Content Safety calls stay outside DB transactions.
+        enforce_group_message_content_safety(
+            dialogue=target_dialogue,
+            text=plain_text,
+            actor=acting_user,
+            field_name=(
+                "forwarded_content"
+            ),
+        )
 
-            return _success({
-                "message": forwarded,
-                "dialogue": target_dialogue,
-                "message_id": forwarded.id,
-                "dialogue_slug": target_dialogue.slug,
-                "is_group": bool(target_dialogue.is_group),
-                "is_forwarded": True,
-                "forward_mode": forward_mode,
-                "kind": "text",
-            })
+        with transaction.atomic():
+            forwarded = (
+                Message.objects.create(
+                    dialogue=(
+                        target_dialogue
+                    ),
+                    sender=acting_user,
+                    content_encrypted=(
+                        _encode_group_plaintext(
+                            plain_text
+                        )
+                    ),
+                    reply_to=None,
+                    is_forwarded=True,
+                    forwarded_from=(
+                        source_message
+                    ),
+                )
+            )
 
-        # Forward file message
+            target_dialogue.last_message = (
+                forwarded
+            )
+
+            target_dialogue.save(
+                update_fields=[
+                    "last_message"
+                ]
+            )
+
+        return _success(
+            {
+                "message":
+                    forwarded,
+                "dialogue":
+                    target_dialogue,
+                "message_id":
+                    forwarded.id,
+                "dialogue_slug":
+                    target_dialogue.slug,
+                "is_group":
+                    True,
+                "is_forwarded":
+                    True,
+                "forward_mode":
+                    forward_mode,
+                "kind":
+                    "text",
+            }
+        )
+
+    # --------------------------------------------------------------
+    # Group -> Group media forward
+    # --------------------------------------------------------------
+
+    source_field_name = (
+        _get_message_file_field_name(
+            source_message
+        )
+    )
+
+    if not source_field_name:
+        return _error(
+            "INVALID_FORWARD_SOURCE",
+            (
+                "Unsupported forward source. "
+                "Message has no forwardable content."
+            ),
+            400,
+        )
+
+    source_file = getattr(
+        source_message,
+        source_field_name,
+        None,
+    )
+
+    if not source_file:
+        return _error(
+            "INVALID_FORWARD_SOURCE",
+            (
+                "Forward source media "
+                "is unavailable."
+            ),
+            400,
+        )
+
+    # IMPORTANT:
+    # Inspect the existing source bytes before copying them into a new
+    # storage key. Cache makes previously inspected identical media cheap,
+    # while still enforcing the target publication path.
+    enforce_group_message_media_content_safety(
+        dialogue=target_dialogue,
+        file_obj=source_file,
+        media_field_name=(
+            source_field_name
+        ),
+        actor=acting_user,
+        audit_field_name=(
+            f"forwarded_{source_field_name}"
+        ),
+        validation_field_name="file",
+        mime_type=None,
+    )
+
+    with transaction.atomic():
         target_message = Message(
             dialogue=target_dialogue,
             sender=acting_user,
             is_forwarded=True,
-            forwarded_from=source_message,
+            forwarded_from=(
+                source_message
+            ),
             reply_to=None,
             is_encrypted_file=False,
         )
 
-        copied_field = _copy_file_field_from_source(
-            source_message=source_message,
-            target_message=target_message,
+        copied_field = (
+            _copy_file_field_from_source(
+                source_message=(
+                    source_message
+                ),
+                target_message=(
+                    target_message
+                ),
+            )
         )
 
         if not copied_field:
             return _error(
                 "INVALID_FORWARD_SOURCE",
-                "Unsupported forward source. Message has no forwardable content.",
+                (
+                    "Unsupported forward source. "
+                    "Message has no forwardable content."
+                ),
                 400,
             )
 
         target_message.save()
 
-        target_dialogue.last_message = target_message
-        target_dialogue.save(update_fields=["last_message"])
+        target_dialogue.last_message = (
+            target_message
+        )
 
-    return _success({
-        "message": target_message,
-        "dialogue": target_dialogue,
-        "message_id": target_message.id,
-        "dialogue_slug": target_dialogue.slug,
-        "is_group": bool(target_dialogue.is_group),
-        "is_forwarded": True,
-        "forward_mode": forward_mode,
-        "kind": "file",
-        "file_field": copied_field,
-    })
-    
+        target_dialogue.save(
+            update_fields=[
+                "last_message"
+            ]
+        )
+
+    return _success(
+        {
+            "message":
+                target_message,
+            "dialogue":
+                target_dialogue,
+            "message_id":
+                target_message.id,
+            "dialogue_slug":
+                target_dialogue.slug,
+            "is_group":
+                True,
+            "is_forwarded":
+                True,
+            "forward_mode":
+                forward_mode,
+            "kind":
+                "file",
+            "file_field":
+                copied_field,
+        }
+    )
     
 def _validate_encrypted_contents(encrypted_contents):
     """
@@ -505,6 +699,13 @@ def create_forwarded_text_client_decrypted_group(
             "content is required.",
             400,
         )
+        
+    enforce_group_message_content_safety(
+        dialogue=target_dialogue,
+        text=plain_text,
+        actor=acting_user,
+        field_name="forwarded_content",
+    )
 
     with transaction.atomic():
         forwarded = Message.objects.create(

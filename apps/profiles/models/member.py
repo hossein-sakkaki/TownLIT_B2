@@ -48,6 +48,7 @@ class Member(SlugMixin):
 
     biography = models.CharField(max_length=2000, null=True, blank=True, verbose_name="Biography")
     vision = models.CharField(max_length=2000, null=True, blank=True, verbose_name="Vision")
+    
     spiritual_rebirth_day = models.DateField(
         auto_now=False,
         auto_now_add=False,

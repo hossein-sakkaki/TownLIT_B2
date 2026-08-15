@@ -6,7 +6,9 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.conversation.models import Message, MessageEncryption
-
+from apps.conversation.services.content_safety import (
+    enforce_group_message_content_safety,
+)
 
 def _error(code: str, message: str, status_code: int):
     """Build a stable service error payload."""
@@ -86,18 +88,43 @@ def edit_message_content(message_id, acting_user, new_content=None, encrypted_co
 
     # Group message edit: store plaintext as base64 bytes
     if dialogue.is_group:
-        plain_text = (new_content or "").strip()
-        if not plain_text:
-            return _error("BAD_REQUEST", "Message content cannot be empty.", 400)
+        plain_text = (
+            new_content
+            or ""
+        ).strip()
 
-        base64_str = base64.b64encode(plain_text.encode("utf-8")).decode("utf-8")
-        content_bytes = base64_str.encode("utf-8")
+        if not plain_text:
+            return _error(
+                "BAD_REQUEST",
+                "Message content cannot be empty.",
+                400,
+            )
+
+        enforce_group_message_content_safety(
+            dialogue=dialogue,
+            text=plain_text,
+            actor=acting_user,
+            field_name="content",
+        )
+
+        base64_str = base64.b64encode(
+            plain_text.encode(
+                "utf-8"
+            )
+        ).decode(
+            "utf-8"
+        )
+
+        content_bytes = base64_str.encode(
+            "utf-8"
+        )
 
         message.content_encrypted = content_bytes
         message.edited_at = now
         message.is_edited = True
         message.encrypted_for_device = None
         message.aes_key_encrypted = None
+
         message.save(
             update_fields=[
                 "content_encrypted",
@@ -109,7 +136,11 @@ def edit_message_content(message_id, acting_user, new_content=None, encrypted_co
         )
 
         dialogue.last_message = message
-        dialogue.save(update_fields=["last_message"])
+        dialogue.save(
+            update_fields=[
+                "last_message",
+            ]
+        )
 
         return _success({
             "message_id": message.id,

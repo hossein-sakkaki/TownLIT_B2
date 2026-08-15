@@ -1,4 +1,10 @@
 # apps/posts/views/comments.py
+#
+# TownLIT
+#
+# Created by Hossein Sakkaki on 2025-01-01.
+# Last Update by Hossein Sakkaki on 2026-08-14.
+
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -24,6 +30,9 @@ from apps.posts.services.boundary_interactions import (
     check_comment_create_boundary,
     check_comment_update_boundary,
     content_interaction_error_payload,
+)
+from apps.posts.services.comment_content_safety import (
+    enforce_comment_content_safety,
 )
 
 logger = logging.getLogger(__name__)
@@ -258,6 +267,12 @@ class CommentViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        # Enforce text safety before persistence.
+        enforce_comment_content_safety(
+            validated_data=serializer.validated_data,
+            actor=request.user,
+        )
+
         try:
             self.perform_create(serializer)
 
@@ -321,6 +336,13 @@ class CommentViewSet(viewsets.ModelViewSet):
                 ),
                 status=status.HTTP_403_FORBIDDEN,
             )
+
+        # Re-check edited text before persistence.
+        enforce_comment_content_safety(
+            validated_data=serializer.validated_data,
+            actor=request.user,
+            instance=instance,
+        )
 
         try:
             self.perform_update(serializer)
