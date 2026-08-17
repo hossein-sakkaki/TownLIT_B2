@@ -1,13 +1,17 @@
+{# apps/audio_catalog/templates/admin/audio_catalog/musictrack/change_form.html #}
+{# #}
+{# TownLIT #}
+{# #}
+{# Created by Hossein Sakkaki on 2026-08-03. #}
+{# Last Update by Hossein Sakkaki on 2026-08-17. #}
 
 {% extends "admin/change_form.html" %}
 {% load i18n admin_urls %}
 
 {% block submit_buttons_bottom %}
-
     {{ block.super }}
 
     {% if change and original %}
-
         <div
             class="submit-row"
             style="
@@ -16,66 +20,49 @@
                 align-items:center;
                 gap:10px;
                 flex-wrap:wrap;
+                border:1px solid var(--border-color);
+                background:var(--darkened-bg);
+                color:var(--body-fg);
             "
         >
-
-            <span
-                style="
-                    font-weight:700;
-                    margin-right:8px;
-                "
-            >
+            <span style="font-weight:700;margin-right:8px;">
                 Music workflow:
             </span>
 
             {% if audio_current_status == "draft" %}
-
                 <input
                     type="submit"
                     name="_move_to_review"
                     value="Move to review"
                 >
-
             {% endif %}
 
-
             {% if audio_current_status == "review" %}
-
                 <input
                     type="submit"
                     name="_move_to_draft"
                     value="Move back to draft"
                 >
-
             {% endif %}
 
-
             {% if audio_current_status == "suspended" %}
-
                 <input
                     type="submit"
                     name="_move_to_draft"
                     value="Move to draft"
                 >
-
             {% endif %}
 
-
             {% if audio_current_status == "archived" %}
-
                 <input
                     type="submit"
                     name="_move_to_draft"
                     value="Restore to draft"
                 >
-
             {% endif %}
 
-
-            {% if audio_current_status != "published" %}
-
+            {% if audio_current_status == "draft" or audio_current_status == "review" %}
                 {% if audio_can_publish %}
-
                     <input
                         type="submit"
                         name="_publish_now"
@@ -86,9 +73,7 @@
                             font-weight:700;
                         "
                     >
-
                 {% else %}
-
                     <input
                         type="button"
                         value="Publish now"
@@ -98,21 +83,18 @@
 
                     <span
                         style="
-                            color:#ba2121;
+                            color:var(--error-fg);
                             font-size:12px;
+                            font-weight:600;
                         "
                     >
                         {{ audio_readiness_missing_count }}
                         requirement(s) still need attention
                     </span>
-
                 {% endif %}
-
             {% endif %}
 
-
             {% if audio_current_status == "published" %}
-
                 <input
                     type="submit"
                     name="_suspend_now"
@@ -122,22 +104,15 @@
                         color:#fff;
                     "
                 >
-
             {% endif %}
 
-
             {% if audio_current_status != "archived" %}
-
                 <input
                     type="submit"
                     name="_archive_now"
                     value="Archive"
                 >
-
             {% endif %}
-
         </div>
-
     {% endif %}
-
 {% endblock %}

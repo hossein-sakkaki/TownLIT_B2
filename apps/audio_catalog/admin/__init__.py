@@ -1,7 +1,12 @@
 # apps/audio_catalog/admin/__init__.py
+#
+# TownLIT
+#
+# Created by Hossein Sakkaki on 2026-08-03.
+# Last Update by Hossein Sakkaki on 2026-08-17.
 
-from .analytics import *  # noqa: F401,F403
-from .assets import *  # noqa: F401,F403
-from .rights import *  # noqa: F401,F403
-from .taxonomy import *  # noqa: F401,F403
-from .tracks import *  # noqa: F401,F403
+from . import analytics as analytics
+from . import assets as assets
+from . import rights as rights
+from . import taxonomy as taxonomy
+from . import tracks as tracks

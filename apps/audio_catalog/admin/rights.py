@@ -1,4 +1,9 @@
 # apps/audio_catalog/admin/rights.py
+#
+# TownLIT
+#
+# Created by Hossein Sakkaki on 2026-08-03.
+# Last Update by Hossein Sakkaki on 2026-08-17.
 
 from __future__ import annotations
 
@@ -16,41 +21,25 @@ from .shared import (
     LargeResultAdminMixin,
     linked_object,
     render_file_link,
-    render_json,
     status_badge,
 )
 
 
 class RightsEvidenceInline(admin.StackedInline):
-    """
-    Manage private legal documents.
-    """
-
     model = RightsEvidence
     extra = 1
     show_change_link = True
 
     fields = (
-        (
-            "evidence_type",
-            "title",
-        ),
+        ("evidence_type", "title"),
         "evidence_file",
         "evidence_link",
-        (
-            "captured_at",
-            "sha256",
-        ),
+        ("captured_at", "sha256"),
         "notes",
     )
+    readonly_fields = ("evidence_link",)
 
-    readonly_fields = (
-        "evidence_link",
-    )
-
-    @admin.display(
-        description="Document",
-    )
+    @admin.display(description="Document")
     def evidence_link(self, obj):
         if not obj or not obj.pk:
             return "Document will be available after saving."
@@ -61,19 +50,15 @@ class RightsEvidenceInline(admin.StackedInline):
         )
 
 
-@admin.action(
-    description="Mark selected rights as cleared",
-)
-def mark_rights_cleared(
-    modeladmin,
-    request,
-    queryset,
-):
+@admin.action(description="Mark selected rights as cleared")
+def mark_rights_cleared(modeladmin, request, queryset):
+    now = timezone.now()
+
     count = queryset.update(
         status=MusicRightsRecord.Status.CLEARED,
         reviewed_by=request.user,
-        reviewed_at=timezone.now(),
-        updated_at=timezone.now(),
+        reviewed_at=now,
+        updated_at=now,
     )
 
     modeladmin.message_user(
@@ -83,14 +68,8 @@ def mark_rights_cleared(
     )
 
 
-@admin.action(
-    description="Move selected rights to review",
-)
-def mark_rights_review_required(
-    modeladmin,
-    request,
-    queryset,
-):
+@admin.action(description="Move selected rights to review")
+def mark_rights_review_required(modeladmin, request, queryset):
     count = queryset.update(
         status=MusicRightsRecord.Status.REVIEW_REQUIRED,
         reviewed_by=None,
@@ -105,19 +84,15 @@ def mark_rights_review_required(
     )
 
 
-@admin.action(
-    description="Revoke selected rights",
-)
-def revoke_rights(
-    modeladmin,
-    request,
-    queryset,
-):
+@admin.action(description="Revoke selected rights")
+def revoke_rights(modeladmin, request, queryset):
+    now = timezone.now()
+
     count = queryset.update(
         status=MusicRightsRecord.Status.REVOKED,
         reviewed_by=request.user,
-        reviewed_at=timezone.now(),
-        updated_at=timezone.now(),
+        reviewed_at=now,
+        updated_at=now,
     )
 
     modeladmin.message_user(
@@ -147,11 +122,7 @@ class MusicRightsRecordAdmin(
         "effective_until",
         "reviewed_by",
     )
-
-    list_display_links = (
-        "status_display",
-    )
-
+    list_display_links = ("status_display",)
     list_filter = (
         "status",
         "license_type",
@@ -171,7 +142,6 @@ class MusicRightsRecordAdmin(
         "effective_from",
         "effective_until",
     )
-
     search_fields = (
         "track__title",
         "track__slug",
@@ -182,32 +152,25 @@ class MusicRightsRecordAdmin(
         "license_version",
         "public_id",
     )
-
     autocomplete_fields = (
         "track",
         "master_owner",
         "composition_owner",
         "licensor",
-        "reviewed_by",
     )
-
     readonly_fields = (
         "public_id",
-        "restrictions_pretty",
+        "reviewed_by",
+        "reviewed_at",
         "created_at",
         "updated_at",
     )
-
     actions = (
         mark_rights_cleared,
         mark_rights_review_required,
         revoke_rights,
     )
-
-    inlines = (
-        RightsEvidenceInline,
-    )
-
+    inlines = (RightsEvidenceInline,)
     list_select_related = (
         "track",
         "master_owner",
@@ -215,11 +178,7 @@ class MusicRightsRecordAdmin(
         "licensor",
         "reviewed_by",
     )
-
-    ordering = (
-        "-updated_at",
-        "-id",
-    )
+    ordering = ("-updated_at", "-id")
 
     fieldsets = (
         (
@@ -227,14 +186,8 @@ class MusicRightsRecordAdmin(
             {
                 "fields": (
                     "track",
-                    (
-                        "status",
-                        "license_type",
-                    ),
-                    (
-                        "reviewed_by",
-                        "reviewed_at",
-                    ),
+                    ("status", "license_type"),
+                    ("reviewed_by", "reviewed_at"),
                 ),
             },
         ),
@@ -252,10 +205,7 @@ class MusicRightsRecordAdmin(
             "Provider and agreement",
             {
                 "fields": (
-                    (
-                        "provider_name",
-                        "provider_plan",
-                    ),
+                    ("provider_name", "provider_plan"),
                     "provider_account_reference",
                     "generation_reference",
                     "generation_prompt_hash",
@@ -269,10 +219,7 @@ class MusicRightsRecordAdmin(
             "Validity and territory",
             {
                 "fields": (
-                    (
-                        "effective_from",
-                        "effective_until",
-                    ),
+                    ("effective_from", "effective_until"),
                     "territory_mode",
                     "territory_codes",
                 ),
@@ -311,7 +258,6 @@ class MusicRightsRecordAdmin(
                     "attribution_required",
                     "attribution_text",
                     "restrictions",
-                    "restrictions_pretty",
                     "notes",
                 ),
             },
@@ -319,9 +265,7 @@ class MusicRightsRecordAdmin(
         (
             "System",
             {
-                "classes": (
-                    "collapse",
-                ),
+                "classes": ("collapse",),
                 "fields": (
                     "public_id",
                     "created_at",
@@ -331,19 +275,42 @@ class MusicRightsRecordAdmin(
         ),
     )
 
-    @admin.display(
-        description="Track",
-        ordering="track__title",
-    )
-    def track_link(self, obj):
-        return linked_object(
-            obj.track,
-        )
+    def save_model(self, request, obj, form, change):
+        previous_status = None
 
-    @admin.display(
-        description="Status",
-        ordering="status",
-    )
+        if change and obj.pk:
+            previous_status = (
+                MusicRightsRecord.objects.filter(pk=obj.pk)
+                .values_list("status", flat=True)
+                .first()
+            )
+
+        status_changed = not change or previous_status != obj.status
+
+        if status_changed:
+            if obj.status in {
+                MusicRightsRecord.Status.CLEARED,
+                MusicRightsRecord.Status.RESTRICTED,
+                MusicRightsRecord.Status.EXPIRED,
+                MusicRightsRecord.Status.REVOKED,
+            }:
+                obj.reviewed_by = request.user
+                obj.reviewed_at = timezone.now()
+
+            elif obj.status in {
+                MusicRightsRecord.Status.DRAFT,
+                MusicRightsRecord.Status.REVIEW_REQUIRED,
+            }:
+                obj.reviewed_by = None
+                obj.reviewed_at = None
+
+        super().save_model(request, obj, form, change)
+
+    @admin.display(description="Track", ordering="track__title")
+    def track_link(self, obj):
+        return linked_object(obj.track)
+
+    @admin.display(description="Status", ordering="status")
     def status_display(self, obj):
         color_map = {
             MusicRightsRecord.Status.DRAFT: "#666666",
@@ -356,18 +323,7 @@ class MusicRightsRecordAdmin(
 
         return status_badge(
             obj.get_status_display(),
-            background=color_map.get(
-                obj.status,
-                "#666666",
-            ),
-        )
-
-    @admin.display(
-        description="Formatted restrictions",
-    )
-    def restrictions_pretty(self, obj):
-        return render_json(
-            obj.restrictions
+            background=color_map.get(obj.status, "#666666"),
         )
 
 
@@ -385,13 +341,11 @@ class RightsEvidenceAdmin(
         "captured_at",
         "created_at",
     )
-
     list_filter = (
         "evidence_type",
         "captured_at",
         "created_at",
     )
-
     search_fields = (
         "title",
         "rights_record__track__title",
@@ -399,34 +353,23 @@ class RightsEvidenceAdmin(
         "sha256",
         "public_id",
     )
-
-    autocomplete_fields = (
-        "rights_record",
-    )
-
+    autocomplete_fields = ("rights_record",)
     readonly_fields = (
         "public_id",
         "document_link",
         "created_at",
         "updated_at",
     )
-
     list_select_related = (
         "rights_record",
         "rights_record__track",
     )
 
-    @admin.display(
-        description="Rights record",
-    )
+    @admin.display(description="Rights record")
     def rights_record_link(self, obj):
-        return linked_object(
-            obj.rights_record,
-        )
+        return linked_object(obj.rights_record)
 
-    @admin.display(
-        description="Document",
-    )
+    @admin.display(description="Document")
     def document_link(self, obj):
         return render_file_link(
             obj.evidence_file,
@@ -447,12 +390,7 @@ class RightsPartyAdmin(
         "contact_email",
         "website_url",
     )
-
-    list_filter = (
-        "kind",
-        "country_code",
-    )
-
+    list_filter = ("kind", "country_code")
     search_fields = (
         "display_name",
         "legal_name",
@@ -460,23 +398,51 @@ class RightsPartyAdmin(
         "external_reference",
         "public_id",
     )
-
     readonly_fields = (
         "public_id",
-        "metadata_pretty",
         "created_at",
         "updated_at",
     )
+    ordering = ("display_name", "id")
 
-    ordering = (
-        "display_name",
-        "id",
+    fieldsets = (
+        (
+            "Identity",
+            {
+                "fields": (
+                    "display_name",
+                    "legal_name",
+                    "kind",
+                    "country_code",
+                ),
+            },
+        ),
+        (
+            "Contact and references",
+            {
+                "fields": (
+                    "website_url",
+                    "contact_email",
+                    "external_reference",
+                ),
+            },
+        ),
+        (
+            "Metadata",
+            {
+                "classes": ("collapse",),
+                "fields": ("metadata",),
+            },
+        ),
+        (
+            "System",
+            {
+                "classes": ("collapse",),
+                "fields": (
+                    "public_id",
+                    "created_at",
+                    "updated_at",
+                ),
+            },
+        ),
     )
-
-    @admin.display(
-        description="Metadata",
-    )
-    def metadata_pretty(self, obj):
-        return render_json(
-            obj.metadata
-        )
