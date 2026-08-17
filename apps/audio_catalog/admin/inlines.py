@@ -406,15 +406,14 @@ class TrackContributorInline(
     admin.TabularInline
 ):
     """
-    Optional credits.
-
-    When no primary artist exists the API already falls back to
-    "TownLIT Original", so an empty contributor row is unnecessary.
+    Manage track credits.
     """
 
     model = TrackContributor
 
-    extra = 0
+    extra = 2
+
+    max_num = 10
 
     show_change_link = True
 
