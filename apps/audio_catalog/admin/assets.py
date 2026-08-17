@@ -11,6 +11,7 @@ from apps.audio_catalog.models import (
 )
 
 from .shared import (
+    HiddenFromAdminIndexMixin,
     LargeResultAdminMixin,
     conversion_status_badge,
     linked_object,
@@ -19,7 +20,6 @@ from .shared import (
     render_image_preview,
     render_json,
 )
-
 
 @admin.action(
     description="Set selected artwork as primary",
@@ -105,6 +105,7 @@ def deactivate_artwork(
 
 @admin.register(MusicArtwork)
 class MusicArtworkAdmin(
+    HiddenFromAdminIndexMixin,
     LargeResultAdminMixin,
     admin.ModelAdmin,
 ):
@@ -368,6 +369,7 @@ def disable_streaming(
 
 @admin.register(MusicTrackVariant)
 class MusicTrackVariantAdmin(
+    HiddenFromAdminIndexMixin,
     LargeResultAdminMixin,
     admin.ModelAdmin,
 ):

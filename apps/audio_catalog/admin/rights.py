@@ -12,6 +12,7 @@ from apps.audio_catalog.models import (
 )
 
 from .shared import (
+    HiddenFromAdminIndexMixin,
     LargeResultAdminMixin,
     linked_object,
     render_file_link,
@@ -128,6 +129,7 @@ def revoke_rights(
 
 @admin.register(MusicRightsRecord)
 class MusicRightsRecordAdmin(
+    HiddenFromAdminIndexMixin,
     LargeResultAdminMixin,
     admin.ModelAdmin,
 ):
@@ -371,6 +373,7 @@ class MusicRightsRecordAdmin(
 
 @admin.register(RightsEvidence)
 class RightsEvidenceAdmin(
+    HiddenFromAdminIndexMixin,
     LargeResultAdminMixin,
     admin.ModelAdmin,
 ):

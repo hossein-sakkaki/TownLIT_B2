@@ -6,10 +6,18 @@ from django.contrib import admin
 
 from apps.audio_catalog.models import (
     MusicArtwork,
+    MusicRightsRecord,
     MusicTrackVariant,
     TrackContributor,
 )
 
+from .forms import (
+    MusicArtworkInlineForm,
+    MusicRightsRecordInlineForm,
+    MusicTrackVariantInlineForm,
+    SingleDefaultVariantFormSet,
+    SinglePrimaryArtworkFormSet,
+)
 from .shared import (
     conversion_status_badge,
     render_audio_player,
@@ -18,31 +26,53 @@ from .shared import (
 )
 
 
-class MusicArtworkInline(admin.StackedInline):
+class MusicArtworkInline(
+    admin.StackedInline
+):
     """
-    Manage track artwork from the track page.
+    Normal admin workflow for cover artwork.
     """
 
     model = MusicArtwork
+
+    form = MusicArtworkInlineForm
+    formset = SinglePrimaryArtworkFormSet
+
     extra = 1
     max_num = 10
+
     show_change_link = True
 
-    fields = (
+    fieldsets = (
         (
-            "role",
-            "label",
+            "Cover artwork",
+            {
+                "fields": (
+                    "image",
+                    "artwork_preview",
+                    (
+                        "role",
+                        "label",
+                    ),
+                    (
+                        "is_primary",
+                        "is_active",
+                    ),
+                ),
+            },
         ),
-        "image",
-        "artwork_preview",
         (
-            "is_primary",
-            "is_active",
-            "sort_order",
-        ),
-        (
-            "conversion_state",
-            "conversion_job",
+            "Processing and advanced",
+            {
+                "classes": (
+                    "collapse",
+                ),
+                "fields": (
+                    "sort_order",
+                    "conversion_state",
+                    "conversion_job",
+                ),
+            },
         ),
     )
 
@@ -55,84 +85,125 @@ class MusicArtworkInline(admin.StackedInline):
     @admin.display(
         description="Preview",
     )
-    def artwork_preview(self, obj):
+    def artwork_preview(
+        self,
+        obj,
+    ):
         return render_image_preview(
             getattr(
                 obj,
                 "image",
                 None,
             ),
-            width=160,
-            height=160,
+            width=180,
+            height=180,
         )
 
     @admin.display(
         description="Conversion",
     )
-    def conversion_state(self, obj):
+    def conversion_state(
+        self,
+        obj,
+    ):
         if not obj or not obj.pk:
-            return "Saved artwork will be converted automatically."
+            return (
+                "Save the track. Artwork conversion "
+                "will start automatically."
+            )
 
-        return conversion_status_badge(obj)
+        return conversion_status_badge(
+            obj
+        )
 
     @admin.display(
         description="Latest job",
     )
-    def conversion_job(self, obj):
+    def conversion_job(
+        self,
+        obj,
+    ):
         if not obj or not obj.pk:
             return "—"
 
-        return render_conversion_job(obj)
+        return render_conversion_job(
+            obj
+        )
 
 
-class MusicTrackVariantInline(admin.StackedInline):
+class MusicTrackVariantInline(
+    admin.StackedInline
+):
     """
-    Manage playable audio variants from the track page.
+    Normal admin workflow for playable audio.
     """
 
     model = MusicTrackVariant
+
+    form = MusicTrackVariantInlineForm
+    formset = SingleDefaultVariantFormSet
+
     extra = 1
     max_num = 30
+
     show_change_link = True
 
-    fields = (
+    fieldsets = (
         (
-            "variant_type",
-            "label",
-            "locale",
-        ),
-        "audio_file",
-        "audio_preview",
-        (
-            "duration_ms",
-            "source_start_ms",
-            "source_end_ms",
-        ),
-        (
-            "is_default",
-            "is_streamable",
-            "is_downloadable",
-            "is_active",
-        ),
-        (
-            "mime_type",
-            "codec",
-            "container",
+            "Playable audio",
+            {
+                "fields": (
+                    "audio_file",
+                    "audio_preview",
+                    (
+                        "variant_type",
+                        "label",
+                        "locale",
+                    ),
+                    (
+                        "is_default",
+                        "is_streamable",
+                        "is_active",
+                    ),
+                ),
+            },
         ),
         (
-            "bitrate_kbps",
-            "sample_rate_hz",
-            "channels",
+            "Advanced playback and technical metadata",
+            {
+                "classes": (
+                    "collapse",
+                ),
+                "fields": (
+                    (
+                        "is_downloadable",
+                        "sort_order",
+                    ),
+                    (
+                        "duration_ms",
+                        "source_start_ms",
+                        "source_end_ms",
+                    ),
+                    (
+                        "mime_type",
+                        "codec",
+                        "container",
+                    ),
+                    (
+                        "bitrate_kbps",
+                        "sample_rate_hz",
+                        "channels",
+                    ),
+                    (
+                        "file_size_bytes",
+                        "checksum_sha256",
+                    ),
+                    "waveform_file",
+                    "conversion_state",
+                    "conversion_job",
+                ),
+            },
         ),
-        (
-            "file_size_bytes",
-            "checksum_sha256",
-        ),
-        (
-            "conversion_state",
-            "conversion_job",
-        ),
-        "sort_order",
     )
 
     readonly_fields = (
@@ -144,42 +215,207 @@ class MusicTrackVariantInline(admin.StackedInline):
     @admin.display(
         description="Audio preview",
     )
-    def audio_preview(self, obj):
+    def audio_preview(
+        self,
+        obj,
+    ):
         return render_audio_player(
             getattr(
                 obj,
                 "audio_file",
                 None,
             ),
-            width=420,
+            width=520,
         )
 
     @admin.display(
         description="Conversion",
     )
-    def conversion_state(self, obj):
+    def conversion_state(
+        self,
+        obj,
+    ):
         if not obj or not obj.pk:
-            return "Saved audio will be converted automatically."
+            return (
+                "Save the track. Audio conversion "
+                "will start automatically."
+            )
 
-        return conversion_status_badge(obj)
+        return conversion_status_badge(
+            obj
+        )
 
     @admin.display(
         description="Latest job",
     )
-    def conversion_job(self, obj):
+    def conversion_job(
+        self,
+        obj,
+    ):
         if not obj or not obj.pk:
             return "—"
 
-        return render_conversion_job(obj)
+        return render_conversion_job(
+            obj
+        )
 
 
-class TrackContributorInline(admin.TabularInline):
+class MusicRightsRecordInline(
+    admin.StackedInline
+):
     """
-    Manage track credits.
+    Rights are now completed directly on the track page.
+
+    Advanced legal/provider fields still exist but are collapsed.
+    """
+
+    model = MusicRightsRecord
+
+    form = MusicRightsRecordInlineForm
+
+    extra = 1
+    max_num = 1
+
+    can_delete = False
+
+    show_change_link = True
+
+    fieldsets = (
+        (
+            "License basics",
+            {
+                "fields": (
+                    (
+                        "status",
+                        "license_type",
+                    ),
+                    "apply_townlit_usage_preset",
+                    (
+                        "provider_name",
+                        "provider_plan",
+                    ),
+                    (
+                        "effective_from",
+                        "effective_until",
+                    ),
+                    "territory_mode",
+                    "territory_codes",
+                ),
+            },
+        ),
+        (
+            "Required TownLIT permissions",
+            {
+                "description": (
+                    "These are the permissions required by the "
+                    "current TownLIT music/content workflow."
+                ),
+                "fields": (
+                    (
+                        "ugc_use_allowed",
+                        "streaming_allowed",
+                        "synchronization_allowed",
+                    ),
+                    (
+                        "clipping_allowed",
+                        "hosting_allowed",
+                        "sublicensing_to_end_users_allowed",
+                    ),
+                ),
+            },
+        ),
+        (
+            "Additional permissions",
+            {
+                "classes": (
+                    "collapse",
+                ),
+                "fields": (
+                    (
+                        "commercial_use_allowed",
+                        "adaptation_allowed",
+                    ),
+                    (
+                        "standalone_download_allowed",
+                        "external_export_allowed",
+                    ),
+                    "perpetual_existing_content_allowed",
+                ),
+            },
+        ),
+        (
+            "Ownership, provider records and source",
+            {
+                "classes": (
+                    "collapse",
+                ),
+                "fields": (
+                    "master_owner",
+                    "composition_owner",
+                    "licensor",
+                    "provider_account_reference",
+                    "generation_reference",
+                    "generation_prompt_hash",
+                    "agreement_reference",
+                    "license_version",
+                    "source_url",
+                ),
+            },
+        ),
+        (
+            "Attribution and restrictions",
+            {
+                "classes": (
+                    "collapse",
+                ),
+                "fields": (
+                    "attribution_required",
+                    "attribution_text",
+                    "restrictions",
+                    "notes",
+                ),
+            },
+        ),
+        (
+            "Legal review",
+            {
+                "classes": (
+                    "collapse",
+                ),
+                "fields": (
+                    "reviewed_by",
+                    "reviewed_at",
+                ),
+            },
+        ),
+    )
+
+    autocomplete_fields = (
+        "master_owner",
+        "composition_owner",
+        "licensor",
+    )
+
+    readonly_fields = (
+        "reviewed_by",
+        "reviewed_at",
+    )
+
+
+class TrackContributorInline(
+    admin.TabularInline
+):
+    """
+    Optional credits.
+
+    When no primary artist exists the API already falls back to
+    "TownLIT Original", so an empty contributor row is unnecessary.
     """
 
     model = TrackContributor
-    extra = 1
+
+    extra = 0
+
     show_change_link = True
 
     fields = (

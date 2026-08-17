@@ -706,3 +706,18 @@ class LargeResultAdminMixin:
     preserve_filters = True
     show_full_result_count = False
     empty_value_display = "—"
+    
+    
+class HiddenFromAdminIndexMixin:
+    """
+    Keep a model fully registered and accessible, but hide it from
+    the normal Django Admin application index/sidebar.
+
+    Advanced editors and direct links continue to work.
+    """
+
+    def get_model_perms(
+        self,
+        request,
+    ):
+        return {}

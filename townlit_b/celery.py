@@ -70,42 +70,6 @@ app.conf.beat_schedule = {
         ),
     },
 
-    # Sanctuary reviewer fallback every 48 hours.
-    "check-for-inactive-reviewers-every-48-hours": {
-        "task": (
-            "apps.sanctuary.tasks."
-            "check_for_inactive_reviewers"
-        ),
-        "schedule": crontab(
-            minute=0,
-            hour="*/48",
-        ),
-    },
-
-    # Sanctuary admin fallback every 24 hours.
-    "check-for-inactive-admins-every-24-hours": {
-        "task": (
-            "apps.sanctuary.tasks."
-            "check_for_inactive_admins"
-        ),
-        "schedule": crontab(
-            minute=0,
-            hour="*/24",
-        ),
-    },
-
-    # Sanctuary appeal admin fallback every 24 hours.
-    "check-for-inactive-appeal-admins-every-24-hours": {
-        "task": (
-            "apps.sanctuary.tasks."
-            "check_for_inactive_appeal_admins"
-        ),
-        "schedule": crontab(
-            minute=0,
-            hour="*/24",
-        ),
-    },
-
     # Check appeal deadlines daily.
     "check-appeal-deadlines-daily": {
         "task": (
