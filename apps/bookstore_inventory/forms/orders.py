@@ -1,4 +1,9 @@
 # apps/bookstore_inventory/forms/orders.py
+#
+# TownLIT
+#
+# Created by Hossein Sakkaki on 2026-04-01.
+# Last Update by Hossein Sakkaki on 2026-08-17.
 
 from django import forms
 
@@ -7,88 +12,62 @@ from apps.bookstore_inventory.models import BookOrder
 
 
 class BookOrderAdminForm(forms.ModelForm):
-    # Admin form for smarter recipient handling
-
     class Meta:
         model = BookOrder
         fields = "__all__"
 
     def __init__(self, *args, **kwargs):
-        # Configure admin-friendly labels and help texts
         super().__init__(*args, **kwargs)
-
-        self.fields["recipient_type"].help_text = "Choose whether this outgoing order is for a person or an organization."
-        self.fields["recipient_first_name"].help_text = "Optional. Use only when the recipient is a person."
-        self.fields["recipient_last_name"].help_text = "Optional. Use only when the recipient is a person."
-        self.fields["recipient_email"].help_text = "Optional. Keep personal data minimal."
-        self.fields["recipient_phone"].help_text = "Optional. Keep personal data minimal."
-
-        self.fields["organization_name"].help_text = "Required for organization orders."
-        self.fields["organization_contact_person"].help_text = "Optional contact person inside the organization."
-        self.fields["organization_email"].help_text = "Optional."
-        self.fields["organization_phone"].help_text = "Optional."
-
-        self.fields["delivery_method"].help_text = "Select how the books were delivered."
-        self.fields["purpose"].help_text = "Select the purpose of this outgoing order."
-
-        self.fields["address_line_1"].help_text = "Required only for shipping."
-        self.fields["address_line_2"].help_text = "Optional."
-        self.fields["city"].help_text = "Optional unless shipping needs an address."
-        self.fields["province_state"].help_text = "Optional unless shipping needs an address."
-        self.fields["postal_code"].help_text = "Optional unless shipping needs an address."
-        self.fields["country"].help_text = "Optional unless shipping needs an address."
+        if "order_number" in self.fields:
+            self.fields["order_number"].required = False
+            self.fields["order_number"].help_text = (
+                "Leave blank to generate a permanent order number automatically."
+            )
+        help_texts = {
+            "recipient_type": "Choose a person or an organization; complete only the matching section.",
+            "recipient_first_name": "Person orders only.",
+            "recipient_last_name": "Person orders only.",
+            "recipient_email": "Optional; collect only what operations need.",
+            "recipient_phone": "Optional; collect only what operations need.",
+            "recipient_organization": "Choose the organization once; its name is preserved as a snapshot on this order.",
+            "organization_name": "Historical snapshot; use only when the organization is not yet in the directory.",
+            "organization_contact_person": "Optional contact inside the organization.",
+            "delivery_method": "Shipping requires address line 1.",
+            "purpose": "Used in distribution reporting.",
+            "address_line_1": "Required for shipping; otherwise optional.",
+        }
+        for name, help_text in help_texts.items():
+            if name in self.fields:
+                self.fields[name].help_text = help_text
 
     def clean(self):
-        # Server-side validation for recipient and delivery logic
-        cleaned_data = super().clean()
+        cleaned = super().clean()
+        person_fields = ("recipient_first_name", "recipient_last_name", "recipient_email", "recipient_phone")
+        organization_fields = (
+            "recipient_organization", "organization_name",
+            "organization_contact_person",
+            "organization_email",
+            "organization_phone",
+        )
 
-        recipient_type = cleaned_data.get("recipient_type")
-        delivery_method = cleaned_data.get("delivery_method")
+        def value(name):
+            raw = cleaned.get(name)
+            return raw.strip() if isinstance(raw, str) else raw
 
-        recipient_first_name = cleaned_data.get("recipient_first_name", "").strip()
-        recipient_last_name = cleaned_data.get("recipient_last_name", "").strip()
-        recipient_email = cleaned_data.get("recipient_email", "").strip()
-        recipient_phone = cleaned_data.get("recipient_phone", "").strip()
-
-        organization_name = cleaned_data.get("organization_name", "").strip()
-        organization_contact_person = cleaned_data.get("organization_contact_person", "").strip()
-        organization_email = cleaned_data.get("organization_email", "").strip()
-        organization_phone = cleaned_data.get("organization_phone", "").strip()
-
-        address_line_1 = cleaned_data.get("address_line_1", "").strip()
-
+        recipient_type = cleaned.get("recipient_type")
         if recipient_type == RecipientType.PERSON:
-            # Organization fields should stay empty for person orders
-            if organization_name:
-                self.add_error("organization_name", "Leave this empty for person orders.")
-            if organization_contact_person:
-                self.add_error("organization_contact_person", "Leave this empty for person orders.")
-            if organization_email:
-                self.add_error("organization_email", "Leave this empty for person orders.")
-            if organization_phone:
-                self.add_error("organization_phone", "Leave this empty for person orders.")
+            if not any(value(name) for name in person_fields):
+                raise forms.ValidationError("Enter at least one person name, email, or phone.")
+            for name in organization_fields:
+                if value(name):
+                    self.add_error(name, "Leave this empty for a person order.")
+        elif recipient_type == RecipientType.ORGANIZATION:
+            if not value("recipient_organization") and not value("organization_name"):
+                self.add_error("recipient_organization", "Choose an organization or provide a snapshot name.")
+            for name in person_fields:
+                if value(name):
+                    self.add_error(name, "Leave this empty for an organization order.")
 
-            # At least one lightweight identifier is helpful
-            if not any([recipient_first_name, recipient_last_name, recipient_email, recipient_phone]):
-                raise forms.ValidationError(
-                    "For person orders, enter at least one of these: first name, last name, email, or phone."
-                )
-
-        if recipient_type == RecipientType.ORGANIZATION:
-            if not organization_name:
-                self.add_error("organization_name", "Organization name is required for organization orders.")
-
-            # Person fields should stay empty for organization orders
-            if recipient_first_name:
-                self.add_error("recipient_first_name", "Leave this empty for organization orders.")
-            if recipient_last_name:
-                self.add_error("recipient_last_name", "Leave this empty for organization orders.")
-            if recipient_email:
-                self.add_error("recipient_email", "Leave this empty for organization orders.")
-            if recipient_phone:
-                self.add_error("recipient_phone", "Leave this empty for organization orders.")
-
-        if delivery_method == DeliveryMethod.SHIPPING and not address_line_1:
+        if cleaned.get("delivery_method") == DeliveryMethod.SHIPPING and not value("address_line_1"):
             self.add_error("address_line_1", "Address line 1 is required for shipping.")
-
-        return cleaned_data
+        return cleaned

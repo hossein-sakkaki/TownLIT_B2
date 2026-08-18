@@ -1,8 +1,11 @@
 # apps/bookstore_inventory/admin/__init__.py
+#
+# TownLIT
+#
+# Created by Hossein Sakkaki on 2026-04-01.
+# Last Update by Hossein Sakkaki on 2026-08-17.
 
-from .catalog import *  # noqa
-from .warehouse import *  # noqa
-from .inbound import *  # noqa
-from .inventory import *  # noqa
-from .orders import *  # noqa
-from .finance import *  # noqa
+from . import (  # noqa: F401
+    catalog, finance, inbound, inventory, operations, orders,
+    organizations, warehouse, workspace,
+)

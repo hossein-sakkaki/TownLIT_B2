@@ -1,0 +1,32 @@
+{% comment %}
+apps/bookstore_inventory/templates/admin/bookstore_inventory/confirm_workflow_action.html
+
+TownLIT
+
+Created by Hossein Sakkaki on 2026-04-01.
+Last Update by Hossein Sakkaki on 2026-08-17.
+{% endcomment %}
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block content %}
+  <form method="post">
+    {% csrf_token %}
+    <div class="module" style="max-width:760px;padding:20px;">
+      <h2>{{ title }}</h2>
+      <p class="errornote" style="display:block;">{{ warning }}</p>
+      <p>The following record will be processed:</p>
+      <ul>{% for object in queryset %}<li>{{ object }}</li>{% endfor %}</ul>
+      {% for object in queryset %}
+        <input type="hidden" name="{{ action_checkbox_name }}" value="{{ object.pk }}">
+      {% endfor %}
+      <input type="hidden" name="action" value="{{ action_name }}">
+      <input type="hidden" name="confirm_irreversible" value="yes">
+      <input type="hidden" name="index" value="0">
+      <div class="submit-row">
+        <input type="submit" value="Confirm and continue" class="default">
+        <a href="../" class="closelink">Cancel</a>
+      </div>
+    </div>
+  </form>
+{% endblock %}

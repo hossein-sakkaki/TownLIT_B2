@@ -1,0 +1,37 @@
+{% comment %}
+apps/bookstore_inventory/templates/admin/bookstore_inventory/change_list_with_summary.html
+
+TownLIT
+
+Created by Hossein Sakkaki on 2026-04-01.
+Last Update by Hossein Sakkaki on 2026-08-17.
+{% endcomment %}
+{% extends "admin/change_list.html" %}
+{% load i18n %}
+
+{% block content_title %}
+  {{ block.super }}
+  {% if townlit_summary %}
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin:16px 0 4px;">
+      {% for key, value in townlit_summary.items %}
+        <div style="min-width:150px;padding:12px 14px;border:1px solid var(--hairline-color);border-radius:8px;background:var(--body-bg);">
+          <div style="font-size:11px;text-transform:uppercase;color:var(--body-quiet-color);">{{ key|cut:"_"|title }}</div>
+          <div style="font-size:20px;font-weight:700;margin-top:4px;">{{ value|default:0 }}</div>
+        </div>
+      {% endfor %}
+    </div>
+    <p class="help">Summary reflects the current filters and search.</p>
+  {% endif %}
+  {% if townlit_currency_summaries %}
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin:10px 0 4px;">
+      {% for row in townlit_currency_summaries %}
+        <div style="min-width:220px;padding:12px 14px;border:1px solid var(--hairline-color);border-radius:8px;background:var(--body-bg);">
+          <strong>{{ row.currency }}</strong>
+          {% for key, value in row.items %}
+            {% if key != "currency" %}<div>{{ key|cut:"_"|title }}: {{ value|default:0 }}</div>{% endif %}
+          {% endfor %}
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endblock %}

@@ -22,7 +22,9 @@ from django.utils.safestring import mark_safe
 from apps.audio_catalog.models import (
     MusicRightsRecord,
     MusicTrack,
+    MusicTrackVariant,
 )
+
 from apps.audio_catalog.services.publishing import (
     publish_track,
     suspend_track,
@@ -866,13 +868,12 @@ class MusicTrackAdmin(
 
     def save_formset(self, request, form, formset, change):
         """
-        Save track inlines and maintain rights review audit metadata.
-
-        Contributor identities are canonical AudioContributor records;
-        TrackContributor only stores the track/role relationship.
+        Save track inlines and maintain canonical playback duration
+        and rights-review audit metadata.
         """
 
         now = timezone.now()
+        track = form.instance
 
         for inline_form in formset.forms:
             cleaned = getattr(inline_form, "cleaned_data", None)
@@ -884,6 +885,18 @@ class MusicTrackAdmin(
                 continue
 
             instance = inline_form.instance
+
+            if isinstance(instance, MusicTrackVariant):
+                # The main playback variant represents the complete track.
+                # Its duration must never remain at the model's placeholder
+                # value (e.g. 1 ms), otherwise clients see 00:00/unavailable.
+                if (
+                    instance.variant_type == MusicTrackVariant.VariantType.PLAYBACK
+                    and instance.is_default
+                    and instance.source_start_ms in (None, 0)
+                    and instance.source_end_ms in (None, track.duration_ms)
+                ):
+                    instance.duration_ms = track.duration_ms
 
             if isinstance(instance, MusicRightsRecord):
                 status_changed = (

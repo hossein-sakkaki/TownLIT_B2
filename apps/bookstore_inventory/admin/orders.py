@@ -1,264 +1,148 @@
 # apps/bookstore_inventory/admin/orders.py
+#
+# TownLIT
+#
+# Created by Hossein Sakkaki on 2026-04-01.
+# Last Update by Hossein Sakkaki on 2026-08-17.
 
 from django.contrib import admin
-from django.utils.html import format_html
 
-from apps.bookstore_inventory.admin.actions import fulfill_selected_orders
-from apps.bookstore_inventory.admin.mixins import AdminSummaryMixin, ProtectedAfterPostMixin, ProtectedInlineMixin
+from apps.bookstore_inventory.admin.actions import fulfill_selected_orders, reserve_selected_order
+from apps.bookstore_inventory.admin.common import (
+    HiddenFromAdminIndexMixin, PermissionedActionsMixin,
+    ProtectedAfterPostMixin, ProtectedInlineMixin, SummaryChangeListMixin,
+    WarehouseScopeAdminMixin, WorkflowAdminMixin, badge,
+)
+from apps.bookstore_inventory.admin.media import edition_cover_preview
 from apps.bookstore_inventory.forms.orders import BookOrderAdminForm
-from apps.bookstore_inventory.models import BookOrder, BookOrderItem, PaymentRecord
+from apps.bookstore_inventory.models.orders import BookOrder, BookOrderItem, PaymentRecord
 from apps.bookstore_inventory.services.numbering import generate_order_number
 
 
 class BookOrderItemInline(ProtectedInlineMixin):
-    # Order items inline
     model = BookOrderItem
-    parent_lock_attr = "is_fulfilled"
-    extra = 1
+    parent_lock_attribute = "is_fulfilled"
+    extra = 0
     autocomplete_fields = ("book_edition", "warehouse")
     fields = (
-        "book_edition",
-        "warehouse",
-        "quantity",
-        "unit_price",
-        "line_total",
-        "pricing_mode_snapshot",
-        "notes",
+        "cover_preview", "book_edition", "warehouse", "location", "quantity", "unit_price", "line_total",
+        "pricing_mode_snapshot", "notes",
     )
-    readonly_fields = ("line_total",)
+    readonly_fields = ("cover_preview", "line_total", "pricing_mode_snapshot")
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related("book_edition__book")
+
+    @admin.display(description="Cover")
+    def cover_preview(self, obj):
+        edition = getattr(obj, "book_edition", None)
+        return edition_cover_preview(edition)
 
 
-class PaymentRecordInline(ProtectedInlineMixin):
-    # Order payments inline
+class PaymentRecordInline(admin.TabularInline):
     model = PaymentRecord
-    parent_lock_attr = "is_fulfilled"
     extra = 0
-    autocomplete_fields = ("received_by",)
     fields = (
-        "amount",
-        "currency",
-        "payment_method",
-        "payment_status",
-        "transaction_reference",
-        "received_by",
-        "received_at",
-        "notes",
+        "amount", "currency", "payment_method", "payment_status",
+        "transaction_reference", "received_at", "received_by", "notes",
     )
+    autocomplete_fields = ("received_by",)
+
+    def has_delete_permission(self, request, obj=None):
+        return bool(not obj or not obj.is_fulfilled) and super().has_delete_permission(request, obj)
 
 
 @admin.register(BookOrder)
-class BookOrderAdmin(ProtectedAfterPostMixin, AdminSummaryMixin, admin.ModelAdmin):
-    # Order admin
+class BookOrderAdmin(
+    HiddenFromAdminIndexMixin, WarehouseScopeAdminMixin,
+    PermissionedActionsMixin, ProtectedAfterPostMixin,
+    SummaryChangeListMixin, WorkflowAdminMixin,
+    admin.ModelAdmin,
+):
+    warehouse_scope_lookups = ("items__warehouse",)
     form = BookOrderAdminForm
-    actions = [fulfill_selected_orders]
-    change_list_template = "admin/bookstore_inventory/change_list_with_summary.html"
-
-    protected_fieldsets = (
-        "order_type",
-        "recipient_type",
-        "recipient_first_name",
-        "recipient_last_name",
-        "recipient_email",
-        "recipient_phone",
-        "organization_name",
-        "organization_contact_person",
-        "organization_email",
-        "organization_phone",
-        "delivery_method",
-        "purpose",
-        "destination_name",
-        "address_line_1",
-        "address_line_2",
-        "city",
-        "province_state",
-        "postal_code",
-        "country",
-        "currency",
-        "donation_amount",
-        "discount_amount",
-    )
-    protected_inline_message = "Fulfilled orders cannot be edited. Items and payments are locked."
-
-    summary_config = {
-        "order_count": {"aggregate": "count"},
-        "total_amount_sum": {"aggregate": "sum", "field": "total_amount"},
-        "paid_amount_sum": {"aggregate": "sum", "field": "paid_amount"},
-        "remaining_amount_sum": {"aggregate": "sum", "field": "remaining_amount"},
+    lock_attribute = "is_fulfilled"
+    summary_fields = ("total_amount", "paid_amount", "remaining_amount")
+    actions = (reserve_selected_order, fulfill_selected_orders)
+    action_permission_map = {
+        "reserve_selected_order": "bookstore_inventory.reserve_bookorder",
+        "fulfill_selected_orders": "bookstore_inventory.fulfill_bookorder",
     }
-
+    workflow_select_related = ("recipient_organization", "created_by", "fulfilled_by")
     list_display = (
-        "order_number",
-        "order_type",
-        "recipient_type",
-        "recipient_display_admin",
-        "purpose",
-        "status_badge",
-        "currency",
-        "total_amount",
-        "paid_amount",
-        "remaining_amount",
-        "payment_status",
-        "fulfilled_badge",
-        "created_at",
-    )
-    search_fields = (
-        "order_number",
-        "recipient_first_name",
-        "recipient_last_name",
-        "recipient_email",
-        "recipient_phone",
-        "organization_name",
-        "organization_contact_person",
-        "organization_email",
-        "organization_phone",
-        "destination_name",
+        "order_number", "recipient", "order_type", "purpose", "delivery_method",
+        "created_at", "total_amount", "remaining_amount", "payment_badge",
+        "fulfilment_badge",
     )
     list_filter = (
-        "order_type",
-        "recipient_type",
-        "purpose",
-        "delivery_method",
-        "status",
-        "payment_status",
-        "currency",
-        "created_at",
-        "fulfilled_at",
+        "status", "order_type", "recipient_type", "purpose", "delivery_method",
+        "payment_status", "currency", "fulfilled_at", "created_at",
     )
+    search_fields = (
+        "order_number", "recipient_first_name", "recipient_last_name",
+        "recipient_email", "recipient_phone", "organization_name",
+        "organization_contact_person", "organization_email", "organization_phone",
+        "recipient_organization__official_name", "recipient_organization__aliases__name",
+    )
+    autocomplete_fields = ("recipient_organization", "created_by", "fulfilled_by")
     readonly_fields = (
-        "subtotal_amount",
-        "total_amount",
-        "paid_amount",
-        "remaining_amount",
-        "fulfilled_at",
-        "fulfilled_by",
-        "fulfilled_badge",
-        "created_at",
-        "updated_at",
+        "order_number", "subtotal_amount", "total_amount", "paid_amount", "remaining_amount",
+        "payment_status", "fulfilled_at", "fulfilled_by", "created_at", "updated_at",
     )
-    autocomplete_fields = ("created_by", "fulfilled_by")
-    inlines = [BookOrderItemInline, PaymentRecordInline]
+    date_hierarchy = "created_at"
+    inlines = (BookOrderItemInline, PaymentRecordInline)
     fieldsets = (
-        ("Main", {
-            "fields": ("order_number", "order_type", "status", "payment_status")
-        }),
-        ("Recipient type", {
-            "fields": ("recipient_type", "purpose", "delivery_method")
-        }),
-        ("Person", {
-            "classes": ("book-order-person-section",),
-            "fields": (
-                "recipient_first_name",
-                "recipient_last_name",
-                "recipient_email",
-                "recipient_phone",
-            )
-        }),
-        ("Organization", {
-            "classes": ("book-order-organization-section",),
-            "fields": (
-                "organization_name",
-                "organization_contact_person",
-                "organization_email",
-                "organization_phone",
-            )
-        }),
-        ("Destination", {
-            "classes": ("book-order-destination-section",),
-            "fields": (
-                "destination_name",
-                "address_line_1",
-                "address_line_2",
-                "city",
-                "province_state",
-                "postal_code",
-                "country",
-            )
-        }),
-        ("Amounts", {
-            "fields": (
-                "currency",
-                "subtotal_amount",
-                "donation_amount",
-                "discount_amount",
-                "total_amount",
-                "paid_amount",
-                "remaining_amount",
-            )
-        }),
-        ("Fulfillment", {
-            "fields": ("fulfilled_at", "fulfilled_by", "fulfilled_badge")
-        }),
-        ("Notes", {
-            "fields": ("notes", "created_by")
-        }),
-        ("Timestamps", {
-            "fields": ("created_at", "updated_at"),
-            "classes": ("collapse",),
-        }),
+        ("1. Order", {"fields": (("order_number", "order_type", "status"), ("purpose", "currency"))}),
+        ("2. Recipient", {"fields": ("recipient_type", "recipient_organization", ("recipient_first_name", "recipient_last_name"), ("recipient_email", "recipient_phone"), "organization_name", "organization_contact_person", ("organization_email", "organization_phone")), "description": "For organization orders, choose the reusable directory record. Snapshot fields preserve historical contact details."}),
+        ("3. Delivery", {"fields": (("delivery_method", "destination_name"), "address_line_1", "address_line_2", ("city", "province_state"), ("postal_code", "country"))}),
+        ("4. Financial summary", {"fields": (("subtotal_amount", "donation_amount", "discount_amount"), ("total_amount", "paid_amount", "remaining_amount"), "payment_status"), "description": "Totals are calculated from order lines and successful payment records."}),
+        ("5. Fulfilment", {"fields": (("fulfilled_at", "fulfilled_by"),), "description": "After checking order lines, use the list action to fulfil the order and deduct stock."}),
+        ("Notes and audit", {"fields": ("notes", "created_by", ("created_at", "updated_at")), "classes": ("collapse",)}),
     )
-
-    class Media:
-        # Load admin helper script
-        js = ("bookstore_inventory/admin/js/book_order_admin.js",)
-
-    def is_locked(self, obj):
-        # Lock after fulfillment
-        return obj.is_fulfilled
 
     def save_model(self, request, obj, form, change):
-        # Auto-fill order number
         if not obj.order_number:
             obj.order_number = generate_order_number()
-        if not obj.created_by_id:
-            obj.created_by = request.user
         super().save_model(request, obj, form, change)
 
-    def recipient_display_admin(self, obj):
-        # Show recipient in list display
+    def save_related(self, request, form, formsets, change):
+        super().save_related(request, form, formsets, change)
+        form.instance.recalculate_totals(save=True)
+
+    @admin.display(description="Recipient")
+    def recipient(self, obj):
         return obj.recipient_display
 
-    recipient_display_admin.short_description = "Recipient"
+    @admin.display(description="Payment", ordering="payment_status")
+    def payment_badge(self, obj):
+        tone = "success" if obj.payment_status == "paid" else "warning" if obj.payment_status == "partial" else "danger"
+        return badge(obj.get_payment_status_display(), tone)
 
-    def fulfilled_badge(self, obj):
-        # Display fulfillment state
-        if obj.is_fulfilled:
-            return format_html(
-                '<span style="color:#15803d;font-weight:600;">Fulfilled</span>'
-            )
-        return format_html(
-            '<span style="color:#b45309;font-weight:600;">Pending</span>'
+    @admin.display(description="Order")
+    def fulfilment_badge(self, obj):
+        return badge(
+            "Fulfilled" if obj.is_fulfilled else obj.get_status_display(),
+            "success" if obj.is_fulfilled else "warning",
         )
 
-    fulfilled_badge.short_description = "Fulfillment"
 
-    def status_badge(self, obj):
-        # Display order status badge
-        color = "#475569"
-        if obj.status == "fulfilled":
-            color = "#15803d"
-        elif obj.status == "confirmed":
-            color = "#1d4ed8"
-        elif obj.status == "draft":
-            color = "#b45309"
-        elif obj.status == "cancelled":
-            color = "#b91c1c"
+@admin.register(PaymentRecord)
+class PaymentRecordAdmin(HiddenFromAdminIndexMixin, WarehouseScopeAdminMixin, WorkflowAdminMixin, admin.ModelAdmin):
+    warehouse_scope_lookups = ("order__items__warehouse",)
+    workflow_select_related = ("order", "received_by")
+    list_display = (
+        "received_at", "order", "amount", "currency", "payment_method",
+        "payment_status", "transaction_reference", "received_by",
+    )
+    list_filter = ("payment_method", "payment_status", "currency", "received_at")
+    search_fields = ("order__order_number", "transaction_reference", "notes")
+    autocomplete_fields = ("order", "received_by")
+    date_hierarchy = "received_at"
 
-        return format_html(
-            '<span style="color:{};font-weight:600;">{}</span>',
-            color,
-            obj.get_status_display(),
-        )
+    def save_model(self, request, obj, form, change):
+        if not obj.received_by_id:
+            obj.received_by = request.user
+        super().save_model(request, obj, form, change)
 
-    status_badge.short_description = "Status"
-
-    def changelist_view(self, request, extra_context=None):
-        # Add friendly titles for summary
-        extra_context = extra_context or {}
-        summary_data = self.get_summary_data(request)
-        extra_context["summary_data_verbose"] = {
-            "Order count": summary_data.get("order_count", 0),
-            "Total amount": summary_data.get("total_amount_sum", 0),
-            "Paid amount": summary_data.get("paid_amount_sum", 0),
-            "Remaining amount": summary_data.get("remaining_amount_sum", 0),
-        }
-        return super().changelist_view(request, extra_context=extra_context)
+    def has_delete_permission(self, request, obj=None):
+        return bool(obj and not obj.order.is_fulfilled and super().has_delete_permission(request, obj))

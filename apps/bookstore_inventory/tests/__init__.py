@@ -1,4 +1,4 @@
-# apps/bookstore_inventory/__init__.py
+# apps/bookstore_inventory/tests/__init__.py
 #
 # TownLIT
 #

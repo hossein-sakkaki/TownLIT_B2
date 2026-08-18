@@ -1,4 +1,9 @@
 # apps/bookstore_inventory/apps.py
+#
+# TownLIT
+#
+# Created by Hossein Sakkaki on 2026-04-01.
+# Last Update by Hossein Sakkaki on 2026-08-17.
 
 from django.apps import AppConfig
 
@@ -9,5 +14,4 @@ class BookstoreInventoryConfig(AppConfig):
     verbose_name = "Bookstore Inventory"
 
     def ready(self):
-        # Import signals
         from . import signals  # noqa: F401

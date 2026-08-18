@@ -1,0 +1,156 @@
+{#
+apps/bookstore_inventory/templates/admin/bookstore_inventory/workspace.html
+
+TownLIT
+
+Created by Hossein Sakkaki on 2026-04-01.
+Last Update by Hossein Sakkaki on 2026-08-17.
+#}
+
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block extrastyle %}
+  {{ block.super }}
+  <style>
+    .townlit-workspace { max-width: 1280px; }
+    .townlit-intro {
+      margin: 0 0 20px;
+      padding: 18px 20px;
+      border: 1px solid var(--hairline-color, #d8dee4);
+      border-radius: 12px;
+      background: var(--darkened-bg, #f8fafc);
+    }
+    .townlit-intro strong { display: block; margin-bottom: 6px; }
+    .townlit-flow { margin: 0; color: var(--body-quiet-color, #52606d); }
+    .townlit-stats,
+    .townlit-grid {
+      display: grid;
+      gap: 14px;
+    }
+    .townlit-stats {
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      margin-bottom: 22px;
+    }
+    .townlit-stat,
+    .townlit-card {
+      border: 1px solid var(--hairline-color, #d8dee4);
+      border-radius: 12px;
+      background: var(--body-bg, #fff);
+      box-shadow: 0 2px 8px rgba(15, 23, 42, .05);
+    }
+    .townlit-stat { padding: 14px 16px; }
+    .townlit-stat-value { display: block; font-size: 25px; font-weight: 700; }
+    .townlit-stat-label { color: var(--body-quiet-color, #52606d); }
+    .townlit-stat-success { border-left: 4px solid #16a34a; }
+    .townlit-stat-warning { border-left: 4px solid #d97706; }
+    .townlit-stat-danger { border-left: 4px solid #dc2626; }
+    .townlit-stat-neutral { border-left: 4px solid #64748b; }
+    .townlit-grid {
+      grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+    }
+    .townlit-card { padding: 18px; }
+    .townlit-card h2 { margin: 0 0 5px; font-size: 18px; }
+    .townlit-card > p {
+      margin: 0 0 14px;
+      color: var(--body-quiet-color, #52606d);
+    }
+    .townlit-link {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 12px 0;
+      border-top: 1px solid var(--hairline-color, #e5e7eb);
+    }
+    .townlit-link:first-of-type { border-top: 0; }
+    .townlit-link-main { min-width: 0; }
+    .townlit-link-main > a { font-weight: 700; }
+    .townlit-link-main small {
+      display: block;
+      margin-top: 3px;
+      color: var(--body-quiet-color, #52606d);
+      line-height: 1.35;
+    }
+    .townlit-add {
+      align-self: center;
+      white-space: nowrap;
+      padding: 6px 9px;
+      border-radius: 7px;
+      background: var(--button-bg, #417690);
+      color: var(--button-fg, #fff) !important;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .townlit-technical { margin-top: 22px; }
+    .townlit-technical summary { cursor: pointer; font-weight: 700; }
+    .townlit-technical-list { margin: 12px 0 0 20px; }
+    .townlit-technical-list li { margin: 7px 0; }
+    @media (max-width: 600px) {
+      .townlit-grid { grid-template-columns: 1fr; }
+      .townlit-link { display: block; }
+      .townlit-add { display: inline-block; margin-top: 8px; }
+    }
+  </style>
+{% endblock %}
+
+{% block breadcrumbs %}
+  <div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+    &rsaquo; {{ title }}
+  </div>
+{% endblock %}
+
+{% block content %}
+  <div id="content-main" class="townlit-workspace">
+    <div class="townlit-intro">
+      <strong>One safe workflow for bookstore operations</strong>
+      <p class="townlit-flow">
+        Receive books → post verified stock → reserve and fulfil orders → record payments → review the ledger.
+        Use transfers for warehouse-to-warehouse movement and counts for physical inventory checks.
+      </p>
+    </div>
+
+    <div class="townlit-stats">
+      {% for stat in stats %}
+        <div class="townlit-stat townlit-stat-{{ stat.tone }}">
+          <span class="townlit-stat-value">{{ stat.value }}</span>
+          <span class="townlit-stat-label">{{ stat.label }}</span>
+        </div>
+      {% endfor %}
+    </div>
+
+    <div class="townlit-grid">
+      {% for group in workflow_groups %}
+        <section class="townlit-card">
+          <h2>{{ group.title }}</h2>
+          <p>{{ group.description }}</p>
+          {% for link in group.links %}
+            <div class="townlit-link">
+              <div class="townlit-link-main">
+                <a href="{{ link.url }}">{{ link.label }}</a>
+                <small>{{ link.description }}</small>
+              </div>
+              {% if link.add_url %}
+                <a class="townlit-add" href="{{ link.add_url }}">{{ link.add_label }}</a>
+              {% endif %}
+            </div>
+          {% endfor %}
+        </section>
+      {% endfor %}
+    </div>
+
+    {% if technical_links %}
+      <details class="townlit-technical">
+        <summary>Technical and audit detail</summary>
+        <ul class="townlit-technical-list">
+          {% for link in technical_links %}
+            <li>
+              <a href="{{ link.url }}">{{ link.label }}</a>
+              — {{ link.description }}
+            </li>
+          {% endfor %}
+        </ul>
+      </details>
+    {% endif %}
+  </div>
+{% endblock %}

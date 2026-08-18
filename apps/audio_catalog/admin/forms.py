@@ -153,11 +153,10 @@ class MusicTrackAdminForm(forms.ModelForm):
                 "An instrumental track cannot also be marked as having vocals."
             )
 
-        if (
+        cleaned["is_ai_assisted"] = (
             cleaned.get("source_type")
             == MusicTrack.SourceType.TOWNLIT_AI_ASSISTED
-        ):
-            cleaned["is_ai_assisted"] = True
+        )
 
         return cleaned
 

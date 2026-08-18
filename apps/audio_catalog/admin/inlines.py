@@ -137,6 +137,7 @@ class MusicTrackVariantInline(admin.StackedInline):
 
     readonly_fields = (
         "audio_preview",
+        "duration_ms",
         "conversion_state",
         "conversion_job",
     )

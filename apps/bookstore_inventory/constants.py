@@ -1,4 +1,9 @@
 # apps/bookstore_inventory/constants.py
+#
+# TownLIT
+#
+# Created by Hossein Sakkaki on 2026-04-01.
+# Last Update by Hossein Sakkaki on 2026-08-17.
 
 from django.db import models
 
@@ -45,6 +50,28 @@ class PricingMode(models.TextChoices):
     FIXED_PLUS_DONATION = "fixed_plus_donation", "Fixed + Donation"
 
 
+class OrganizationRoleType(models.TextChoices):
+    PUBLISHER = "publisher", "Publisher"
+    PRINTER = "printer", "Printer"
+    SUPPLIER = "supplier", "Supplier"
+    DONOR = "donor", "Donor"
+    DISTRIBUTOR = "distributor", "Distributor"
+    LIBRARY = "library", "Library"
+    MINISTRY = "ministry", "Ministry"
+    CHURCH = "church", "Church"
+    RIGHTS_HOLDER = "rights_holder", "Rights holder"
+    CONSIGNMENT_PARTNER = "consignment_partner", "Consignment partner"
+    CUSTOMER = "customer", "Customer / recipient"
+    OTHER = "other", "Other"
+
+
+class ProfileLinkStatus(models.TextChoices):
+    PENDING = "pending", "Pending verification"
+    VERIFIED = "verified", "Verified"
+    REJECTED = "rejected", "Rejected"
+    UNLINKED = "unlinked", "Unlinked"
+
+
 class InboundSourceType(models.TextChoices):
     PURCHASE = "purchase", "Purchase"
     DONATION = "donation", "Donation"
@@ -62,6 +89,37 @@ class InboundPaymentStatus(models.TextChoices):
     PAY_AFTER_SALE = "pay_after_sale", "Pay after sale"
 
 
+class InventoryCondition(models.TextChoices):
+    NEW = "new", "New"
+    GOOD = "good", "Good"
+    DAMAGED = "damaged", "Damaged"
+    DISPLAY = "display", "Display copy"
+    QUARANTINED = "quarantined", "Quarantined"
+    UNSELLABLE = "unsellable", "Unsellable"
+
+
+class LocationType(models.TextChoices):
+    ZONE = "zone", "Zone"
+    AISLE = "aisle", "Aisle"
+    SHELF = "shelf", "Shelf"
+    BIN = "bin", "Bin"
+    STAGING = "staging", "Staging area"
+    OTHER = "other", "Other"
+
+
+class WarehouseStaffRole(models.TextChoices):
+    PRIMARY_MANAGER = "primary_manager", "Primary manager"
+    MANAGER = "manager", "Manager"
+    OPERATOR = "operator", "Operator"
+    AUDITOR = "auditor", "Read-only auditor"
+
+
+class InboundPaymentScheduleStatus(models.TextChoices):
+    SCHEDULED = "scheduled", "Scheduled"
+    PARTIAL = "partial", "Partially paid"
+    PAID = "paid", "Paid"
+
+
 class StockMovementType(models.TextChoices):
     IN = "in", "Stock in"
     OUT = "out", "Stock out"
@@ -76,6 +134,49 @@ class StockMovementType(models.TextChoices):
     LOST = "lost", "Lost"
     TRANSFER_IN = "transfer_in", "Transfer in"
     TRANSFER_OUT = "transfer_out", "Transfer out"
+
+
+class DocumentStatus(models.TextChoices):
+    DRAFT = "draft", "Draft"
+    CONFIRMED = "confirmed", "Confirmed"
+    POSTED = "posted", "Posted"
+    CANCELLED = "cancelled", "Cancelled"
+
+
+class ReservationStatus(models.TextChoices):
+    ACTIVE = "active", "Active"
+    CONSUMED = "consumed", "Consumed"
+    RELEASED = "released", "Released"
+    EXPIRED = "expired", "Expired"
+
+
+class TransferStatus(models.TextChoices):
+    DRAFT = "draft", "Draft"
+    DISPATCHED = "dispatched", "Dispatched"
+    RECEIVED = "received", "Received"
+    CANCELLED = "cancelled", "Cancelled"
+
+
+class StockCountStatus(models.TextChoices):
+    DRAFT = "draft", "Draft"
+    COUNTING = "counting", "Counting"
+    SUBMITTED = "submitted", "Submitted"
+    POSTED = "posted", "Posted"
+    CANCELLED = "cancelled", "Cancelled"
+
+
+class AdjustmentReason(models.TextChoices):
+    COUNT_VARIANCE = "count_variance", "Stock-count variance"
+    DAMAGE = "damage", "Damage"
+    LOSS = "loss", "Loss"
+    FOUND = "found", "Found stock"
+    DATA_CORRECTION = "data_correction", "Data correction"
+    OTHER = "other", "Other"
+
+
+class ReturnDirection(models.TextChoices):
+    CUSTOMER_TO_STOCK = "customer_to_stock", "Customer return to stock"
+    STOCK_TO_SUPPLIER = "stock_to_supplier", "Return to supplier"
 
 
 class OrderType(models.TextChoices):
@@ -124,33 +225,11 @@ class CashEntryType(models.TextChoices):
     MANUAL = "manual", "Manual"
 
 
-STOCK_IN_TYPES = {
-    StockMovementType.IN,
-    StockMovementType.RETURN_IN,
-    StockMovementType.ADJUSTMENT_PLUS,
-    StockMovementType.TRANSFER_IN,
-}
-
-STOCK_OUT_TYPES = {
-    StockMovementType.OUT,
-    StockMovementType.SALE,
-    StockMovementType.GIFT,
-    StockMovementType.DONATION_DISTRIBUTION,
-    StockMovementType.RETURN_OUT,
-    StockMovementType.ADJUSTMENT_MINUS,
-    StockMovementType.DAMAGED,
-    StockMovementType.LOST,
-    StockMovementType.TRANSFER_OUT,
-}
-
-
-# Recipient type
 class RecipientType(models.TextChoices):
     PERSON = "person", "Person"
     ORGANIZATION = "organization", "Organization"
 
 
-# Delivery method
 class DeliveryMethod(models.TextChoices):
     PICKUP = "pickup", "Pickup"
     SHIPPING = "shipping", "Shipping"
@@ -158,7 +237,6 @@ class DeliveryMethod(models.TextChoices):
     INTERNAL_TRANSFER = "internal_transfer", "Internal transfer"
 
 
-# Order purpose
 class OrderPurpose(models.TextChoices):
     PERSONAL_SALE = "personal_sale", "Personal sale"
     ORGANIZATION_SALE = "organization_sale", "Organization sale"
@@ -168,3 +246,15 @@ class OrderPurpose(models.TextChoices):
     INTERNAL_USE = "internal_use", "Internal use"
     PROMOTIONAL = "promotional", "Promotional"
     OTHER = "other", "Other"
+
+
+STOCK_IN_TYPES = {
+    StockMovementType.IN, StockMovementType.RETURN_IN,
+    StockMovementType.ADJUSTMENT_PLUS, StockMovementType.TRANSFER_IN,
+}
+STOCK_OUT_TYPES = {
+    StockMovementType.OUT, StockMovementType.SALE, StockMovementType.GIFT,
+    StockMovementType.DONATION_DISTRIBUTION, StockMovementType.RETURN_OUT,
+    StockMovementType.ADJUSTMENT_MINUS, StockMovementType.DAMAGED,
+    StockMovementType.LOST, StockMovementType.TRANSFER_OUT,
+}

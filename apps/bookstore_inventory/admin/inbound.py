@@ -1,213 +1,297 @@
 # apps/bookstore_inventory/admin/inbound.py
+#
+# TownLIT
+#
+# Created by Hossein Sakkaki on 2026-04-01.
+# Last Update by Hossein Sakkaki on 2026-08-17.
+
+from decimal import Decimal
 
 from django.contrib import admin
-from django.utils.html import format_html
+from django.db.models import DecimalField, Sum, Value
+from django.db.models.functions import Coalesce
+from django.utils import timezone
 
 from apps.bookstore_inventory.admin.actions import post_selected_shipments_to_stock
-from apps.bookstore_inventory.admin.mixins import AdminSummaryMixin, ProtectedAfterPostMixin, ProtectedInlineMixin
-from apps.bookstore_inventory.models import InboundPayment, InboundShipment, InboundShipmentItem
+from apps.bookstore_inventory.admin.common import (
+    HiddenFromAdminIndexMixin, PermissionedActionsMixin,
+    ProtectedAfterPostMixin, ProtectedInlineMixin, SummaryChangeListMixin,
+    WarehouseScopeAdminMixin, WorkflowAdminMixin, badge,
+)
+from apps.bookstore_inventory.admin.media import edition_cover_preview
+from apps.bookstore_inventory.forms import InboundShipmentAdminForm
+from apps.bookstore_inventory.constants import InboundPaymentScheduleStatus
+from apps.bookstore_inventory.models import (
+    InboundPayment, InboundPaymentSchedule, InboundShipment,
+    InboundShipmentItem,
+)
 from apps.bookstore_inventory.services.numbering import generate_shipment_number
 
 
 class InboundShipmentItemInline(ProtectedInlineMixin):
-    # Shipment items inline
     model = InboundShipmentItem
-    parent_lock_attr = "is_stock_posted"
-    extra = 1
-    autocomplete_fields = ("book_edition",)
-    fields = ("book_edition", "quantity", "unit_cost", "line_total", "notes")
-    readonly_fields = ("line_total",)
-
-
-class InboundPaymentInline(ProtectedInlineMixin):
-    # Shipment payments inline
-    model = InboundPayment
-    parent_lock_attr = "is_stock_posted"
+    parent_lock_attribute = "is_stock_posted"
     extra = 0
-    autocomplete_fields = ("recorded_by",)
-    fields = ("amount", "currency", "payment_reference", "paid_at", "recorded_by", "notes")
+    autocomplete_fields = ("book_edition", "location")
+    fields = ("cover_preview", "book_edition", "location", "lot_number", "condition", "quantity", "unit_cost", "line_total", "notes")
+    readonly_fields = ("cover_preview", "line_total")
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related("book_edition__book")
+
+    @admin.display(description="Cover")
+    def cover_preview(self, obj):
+        edition = getattr(obj, "book_edition", None)
+        return edition_cover_preview(edition)
+
+
+class InboundPaymentInline(admin.TabularInline):
+    model = InboundPayment
+    extra = 0
+    fields = (
+        "schedule", "amount", "currency", "settlement_amount",
+        "settlement_currency", "exchange_rate", "payment_reference",
+        "paid_at", "recorded_by", "notes",
+    )
+    autocomplete_fields = ("schedule", "recorded_by")
+
+    def has_delete_permission(self, request, obj=None):
+        return bool(not obj or not obj.is_stock_posted) and super().has_delete_permission(request, obj)
+
+
+class InboundPaymentScheduleInline(admin.TabularInline):
+    model = InboundPaymentSchedule
+    extra = 0
+    can_delete = False
+    fields = (
+        "due_date", "description", "amount", "currency", "status",
+        "paid_amount_display", "remaining_amount_display", "overdue_display",
+    )
+    readonly_fields = (
+        "status", "paid_amount_display", "remaining_amount_display",
+        "overdue_display",
+    )
+
+    @admin.display(description="Paid")
+    def paid_amount_display(self, obj):
+        return obj.paid_amount if obj and obj.pk else 0
+
+    @admin.display(description="Remaining")
+    def remaining_amount_display(self, obj):
+        return obj.remaining_amount if obj and obj.pk else 0
+
+    @admin.display(description="Overdue", boolean=True)
+    def overdue_display(self, obj):
+        return bool(obj and obj.pk and obj.is_overdue)
+
+
+class PaymentScheduleDueFilter(admin.SimpleListFilter):
+    title = "Due state"
+    parameter_name = "due_state"
+
+    def lookups(self, request, model_admin):
+        return (("overdue", "Overdue"), ("upcoming", "Upcoming/open"))
+
+    def queryset(self, request, queryset):
+        today = timezone.localdate()
+        if self.value() == "overdue":
+            return queryset.exclude(
+                status=InboundPaymentScheduleStatus.PAID
+            ).filter(due_date__lt=today)
+        if self.value() == "upcoming":
+            return queryset.exclude(
+                status=InboundPaymentScheduleStatus.PAID
+            ).filter(due_date__gte=today)
+        return queryset
 
 
 @admin.register(InboundShipment)
-class InboundShipmentAdmin(ProtectedAfterPostMixin, AdminSummaryMixin, admin.ModelAdmin):
-    # Inbound shipment admin
-    actions = [post_selected_shipments_to_stock]
-
-    protected_fieldsets = (
-        "warehouse",
-        "source_type",
-        "supplier_name",
-        "supplier_contact",
-        "supplier_phone",
-        "invoice_reference",
-        "received_at",
-        "shipping_cost",
-        "other_cost",
-        "currency",
-        "is_consignment",
-        "consignment_notes",
-    )
-    protected_inline_message = "Posted shipments cannot be edited. Items and payments are locked."
-
-    change_list_template = "admin/bookstore_inventory/change_list_with_summary.html"
-
-    summary_config = {
-        "shipment_count": {"aggregate": "count"},
-        "total_cost_sum": {"aggregate": "sum", "field": "total_cost"},
-        "amount_paid_sum": {"aggregate": "sum", "field": "amount_paid"},
-        "amount_due_sum": {"aggregate": "sum", "field": "amount_due"},
+class InboundShipmentAdmin(HiddenFromAdminIndexMixin, WarehouseScopeAdminMixin, PermissionedActionsMixin, ProtectedAfterPostMixin, SummaryChangeListMixin, WorkflowAdminMixin, admin.ModelAdmin):
+    form = InboundShipmentAdminForm
+    lock_attribute = "is_stock_posted"
+    summary_fields = ("total_cost", "amount_paid", "amount_due")
+    actions = (post_selected_shipments_to_stock,)
+    action_permission_map = {
+        "post_selected_shipments_to_stock": "bookstore_inventory.post_inboundshipment",
     }
-
+    workflow_select_related = ("warehouse", "supplier", "donor", "created_by", "stock_posted_by")
     list_display = (
-        "shipment_number",
-        "warehouse",
-        "source_type",
-        "supplier_name",
-        "received_at",
-        "total_cost",
-        "amount_paid",
-        "amount_due",
-        "payment_status_badge",
-        "stock_posted_badge",
-        "is_consignment",
+        "shipment_number", "warehouse", "source_type", "supplier", "donor",
+        "received_at", "total_cost", "amount_due", "overdue_amount_display",
+        "payment_badge", "stock_badge",
     )
-    search_fields = (
-        "shipment_number",
-        "supplier_name",
-        "supplier_contact",
-        "supplier_phone",
-        "invoice_reference",
-    )
-    list_filter = (
-        "warehouse",
-        "source_type",
-        "payment_status",
-        "is_consignment",
-        "currency",
-        "received_at",
-        "stock_posted_at",
-    )
-    autocomplete_fields = ("warehouse", "created_by", "stock_posted_by")
+    list_filter = ("warehouse", "source_type", "payment_status", "is_consignment", "currency", "stock_posted_at", "received_at")
+    search_fields = ("shipment_number", "supplier_name", "donor_name", "supplier__official_name", "donor__official_name", "invoice_reference", "supplier_contact", "supplier_phone")
+    autocomplete_fields = ("warehouse", "supplier", "donor", "created_by", "stock_posted_by")
     readonly_fields = (
-        "subtotal_cost",
-        "total_cost",
-        "amount_due",
-        "created_at",
-        "updated_at",
-        "stock_posted_at",
-        "stock_posted_by",
-        "payment_status_badge",
-        "stock_posted_badge",
+        "shipment_number", "subtotal_cost", "total_cost", "amount_paid",
+        "amount_due", "payment_status", "payment_plan_summary",
+        "stock_posted_at", "stock_posted_by", "created_at", "updated_at",
     )
-    inlines = [InboundShipmentItemInline, InboundPaymentInline]
     date_hierarchy = "received_at"
+    inlines = (
+        InboundShipmentItemInline, InboundPaymentScheduleInline,
+        InboundPaymentInline,
+    )
     fieldsets = (
-        ("Main", {
-            "fields": (
-                "shipment_number",
-                "warehouse",
-                "source_type",
-                "received_at",
-            )
-        }),
-        ("Supplier", {
-            "fields": (
-                "supplier_name",
-                "supplier_contact",
-                "supplier_phone",
-                "invoice_reference",
-            )
-        }),
-        ("Costs", {
-            "fields": (
-                "currency",
-                "shipping_cost",
-                "other_cost",
-                "subtotal_cost",
-                "total_cost",
-                "amount_paid",
-                "amount_due",
-                "payment_status",
-                "payment_status_badge",
-            )
-        }),
-        ("Consignment", {
-            "fields": (
-                "is_consignment",
-                "consignment_notes",
-            )
-        }),
-        ("Stock", {
-            "fields": (
-                "stock_posted_at",
-                "stock_posted_by",
-                "stock_posted_badge",
-            )
-        }),
-        ("Notes", {
-            "fields": ("notes", "created_by")
-        }),
-        ("Timestamps", {
-            "fields": ("created_at", "updated_at"),
-            "classes": ("collapse",),
-        }),
+        ("1. Receiving", {"fields": (("shipment_number", "warehouse"), ("source_type", "received_at"))}),
+        ("2. Organizations", {"fields": (("supplier", "donor"), ("supplier_name", "donor_name"), ("supplier_contact", "supplier_phone"), "invoice_reference"), "description": "Select reusable organizations. Snapshot names preserve the document history."}),
+        ("3. Costs and payment", {"fields": (("currency", "shipping_cost", "other_cost"), ("subtotal_cost", "total_cost"), ("amount_paid", "amount_due", "payment_status"), "payment_plan_summary")}),
+        ("Consignment", {"fields": ("is_consignment", "consignment_notes"), "classes": ("collapse",)}),
+        ("4. Stock posting", {"fields": (("stock_posted_at", "stock_posted_by"),), "description": "After checking item lines, use the action on the shipment list to post stock."}),
+        ("Notes and audit", {"fields": ("notes", "created_by", ("created_at", "updated_at")), "classes": ("collapse",)}),
     )
 
-    def is_locked(self, obj):
-        # Lock after stock posting
-        return obj.is_stock_posted
-
-    def get_actions(self, request):
-        # Hide action if not allowed
-        actions = super().get_actions(request)
-        return actions
+    def get_queryset(self, request):
+        return super().get_queryset(request).prefetch_related(
+            "payment_schedules__payments"
+        )
 
     def save_model(self, request, obj, form, change):
-        # Auto-fill shipment number
         if not obj.shipment_number:
             obj.shipment_number = generate_shipment_number()
+        super().save_model(request, obj, form, change)
+
+    def save_related(self, request, form, formsets, change):
+        super().save_related(request, form, formsets, change)
+        form.instance.amount_paid = sum((p.amount for p in form.instance.payments.all()), 0)
+        form.instance.recalculate_totals(save=True)
+
+    def save_formset(self, request, form, formset, change):
+        for inline_form in formset.forms:
+            instance = inline_form.instance
+            if isinstance(instance, InboundPaymentSchedule) and not instance.created_by_id:
+                instance.created_by = request.user
+            if isinstance(instance, InboundPayment) and not instance.recorded_by_id:
+                instance.recorded_by = request.user
+        super().save_formset(request, form, formset, change)
+
+    @admin.display(description="Payment", ordering="payment_status")
+    def payment_badge(self, obj):
+        tone = "success" if obj.payment_status in {"paid", "not_required"} else "warning" if obj.payment_status == "partial" else "danger"
+        return badge(obj.get_payment_status_display(), tone)
+
+    @admin.display(description="Stock")
+    def stock_badge(self, obj):
+        return badge("Posted" if obj.is_stock_posted else "Draft", "success" if obj.is_stock_posted else "warning")
+
+    @admin.display(description="Overdue")
+    def overdue_amount_display(self, obj):
+        amount = obj.overdue_amount
+        return badge(
+            f"{amount} {obj.currency}" if amount else "None",
+            "danger" if amount else "success",
+        )
+
+    @admin.display(description="Payment plan")
+    def payment_plan_summary(self, obj):
+        if not obj or not obj.pk:
+            return "Save the shipment to add payment due dates."
+        return (
+            f"Outstanding: {obj.amount_due} {obj.currency} | "
+            f"Scheduled remaining: {obj.scheduled_remaining_amount} {obj.currency} | "
+            f"Unplanned: {obj.unplanned_due_amount} {obj.currency} | "
+            f"Overdue: {obj.overdue_amount} {obj.currency}"
+        )
+
+
+@admin.register(InboundPaymentSchedule)
+class InboundPaymentScheduleAdmin(
+    HiddenFromAdminIndexMixin, WarehouseScopeAdminMixin, SummaryChangeListMixin,
+    WorkflowAdminMixin, admin.ModelAdmin,
+):
+    warehouse_scope_lookups = ("shipment__warehouse",)
+    summary_fields = ("amount",)
+    workflow_select_related = ("shipment", "shipment__supplier", "created_by")
+    list_display = (
+        "due_date", "shipment", "supplier", "amount", "currency",
+        "paid_amount_display", "remaining_amount_display", "status_badge",
+        "overdue_display",
+    )
+    list_filter = (
+        PaymentScheduleDueFilter, "status", "currency", "due_date",
+        "shipment__supplier",
+    )
+    search_fields = (
+        "shipment__shipment_number", "shipment__supplier__official_name",
+        "description", "notes",
+    )
+    autocomplete_fields = ("shipment", "created_by")
+    readonly_fields = ("status", "paid_amount_display", "remaining_amount_display", "created_at", "updated_at")
+    date_hierarchy = "due_date"
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).annotate(
+            _paid_amount=Coalesce(
+                Sum("payments__amount"),
+                Value(Decimal("0.00")),
+                output_field=DecimalField(max_digits=12, decimal_places=2),
+            )
+        )
+
+    def _paid(self, obj):
+        annotated = getattr(obj, "_paid_amount", None)
+        return obj.paid_amount if annotated is None else annotated
+
+    def _remaining(self, obj):
+        return max(obj.amount - self._paid(obj), Decimal("0.00"))
+
+    def _overdue(self, obj):
+        return bool(
+            self._remaining(obj) > Decimal("0.00")
+            and obj.due_date < timezone.localdate()
+        )
+
+    @admin.display(description="Supplier")
+    def supplier(self, obj):
+        return obj.shipment.supplier or "—"
+
+    @admin.display(description="Paid")
+    def paid_amount_display(self, obj):
+        return self._paid(obj)
+
+    @admin.display(description="Remaining")
+    def remaining_amount_display(self, obj):
+        return self._remaining(obj)
+
+    @admin.display(description="Status", ordering="status")
+    def status_badge(self, obj):
+        tone = "success" if obj.status == InboundPaymentScheduleStatus.PAID else "warning"
+        if self._overdue(obj):
+            tone = "danger"
+        return badge(obj.get_status_display(), tone)
+
+    @admin.display(description="Overdue", boolean=True)
+    def overdue_display(self, obj):
+        return self._overdue(obj)
+
+    def save_model(self, request, obj, form, change):
         if not obj.created_by_id:
             obj.created_by = request.user
         super().save_model(request, obj, form, change)
 
-    def payment_status_badge(self, obj):
-        # Display payment status badge
-        color = "#475569"
-        if obj.payment_status in {"paid", "not_required"}:
-            color = "#15803d"
-        elif obj.payment_status == "partial":
-            color = "#b45309"
-        elif obj.payment_status in {"unpaid", "pay_after_sale"}:
-            color = "#b91c1c"
+    def has_delete_permission(self, request, obj=None):
+        if obj and obj.payments.exists():
+            return False
+        return super().has_delete_permission(request, obj)
 
-        return format_html(
-            '<span style="color:{};font-weight:600;">{}</span>',
-            color,
-            obj.get_payment_status_display(),
-        )
 
-    payment_status_badge.short_description = "Payment status"
+@admin.register(InboundPayment)
+class InboundPaymentAdmin(HiddenFromAdminIndexMixin, WarehouseScopeAdminMixin, WorkflowAdminMixin, admin.ModelAdmin):
+    warehouse_scope_lookups = ("shipment__warehouse",)
+    workflow_select_related = ("shipment", "recorded_by")
+    list_display = (
+        "paid_at", "shipment", "schedule", "amount", "currency",
+        "settlement_display", "payment_reference", "recorded_by",
+    )
+    list_filter = ("currency", "settlement_currency", "paid_at")
+    search_fields = ("shipment__shipment_number", "payment_reference", "notes")
+    autocomplete_fields = ("shipment", "schedule", "recorded_by")
+    date_hierarchy = "paid_at"
 
-    def stock_posted_badge(self, obj):
-        # Display stock posting state
-        if obj.is_stock_posted:
-            return format_html(
-                '<span style="color:#15803d;font-weight:600;">Posted</span>'
-            )
-        return format_html(
-            '<span style="color:#b45309;font-weight:600;">Not posted</span>'
-        )
+    @admin.display(description="Cash settlement")
+    def settlement_display(self, obj):
+        return f"{obj.cash_amount} {obj.cash_currency}"
 
-    stock_posted_badge.short_description = "Stock"
-
-    def changelist_view(self, request, extra_context=None):
-        # Add friendly titles for summary
-        extra_context = extra_context or {}
-        summary_data = self.get_summary_data(request)
-        extra_context["summary_data_verbose"] = {
-            "Shipment count": summary_data.get("shipment_count", 0),
-            "Total cost": summary_data.get("total_cost_sum", 0),
-            "Amount paid": summary_data.get("amount_paid_sum", 0),
-            "Amount due": summary_data.get("amount_due_sum", 0),
-        }
-        return super().changelist_view(request, extra_context=extra_context)
+    def has_delete_permission(self, request, obj=None):
+        return bool(obj and not obj.shipment.is_stock_posted and super().has_delete_permission(request, obj))

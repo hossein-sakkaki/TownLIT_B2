@@ -1,77 +1,57 @@
 # apps/bookstore_inventory/admin/inventory.py
+#
+# TownLIT
+#
+# Created by Hossein Sakkaki on 2026-04-01.
+# Last Update by Hossein Sakkaki on 2026-08-17.
 
 from django.contrib import admin
-from django.utils.html import format_html
 
+from apps.bookstore_inventory.admin.common import (
+    HiddenFromAdminIndexMixin, ImmutableAdminMixin, SummaryChangeListMixin,
+    WarehouseScopeAdminMixin, WorkflowAdminMixin, badge,
+)
+from apps.bookstore_inventory.admin.media import edition_cover_preview
 from apps.bookstore_inventory.models import InventoryBalance, StockMovement
 
 
-@admin.register(StockMovement)
-class StockMovementAdmin(admin.ModelAdmin):
-    # Stock movement admin
-    list_display = (
-        "performed_at",
-        "movement_type",
-        "warehouse",
-        "book_edition",
-        "quantity",
-        "reference_type",
-        "reference_id",
-        "performed_by",
-    )
-    search_fields = (
-        "book_edition__book__title",
-        "book_edition__edition_code",
-        "book_edition__barcode",
-        "reference_type",
-        "reference_id",
-        "notes",
-    )
-    list_filter = ("movement_type", "warehouse", "performed_at")
-    autocomplete_fields = ("warehouse", "book_edition", "inbound_shipment", "performed_by")
-    readonly_fields = ("created_at", "updated_at")
-    date_hierarchy = "performed_at"
-
-
 @admin.register(InventoryBalance)
-class InventoryBalanceAdmin(admin.ModelAdmin):
-    # Inventory balance admin
-    list_display = (
-        "warehouse",
-        "book_edition",
-        "on_hand_quantity",
-        "reserved_quantity",
-        "available_quantity_display",
-        "stock_status",
-    )
-    search_fields = (
-        "warehouse__name",
-        "book_edition__book__title",
-        "book_edition__edition_code",
-        "book_edition__barcode",
-    )
-    list_filter = ("warehouse",)
-    autocomplete_fields = ("warehouse", "book_edition")
-    readonly_fields = (
-        "created_at",
-        "updated_at",
-        "available_quantity_display",
-        "stock_status",
-    )
+class InventoryBalanceAdmin(HiddenFromAdminIndexMixin, WarehouseScopeAdminMixin, SummaryChangeListMixin, WorkflowAdminMixin, admin.ModelAdmin):
+    summary_fields = ("on_hand_quantity", "reserved_quantity", "unavailable_quantity")
+    workflow_select_related = ("warehouse", "book_edition", "book_edition__book")
+    list_display = ("cover", "warehouse", "book_edition", "on_hand_quantity", "reserved_quantity", "unavailable_quantity", "available", "health")
+    list_filter = ("warehouse", "book_edition__language", "book_edition__is_active")
+    search_fields = ("book_edition__edition_code", "book_edition__book__title", "book_edition__isbn", "book_edition__barcode")
+    readonly_fields = ("warehouse", "book_edition", "on_hand_quantity", "reserved_quantity", "unavailable_quantity", "available", "created_at", "updated_at")
 
-    def available_quantity_display(self, obj):
-        # Display available stock
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    @admin.display(description="Cover")
+    def cover(self, obj):
+        return edition_cover_preview(obj.book_edition)
+
+    @admin.display(description="Available", ordering="on_hand_quantity")
+    def available(self, obj):
         return obj.available_quantity
 
-    available_quantity_display.short_description = "Available"
+    @admin.display(description="Status")
+    def health(self, obj):
+        if obj.available_quantity < 0:
+            return badge("Negative", "danger")
+        if obj.available_quantity == 0:
+            return badge("Out of stock", "warning")
+        return badge("Available", "success")
 
-    def stock_status(self, obj):
-        # Display stock status
-        qty = obj.available_quantity
-        if qty <= 0:
-            return format_html('<span style="color:#b91c1c;font-weight:600;">Out of stock</span>')
-        if qty <= 5:
-            return format_html('<span style="color:#b45309;font-weight:600;">Low stock</span>')
-        return format_html('<span style="color:#15803d;font-weight:600;">In stock</span>')
 
-    stock_status.short_description = "Status"
+@admin.register(StockMovement)
+class StockMovementAdmin(HiddenFromAdminIndexMixin, WarehouseScopeAdminMixin, ImmutableAdminMixin, SummaryChangeListMixin, WorkflowAdminMixin, admin.ModelAdmin):
+    summary_fields = ("quantity", "total_amount")
+    workflow_select_related = ("warehouse", "location", "book_edition", "book_edition__book", "lot", "performed_by", "inbound_shipment")
+    list_display = ("performed_at", "movement_type", "warehouse", "location", "book_edition", "lot", "quantity", "unit_price", "total_amount", "reference_type", "reference_id", "performed_by")
+    list_filter = ("movement_type", "warehouse", "location", "performed_at")
+    search_fields = ("book_edition__edition_code", "book_edition__book__title", "lot__lot_number", "reference_type", "reference_id", "inbound_shipment__shipment_number", "notes")
+    date_hierarchy = "performed_at"
