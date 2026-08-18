@@ -11,6 +11,7 @@ from apps.bookstore_inventory.admin.common import (
     HiddenFromAdminIndexMixin, SummaryChangeListMixin, WorkflowAdminMixin, badge,
 )
 from apps.bookstore_inventory.models import CashLedgerEntry
+from apps.bookstore_inventory.services.reports import scoped_cash_ledger_queryset
 
 
 @admin.register(CashLedgerEntry)
@@ -23,6 +24,15 @@ class CashLedgerEntryAdmin(HiddenFromAdminIndexMixin, SummaryChangeListMixin, Wo
     autocomplete_fields = ("recorded_by",)
     readonly_fields = ("created_at", "updated_at")
     date_hierarchy = "entry_date"
+
+    def get_queryset(self, request):
+        queryset = super().get_queryset(request)
+        if request.user.is_superuser:
+            return queryset
+        allowed_ids = scoped_cash_ledger_queryset(request.user).values_list(
+            "pk", flat=True
+        )
+        return queryset.filter(pk__in=allowed_ids)
 
     @admin.display(description="Direction", ordering="direction")
     def direction_badge(self, obj):

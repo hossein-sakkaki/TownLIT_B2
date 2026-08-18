@@ -1,0 +1,307 @@
+{#
+apps/bookstore_inventory/templates/admin/bookstore_inventory/reports.html
+
+TownLIT
+
+Created by Hossein Sakkaki on 2026-04-01.
+Last Update by Hossein Sakkaki on 2026-08-17.
+#}
+
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block extrastyle %}
+  {{ block.super }}
+  <style>
+    .townlit-report-page { max-width: 1500px; }
+    .townlit-report-panel,
+    .townlit-email-panel,
+    .townlit-report-table-wrap {
+      border: 1px solid var(--hairline-color, #d8dee4);
+      border-radius: 12px;
+      background: var(--body-bg, #fff);
+      box-shadow: 0 2px 8px rgba(15, 23, 42, .05);
+    }
+    .townlit-report-panel { padding: 18px; margin-bottom: 18px; }
+    .townlit-filter-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 12px;
+      align-items: end;
+    }
+    .townlit-field label {
+      display: block;
+      margin-bottom: 5px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--body-quiet-color, #52606d);
+    }
+    .townlit-field input,
+    .townlit-field select {
+      box-sizing: border-box;
+      width: 100%;
+      min-height: 36px;
+    }
+    .townlit-report-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 9px;
+      margin-top: 14px;
+    }
+    .townlit-button {
+      display: inline-block;
+      box-sizing: border-box;
+      border: 0;
+      border-radius: 7px;
+      padding: 9px 13px;
+      background: var(--button-bg, #417690);
+      color: var(--button-fg, #fff) !important;
+      cursor: pointer;
+      font-weight: 600;
+      text-decoration: none;
+    }
+    .townlit-button-secondary { background: #64748b; }
+    .townlit-result-heading { margin: 22px 0 12px; }
+    .townlit-result-heading h2 { margin-bottom: 4px; }
+    .townlit-result-heading p { margin: 0; color: var(--body-quiet-color, #52606d); }
+    .townlit-totals {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+      gap: 10px;
+      margin: 14px 0;
+    }
+    .townlit-total {
+      padding: 11px 13px;
+      border-left: 4px solid #0F52BA;
+      border-radius: 8px;
+      background: var(--darkened-bg, #f8fafc);
+    }
+    .townlit-total strong { display: block; font-size: 20px; }
+    .townlit-total span { color: var(--body-quiet-color, #52606d); }
+    .townlit-currency-groups {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 10px;
+      margin: 14px 0;
+    }
+    .townlit-currency {
+      padding: 12px 14px;
+      border: 1px solid var(--hairline-color, #d8dee4);
+      border-radius: 8px;
+    }
+    .townlit-currency h3 { margin: 0 0 7px; }
+    .townlit-currency-line { display: flex; justify-content: space-between; gap: 10px; }
+    .townlit-report-table-wrap { overflow-x: auto; }
+    .townlit-report-table { width: 100%; border-collapse: collapse; }
+    .townlit-report-table th,
+    .townlit-report-table td {
+      padding: 9px 10px;
+      border-bottom: 1px solid var(--hairline-color, #e5e7eb);
+      text-align: left;
+      vertical-align: top;
+      white-space: nowrap;
+    }
+    .townlit-report-table th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: var(--darkened-bg, #f1f5f9);
+    }
+    .townlit-alert {
+      margin: 12px 0;
+      padding: 12px 14px;
+      border-radius: 8px;
+      background: #fef3c7;
+      color: #92400e;
+    }
+    .townlit-alert-error { background: #fee2e2; color: #991b1b; }
+    .townlit-email-panel {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      align-items: center;
+      margin-top: 22px;
+      padding: 16px 18px;
+    }
+    .townlit-email-panel h2 { margin: 0 0 5px; }
+    .townlit-email-panel p { margin: 0; color: var(--body-quiet-color, #52606d); }
+    @media (max-width: 720px) {
+      .townlit-email-panel { display: block; }
+      .townlit-email-panel form { margin-top: 12px; }
+    }
+    @media print {
+      #header, .breadcrumbs, .townlit-report-panel, .townlit-email-panel,
+      .townlit-report-actions, #nav-sidebar, .toggle-nav-sidebar { display: none !important; }
+      body, #container, #content { background: #fff !important; color: #000 !important; }
+      #content { margin: 0 !important; padding: 0 !important; }
+      .townlit-report-page { max-width: none; }
+      .townlit-report-table-wrap { overflow: visible; border: 0; box-shadow: none; }
+      .townlit-report-table th { position: static; }
+      .townlit-report-table th, .townlit-report-table td {
+        color: #000 !important; background: #fff !important; white-space: normal;
+      }
+    }
+  </style>
+{% endblock %}
+
+{% block breadcrumbs %}
+  <div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+    &rsaquo;
+    <a href="{% url 'admin:bookstore_inventory_bookstoreworkspace_changelist' %}">Bookstore workspace</a>
+    &rsaquo; Reports
+  </div>
+{% endblock %}
+
+{% block content %}
+  <div id="content-main" class="townlit-report-page">
+    <section class="townlit-report-panel">
+      <form method="get">
+        <div class="townlit-filter-grid">
+          <div class="townlit-field">
+            <label for="id_report">Report</label>
+            <select id="id_report" name="report">
+              {% for definition in report_definitions %}
+                <option value="{{ definition.code }}"{% if result.code == definition.code %} selected{% endif %}>
+                  {{ definition.label }}
+                </option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="townlit-field">
+            <label for="id_warehouse">Warehouse</label>
+            <select id="id_warehouse" name="warehouse">
+              <option value="">All accessible warehouses</option>
+              {% for warehouse in warehouses %}
+                <option value="{{ warehouse.pk }}"{% if result.filters.warehouse_id == warehouse.pk %} selected{% endif %}>
+                  {{ warehouse.name }} ({{ warehouse.code }})
+                </option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="townlit-field">
+            <label for="id_date_from">From date</label>
+            <input id="id_date_from" type="date" name="date_from" value="{{ result.filters.date_from|date:'Y-m-d' }}">
+          </div>
+          <div class="townlit-field">
+            <label for="id_date_to">To date</label>
+            <input id="id_date_to" type="date" name="date_to" value="{{ result.filters.date_to|date:'Y-m-d' }}">
+          </div>
+          <div class="townlit-field">
+            <label for="id_movement_type">Movement type</label>
+            <select id="id_movement_type" name="movement_type">
+              <option value="">All movement types</option>
+              {% for value, label in movement_types %}
+                <option value="{{ value }}"{% if result.filters.movement_type == value %} selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="townlit-field">
+            <label for="id_currency">Currency</label>
+            <input id="id_currency" name="currency" maxlength="12" placeholder="CAD, GBP..." value="{{ result.filters.currency|default:'' }}">
+          </div>
+          <div class="townlit-field">
+            <label for="id_query">Book, reference, person, or organization</label>
+            <input id="id_query" name="query" maxlength="160" value="{{ result.filters.query|default:'' }}">
+          </div>
+        </div>
+        <div class="townlit-report-actions">
+          <button class="townlit-button" type="submit">Run report</button>
+          {% if result %}
+            <a class="townlit-button townlit-button-secondary" href="{{ export_url }}">Export CSV for Excel</a>
+            <button class="townlit-button townlit-button-secondary" type="button" onclick="window.print()">Print / save PDF</button>
+          {% endif %}
+        </div>
+      </form>
+    </section>
+
+    {% if report_error %}
+      <div class="townlit-alert townlit-alert-error">{{ report_error }}</div>
+    {% endif %}
+
+    {% if result %}
+      <header class="townlit-result-heading">
+        <h2>{{ result.title }}</h2>
+        <p>{{ result.description }}</p>
+        {% if result.filters.date_from and result.filters.date_to %}
+          <p>{{ result.filters.date_from|date:"M j, Y" }} – {{ result.filters.date_to|date:"M j, Y" }}</p>
+        {% endif %}
+      </header>
+
+      {% if result.totals %}
+        <div class="townlit-totals">
+          {% for total in result.totals %}
+            <div class="townlit-total">
+              <strong>{{ total.value }}</strong>
+              <span>{{ total.label }}</span>
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      {% if result.currency_totals %}
+        <div class="townlit-currency-groups">
+          {% for group in result.currency_totals %}
+            <div class="townlit-currency">
+              <h3>{{ group.currency }}</h3>
+              {% for metric in group.metrics %}
+                <div class="townlit-currency-line">
+                  <span>{{ metric.label }}</span>
+                  <strong>{{ metric.value }}</strong>
+                </div>
+              {% endfor %}
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      {% if result.truncated %}
+        <div class="townlit-alert">
+          The on-screen report reached its safety row limit. Narrow the filters or use CSV export.
+        </div>
+      {% endif %}
+
+      <div class="townlit-report-table-wrap">
+        <table class="townlit-report-table">
+          <thead>
+            <tr>
+              {% for column in result.columns %}<th>{{ column.label }}</th>{% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in result.rows %}
+              <tr>{% for cell in row %}<td>{{ cell }}</td>{% endfor %}</tr>
+            {% empty %}
+              <tr><td colspan="20">No records matched these filters.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+
+    <section class="townlit-email-panel">
+      <div>
+        <h2>Daily manager inventory email</h2>
+        <p>
+          Current primary managers and managers receive a concise summary of every active warehouse.
+          The scheduled task is safe to run once each morning and does not include warehouse addresses.
+        </p>
+        <p>
+          <strong>{{ daily_recipient_count }} current recipient(s)</strong> ·
+          {% if daily_schedule.configured %}
+            Schedule {{ daily_schedule.description }} ·
+            {% if daily_schedule.enabled %}enabled{% else %}disabled{% endif %}
+          {% else %}
+            {{ daily_schedule.description }}
+          {% endif %}
+        </p>
+      </div>
+      {% if can_queue_daily_report %}
+        <form method="post" onsubmit="return confirm('Queue the inventory summary email to all current warehouse managers now?');">
+          {% csrf_token %}
+          <button class="townlit-button" type="submit">Queue email now</button>
+        </form>
+      {% endif %}
+    </section>
+  </div>
+{% endblock %}

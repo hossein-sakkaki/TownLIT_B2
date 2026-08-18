@@ -5,17 +5,25 @@
 # Created by Hossein Sakkaki on 2026-04-01.
 # Last Update by Hossein Sakkaki on 2026-08-17.
 
-from django.contrib import admin
+import csv
+import logging
+from datetime import date, datetime
+from decimal import Decimal
+
+from django.conf import settings
+from django.contrib import admin, messages
 from django.core.exceptions import PermissionDenied
 from django.db.models import Q, Sum
 from django.db.models.functions import Coalesce
+from django.http import HttpResponse, HttpResponseRedirect
 from django.template.response import TemplateResponse
-from django.urls import reverse
+from django.urls import path, reverse
 from django.utils import timezone
 
 from apps.bookstore_inventory.constants import (
     InboundPaymentScheduleStatus,
     OrderStatus,
+    StockMovementType,
     TransferStatus,
 )
 from apps.bookstore_inventory.models import (
@@ -40,6 +48,15 @@ from apps.bookstore_inventory.models import (
     Warehouse,
 )
 from apps.bookstore_inventory.services.access import current_warehouse_ids
+from apps.bookstore_inventory.services.reports import (
+    ReportValidationError,
+    available_report_definitions,
+    build_report,
+    report_warehouses,
+)
+
+
+logger = logging.getLogger(__name__)
 
 
 @admin.register(BookstoreWorkspace)
@@ -47,6 +64,22 @@ class BookstoreWorkspaceAdmin(admin.ModelAdmin):
     """A permission-aware home screen for every bookstore workflow."""
 
     change_list_template = "admin/bookstore_inventory/workspace.html"
+    report_template = "admin/bookstore_inventory/reports.html"
+
+    def get_urls(self):
+        custom_urls = (
+            path(
+                "reports/",
+                self.admin_site.admin_view(self.reports_view),
+                name="bookstore_inventory_reports",
+            ),
+            path(
+                "reports/export.csv",
+                self.admin_site.admin_view(self.reports_csv_view),
+                name="bookstore_inventory_reports_csv",
+            ),
+        )
+        return list(custom_urls) + super().get_urls()
 
     def has_module_permission(self, request):
         return bool(
@@ -115,6 +148,21 @@ class BookstoreWorkspaceAdmin(admin.ModelAdmin):
             "title": title,
             "description": description,
             "links": available_links,
+        }
+
+    def _reports_link(self, request):
+        if not available_report_definitions(request.user):
+            return None
+        return {
+            "label": "Reports centre",
+            "description": (
+                "Filter by warehouse and date, review operational totals, export CSV, "
+                "or print a PDF-ready report."
+            ),
+            "url": reverse(
+                "admin:bookstore_inventory_reports",
+                current_app=self.admin_site.name,
+            ),
         }
 
     def _warehouse_ids(self, request):
@@ -333,6 +381,13 @@ class BookstoreWorkspaceAdmin(admin.ModelAdmin):
                     ),
                 ),
             ),
+            self._group(
+                "8. Reports and daily summary",
+                "Operational reporting and the manager-facing morning inventory email.",
+                (
+                    self._reports_link(request),
+                ),
+            ),
         )
 
         technical_links = (
@@ -371,3 +426,158 @@ class BookstoreWorkspaceAdmin(admin.ModelAdmin):
             self.change_list_template,
             context,
         )
+
+    def _can_queue_daily_report(self, request):
+        return bool(
+            request.user.is_superuser
+            or request.user.has_perm(
+                "bookstore_inventory.change_warehousestaffassignment"
+            )
+        )
+
+    def _report_context(self, request, result=None, error=""):
+        query = request.GET.copy()
+        export_url = reverse(
+            "admin:bookstore_inventory_reports_csv",
+            current_app=self.admin_site.name,
+        )
+        if query:
+            export_url = f"{export_url}?{query.urlencode()}"
+        daily_schedule = {
+            "configured": False,
+            "enabled": False,
+            "description": "Run the configuration command to create the morning schedule.",
+        }
+        try:
+            from django_celery_beat.models import PeriodicTask
+
+            periodic_task = PeriodicTask.objects.select_related("crontab").filter(
+                name="TownLIT daily bookstore inventory summary"
+            ).first()
+            if periodic_task:
+                daily_schedule = {
+                    "configured": True,
+                    "enabled": getattr(
+                        settings,
+                        "BOOKSTORE_DAILY_REPORT_ENABLED",
+                        True,
+                    ),
+                    "description": (
+                        "Daily at "
+                        f"{getattr(settings, 'BOOKSTORE_DAILY_REPORT_HOUR', 7):02d}:"
+                        f"{getattr(settings, 'BOOKSTORE_DAILY_REPORT_MINUTE', 0):02d} "
+                        f"{getattr(settings, 'CELERY_TIMEZONE', settings.TIME_ZONE)}"
+                    ),
+                }
+        except Exception:
+            pass
+
+        try:
+            from apps.bookstore_inventory.services.daily_reports import (
+                daily_report_recipients,
+            )
+
+            daily_recipient_count = len(daily_report_recipients())
+        except Exception:
+            logger.exception("bookstore.admin.daily_report_recipient_count_failed")
+            daily_recipient_count = 0
+
+        return {
+            **self.admin_site.each_context(request),
+            "opts": self.model._meta,
+            "title": "Bookstore reports centre",
+            "report_definitions": available_report_definitions(request.user),
+            "warehouses": report_warehouses(request.user),
+            "movement_types": StockMovementType.choices,
+            "result": result,
+            "report_error": error,
+            "export_url": export_url,
+            "can_queue_daily_report": self._can_queue_daily_report(request),
+            "daily_schedule": daily_schedule,
+            "daily_recipient_count": daily_recipient_count,
+        }
+
+    def reports_view(self, request):
+        if not self.has_view_permission(request):
+            raise PermissionDenied
+        if not available_report_definitions(request.user):
+            raise PermissionDenied
+
+        if request.method == "POST":
+            if not self._can_queue_daily_report(request):
+                raise PermissionDenied
+            try:
+                from apps.bookstore_inventory.tasks import send_daily_inventory_report
+
+                async_result = send_daily_inventory_report.delay()
+            except Exception:
+                logger.exception("bookstore.admin.daily_report_queue_failed")
+                self.message_user(
+                    request,
+                    "The daily inventory email could not be queued. Check the Celery broker and worker.",
+                    level=messages.ERROR,
+                )
+            else:
+                self.message_user(
+                    request,
+                    f"Daily inventory email queued successfully (task {async_result.id}).",
+                    level=messages.SUCCESS,
+                )
+            return HttpResponseRedirect(request.path)
+
+        result = None
+        error = ""
+        try:
+            result = build_report(user=request.user, params=request.GET)
+        except ReportValidationError as exc:
+            error = str(exc)
+        request.current_app = self.admin_site.name
+        return TemplateResponse(
+            request,
+            self.report_template,
+            self._report_context(request, result=result, error=error),
+        )
+
+    @staticmethod
+    def _csv_value(value):
+        if value is None:
+            return ""
+        if isinstance(value, datetime):
+            if timezone.is_aware(value):
+                value = timezone.localtime(value)
+            return value.isoformat(sep=" ", timespec="seconds")
+        if isinstance(value, date):
+            return value.isoformat()
+        if isinstance(value, (int, float, Decimal)):
+            return value
+        text = str(value)
+        if text.startswith(("=", "+", "-", "@")):
+            return f"'{text}"
+        return text
+
+    def reports_csv_view(self, request):
+        if not self.has_view_permission(request):
+            raise PermissionDenied
+        try:
+            result = build_report(
+                user=request.user,
+                params=request.GET,
+                row_limit=getattr(
+                    settings,
+                    "BOOKSTORE_REPORT_CSV_ROW_LIMIT",
+                    50000,
+                ),
+            )
+        except ReportValidationError as exc:
+            return HttpResponse(str(exc), status=400, content_type="text/plain")
+
+        response = HttpResponse(content_type="text/csv; charset=utf-8")
+        response["Content-Disposition"] = (
+            f'attachment; filename="{result["filename"]}"'
+        )
+        response.write("\ufeff")
+        writer = csv.writer(response)
+        writer.writerow([column["label"] for column in result["columns"]])
+        for row in result["rows"]:
+            writer.writerow([self._csv_value(value) for value in row])
+        return response

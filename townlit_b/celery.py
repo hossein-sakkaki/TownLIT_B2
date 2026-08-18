@@ -275,6 +275,21 @@ app.conf.beat_schedule = {
             minute="*/5",
         ),
     },
+    
+    # Send the daily bookstore inventory summary.
+    "send-daily-bookstore-inventory-summary": {
+        "task": (
+            "apps.bookstore_inventory.tasks."
+            "send_daily_inventory_report"
+        ),
+        "schedule": crontab(
+            hour=14,  # 07:00 Vancouver while UTC-7
+            minute=0,
+        ),
+        "options": {
+            "expires": 2 * 60 * 60,
+        },
+    },
 }
 
 
