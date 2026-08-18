@@ -15,12 +15,42 @@ from apps.bookstore_inventory.admin.common import (
 from apps.bookstore_inventory.models import (
     Warehouse, WarehouseLocation, WarehouseStaffAssignment,
 )
+from apps.bookstore_inventory.forms.warehouse import (
+    WarehouseStaffAssignmentAdminForm,
+)
+
+
+
+def _disable_user_related_actions(form_class):
+    """
+    Warehouse administration may only select an existing user.
+
+    Remove Admin's add/change/delete/view related-object controls so this
+    screen can never open CustomUser creation or modification forms.
+    """
+    user_field = form_class.base_fields.get("user")
+    if not user_field:
+        return form_class
+
+    widget = user_field.widget
+
+    for attribute in (
+        "can_add_related",
+        "can_change_related",
+        "can_delete_related",
+        "can_view_related",
+    ):
+        if hasattr(widget, attribute):
+            setattr(widget, attribute, False)
+
+    return form_class
 
 
 class WarehouseStaffAssignmentInline(admin.StackedInline):
     model = WarehouseStaffAssignment
+    form = WarehouseStaffAssignmentAdminForm
     extra = 1
-    autocomplete_fields = ("user",)
+
     fieldsets = (
         (
             None,
@@ -55,7 +85,13 @@ class WarehouseStaffAssignmentInline(admin.StackedInline):
         ),
         ("Notes", {"fields": ("notes",), "classes": ("collapse",)}),
     )
+
     readonly_fields = ("account_contact",)
+
+    def get_formset(self, request, obj=None, **kwargs):
+        formset = super().get_formset(request, obj, **kwargs)
+        _disable_user_related_actions(formset.form)
+        return formset
 
     @admin.display(description="Contact from CustomUser")
     def account_contact(self, obj):
@@ -71,7 +107,7 @@ class WarehouseStaffAssignmentInline(admin.StackedInline):
 
     def has_delete_permission(self, request, obj=None):
         return request.user.is_superuser
-
+    
 
 class WarehouseLocationInline(admin.TabularInline):
     model = WarehouseLocation
@@ -196,17 +232,44 @@ class WarehouseLocationAdmin(HiddenFromAdminIndexMixin, WarehouseScopeAdminMixin
 
 
 @admin.register(WarehouseStaffAssignment)
-class WarehouseStaffAssignmentAdmin(HiddenFromAdminIndexMixin, WarehouseScopeAdminMixin, WorkflowAdminMixin, admin.ModelAdmin):
+class WarehouseStaffAssignmentAdmin(
+    HiddenFromAdminIndexMixin,
+    WarehouseScopeAdminMixin,
+    WorkflowAdminMixin,
+    admin.ModelAdmin,
+):
+    form = WarehouseStaffAssignmentAdminForm
     workflow_select_related = ("warehouse", "user")
+
     list_display = (
-        "user", "warehouse", "role", "current_status", "starts_at", "ends_at",
+        "user",
+        "warehouse",
+        "role",
+        "current_status",
+        "starts_at",
+        "ends_at",
     )
     list_filter = ("role", "is_active", "warehouse")
     search_fields = (
-        "warehouse__name", "warehouse__code", "user__username", "user__email",
+        "warehouse__name",
+        "warehouse__code",
+        "user__username",
+        "user__email",
     )
-    autocomplete_fields = ("warehouse", "user")
+
+    # Warehouse remains searchable; user uses the filtered existing-user list.
+    autocomplete_fields = ("warehouse",)
+
     readonly_fields = ("created_at", "updated_at")
+
+    def get_form(self, request, obj=None, change=False, **kwargs):
+        form_class = super().get_form(
+            request,
+            obj=obj,
+            change=change,
+            **kwargs,
+        )
+        return _disable_user_related_actions(form_class)
 
     @admin.display(description="Current", boolean=True)
     def current_status(self, obj):
