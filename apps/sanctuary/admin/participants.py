@@ -26,7 +26,7 @@ class SanctuaryParticipantAuditInline(
     admin.TabularInline
 ):
     model = SanctuaryParticipantAudit
-    extra = 0
+    extra = 1
     can_delete = False
     show_change_link = True
 

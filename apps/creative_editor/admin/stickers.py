@@ -24,7 +24,7 @@ class StickerAssetInline(
 ):
     model = StickerAsset
 
-    extra = 0
+    extra = 1
     show_change_link = True
 
     fields = (

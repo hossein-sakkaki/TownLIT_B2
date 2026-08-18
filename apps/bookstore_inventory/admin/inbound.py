@@ -31,7 +31,7 @@ from apps.bookstore_inventory.services.numbering import generate_shipment_number
 class InboundShipmentItemInline(ProtectedInlineMixin):
     model = InboundShipmentItem
     parent_lock_attribute = "is_stock_posted"
-    extra = 0
+    extra = 1
     autocomplete_fields = ("book_edition", "location")
     fields = ("cover_preview", "book_edition", "location", "lot_number", "condition", "quantity", "unit_cost", "line_total", "notes")
     readonly_fields = ("cover_preview", "line_total")
@@ -47,7 +47,7 @@ class InboundShipmentItemInline(ProtectedInlineMixin):
 
 class InboundPaymentInline(admin.TabularInline):
     model = InboundPayment
-    extra = 0
+    extra = 1
     fields = (
         "schedule", "amount", "currency", "settlement_amount",
         "settlement_currency", "exchange_rate", "payment_reference",
@@ -61,7 +61,7 @@ class InboundPaymentInline(admin.TabularInline):
 
 class InboundPaymentScheduleInline(admin.TabularInline):
     model = InboundPaymentSchedule
-    extra = 0
+    extra = 1
     can_delete = False
     fields = (
         "due_date", "description", "amount", "currency", "status",

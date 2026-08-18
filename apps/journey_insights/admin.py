@@ -16,7 +16,7 @@ from apps.journey_insights.models import (
 
 class ReflectionChoiceInline(admin.TabularInline):
     model = ReflectionChoice
-    extra = 0
+    extra = 1
 
 
 @admin.register(ReflectionQuestion)
@@ -99,7 +99,7 @@ class ReflectionQuestionExposureAdmin(admin.ModelAdmin):
 
 class MonthlyInsightDimensionInline(admin.TabularInline):
     model = MonthlyInsightDimension
-    extra = 0
+    extra = 1
     readonly_fields = (
         "dimension",
         "score",

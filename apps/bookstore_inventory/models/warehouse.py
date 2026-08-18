@@ -166,3 +166,4 @@ class WarehouseLocation(TimeStampedModel):
                 raise ValidationError({"parent": "A location cannot contain itself."})
             if self.parent.warehouse_id != self.warehouse_id:
                 raise ValidationError({"parent": "Parent and child must belong to the same warehouse."})
+

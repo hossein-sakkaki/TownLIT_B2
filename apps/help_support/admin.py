@@ -11,7 +11,7 @@ from apps.help_support.models import (
 
 class SupportTicketMessageInline(admin.TabularInline):
     model = SupportTicketMessage
-    extra = 0
+    extra = 1
     can_delete = False
     fields = [
         "sender_type",

@@ -81,7 +81,7 @@ def _badge(label: str, color: str):
 
 class TranscriptSegmentInline(admin.TabularInline):
     model = TranscriptSegment
-    extra = 0
+    1
     can_delete = False
 
     fields = (
@@ -108,7 +108,7 @@ class TranscriptSegmentInline(admin.TabularInline):
 
 class SubtitleTrackInline(admin.TabularInline):
     model = SubtitleTrack
-    extra = 0
+    extra = 1
     can_delete = False
 
     fields = (
@@ -146,7 +146,7 @@ class SubtitleTrackInline(admin.TabularInline):
 
 class VoiceTrackInline(admin.TabularInline):
     model = VoiceTrack
-    extra = 0
+    extra = 1
     can_delete = False
 
     fields = (

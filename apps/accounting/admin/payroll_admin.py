@@ -56,7 +56,7 @@ class PayStubInline(admin.TabularInline):
     """
 
     model = PayStub
-    extra = 0
+    extra = 1
     can_delete = False
 
     readonly_fields = (

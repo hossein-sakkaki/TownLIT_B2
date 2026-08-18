@@ -58,7 +58,7 @@ class SanctuaryReviewInline(
     admin.TabularInline
 ):
     model = SanctuaryReview
-    extra = 0
+    extra = 1
     can_delete = False
     show_change_link = True
 

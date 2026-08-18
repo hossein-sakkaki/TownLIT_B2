@@ -33,7 +33,7 @@ from apps.bookstore_inventory.services.numbering import (
 
 
 class DraftOnlyInline(admin.TabularInline):
-    extra = 0
+    extra = 1
     lock_statuses = ()
 
     def _locked(self, obj):

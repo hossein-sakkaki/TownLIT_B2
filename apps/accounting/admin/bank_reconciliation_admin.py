@@ -24,7 +24,7 @@ class BankStatementLineInline(admin.TabularInline):
     """
 
     model = BankStatementLine
-    extra = 0
+    extra = 1
     fields = (
         "transaction_date",
         "posted_date",

@@ -9,7 +9,7 @@ from .models import (
 # --- Inline for Logs ------------------------------------------------------
 class NotificationLogInline(admin.TabularInline):
     model = NotificationLog
-    extra = 0
+    extra = 1
     fields = ("recipient", "sent_at", "read_at")
     readonly_fields = ("recipient", "sent_at", "read_at")
 

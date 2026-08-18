@@ -26,7 +26,7 @@ class CreativeRenderJobInline(
 ):
     model = CreativeRenderJob
 
-    extra = 0
+    extra = 1
     can_delete = False
     show_change_link = True
 

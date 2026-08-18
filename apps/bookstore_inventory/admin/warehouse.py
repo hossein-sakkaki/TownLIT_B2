@@ -19,7 +19,7 @@ from apps.bookstore_inventory.models import (
 
 class WarehouseStaffAssignmentInline(admin.StackedInline):
     model = WarehouseStaffAssignment
-    extra = 0
+    extra = 1
     autocomplete_fields = ("user",)
     fieldsets = (
         (
@@ -75,7 +75,7 @@ class WarehouseStaffAssignmentInline(admin.StackedInline):
 
 class WarehouseLocationInline(admin.TabularInline):
     model = WarehouseLocation
-    extra = 0
+    extra = 1
     fields = ("code", "name", "location_type", "parent", "is_pickable", "is_active")
     autocomplete_fields = ("parent",)
 

@@ -19,19 +19,19 @@ from apps.bookstore_inventory.models import (
 
 class OrganizationAliasInline(admin.TabularInline):
     model = OrganizationAlias
-    extra = 0
+    extra = 1
     fields = ("name", "is_primary")
 
 
 class OrganizationRoleInline(admin.TabularInline):
     model = OrganizationRole
-    extra = 0
+    extra = 1
     fields = ("role", "is_active", "notes")
 
 
 class OrganizationProfileLinkInline(admin.TabularInline):
     model = OrganizationProfileLink
-    extra = 0
+    extra = 1
     fields = ("content_type", "object_id", "status", "verified_at", "verified_by", "evidence")
     readonly_fields = ("verified_at", "verified_by")
 

@@ -16,7 +16,7 @@ CustomUser = get_user_model()
 # SANCTUARY PARTICIPANT PROFILE Inline Admin ----------------------------------------
 class SanctuaryParticipationInline(admin.StackedInline):
     model = SanctuaryParticipantProfile
-    extra = 0
+    extra = 1
     can_delete = False
     fk_name = "user"
     fields = (
@@ -35,7 +35,7 @@ class SanctuaryParticipationInline(admin.StackedInline):
 class FriendshipInline(admin.TabularInline):
     model = Friendship
     fields = ('to_user', 'status', 'created_at')
-    extra = 0
+    extra = 1
     verbose_name_plural = 'Friendships'
     can_delete = True
     fk_name = 'from_user'

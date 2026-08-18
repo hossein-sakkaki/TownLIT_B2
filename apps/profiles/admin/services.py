@@ -17,7 +17,7 @@ from apps.profiles.admin_forms import MemberServiceTypeAdminForm
 class MemberServiceTypeInline(admin.TabularInline):
     # M2M through model between Member and MemberServiceType
     model = Member.service_types.through
-    extra = 0
+    extra = 1
     verbose_name = "Service link"
     verbose_name_plural = "Linked services"
     can_delete = True

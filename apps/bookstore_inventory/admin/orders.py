@@ -22,7 +22,7 @@ from apps.bookstore_inventory.services.numbering import generate_order_number
 class BookOrderItemInline(ProtectedInlineMixin):
     model = BookOrderItem
     parent_lock_attribute = "is_fulfilled"
-    extra = 0
+    extra = 1
     autocomplete_fields = ("book_edition", "warehouse")
     fields = (
         "cover_preview", "book_edition", "warehouse", "location", "quantity", "unit_price", "line_total",
@@ -41,7 +41,7 @@ class BookOrderItemInline(ProtectedInlineMixin):
 
 class PaymentRecordInline(admin.TabularInline):
     model = PaymentRecord
-    extra = 0
+    extra = 1
     fields = (
         "amount", "currency", "payment_method", "payment_status",
         "transaction_reference", "received_at", "received_by", "notes",

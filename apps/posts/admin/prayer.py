@@ -16,7 +16,7 @@ class PrayerResponseInline(admin.StackedInline):
     """
 
     model = PrayerResponse
-    extra = 0
+    extra = 1
     can_delete = True
 
     readonly_fields = (

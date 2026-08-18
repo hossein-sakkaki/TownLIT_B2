@@ -11,7 +11,7 @@ from .filters import HighStrategicScoreFilter
 class InteractionInline(admin.TabularInline):
     """Recent interactions inline."""
     model = InteractionLog
-    extra = 0
+    extra = 1
     fields = (
         "interaction_type",
         "status",
