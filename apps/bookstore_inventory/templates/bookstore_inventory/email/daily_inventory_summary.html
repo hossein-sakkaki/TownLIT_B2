@@ -1,13 +1,13 @@
-{#
+{% extends "base_email.html" %}
+
+{% comment %}
 apps/bookstore_inventory/templates/bookstore_inventory/email/daily_inventory_summary.html
 
 TownLIT
 
 Created by Hossein Sakkaki on 2026-04-01.
-Last Update by Hossein Sakkaki on 2026-08-17.
-#}
-
-{% extends "base_email.html" %}
+Last Update by Hossein Sakkaki on 2026-08-18.
+{% endcomment %}
 
 {% block subject %}
 TownLIT Daily Bookstore Inventory
@@ -122,15 +122,62 @@ TownLIT Daily Bookstore Inventory
           <tbody>
             {% for item in warehouse.items %}
               <tr>
-                <td style="padding:9px 8px;border-bottom:1px solid #EEE6DB;">
-                  <strong>{{ item.book }}</strong>
-                  <br>
+                <td
+                  style="
+                    padding:9px 8px;
+                    border-bottom:1px solid #EEE6DB;
+                  "
+                >
+                  <table
+                    role="presentation"
+                    cellspacing="0"
+                    cellpadding="0"
+                    border="0"
+                    width="100%"
+                    style="border-collapse:collapse;"
+                  >
+                    <tr>
+                      {% if item.cover_url %}
+                        <td
+                          width="52"
+                          valign="top"
+                          style="
+                            width:52px;
+                            padding:0 10px 0 0;
+                          "
+                        >
+                          <img
+                            src="{{ item.cover_url }}"
+                            alt=""
+                            width="42"
+                            style="
+                              display:block;
+                              width:42px;
+                              height:auto;
+                              max-height:64px;
+                              border:0;
+                              border-radius:4px;
+                              object-fit:cover;
+                            "
+                          >
+                        </td>
+                      {% endif %}
 
-                  <span style="color:#6F6F6F;">
-                    {{ item.book_type }} ·
-                    {{ item.edition }} ·
-                    {{ item.language }}
-                  </span>
+                      <td valign="middle">
+                        <strong>
+                          {{ item.book }}
+                        </strong>
+
+                        <br>
+
+                        <span style="color:#6F6F6F;">
+                          {{ item.book_type }} ·
+                          {{ item.edition }} ·
+                          {{ item.language }}
+                        </span>
+                      </td>
+                    </tr>
+                  </table>
                 </td>
 
                 <td

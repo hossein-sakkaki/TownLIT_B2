@@ -3,7 +3,7 @@
 # TownLIT
 #
 # Created by Hossein Sakkaki on 2026-04-01.
-# Last Update by Hossein Sakkaki on 2026-08-17.
+# Last Update by Hossein Sakkaki on 2026-08-18.
 
 from __future__ import annotations
 
@@ -25,7 +25,12 @@ from apps.bookstore_inventory.models import (
 from utils.email.email_tools import (
     send_custom_email,
 )
-
+from apps.asset_delivery.services.signers.cloudfront_signer import (
+    build_signed_exact_url,
+)
+from apps.asset_delivery.utils.cdn_urls import (
+    build_cdn_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +49,83 @@ DEFAULT_RECIPIENT_ROLES = (
 )
 
 
+DEFAULT_COVER_URL_TTL_SECONDS = (
+    7 * 24 * 60 * 60
+)
+
+
+def _email_cover_url(
+    cover_image,
+):
+    """
+    Return a temporary exact-resource CloudFront URL for an email cover.
+
+    The underlying storage remains private. URL construction and signing
+    stay inside the canonical TownLIT asset-delivery implementation.
+    """
+
+    if not cover_image:
+        return ""
+
+    storage_key = str(
+        getattr(
+            cover_image,
+            "name",
+            "",
+        )
+        or ""
+    ).strip()
+
+    if not storage_key:
+        return ""
+
+    cdn_url = build_cdn_url(
+        storage_key
+    )
+
+    if not cdn_url:
+        logger.warning(
+            (
+                "bookstore.daily_inventory_report."
+                "cover_cdn_url_unavailable key=%s"
+            ),
+            storage_key,
+        )
+        return ""
+
+    configured_ttl = int(
+        getattr(
+            settings,
+            "BOOKSTORE_DAILY_REPORT_COVER_TTL_SECONDS",
+            DEFAULT_COVER_URL_TTL_SECONDS,
+        )
+    )
+
+    expires_in = max(
+        3600,
+        min(
+            configured_ttl,
+            30 * 24 * 60 * 60,
+        ),
+    )
+
+    try:
+        result = build_signed_exact_url(
+            resource_url=cdn_url,
+            expires_in=expires_in,
+        )
+    except Exception:
+        logger.exception(
+            (
+                "bookstore.daily_inventory_report."
+                "cover_signing_failed key=%s"
+            ),
+            storage_key,
+        )
+        return ""
+
+    return result.url
+    
 def _recipient_display_name(user):
     parts = [
         str(
@@ -330,19 +412,30 @@ def build_daily_inventory_snapshot(
             warehouse.pk,
             [],
         ):
+            edition = balance.book_edition
+
+            cover_image = (
+                edition.effective_cover_image
+            )
+
             items.append({
                 "book": (
-                    balance.book_edition.book.title
+                    edition.book.title
                 ),
                 "book_type": (
-                    balance.book_edition.book
+                    edition.book
                     .get_book_type_display()
                 ),
                 "edition": (
-                    balance.book_edition.edition_code
+                    edition.edition_code
                 ),
                 "language": (
-                    balance.book_edition.language
+                    edition.language
+                ),
+                "cover_url": (
+                    _email_cover_url(
+                        cover_image
+                    )
                 ),
                 "on_hand": (
                     balance.on_hand_quantity
@@ -357,7 +450,6 @@ def build_daily_inventory_snapshot(
                     balance.available_quantity
                 ),
             })
-
             totals["edition_count"] += 1
             totals["on_hand"] += (
                 balance.on_hand_quantity

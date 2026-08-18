@@ -1116,5 +1116,4 @@ class Command(BaseCommand):
 
 # docker compose exec -T backend python manage.py bootstrap_bookstore_initial_data
 
-# docker compose exec -T backend \
-#   python manage.py bootstrap_bookstore_initial_data --post-stock
+# docker compose exec -T backend python manage.py bootstrap_bookstore_initial_data --post-stock

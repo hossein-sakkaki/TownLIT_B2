@@ -120,4 +120,93 @@ def build_signed_url(*, resource_url: str, expires_in: int) -> SignedResult:
     return SignedResult(url=signed_url, expires_in=expires_in)
 
 
+def build_signed_exact_url(
+    *,
+    resource_url: str,
+    expires_in: int,
+) -> SignedResult:
+    """
+    Build a CloudFront signed URL restricted to one exact resource.
 
+    Intended for standalone private assets such as images, thumbnails,
+    documents, and other single-file resources.
+
+    HLS must continue to use build_signed_url(), which intentionally signs
+    the containing directory with a custom wildcard policy.
+    """
+
+    resource_url = str(
+        resource_url or ""
+    ).strip()
+
+    if not resource_url:
+        raise ValueError(
+            "resource_url is required."
+        )
+
+    expires_in = int(
+        expires_in
+    )
+
+    if expires_in <= 0:
+        raise ValueError(
+            "expires_in must be greater than zero."
+        )
+
+    allow_unsigned = bool(
+        getattr(
+            settings,
+            "ASSET_DELIVERY_ALLOW_UNSIGNED_IN_DEBUG",
+            False,
+        )
+    )
+
+    if settings.DEBUG and allow_unsigned:
+        logger.warning(
+            "[AssetDelivery] DEBUG unsigned exact CDN URL"
+        )
+
+        return SignedResult(
+            url=resource_url,
+            expires_in=expires_in,
+        )
+
+    key_pair_id = (
+        getattr(
+            settings,
+            "CLOUDFRONT_KEY_PAIR_ID",
+            "",
+        )
+        or ""
+    )
+
+    if not key_pair_id:
+        raise RuntimeError(
+            "CLOUDFRONT_KEY_PAIR_ID is not set."
+        )
+
+    signer = CloudFrontSigner(
+        key_pair_id,
+        _rsa_signer,
+    )
+
+    expires_at = (
+        datetime.datetime.now(
+            datetime.timezone.utc
+        )
+        + datetime.timedelta(
+            seconds=expires_in
+        )
+    )
+
+    signed_url = (
+        signer.generate_presigned_url(
+            resource_url,
+            date_less_than=expires_at,
+        )
+    )
+
+    return SignedResult(
+        url=signed_url,
+        expires_in=expires_in,
+    )

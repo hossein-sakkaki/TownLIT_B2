@@ -1,11 +1,11 @@
-{#
+{% comment %}
 apps/bookstore_inventory/templates/bookstore_inventory/email/daily_inventory_summary.txt
 
 TownLIT
 
 Created by Hossein Sakkaki on 2026-04-01.
-Last Update by Hossein Sakkaki on 2026-08-17.
-#}
+Last Update by Hossein Sakkaki on 2026-08-18.
+{% endcomment %}
 
 TownLIT Daily Bookstore Inventory
 {{ generated_at|date:"F j, Y, g:i A" }}
