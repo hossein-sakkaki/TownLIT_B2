@@ -1,0 +1,153 @@
+{#
+apps/bookstore_inventory/templates/admin/bookstore_inventory/all_records.html
+
+TownLIT
+
+Created by Hossein Sakkaki on 2026-04-01.
+Last Update by Hossein Sakkaki on 2026-08-17.
+#}
+
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block extrastyle %}
+  {{ block.super }}
+
+  <style>
+    .townlit-records-page {
+      max-width: 1280px;
+    }
+
+    .townlit-records-intro {
+      margin-bottom: 18px;
+      padding: 16px 18px;
+      border: 1px solid var(--hairline-color, #d8dee4);
+      border-radius: 12px;
+      background: var(--darkened-bg, #f8fafc);
+    }
+
+    .townlit-record-groups {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+      gap: 16px;
+    }
+
+    .townlit-record-group {
+      padding: 18px;
+      border: 1px solid var(--hairline-color, #d8dee4);
+      border-radius: 12px;
+      background: var(--body-bg, #fff);
+      box-shadow: 0 2px 8px rgba(15, 23, 42, .05);
+    }
+
+    .townlit-record-group h2 {
+      margin-top: 0;
+      margin-bottom: 5px;
+    }
+
+    .townlit-record-group > p {
+      margin-top: 0;
+      color: var(--body-quiet-color, #52606d);
+    }
+
+    .townlit-record-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 15px;
+      padding: 12px 0;
+      border-top: 1px solid var(--hairline-color, #e5e7eb);
+    }
+
+    .townlit-record-row:first-of-type {
+      border-top: 0;
+    }
+
+    .townlit-record-main a {
+      font-weight: 700;
+    }
+
+    .townlit-record-main small {
+      display: block;
+      margin-top: 3px;
+      color: var(--body-quiet-color, #52606d);
+    }
+
+    .townlit-record-add {
+      align-self: center;
+      white-space: nowrap;
+      padding: 6px 9px;
+      border-radius: 7px;
+      background: var(--button-bg, #417690);
+      color: var(--button-fg, #fff) !important;
+      font-size: 12px;
+      font-weight: 700;
+    }
+  </style>
+{% endblock %}
+
+{% block breadcrumbs %}
+  <div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">
+      {% translate 'Home' %}
+    </a>
+    &rsaquo;
+    <a href="{% url 'admin:bookstore_inventory_bookstoreworkspace_changelist' %}">
+      Bookstore workspace
+    </a>
+    &rsaquo;
+    All records
+  </div>
+{% endblock %}
+
+{% block content %}
+  <div
+    id="content-main"
+    class="townlit-records-page"
+  >
+    <div class="townlit-records-intro">
+      <strong>
+        Complete bookstore administration
+      </strong>
+
+      <p>
+        Use this page when you need direct access to the
+        underlying model lists, manual draft corrections,
+        searches, filters, or audit detail.
+        Operational posting and fulfilment must still use
+        the controlled workflow buttons.
+      </p>
+    </div>
+
+    <div class="townlit-record-groups">
+      {% for group in record_groups %}
+        <section class="townlit-record-group">
+          <h2>{{ group.title }}</h2>
+          <p>{{ group.description }}</p>
+
+          {% for link in group.links %}
+            <div class="townlit-record-row">
+              <div class="townlit-record-main">
+                <a href="{{ link.url }}">
+                  {{ link.label }}
+                </a>
+
+                <small>
+                  {{ link.description }}
+                </small>
+              </div>
+
+              {% if link.add_url %}
+                <a
+                  class="townlit-record-add"
+                  href="{{ link.add_url }}"
+                >
+                  {{ link.add_label }}
+                </a>
+              {% endif %}
+            </div>
+          {% endfor %}
+        </section>
+      {% endfor %}
+    </div>
+  </div>
+{% endblock %}

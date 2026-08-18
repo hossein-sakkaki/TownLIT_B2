@@ -141,26 +141,61 @@ class BookOrder(TimeStampedModel):
 
     def recalculate_totals(self, save=True):
         subtotal = self.items.aggregate(
-            total=Coalesce(Sum("line_total"), Decimal("0.00"))
+            total=Coalesce(
+                Sum("line_total"),
+                Decimal("0.00"),
+            )
         )["total"] or Decimal("0.00")
+
         paid = self.payments.filter(
-            payment_status__in=(PaymentStatus.PARTIAL, PaymentStatus.PAID)
-        ).aggregate(total=Coalesce(Sum("amount"), Decimal("0.00")))["total"] or Decimal("0.00")
+            payment_status__in=(
+                PaymentStatus.PARTIAL,
+                PaymentStatus.PAID,
+            )
+        ).aggregate(
+            total=Coalesce(
+                Sum("amount"),
+                Decimal("0.00"),
+            )
+        )["total"] or Decimal("0.00")
+
         self.subtotal_amount = subtotal
-        self.total_amount = max(subtotal + self.donation_amount - self.discount_amount, Decimal("0.00"))
+
+        self.total_amount = max(
+            subtotal
+            + self.donation_amount
+            - self.discount_amount,
+            Decimal("0.00"),
+        )
+
         self.paid_amount = paid
-        self.remaining_amount = max(self.total_amount - paid, Decimal("0.00"))
-        if paid == 0:
+
+        self.remaining_amount = max(
+            self.total_amount - paid,
+            Decimal("0.00"),
+        )
+
+        # Zero-value distributions are financially settled.
+        if self.total_amount == Decimal("0.00"):
+            self.payment_status = PaymentStatus.PAID
+        elif paid == 0:
             self.payment_status = PaymentStatus.UNPAID
         elif paid < self.total_amount:
             self.payment_status = PaymentStatus.PARTIAL
         else:
             self.payment_status = PaymentStatus.PAID
+
         if save:
-            self.save(update_fields=(
-                "subtotal_amount", "total_amount", "paid_amount",
-                "remaining_amount", "payment_status", "updated_at",
-            ))
+            self.save(
+                update_fields=(
+                    "subtotal_amount",
+                    "total_amount",
+                    "paid_amount",
+                    "remaining_amount",
+                    "payment_status",
+                    "updated_at",
+                )
+            )
 
 
 class BookOrderItem(TimeStampedModel):
@@ -189,21 +224,82 @@ class BookOrderItem(TimeStampedModel):
 
     def clean(self):
         errors = {}
+
         if self.quantity <= 0:
-            errors["quantity"] = "Quantity must be greater than zero."
+            errors["quantity"] = (
+                "Quantity must be greater than zero."
+            )
+
         if self.unit_price < 0:
-            errors["unit_price"] = "Unit price cannot be negative."
-        if self.location_id and self.location.warehouse_id != self.warehouse_id:
-            errors["location"] = "Location must belong to the selected warehouse."
+            errors["unit_price"] = (
+                "Unit price cannot be negative."
+            )
+
+        if (
+            self.location_id
+            and self.location.warehouse_id
+            != self.warehouse_id
+        ):
+            errors["location"] = (
+                "Location must belong to "
+                "the selected warehouse."
+            )
+
+        if (
+            self.order_id
+            and self.book_edition_id
+        ):
+            if (
+                self.order.order_type
+                == OrderType.SALE
+                and not self.book_edition.is_sellable
+            ):
+                errors["book_edition"] = (
+                    "This edition is not enabled for sale."
+                )
+
+            if (
+                self.order.order_type
+                in (
+                    OrderType.FREE_DISTRIBUTION,
+                    OrderType.PROMOTIONAL,
+                )
+                and not self.book_edition.is_distributable
+            ):
+                errors["book_edition"] = (
+                    "This edition is not enabled "
+                    "for distribution."
+                )
+
         if errors:
             raise ValidationError(errors)
 
     def save(self, *args, **kwargs):
-        if not self.pk and not self.unit_price:
-            self.unit_price = self.book_edition.fixed_price
-        self.line_total = (self.unit_price or Decimal("0.00")) * self.quantity
-        if not self.pricing_mode_snapshot:
-            self.pricing_mode_snapshot = self.book_edition.pricing_mode
+        is_new = self.pk is None
+
+        if (
+            is_new
+            and self.order_id
+            and self.order.order_type == OrderType.SALE
+            and self.unit_price == Decimal("0.00")
+        ):
+            self.unit_price = (
+                self.book_edition.fixed_price
+                or Decimal("0.00")
+            )
+
+        self.line_total = (
+            self.unit_price
+            or Decimal("0.00")
+        ) * self.quantity
+
+        # Capture the edition's pricing policy when the order line is created.
+        # Never rewrite the historical snapshot on later edits.
+        if is_new:
+            self.pricing_mode_snapshot = (
+                self.book_edition.pricing_mode
+            )
+
         super().save(*args, **kwargs)
 
 

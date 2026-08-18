@@ -6,12 +6,13 @@ TownLIT
 Created by Hossein Sakkaki on 2026-04-01.
 Last Update by Hossein Sakkaki on 2026-08-17.
 #}
+
 TownLIT Daily Bookstore Inventory
 {{ generated_at|date:"F j, Y, g:i A" }}
 
 Hello {{ recipient_name }},
 
-All active warehouses: {{ grand_totals.warehouse_count }}
+Warehouses in this report: {{ grand_totals.warehouse_count }}
 Total on hand: {{ grand_totals.on_hand }}
 Total reserved: {{ grand_totals.reserved }}
 Total unavailable: {{ grand_totals.unavailable }}
@@ -20,9 +21,15 @@ Total available: {{ grand_totals.available }}
 {% for warehouse in warehouses %}
 {{ warehouse.name }} ({{ warehouse.code }})
 On hand: {{ warehouse.totals.on_hand }} | Available: {{ warehouse.totals.available }}
-{% for item in warehouse.items %}- {{ item.book }} | {{ item.book_type }} | {{ item.edition }} | {{ item.language }} | On hand: {{ item.on_hand }} | Available: {{ item.available }}
-{% empty %}- No books are currently on hand.
+
+{% for item in warehouse.items %}
+- {{ item.book }} | {{ item.book_type }} | {{ item.edition }} | {{ item.language }} | On hand: {{ item.on_hand }} | Available: {{ item.available }}
+{% empty %}
+- No books are currently on hand.
 {% endfor %}
+
+{% empty %}
+No active warehouses are included in your current responsibility scope.
 {% endfor %}
 
 Open the TownLIT Bookstore Workspace for complete reports and audit detail.

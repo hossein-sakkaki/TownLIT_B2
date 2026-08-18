@@ -7,5 +7,11 @@
 
 from .inbound import InboundShipmentAdminForm
 from .orders import BookOrderAdminForm
+from .warehouse import WarehouseStaffAssignmentAdminForm
 
-__all__ = ["BookOrderAdminForm", "InboundShipmentAdminForm"]
+
+__all__ = [
+    "BookOrderAdminForm",
+    "InboundShipmentAdminForm",
+    "WarehouseStaffAssignmentAdminForm",
+]

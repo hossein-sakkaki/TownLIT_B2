@@ -9,30 +9,54 @@ Last Update by Hossein Sakkaki on 2026-08-17.
 
 {% extends "base_email.html" %}
 
-{% block subject %}TownLIT Daily Bookstore Inventory{% endblock %}
+{% block subject %}
+TownLIT Daily Bookstore Inventory
+{% endblock %}
 
 {% block content %}
   <h1>Daily bookstore inventory</h1>
+
   <p>Hello {{ recipient_name }},</p>
+
   <p>
-    Here is the concise TownLIT inventory position across all active warehouses
-    as of <strong>{{ generated_at|date:"F j, Y, g:i A" }}</strong>.
+    Here is your TownLIT inventory position for the active
+    warehouse(s) included in your responsibility scope as of
+    <strong>{{ generated_at|date:"F j, Y, g:i A" }}</strong>.
   </p>
 
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0"
-         style="margin:20px 0;border-collapse:separate;border-spacing:8px 0;">
+  <table
+    role="presentation"
+    width="100%"
+    cellspacing="0"
+    cellpadding="0"
+    style="margin:20px 0;border-collapse:separate;border-spacing:8px 0;"
+  >
     <tr>
       <td style="padding:12px;background:#F4F1EB;border-radius:8px;text-align:center;">
-        <strong style="display:block;color:#0F52BA;font-size:20px;">{{ grand_totals.warehouse_count }}</strong>
-        <span style="font-size:12px;color:#6F6F6F;">Warehouses</span>
+        <strong style="display:block;color:#0F52BA;font-size:20px;">
+          {{ grand_totals.warehouse_count }}
+        </strong>
+        <span style="font-size:12px;color:#6F6F6F;">
+          Warehouses
+        </span>
       </td>
+
       <td style="padding:12px;background:#F4F1EB;border-radius:8px;text-align:center;">
-        <strong style="display:block;color:#0F52BA;font-size:20px;">{{ grand_totals.on_hand }}</strong>
-        <span style="font-size:12px;color:#6F6F6F;">On hand</span>
+        <strong style="display:block;color:#0F52BA;font-size:20px;">
+          {{ grand_totals.on_hand }}
+        </strong>
+        <span style="font-size:12px;color:#6F6F6F;">
+          On hand
+        </span>
       </td>
+
       <td style="padding:12px;background:#F4F1EB;border-radius:8px;text-align:center;">
-        <strong style="display:block;color:#166534;font-size:20px;">{{ grand_totals.available }}</strong>
-        <span style="font-size:12px;color:#6F6F6F;">Available</span>
+        <strong style="display:block;color:#166534;font-size:20px;">
+          {{ grand_totals.available }}
+        </strong>
+        <span style="font-size:12px;color:#6F6F6F;">
+          Available
+        </span>
       </td>
     </tr>
   </table>
@@ -41,37 +65,85 @@ Last Update by Hossein Sakkaki on 2026-08-17.
     <div style="margin:24px 0;border:1px solid #DED8CE;border-radius:10px;overflow:hidden;">
       <div style="padding:12px 14px;background:#0F52BA;color:#FFFFFF;">
         <strong>{{ warehouse.name }}</strong>
-        <span style="float:right;font-size:12px;">{{ warehouse.code }}</span>
+        <span style="float:right;font-size:12px;">
+          {{ warehouse.code }}
+        </span>
       </div>
+
       <div style="padding:10px 14px;background:#FFF8EC;font-size:13px;color:#2B2C30;">
         {{ warehouse.totals.edition_count }} edition(s) ·
         {{ warehouse.totals.on_hand }} on hand ·
-        <strong>{{ warehouse.totals.available }} available</strong>
-        {% if warehouse.totals.reserved %}· {{ warehouse.totals.reserved }} reserved{% endif %}
-        {% if warehouse.totals.unavailable %}· {{ warehouse.totals.unavailable }} unavailable{% endif %}
+        <strong>
+          {{ warehouse.totals.available }} available
+        </strong>
+
+        {% if warehouse.totals.reserved %}
+          · {{ warehouse.totals.reserved }} reserved
+        {% endif %}
+
+        {% if warehouse.totals.unavailable %}
+          · {{ warehouse.totals.unavailable }} unavailable
+        {% endif %}
       </div>
 
       {% if warehouse.items %}
-        <table role="table" width="100%" cellspacing="0" cellpadding="0"
-               style="border-collapse:collapse;font-size:12px;">
+        <table
+          role="table"
+          width="100%"
+          cellspacing="0"
+          cellpadding="0"
+          style="border-collapse:collapse;font-size:12px;"
+        >
           <thead>
             <tr style="background:#F4F1EB;color:#555;">
-              <th align="left" style="padding:8px;border-bottom:1px solid #DED8CE;">Book / edition</th>
-              <th align="center" style="padding:8px;border-bottom:1px solid #DED8CE;">On hand</th>
-              <th align="center" style="padding:8px;border-bottom:1px solid #DED8CE;">Available</th>
+              <th
+                align="left"
+                style="padding:8px;border-bottom:1px solid #DED8CE;"
+              >
+                Book / edition
+              </th>
+
+              <th
+                align="center"
+                style="padding:8px;border-bottom:1px solid #DED8CE;"
+              >
+                On hand
+              </th>
+
+              <th
+                align="center"
+                style="padding:8px;border-bottom:1px solid #DED8CE;"
+              >
+                Available
+              </th>
             </tr>
           </thead>
+
           <tbody>
             {% for item in warehouse.items %}
               <tr>
                 <td style="padding:9px 8px;border-bottom:1px solid #EEE6DB;">
-                  <strong>{{ item.book }}</strong><br>
-                  <span style="color:#6F6F6F;">{{ item.book_type }} · {{ item.edition }} · {{ item.language }}</span>
+                  <strong>{{ item.book }}</strong>
+                  <br>
+
+                  <span style="color:#6F6F6F;">
+                    {{ item.book_type }} ·
+                    {{ item.edition }} ·
+                    {{ item.language }}
+                  </span>
                 </td>
-                <td align="center" style="padding:9px 8px;border-bottom:1px solid #EEE6DB;">
+
+                <td
+                  align="center"
+                  style="padding:9px 8px;border-bottom:1px solid #EEE6DB;"
+                >
                   {{ item.on_hand }}
                 </td>
-                <td align="center" style="padding:9px 8px;border-bottom:1px solid #EEE6DB;font-weight:bold;color:#166534;">
+
+                <td
+                  align="center"
+                  style="padding:9px 8px;border-bottom:1px solid #EEE6DB;font-weight:bold;color:#166534;"
+                >
                   {{ item.available }}
                 </td>
               </tr>
@@ -79,15 +151,21 @@ Last Update by Hossein Sakkaki on 2026-08-17.
           </tbody>
         </table>
       {% else %}
-        <p style="padding:12px 14px;margin:0;color:#6F6F6F;">No books are currently on hand.</p>
+        <p style="padding:12px 14px;margin:0;color:#6F6F6F;">
+          No books are currently on hand.
+        </p>
       {% endif %}
     </div>
   {% empty %}
-    <div class="info-box">No active warehouses are configured.</div>
+    <div class="info-box">
+      No active warehouses are included in your current responsibility scope.
+    </div>
   {% endfor %}
 
   <p style="font-size:12px;color:#6F6F6F;margin-top:24px;">
-    This operational summary intentionally excludes warehouse street addresses and personal contact details.
-    Use the TownLIT Bookstore Workspace for the complete audit trail and filtered reports.
+    This operational summary intentionally excludes warehouse
+    street addresses and personal contact details.
+    Use the TownLIT Bookstore Workspace for the complete audit
+    trail and filtered reports.
   </p>
 {% endblock %}

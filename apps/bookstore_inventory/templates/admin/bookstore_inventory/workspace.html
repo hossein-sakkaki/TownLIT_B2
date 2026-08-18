@@ -12,8 +12,33 @@ Last Update by Hossein Sakkaki on 2026-08-17.
 
 {% block extrastyle %}
   {{ block.super }}
+
   <style>
-    .townlit-workspace { max-width: 1280px; }
+    .townlit-workspace {
+      max-width: 1280px;
+    }
+
+    .townlit-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 0 0 18px;
+    }
+
+    .townlit-toolbar a {
+      display: inline-block;
+      padding: 9px 14px;
+      border-radius: 8px;
+      background: var(--button-bg, #417690);
+      color: var(--button-fg, #fff) !important;
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    .townlit-toolbar a.secondary {
+      background: #64748b;
+    }
+
     .townlit-intro {
       margin: 0 0 20px;
       padding: 18px 20px;
@@ -21,40 +46,134 @@ Last Update by Hossein Sakkaki on 2026-08-17.
       border-radius: 12px;
       background: var(--darkened-bg, #f8fafc);
     }
-    .townlit-intro strong { display: block; margin-bottom: 6px; }
-    .townlit-flow { margin: 0; color: var(--body-quiet-color, #52606d); }
+
+    .townlit-intro strong {
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    .townlit-flow {
+      margin: 0;
+      color: var(--body-quiet-color, #52606d);
+    }
+
     .townlit-stats,
-    .townlit-grid {
+    .townlit-grid,
+    .townlit-action-grid {
       display: grid;
       gap: 14px;
     }
+
     .townlit-stats {
       grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
       margin-bottom: 22px;
     }
+
     .townlit-stat,
-    .townlit-card {
+    .townlit-card,
+    .townlit-action-item {
       border: 1px solid var(--hairline-color, #d8dee4);
       border-radius: 12px;
       background: var(--body-bg, #fff);
       box-shadow: 0 2px 8px rgba(15, 23, 42, .05);
     }
-    .townlit-stat { padding: 14px 16px; }
-    .townlit-stat-value { display: block; font-size: 25px; font-weight: 700; }
-    .townlit-stat-label { color: var(--body-quiet-color, #52606d); }
-    .townlit-stat-success { border-left: 4px solid #16a34a; }
-    .townlit-stat-warning { border-left: 4px solid #d97706; }
-    .townlit-stat-danger { border-left: 4px solid #dc2626; }
-    .townlit-stat-neutral { border-left: 4px solid #64748b; }
+
+    .townlit-stat {
+      display: block;
+      padding: 14px 16px;
+      text-decoration: none !important;
+      color: inherit !important;
+    }
+
+    .townlit-stat:hover {
+      border-color: var(--link-fg, #417690);
+    }
+
+    .townlit-stat-value {
+      display: block;
+      font-size: 25px;
+      font-weight: 700;
+    }
+
+    .townlit-stat-label {
+      color: var(--body-quiet-color, #52606d);
+    }
+
+    .townlit-stat-success {
+      border-left: 4px solid #16a34a;
+    }
+
+    .townlit-stat-warning {
+      border-left: 4px solid #d97706;
+    }
+
+    .townlit-stat-danger {
+      border-left: 4px solid #dc2626;
+    }
+
+    .townlit-stat-neutral {
+      border-left: 4px solid #64748b;
+    }
+
+    .townlit-attention {
+      margin: 0 0 22px;
+      padding: 18px;
+      border: 1px solid var(--hairline-color, #d8dee4);
+      border-radius: 12px;
+      background: var(--body-bg, #fff);
+    }
+
+    .townlit-attention h2 {
+      margin-top: 0;
+    }
+
+    .townlit-action-grid {
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    }
+
+    .townlit-action-item {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      padding: 12px 14px;
+      text-decoration: none !important;
+      color: inherit !important;
+    }
+
+    .townlit-action-count {
+      min-width: 32px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      text-align: center;
+      font-weight: 700;
+      background: #fef3c7;
+      color: #92400e;
+    }
+
+    .townlit-action-danger .townlit-action-count {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
     .townlit-grid {
       grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
     }
-    .townlit-card { padding: 18px; }
-    .townlit-card h2 { margin: 0 0 5px; font-size: 18px; }
+
+    .townlit-card {
+      padding: 18px;
+    }
+
+    .townlit-card h2 {
+      margin: 0 0 5px;
+      font-size: 18px;
+    }
+
     .townlit-card > p {
       margin: 0 0 14px;
       color: var(--body-quiet-color, #52606d);
     }
+
     .townlit-link {
       display: flex;
       justify-content: space-between;
@@ -62,15 +181,26 @@ Last Update by Hossein Sakkaki on 2026-08-17.
       padding: 12px 0;
       border-top: 1px solid var(--hairline-color, #e5e7eb);
     }
-    .townlit-link:first-of-type { border-top: 0; }
-    .townlit-link-main { min-width: 0; }
-    .townlit-link-main > a { font-weight: 700; }
+
+    .townlit-link:first-of-type {
+      border-top: 0;
+    }
+
+    .townlit-link-main {
+      min-width: 0;
+    }
+
+    .townlit-link-main > a {
+      font-weight: 700;
+    }
+
     .townlit-link-main small {
       display: block;
       margin-top: 3px;
       color: var(--body-quiet-color, #52606d);
       line-height: 1.35;
     }
+
     .townlit-add {
       align-self: center;
       white-space: nowrap;
@@ -81,57 +211,145 @@ Last Update by Hossein Sakkaki on 2026-08-17.
       font-size: 12px;
       font-weight: 600;
     }
-    .townlit-technical { margin-top: 22px; }
-    .townlit-technical summary { cursor: pointer; font-weight: 700; }
-    .townlit-technical-list { margin: 12px 0 0 20px; }
-    .townlit-technical-list li { margin: 7px 0; }
+
     @media (max-width: 600px) {
-      .townlit-grid { grid-template-columns: 1fr; }
-      .townlit-link { display: block; }
-      .townlit-add { display: inline-block; margin-top: 8px; }
+      .townlit-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .townlit-link {
+        display: block;
+      }
+
+      .townlit-add {
+        display: inline-block;
+        margin-top: 8px;
+      }
     }
   </style>
 {% endblock %}
 
 {% block breadcrumbs %}
   <div class="breadcrumbs">
-    <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
-    &rsaquo; {{ title }}
+    <a href="{% url 'admin:index' %}">
+      {% translate 'Home' %}
+    </a>
+    &rsaquo;
+    {{ title }}
   </div>
 {% endblock %}
 
 {% block content %}
   <div id="content-main" class="townlit-workspace">
+
+    <div class="townlit-toolbar">
+      <a href="{{ all_records_url }}">
+        Browse all records
+      </a>
+
+      <a
+        class="secondary"
+        href="{% url 'admin:bookstore_inventory_reports' %}"
+      >
+        Reports centre
+      </a>
+    </div>
+
     <div class="townlit-intro">
-      <strong>One safe workflow for bookstore operations</strong>
+      <strong>
+        One safe workflow for bookstore operations
+      </strong>
+
       <p class="townlit-flow">
-        Receive books → post verified stock → reserve and fulfil orders → record payments → review the ledger.
-        Use transfers for warehouse-to-warehouse movement and counts for physical inventory checks.
+        Receive books →
+        post verified stock →
+        reserve and fulfil orders →
+        record payments →
+        review the ledger.
+        Use transfers for warehouse-to-warehouse movement
+        and counts for physical inventory checks.
       </p>
     </div>
 
     <div class="townlit-stats">
       {% for stat in stats %}
-        <div class="townlit-stat townlit-stat-{{ stat.tone }}">
-          <span class="townlit-stat-value">{{ stat.value }}</span>
-          <span class="townlit-stat-label">{{ stat.label }}</span>
-        </div>
+        {% if stat.url %}
+          <a
+            class="townlit-stat townlit-stat-{{ stat.tone }}"
+            href="{{ stat.url }}"
+          >
+        {% else %}
+          <div class="townlit-stat townlit-stat-{{ stat.tone }}">
+        {% endif %}
+
+          <span class="townlit-stat-value">
+            {{ stat.value }}
+          </span>
+
+          <span class="townlit-stat-label">
+            {{ stat.label }}
+          </span>
+
+        {% if stat.url %}
+          </a>
+        {% else %}
+          </div>
+        {% endif %}
       {% endfor %}
     </div>
+
+    {% if action_queue %}
+      <section class="townlit-attention">
+        <h2>Needs attention</h2>
+
+        <div class="townlit-action-grid">
+          {% for item in action_queue %}
+            <a
+              href="{{ item.url }}"
+              class="
+                townlit-action-item
+                {% if item.tone == 'danger' %}
+                  townlit-action-danger
+                {% endif %}
+              "
+            >
+              <span>{{ item.label }}</span>
+
+              <span class="townlit-action-count">
+                {{ item.count }}
+              </span>
+            </a>
+          {% endfor %}
+        </div>
+      </section>
+    {% endif %}
 
     <div class="townlit-grid">
       {% for group in workflow_groups %}
         <section class="townlit-card">
           <h2>{{ group.title }}</h2>
+
           <p>{{ group.description }}</p>
+
           {% for link in group.links %}
             <div class="townlit-link">
               <div class="townlit-link-main">
-                <a href="{{ link.url }}">{{ link.label }}</a>
-                <small>{{ link.description }}</small>
+                <a href="{{ link.url }}">
+                  {{ link.label }}
+                </a>
+
+                <small>
+                  {{ link.description }}
+                </small>
               </div>
+
               {% if link.add_url %}
-                <a class="townlit-add" href="{{ link.add_url }}">{{ link.add_label }}</a>
+                <a
+                  class="townlit-add"
+                  href="{{ link.add_url }}"
+                >
+                  {{ link.add_label }}
+                </a>
               {% endif %}
             </div>
           {% endfor %}
@@ -139,18 +357,5 @@ Last Update by Hossein Sakkaki on 2026-08-17.
       {% endfor %}
     </div>
 
-    {% if technical_links %}
-      <details class="townlit-technical">
-        <summary>Technical and audit detail</summary>
-        <ul class="townlit-technical-list">
-          {% for link in technical_links %}
-            <li>
-              <a href="{{ link.url }}">{{ link.label }}</a>
-              — {{ link.description }}
-            </li>
-          {% endfor %}
-        </ul>
-      </details>
-    {% endif %}
   </div>
 {% endblock %}

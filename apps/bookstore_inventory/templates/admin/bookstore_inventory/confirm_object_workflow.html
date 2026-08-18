@@ -1,0 +1,56 @@
+{% extends "admin/base_site.html" %}
+
+{% comment %}
+apps/bookstore_inventory/templates/admin/bookstore_inventory/confirm_object_workflow.html
+
+TownLIT
+
+Created by Hossein Sakkaki on 2026-04-01.
+Last Update by Hossein Sakkaki on 2026-08-17.
+{% endcomment %}
+
+{% block content %}
+  <div id="content-main">
+    <form method="post">
+      {% csrf_token %}
+
+      <div
+        class="module"
+        style="
+          max-width:760px;
+          padding:20px;
+          border-radius:10px;
+        "
+      >
+        <h2>{{ title }}</h2>
+
+        <p
+          class="errornote"
+          style="display:block;"
+        >
+          {{ warning }}
+        </p>
+
+        <p>
+          <strong>Record:</strong>
+          {{ object }}
+        </p>
+
+        <div class="submit-row">
+          <input
+            type="submit"
+            value="{{ action_label }}"
+            class="default"
+          >
+
+          <a
+            href="{{ cancel_url }}"
+            class="closelink"
+          >
+            Cancel
+          </a>
+        </div>
+      </div>
+    </form>
+  </div>
+{% endblock %}

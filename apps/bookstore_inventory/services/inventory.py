@@ -131,70 +131,184 @@ def _movement_allocations(item):
 
 
 @transaction.atomic
-def fulfill_book_order(order_id, user=None):
-    order = BookOrder.objects.select_for_update().prefetch_related(
-        "items__book_edition", "items__warehouse", "items__location",
-        "items__reservations",
-    ).get(pk=order_id)
+def fulfill_book_order(
+    order_id,
+    user=None,
+    performed_at=None,
+):
+    operation_at = (
+        performed_at
+        or timezone.now()
+    )
+
+    if timezone.is_naive(operation_at):
+        operation_at = timezone.make_aware(
+            operation_at,
+            timezone.get_current_timezone(),
+        )
+
+    order = (
+        BookOrder.objects
+        .select_for_update()
+        .prefetch_related(
+            "items__book_edition",
+            "items__warehouse",
+            "items__location",
+            "items__reservations",
+        )
+        .get(pk=order_id)
+    )
+
     if order.is_fulfilled:
-        raise ValidationError("This order has already been fulfilled.")
+        raise ValidationError(
+            "This order has already been fulfilled."
+        )
+
     if order.status == OrderStatus.CANCELLED:
-        raise ValidationError("Cancelled orders cannot be fulfilled.")
-    items = list(order.items.all())
+        raise ValidationError(
+            "Cancelled orders cannot be fulfilled."
+        )
+
+    items = list(
+        order.items.all()
+    )
+
     if not items:
-        raise ValidationError("Cannot fulfill an order without items.")
+        raise ValidationError(
+            "Cannot fulfill an order without items."
+        )
+
     require_capability_for_warehouses(
         user=user,
-        warehouses=(item.warehouse for item in items),
+        warehouses=(
+            item.warehouse
+            for item in items
+        ),
         capability=CAN_FULFILL_ORDERS,
-        permission="bookstore_inventory.fulfill_bookorder",
+        permission=(
+            "bookstore_inventory."
+            "fulfill_bookorder"
+        ),
     )
 
     for item in items:
-        balance = InventoryBalance.objects.select_for_update().filter(
-            warehouse=item.warehouse, book_edition=item.book_edition,
-        ).first()
-        reservation = item.reservations.filter(status=ReservationStatus.ACTIVE).first()
-        own_reserved = reservation.quantity if reservation else 0
-        available_for_order = (balance.available_quantity if balance else 0) + own_reserved
+        balance = (
+            InventoryBalance.objects
+            .select_for_update()
+            .filter(
+                warehouse=item.warehouse,
+                book_edition=item.book_edition,
+            )
+            .first()
+        )
+
+        reservation = (
+            item.reservations
+            .filter(
+                status=ReservationStatus.ACTIVE
+            )
+            .first()
+        )
+
+        own_reserved = (
+            reservation.quantity
+            if reservation
+            else 0
+        )
+
+        available_for_order = (
+            (
+                balance.available_quantity
+                if balance
+                else 0
+            )
+            + own_reserved
+        )
+
         if available_for_order < item.quantity:
             raise ValidationError(
                 f"Not enough stock for '{item.book_edition}'. "
-                f"Available to this order: {available_for_order}, required: {item.quantity}."
+                f"Available to this order: {available_for_order}, "
+                f"required: {item.quantity}."
             )
 
-    movement_type = get_order_movement_type(order.order_type)
+    movement_type = get_order_movement_type(
+        order.order_type
+    )
+
     created_movements = []
+
     for item in items:
-        for lot, quantity in _movement_allocations(item):
+        for lot, quantity in _movement_allocations(
+            item
+        ):
             movement = StockMovement(
                 warehouse=item.warehouse,
-                location=item.location or (lot.location if lot else None),
+                location=(
+                    item.location
+                    or (
+                        lot.location
+                        if lot
+                        else None
+                    )
+                ),
                 book_edition=item.book_edition,
                 lot=lot,
                 movement_type=movement_type,
                 quantity=quantity,
                 unit_price=item.unit_price,
-                total_amount=item.unit_price * quantity,
+                total_amount=(
+                    item.unit_price
+                    * quantity
+                ),
                 reference_type="book_order",
                 reference_id=order.order_number,
-                performed_by=user or order.created_by,
-                performed_at=timezone.now(),
-                notes=f"Fulfilled from order {order.order_number}",
+                performed_by=(
+                    user
+                    or order.created_by
+                ),
+                performed_at=operation_at,
+                notes=(
+                    f"Fulfilled from order "
+                    f"{order.order_number}"
+                ),
             )
+
             movement.full_clean()
             movement.save()
-            created_movements.append(movement)
-        item.reservations.filter(status=ReservationStatus.ACTIVE).update(
+
+            created_movements.append(
+                movement
+            )
+
+        item.reservations.filter(
+            status=ReservationStatus.ACTIVE
+        ).update(
             status=ReservationStatus.CONSUMED,
             active_order_item=None,
-            closed_at=timezone.now(),
+            closed_at=operation_at,
             updated_at=timezone.now(),
         )
-        rebuild_inventory_balance(item.warehouse_id, item.book_edition_id)
+
+        rebuild_inventory_balance(
+            item.warehouse_id,
+            item.book_edition_id,
+        )
 
     order.status = OrderStatus.FULFILLED
-    order.fulfilled_at = timezone.now()
-    order.fulfilled_by = user or order.created_by
-    order.save(update_fields=("status", "fulfilled_at", "fulfilled_by", "updated_at"))
+    order.fulfilled_at = operation_at
+    order.fulfilled_by = (
+        user
+        or order.created_by
+    )
+
+    order.save(
+        update_fields=(
+            "status",
+            "fulfilled_at",
+            "fulfilled_by",
+            "updated_at",
+        )
+    )
+
     return created_movements

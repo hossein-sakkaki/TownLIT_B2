@@ -64,10 +64,34 @@ class OrganizationRecord(TimeStampedModel):
         return self.display_name or self.official_name
 
     def clean(self):
-        if self.merged_into_id == self.pk:
-            raise ValidationError({"merged_into": "An organization cannot be merged into itself."})
-        if self.merged_into_id and self.is_active:
-            raise ValidationError({"is_active": "A merged organization must be inactive."})
+        errors = {}
+
+        if (
+            self.pk is not None
+            and self.merged_into_id is not None
+            and self.merged_into_id == self.pk
+        ):
+            errors["merged_into"] = (
+                "An organization cannot be merged into itself."
+            )
+
+        if self.merged_into_id is not None and self.is_active:
+            errors["is_active"] = (
+                "A merged organization must be inactive."
+            )
+
+        # Prevent a direct A → B → A merge cycle.
+        if (
+            self.pk is not None
+            and self.merged_into_id is not None
+            and getattr(self.merged_into, "merged_into_id", None) == self.pk
+        ):
+            errors["merged_into"] = (
+                "This merge would create a circular organization relationship."
+            )
+
+        if errors:
+            raise ValidationError(errors)
 
     def save(self, *args, **kwargs):
         self.official_name = self.official_name.strip()
