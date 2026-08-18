@@ -171,11 +171,13 @@ def daily_report_recipients(
     override_emails=None,
 ):
     """
-    Return privacy-safe unique recipients.
+    Return privacy-safe unique bookstore inventory report recipients.
 
-    Regular warehouse managers receive only their own assigned warehouses.
-    Explicit override/extra recipients are treated as bookstore-wide
-    administrative recipients and receive all active warehouses.
+    Active primary managers and managers are selected through their current
+    warehouse assignments, but every eligible recipient receives the complete
+    inventory snapshot for all active TownLIT warehouses.
+
+    Explicit override and extra recipients also receive the complete snapshot.
     """
 
     if override_emails:
@@ -265,17 +267,8 @@ def daily_report_recipients(
                     assignment.user
                 ),
                 "user_id": assignment.user_id,
-                "warehouse_ids": set(),
+                "warehouse_ids": None,
             }
-
-        warehouse_ids = recipients[key][
-            "warehouse_ids"
-        ]
-
-        if warehouse_ids is not None:
-            warehouse_ids.add(
-                assignment.warehouse_id
-            )
 
     extra_recipients = getattr(
         settings,
@@ -301,11 +294,7 @@ def daily_report_recipients(
 
         key = email.casefold()
 
-        if key in recipients:
-            recipients[key][
-                "warehouse_ids"
-            ] = None
-        else:
+        if key not in recipients:
             recipients[key] = {
                 "email": email,
                 "name": "Bookstore administrator",
@@ -505,10 +494,11 @@ def send_daily_inventory_summary(
     dry_run=False,
 ):
     """
-    Send each manager only the warehouse scope assigned to that recipient.
+    Send every eligible manager the complete active-warehouse inventory snapshot.
 
-    Explicit extra/override recipients receive the bookstore-wide snapshot.
-    Failures remain isolated per recipient.
+    Assignments determine recipient eligibility, not inventory visibility.
+    Explicit extra and override recipients receive the same bookstore-wide
+    snapshot. Failures remain isolated per recipient.
     """
 
     if not getattr(
