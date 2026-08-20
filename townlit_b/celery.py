@@ -138,14 +138,25 @@ app.conf.beat_schedule = {
         ),
     },
 
-    # Run scheduled emails every 2 minutes.
-    "run-scheduled-emails-every-2-minutes": {
+    # Dispatch due communication campaigns every minute.
+    "dispatch-due-email-campaigns-every-minute": {
         "task": (
             "apps.communication.tasks."
-            "run_scheduled_emails"
+            "dispatch_due_campaigns"
         ),
         "schedule": crontab(
-            minute="*/2",
+            minute="*",
+        ),
+    },
+
+    # Recover communication campaigns stuck in queue.
+    "recover-stale-email-campaigns-every-5-minutes": {
+        "task": (
+            "apps.communication.tasks."
+            "recover_stale_campaigns"
+        ),
+        "schedule": crontab(
+            minute="*/5",
         ),
     },
 

@@ -80,43 +80,6 @@ def create_active_code(count):
     count-=1
     return random.randint(10**count, 10**(count+1)-1)
         
-# utils/common/utils.py     
-# SEND ACTIVE CODE by AWS EMAIL ------------------------------------------
-import boto3
-from botocore.exceptions import BotoCoreError, ClientError
-import logging
-
-logger = logging.getLogger(__name__)
-
-def send_email(subject, message, html_content, to):
-    ses_client = boto3.client(
-        'ses',
-        region_name=getattr(settings, "AWS_SES_REGION_NAME", None),
-        aws_access_key_id=getattr(settings, "AWS_SES_ACCESS_KEY_ID", None),
-        aws_secret_access_key=getattr(settings, "AWS_SES_SECRET_ACCESS_KEY", None),
-    )
-    if isinstance(to, str):
-        to = [to]
-
-    try:
-        response = ses_client.send_email(
-            Source=getattr(settings, "AWS_SES_EMAIL_FROM", ""),
-            Destination={'ToAddresses': to},
-            Message={
-                'Subject': {'Data': subject, 'Charset': 'UTF-8'},
-                'Body': {
-                    'Text': {'Data': message, 'Charset': 'UTF-8'},
-                    'Html': {'Data': html_content, 'Charset': 'UTF-8'},
-                },
-            },
-            ReturnPath=getattr(settings, "AWS_SES_RETURN_PATH", getattr(settings, "AWS_SES_EMAIL_FROM", "")),
-        )
-        logger.info("SES sent email: msg_id=%s to=%s", response.get("MessageId"), to)
-        return True
-    except (BotoCoreError, ClientError) as error:
-        logger.error("SES send_email error to=%s: %s", to, error, exc_info=True)
-        return False
-    
 
 # SEND ACTIVE CODE by AWS SMS ------------------------------------------
 # utils/sms.py

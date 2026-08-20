@@ -1,0 +1,4796 @@
+{% extends "admin/base_site.html" %}
+
+{% block extrahead %}
+{{ block.super }}
+{{ form.media }}
+
+<style>
+    .tl-editor {
+        max-width: 1600px;
+        margin: 0 auto;
+    }
+
+    .tl-editor-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 20px;
+        margin-bottom: 18px;
+    }
+
+    .tl-editor-head h1 {
+        margin: 0 0 6px;
+        font-size: 27px;
+    }
+
+    .tl-muted {
+        color: var(--body-quiet-color);
+    }
+
+    .tl-status {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: var(--darkened-bg);
+        font-size: 12px;
+        font-weight: 700;
+    }
+
+    .tl-tabs {
+        display: flex;
+        gap: 4px;
+        overflow-x: auto;
+        padding: 6px;
+        margin-bottom: 18px;
+        background: var(--darkened-bg);
+        border-radius: 10px;
+    }
+
+    .tl-tab {
+        border: 0;
+        border-radius: 7px;
+        padding: 10px 15px;
+        background: transparent;
+        color: var(--body-fg);
+        font-weight: 600;
+        cursor: pointer;
+        white-space: nowrap;
+    }
+
+    .tl-tab.active {
+        background: var(--body-bg);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, .08);
+    }
+
+    .tl-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(360px, 520px);
+        gap: 20px;
+        align-items: start;
+    }
+
+    .tl-panel {
+        border: 1px solid var(--border-color);
+        border-radius: 10px;
+        background: var(--body-bg);
+        overflow: hidden;
+    }
+
+    .tl-panel-head {
+        padding: 16px 18px;
+        border-bottom: 1px solid var(--border-color);
+        font-weight: 700;
+    }
+
+    .tl-panel-body {
+        padding: 20px;
+    }
+
+    .tl-section {
+        display: none;
+    }
+
+    .tl-section.active {
+        display: block;
+    }
+
+    .tl-field {
+        margin-bottom: 20px;
+    }
+
+    .tl-field:last-child {
+        margin-bottom: 0;
+    }
+
+    .tl-field label {
+        display: block;
+        margin-bottom: 7px;
+        font-weight: 700;
+    }
+
+    .tl-field input[type="text"],
+    .tl-field input[type="email"],
+    .tl-field input[type="url"],
+    .tl-field input[type="datetime-local"],
+    .tl-field textarea,
+    .tl-field select {
+        width: 100%;
+        box-sizing: border-box;
+        min-height: 40px;
+    }
+
+    .tl-field textarea {
+        min-height: 100px;
+    }
+
+    /* Django Admin autocomplete / Select2 ---------------------------- */
+    .tl-field .select2-container {
+        width: 100% !important;
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    .tl-field .select2-container .select2-selection--single,
+    .tl-field .select2-container .select2-selection--multiple {
+        width: 100%;
+        min-height: 40px;
+        box-sizing: border-box;
+        border-color: var(--border-color);
+        background: var(--body-bg);
+        color: var(--body-fg);
+    }
+
+    .tl-field .select2-container .select2-selection--single {
+        height: 40px;
+    }
+
+    .tl-field
+    .select2-container
+    .select2-selection--single
+    .select2-selection__rendered {
+        line-height: 38px;
+        padding-left: 10px;
+        color: var(--body-fg);
+    }
+
+    .tl-field
+    .select2-container
+    .select2-selection--single
+    .select2-selection__placeholder {
+        color: var(--body-quiet-color);
+    }
+
+    .tl-field
+    .select2-container
+    .select2-selection--single
+    .select2-selection__arrow {
+        height: 38px;
+    }
+
+    .tl-field
+    .select2-container
+    .select2-selection--multiple
+    .select2-search__field {
+        min-height: 30px;
+        color: var(--body-fg);
+    }
+
+    .tl-field
+    .select2-container
+    .select2-selection--multiple
+    .select2-selection__choice {
+        color: var(--body-fg);
+    }
+
+    .select2-container--admin-autocomplete .select2-dropdown {
+        border-color: var(--border-color);
+        background: var(--body-bg);
+        color: var(--body-fg);
+    }
+
+    .select2-container--admin-autocomplete
+    .select2-search--dropdown
+    .select2-search__field {
+        background: var(--body-bg);
+        color: var(--body-fg);
+        border-color: var(--border-color);
+    }
+
+    .select2-container--admin-autocomplete
+    .select2-results__option {
+        color: var(--body-fg);
+    }
+
+    .tl-help {
+        margin-top: 6px;
+        color: var(--body-quiet-color);
+        font-size: 12px;
+        line-height: 1.5;
+    }
+
+    .tl-errors {
+        margin: 6px 0;
+        color: var(--error-fg);
+        font-weight: 600;
+    }
+
+    .tl-preview {
+        position: sticky;
+        top: 20px;
+    }
+
+    .tl-preview iframe {
+        width: 100%;
+        height: 720px;
+        border: 0;
+        background: white;
+    }
+
+    .tl-preview-empty {
+        padding: 80px 24px;
+        text-align: center;
+        color: var(--body-quiet-color);
+    }
+
+    .tl-block {
+        display: flex;
+        justify-content: space-between;
+        gap: 15px;
+        padding: 13px 15px;
+        margin-bottom: 8px;
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        background: var(--darkened-bg);
+    }
+
+    .tl-block:last-child {
+        margin-bottom: 0;
+    }
+
+    .tl-footer {
+        position: sticky;
+        bottom: 0;
+        z-index: 10;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        margin-top: 20px;
+        padding: 14px 16px;
+        border: 1px solid var(--border-color);
+        border-radius: 10px;
+        background: var(--body-bg);
+        box-shadow: 0 -4px 18px rgba(0, 0, 0, .05);
+    }
+
+    .tl-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .tl-button {
+        min-height: 38px;
+        padding: 0 15px;
+        border: 1px solid var(--border-color);
+        border-radius: 7px;
+        background: var(--body-bg);
+        color: var(--body-fg);
+        font-weight: 600;
+        cursor: pointer;
+        text-decoration: none;
+    }
+
+    .tl-button-primary {
+        color: white;
+        background: var(--button-bg);
+        border-color: var(--button-bg);
+    }
+
+    .tl-danger-note {
+        padding: 12px 14px;
+        border-radius: 8px;
+        background: #fff7ed;
+        color: #9a3412;
+        margin-bottom: 18px;
+    }
+
+    /* Visual Block Builder ------------------------------------------ */
+
+    .tl-builder-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        margin-bottom: 18px;
+    }
+
+    .tl-template-content-notice {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 18px;
+        padding: 16px;
+        margin-bottom: 18px;
+        border: 1px solid #bfdbfe;
+        border-radius: 9px;
+        background: #eff6ff;
+        color: #1e3a8a;
+    }
+
+    .tl-block-list {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .tl-builder-block {
+        display: grid;
+        grid-template-columns: 34px minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: center;
+        padding: 14px;
+        border: 1px solid var(--border-color);
+        border-radius: 9px;
+        background: var(--body-bg);
+        transition:
+            border-color .15s ease,
+            box-shadow .15s ease,
+            opacity .15s ease;
+    }
+
+    .tl-builder-block:hover {
+        border-color: var(--body-quiet-color);
+        box-shadow: 0 3px 12px rgba(0, 0, 0, .06);
+    }
+
+    .tl-builder-block.dragging {
+        opacity: .45;
+    }
+
+    .tl-builder-block.disabled {
+        opacity: .55;
+    }
+
+    .tl-drag-handle {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 30px;
+        height: 38px;
+        border-radius: 6px;
+        color: var(--body-quiet-color);
+        cursor: grab;
+        user-select: none;
+        font-size: 19px;
+    }
+
+    .tl-builder-block-title {
+        font-weight: 700;
+        margin-bottom: 3px;
+    }
+
+    .tl-builder-block-meta {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+        color: var(--body-quiet-color);
+        font-size: 12px;
+    }
+
+    .tl-builder-block-actions {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+
+    .tl-icon-button {
+        min-height: 32px;
+        padding: 0 9px;
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        background: var(--body-bg);
+        color: var(--body-fg);
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 600;
+    }
+
+    .tl-icon-button:hover {
+        background: var(--darkened-bg);
+    }
+
+    .tl-icon-button-danger {
+        color: #b91c1c;
+    }
+
+    .tl-builder-empty {
+        padding: 45px 20px;
+        border: 1px dashed var(--border-color);
+        border-radius: 9px;
+        text-align: center;
+        color: var(--body-quiet-color);
+    }
+
+    /* Pre-send review ---------------------------------------------- */
+
+    .tl-review-heading {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 16px;
+        margin-bottom: 18px;
+    }
+
+    .tl-review-heading h2 {
+        margin: 0 0 5px;
+    }
+
+    .tl-review-loading {
+        padding: 22px;
+        border: 1px dashed var(--border-color);
+        border-radius: 9px;
+        text-align: center;
+        color: var(--body-quiet-color);
+    }
+
+    .tl-review-metrics {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        margin-bottom: 16px;
+    }
+
+    .tl-review-metric {
+        padding: 15px;
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        background: var(--darkened-bg);
+    }
+
+    .tl-review-metric span {
+        display: block;
+        color: var(--body-quiet-color);
+        font-size: 12px;
+    }
+
+    .tl-review-metric strong {
+        display: block;
+        margin-top: 5px;
+        font-size: 23px;
+    }
+
+    .tl-review-audience {
+        margin-bottom: 14px;
+        font-weight: 700;
+    }
+
+    .tl-review-checks {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .tl-review-check {
+        display: grid;
+        grid-template-columns: 28px 170px minmax(0, 1fr);
+        gap: 10px;
+        align-items: start;
+        padding: 12px;
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+    }
+
+    .tl-review-check-pass {
+        background: #f0fdf4;
+        color: #166534;
+    }
+
+    .tl-review-check-warning {
+        background: #fffbeb;
+        color: #92400e;
+    }
+
+    .tl-review-check-block {
+        background: #fef2f2;
+        color: #991b1b;
+    }
+
+    .tl-review-check-icon {
+        font-size: 18px;
+        font-weight: 800;
+    }
+
+    .tl-review-check-label {
+        font-weight: 700;
+    }
+
+    .tl-suppression-breakdown {
+        margin-top: 14px;
+        padding: 14px;
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+    }
+
+    .tl-suppression-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 15px;
+        padding: 5px 0;
+    }
+
+    /* Send confirmation -------------------------------------------- */
+
+    .tl-confirm-summary {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin: 16px 0;
+    }
+
+    .tl-confirm-summary > div {
+        padding: 13px;
+        border-radius: 8px;
+        background: var(--darkened-bg);
+    }
+
+    .tl-confirm-summary strong {
+        display: block;
+        margin-top: 4px;
+        font-size: 21px;
+    }
+
+    .tl-confirm-warning {
+        padding: 12px;
+        border-radius: 8px;
+        background: #fff7ed;
+        color: #9a3412;
+    }
+
+    .tl-confirm-phrase {
+        margin-top: 16px;
+    }
+
+    .tl-confirm-phrase input {
+        width: 100%;
+        min-height: 42px;
+        box-sizing: border-box;
+    }
+
+    @media (max-width: 700px) {
+        .tl-review-metrics {
+            grid-template-columns: 1fr;
+        }
+
+        .tl-review-check {
+            grid-template-columns: 28px 1fr;
+        }
+
+        .tl-review-check-detail {
+            grid-column: 2;
+        }
+    }
+
+    /* Modal --------------------------------------------------------- */
+
+    .tl-modal[hidden] {
+        display: none;
+    }
+
+    .tl-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 10000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: rgba(0, 0, 0, .46);
+    }
+
+    .tl-modal-card {
+        width: min(760px, 100%);
+        max-height: calc(100vh - 48px);
+        overflow-y: auto;
+        border-radius: 12px;
+        background: var(--body-bg);
+        color: var(--body-fg);
+        box-shadow: 0 24px 70px rgba(0, 0, 0, .25);
+    }
+
+    .tl-modal-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 15px;
+        padding: 18px 20px;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .tl-modal-head h2 {
+        margin: 0;
+    }
+
+    .tl-modal-body {
+        padding: 20px;
+    }
+
+    .tl-modal-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        padding: 15px 20px;
+        border-top: 1px solid var(--border-color);
+    }
+
+    .tl-block-types {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+    }
+
+    .tl-block-type {
+        min-height: 82px;
+        padding: 14px;
+        border: 1px solid var(--border-color);
+        border-radius: 9px;
+        background: var(--body-bg);
+        color: var(--body-fg);
+        text-align: left;
+        cursor: pointer;
+    }
+
+    .tl-block-type:hover {
+        border-color: var(--button-bg);
+        background: var(--darkened-bg);
+    }
+
+    .tl-block-type strong {
+        display: block;
+        margin-bottom: 5px;
+    }
+
+    .tl-builder-field {
+        margin-bottom: 17px;
+    }
+
+    .tl-builder-field label {
+        display: block;
+        margin-bottom: 6px;
+        font-weight: 700;
+    }
+
+    .tl-builder-field input,
+    .tl-builder-field textarea,
+    .tl-builder-field select {
+        width: 100%;
+        box-sizing: border-box;
+        min-height: 40px;
+    }
+
+    .tl-builder-field textarea {
+        min-height: 110px;
+        resize: vertical;
+    }
+
+    .tl-rich-toolbar {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 4px;
+        padding: 7px;
+        border: 1px solid var(--border-color);
+        border-bottom: 0;
+        border-radius: 6px 6px 0 0;
+        background: var(--darkened-bg);
+    }
+
+    .tl-rich-toolbar + .tl-rich-editor {
+        border-radius: 0 0 6px 6px;
+    }
+
+    .tl-rich-command {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 32px;
+        min-height: 30px;
+        padding: 0 8px;
+        border: 0;
+        border-radius: 4px;
+        background: transparent;
+        color: var(--body-fg);
+        cursor: pointer;
+        font-weight: 700;
+    }
+
+    .tl-rich-command:hover {
+        background: var(--body-bg);
+    }
+
+    .tl-rich-command:focus-visible {
+        outline: 2px solid var(--button-bg);
+        outline-offset: 1px;
+    }
+
+    .tl-rich-separator {
+        width: 1px;
+        height: 24px;
+        margin: 0 3px;
+        background: var(--border-color);
+    }
+
+    .tl-rich-select {
+        width: auto !important;
+        min-width: 92px;
+        max-width: 150px;
+        min-height: 30px !important;
+        height: 30px;
+        padding: 0 6px;
+        margin: 0;
+        border-radius: 4px;
+        font-size: 12px;
+    }
+
+    .tl-rich-color-wrap {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        height: 30px;
+        padding: 0 6px;
+        border-radius: 4px;
+        color: var(--body-fg);
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+    }
+
+    .tl-rich-color-wrap:hover {
+        background: var(--body-bg);
+    }
+
+    .tl-rich-color {
+        width: 24px !important;
+        min-height: 22px !important;
+        height: 22px !important;
+        padding: 0 !important;
+        border: 0 !important;
+        background: transparent;
+        cursor: pointer;
+    }
+
+    .tl-rich-editor {
+        min-height: 140px;
+        padding: 13px;
+        overflow-y: auto;
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        background: var(--body-bg);
+        color: var(--body-fg);
+        line-height: 1.6;
+    }
+
+    .tl-rich-editor-headline {
+        min-height: 58px;
+        max-height: 150px;
+    }
+
+    .tl-rich-editor:focus {
+        outline: 2px solid var(--button-bg);
+        outline-offset: 1px;
+    }
+
+    .tl-rich-editor[dir="rtl"] {
+        direction: rtl;
+    }
+
+    .tl-rich-editor[dir="ltr"] {
+        direction: ltr;
+    }
+
+    .tl-social-row {
+        display: grid;
+        grid-template-columns: 1fr 2fr auto;
+        gap: 8px;
+        margin-bottom: 8px;
+    }
+
+    .tl-rich-editor ul,
+    .tl-rich-editor ol {
+        margin-top: 8px;
+        margin-bottom: 8px;
+        padding-inline-start: 28px;
+    }
+
+    .tl-rich-editor[dir="rtl"] ul,
+    .tl-rich-editor[dir="rtl"] ol {
+        padding-inline-start: 0;
+        padding-inline-end: 28px;
+    }
+
+    .tl-rich-editor li {
+        margin: 4px 0;
+    }
+
+    .tl-builder-error {
+        display: none;
+        margin-bottom: 15px;
+        padding: 11px 13px;
+        border-radius: 7px;
+        background: #fee2e2;
+        color: #991b1b;
+        font-weight: 600;
+    }
+
+    .tl-builder-error.visible {
+        display: block;
+    }
+
+    @media (max-width: 800px) {
+        .tl-block-types {
+            grid-template-columns: 1fr 1fr;
+        }
+
+        .tl-builder-block {
+            grid-template-columns: 28px 1fr;
+        }
+
+        .tl-builder-block-actions {
+            grid-column: 2;
+        }
+
+        .tl-social-row {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    @media (max-width: 1100px) {
+        .tl-layout {
+            grid-template-columns: 1fr;
+        }
+
+        .tl-preview {
+            position: static;
+        }
+    }
+</style>
+{% endblock %}
+
+
+{% block content %}
+<div class="tl-editor">
+
+    <div class="tl-editor-head">
+        <div>
+            <a href="{{ workspace_home_url }}">← Communication Workspace</a>
+
+            <h1 style="margin-top:10px;">
+                {% if campaign %}
+                    {{ campaign.title }}
+                {% else %}
+                    New Campaign
+                {% endif %}
+            </h1>
+
+            {% if campaign %}
+                <span class="tl-status">
+                    {{ campaign.get_status_display }}
+                </span>
+            {% else %}
+                <span class="tl-muted">
+                    Create a new TownLIT email campaign.
+                </span>
+            {% endif %}
+        </div>
+
+        {% if classic_change_url %}
+            <a class="tl-button" href="{{ classic_change_url }}">
+                Advanced Admin
+            </a>
+        {% endif %}
+    </div>
+
+
+    <form method="post" id="campaign-workspace-form">
+        {% csrf_token %}
+
+        {% if form.non_field_errors %}
+            <div class="tl-danger-note">
+                {{ form.non_field_errors }}
+            </div>
+        {% endif %}
+
+        <div class="tl-tabs">
+            <button type="button" class="tl-tab active" data-tab="basics">
+                Basics
+            </button>
+
+            <button type="button" class="tl-tab" data-tab="message">
+                Message
+            </button>
+
+            <button type="button" class="tl-tab" data-tab="design">
+                Design
+            </button>
+
+            <button type="button" class="tl-tab" data-tab="content">
+                Content
+            </button>
+
+            <button type="button" class="tl-tab" data-tab="audience">
+                Audience
+            </button>
+
+            <button type="button" class="tl-tab" data-tab="review">
+                Review & Send
+            </button>
+        </div>
+
+
+        <div class="tl-layout">
+
+            <div class="tl-panel">
+                <div class="tl-panel-body">
+
+                    <section class="tl-section active" data-section="basics">
+                        <div class="tl-field">
+                            {{ form.title.label_tag }}
+                            {{ form.title }}
+                            <div class="tl-errors">{{ form.title.errors }}</div>
+                            <div class="tl-help">{{ form.title.help_text }}</div>
+                        </div>
+
+                        <div class="tl-field">
+                            {{ form.description.label_tag }}
+                            {{ form.description }}
+                            <div class="tl-errors">{{ form.description.errors }}</div>
+                        </div>
+
+                        <div class="tl-field">
+                            {{ form.campaign_type.label_tag }}
+                            {{ form.campaign_type }}
+                            <div class="tl-errors">{{ form.campaign_type.errors }}</div>
+                        </div>
+
+                        <div class="tl-field">
+                            {{ form.tag.label_tag }}
+                            {{ form.tag }}
+                            <div class="tl-errors">{{ form.tag.errors }}</div>
+                            <div class="tl-help">
+                                Optional internal label for organizing campaigns.
+                            </div>
+                        </div>
+                    </section>
+
+
+                    <section class="tl-section" data-section="message">
+                        <div class="tl-field">
+                            {{ form.subject.label_tag }}
+                            {{ form.subject }}
+                            <div class="tl-errors">{{ form.subject.errors }}</div>
+                            <div class="tl-help">{{ form.subject.help_text }}</div>
+                        </div>
+
+                        <div class="tl-field">
+                            {{ form.preheader_text.label_tag }}
+                            {{ form.preheader_text }}
+                            <div class="tl-errors">{{ form.preheader_text.errors }}</div>
+                            <div class="tl-help">{{ form.preheader_text.help_text }}</div>
+                        </div>
+                    </section>
+
+
+                    <section class="tl-section" data-section="design">
+                        <div class="tl-field">
+                            {{ form.template.label_tag }}
+                            {{ form.template }}
+                            <div class="tl-errors">{{ form.template.errors }}</div>
+                            <div class="tl-help">{{ form.template.help_text }}</div>
+                        </div>
+
+                        <div class="tl-field">
+                            {{ form.theme.label_tag }}
+                            {{ form.theme }}
+                            <div class="tl-errors">{{ form.theme.errors }}</div>
+                        </div>
+
+                        <div class="tl-field">
+                            {{ form.from_name.label_tag }}
+                            {{ form.from_name }}
+                            <div class="tl-errors">{{ form.from_name.errors }}</div>
+                        </div>
+
+                        <div class="tl-field">
+                            {{ form.reply_to_email.label_tag }}
+                            {{ form.reply_to_email }}
+                            <div class="tl-errors">{{ form.reply_to_email.errors }}</div>
+                        </div>
+
+                        <div class="tl-field">
+                            <label>Tracking</label>
+                            <div>
+                                {{ form.track_opens }}
+                                {{ form.track_opens.label_tag }}
+                            </div>
+                            <div>
+                                {{ form.track_clicks }}
+                                {{ form.track_clicks.label_tag }}
+                            </div>
+                        </div>
+
+                        <details>
+                            <summary><strong>Campaign Attribution</strong></summary>
+
+                            <div style="padding-top:16px;">
+                                <div class="tl-field">
+                                    {{ form.utm_source.label_tag }}
+                                    {{ form.utm_source }}
+                                </div>
+
+                                <div class="tl-field">
+                                    {{ form.utm_medium.label_tag }}
+                                    {{ form.utm_medium }}
+                                </div>
+
+                                <div class="tl-field">
+                                    {{ form.utm_campaign.label_tag }}
+                                    {{ form.utm_campaign }}
+                                </div>
+                            </div>
+                        </details>
+                    </section>
+
+
+                    <section class="tl-section" data-section="content">
+
+                        {% if campaign %}
+
+                            <div class="tl-builder-head">
+                                <div>
+                                    <strong id="tl-block-count">
+                                        {{ block_count }}
+                                        Content Block{{ block_count|pluralize }}
+                                    </strong>
+
+                                    <div class="tl-help">
+                                        Build the campaign by arranging reusable email sections.
+                                    </div>
+                                </div>
+
+                                {% if block_builder_editable %}
+                                    <button
+                                        type="button"
+                                        class="tl-button tl-button-primary"
+                                        id="tl-add-block"
+                                    >
+                                        + Add Block
+                                    </button>
+                                {% endif %}
+                            </div>
+
+
+                            {% if template_block_count and not block_count %}
+                                <div
+                                    class="tl-template-content-notice"
+                                    id="tl-template-content-notice"
+                                >
+                                    <div>
+                                        <strong>
+                                            This campaign is using content from its template.
+                                        </strong>
+
+                                        <div class="tl-help">
+                                            Customize it to create an independent campaign copy.
+                                            Future template changes will then not affect these blocks.
+                                        </div>
+                                    </div>
+
+                                    {% if block_builder_editable %}
+                                        <button
+                                            type="button"
+                                            class="tl-button"
+                                            id="tl-customize-template"
+                                        >
+                                            Customize Template Content
+                                        </button>
+                                    {% endif %}
+                                </div>
+                            {% endif %}
+
+
+                            <div
+                                id="tl-block-list"
+                                class="tl-block-list"
+                            ></div>
+
+
+                            <div
+                                id="tl-block-empty"
+                                class="tl-builder-empty"
+                                {% if block_count %}hidden{% endif %}
+                            >
+                                <strong>No campaign blocks yet.</strong>
+
+                                <div class="tl-help">
+                                    Add a block to create custom campaign content.
+                                </div>
+                            </div>
+
+
+                            {% if not block_builder_editable %}
+                                <div class="tl-danger-note" style="margin-top:18px;">
+                                    This campaign is no longer editable because it has
+                                    already entered its delivery lifecycle.
+                                </div>
+                            {% endif %}
+
+                        {% else %}
+
+                            <div class="tl-preview-empty">
+                                Save the campaign first, then build its content.
+                            </div>
+
+                        {% endif %}
+
+                    </section>
+
+
+                    <section class="tl-section" data-section="audience">
+                        <div class="tl-field">
+                            {{ form.audience.label_tag }}
+                            {{ form.audience }}
+                            <div class="tl-errors">{{ form.audience.errors }}</div>
+                            <div class="tl-help">
+                                Best choice for reusable, managed audience groups.
+                            </div>
+                        </div>
+
+                        <div class="tl-field">
+                            {{ form.recipients.label_tag }}
+                            {{ form.recipients }}
+                            <div class="tl-errors">{{ form.recipients.errors }}</div>
+                            <div class="tl-help">
+                                Use only when you need a small specific list.
+                                This takes priority over Quick TownLIT Group.
+                            </div>
+                        </div>
+
+                        <div class="tl-field">
+                            {{ form.target_group.label_tag }}
+                            {{ form.target_group }}
+                            <div class="tl-errors">{{ form.target_group.errors }}</div>
+                        </div>
+
+                        <div class="tl-field">
+                            {{ form.topic.label_tag }}
+                            {{ form.topic }}
+                            <div class="tl-errors">{{ form.topic.errors }}</div>
+                            <div class="tl-help">
+                                Topic-level unsubscribe preferences are applied
+                                automatically when a topic is selected.
+                            </div>
+                        </div>
+
+                        <div class="tl-field">
+                            {{ form.ignore_unsubscribe }}
+                            {{ form.ignore_unsubscribe.label_tag }}
+                            <div class="tl-errors">
+                                {{ form.ignore_unsubscribe.errors }}
+                            </div>
+                            <div class="tl-help">
+                                Leave this disabled for normal newsletters,
+                                announcements and community campaigns.
+                            </div>
+                        </div>
+                    </section>
+                    
+
+                    <section class="tl-section" data-section="review">
+
+                        {% if campaign %}
+                            <div class="tl-review-heading">
+                                <div>
+                                    <h2>Pre-send Review</h2>
+
+                                    <div class="tl-help">
+                                        TownLIT checks the current audience,
+                                        suppression rules, content and rendering
+                                        before delivery.
+                                    </div>
+                                </div>
+
+                                <button
+                                    type="button"
+                                    class="tl-button"
+                                    id="tl-refresh-review"
+                                >
+                                    Refresh Review
+                                </button>
+                            </div>
+
+                            <div
+                                id="tl-review-loading"
+                                class="tl-review-loading"
+                            >
+                                Run the review to verify this campaign.
+                            </div>
+
+                            <div
+                                id="tl-review-results"
+                                hidden
+                            >
+                                <div class="tl-review-metrics">
+
+                                    <div class="tl-review-metric">
+                                        <span>Audience</span>
+                                        <strong id="tl-review-total">—</strong>
+                                    </div>
+
+                                    <div class="tl-review-metric">
+                                        <span>Suppressed</span>
+                                        <strong id="tl-review-suppressed">—</strong>
+                                    </div>
+
+                                    <div class="tl-review-metric">
+                                        <span>Expected Delivery</span>
+                                        <strong id="tl-review-deliverable">—</strong>
+                                    </div>
+
+                                </div>
+
+                                <div
+                                    class="tl-review-audience"
+                                    id="tl-review-audience"
+                                ></div>
+
+                                <div
+                                    class="tl-review-checks"
+                                    id="tl-review-checks"
+                                ></div>
+
+                                <div
+                                    id="tl-review-suppression-details"
+                                ></div>
+                            </div>
+
+                            <hr style="margin:26px 0;">
+                        {% endif %}
+
+
+                        <div class="tl-field">
+                            {{ form.test_email.label_tag }}
+                            {{ form.test_email }}
+                            <div class="tl-errors">
+                                {{ form.test_email.errors }}
+                            </div>
+
+                            {% if campaign.last_test_sent_at %}
+                                <div class="tl-help">
+                                    Last test:
+                                    {{ campaign.last_test_sent_at|date:"M j, Y · H:i" }}
+                                    to {{ campaign.last_test_email }}
+                                </div>
+                            {% endif %}
+                        </div>
+
+
+                        <hr style="margin:22px 0;">
+
+
+                        <div class="tl-field">
+                            {{ form.scheduled_time.label_tag }}
+                            {{ form.scheduled_time }}
+
+                            <div class="tl-errors">
+                                {{ form.scheduled_time.errors }}
+                            </div>
+                        </div>
+
+                        <div class="tl-field">
+                            {{ form.schedule_timezone.label_tag }}
+                            {{ form.schedule_timezone }}
+
+                            <div class="tl-errors">
+                                {{ form.schedule_timezone.errors }}
+                            </div>
+                        </div>
+
+                    </section>
+
+                </div>
+            </div>
+
+
+            <aside class="tl-panel tl-preview">
+                <div class="tl-panel-head">
+                    Live Email Preview
+                </div>
+
+                {% if preview_url %}
+                    <iframe
+                        src="{{ preview_url }}"
+                        title="Campaign Preview"
+                    ></iframe>
+                {% else %}
+                    <div class="tl-preview-empty">
+                        Save the campaign to enable live preview.
+                    </div>
+                {% endif %}
+            </aside>
+
+        </div>
+
+
+        <div class="tl-footer">
+            <div class="tl-muted">
+                {% if campaign %}
+                    Campaign #{{ campaign.pk }}
+                {% else %}
+                    New draft
+                {% endif %}
+            </div>
+
+            <div class="tl-actions">
+                <button
+                    class="tl-button"
+                    type="submit"
+                    name="workspace_action"
+                    value="save"
+                >
+                    Save
+                </button>
+
+                {% if campaign %}
+                    <button
+                        class="tl-button"
+                        type="submit"
+                        name="workspace_action"
+                        value="test"
+                    >
+                        Send Test
+                    </button>
+
+                    {% if campaign.status == "scheduled" %}
+                        <button
+                            class="tl-button"
+                            type="submit"
+                            name="workspace_action"
+                            value="unschedule"
+                        >
+                            Unschedule
+                        </button>
+                    {% else %}
+                        <button
+                            class="tl-button"
+                            type="button"
+                            id="tl-schedule-campaign"
+                        >
+                            Schedule
+                        </button>
+                    {% endif %}
+
+                    {% if campaign.status != "sent" and campaign.status != "sending" and campaign.status != "queued" and campaign.status != "scheduled" %}
+                        <button
+                            class="tl-button tl-button-primary"
+                            type="button"
+                            id="tl-send-now"
+                        >
+                            Send Now
+                        </button>
+                    {% endif %}
+                {% endif %}
+            </div>
+        </div>
+
+    </form>
+
+</div>
+
+
+{% comment %} -------------------------------------- {% endcomment %}
+{% if campaign %}
+
+{{ workspace_blocks|json_script:"tl-workspace-blocks-data" }}
+{{ block_type_choices|json_script:"tl-block-types-data" }}
+
+<div
+    class="tl-modal"
+    id="tl-block-type-modal"
+    hidden
+>
+    <div class="tl-modal-card">
+        <div class="tl-modal-head">
+            <h2>Add Content Block</h2>
+
+            <button
+                type="button"
+                class="tl-icon-button"
+                data-close-modal="tl-block-type-modal"
+            >
+                Close
+            </button>
+        </div>
+
+        <div class="tl-modal-body">
+            <div
+                class="tl-block-types"
+                id="tl-block-types"
+            ></div>
+        </div>
+    </div>
+</div>
+
+
+<div
+    class="tl-modal"
+    id="tl-block-editor-modal"
+    hidden
+>
+    <div class="tl-modal-card">
+
+        <div class="tl-modal-head">
+            <div>
+                <h2 id="tl-editor-title">
+                    Edit Block
+                </h2>
+
+                <div
+                    class="tl-muted"
+                    id="tl-editor-type-label"
+                ></div>
+            </div>
+
+            <button
+                type="button"
+                class="tl-icon-button"
+                data-close-modal="tl-block-editor-modal"
+            >
+                Close
+            </button>
+        </div>
+
+        <div class="tl-modal-body">
+
+            <div
+                class="tl-builder-error"
+                id="tl-builder-error"
+            ></div>
+
+            <input
+                type="hidden"
+                id="tl-block-id"
+            >
+
+            <input
+                type="hidden"
+                id="tl-block-type"
+            >
+
+
+            <div class="tl-builder-field">
+                <label for="tl-block-name">
+                    Internal Block Name
+                </label>
+
+                <input
+                    type="text"
+                    id="tl-block-name"
+                    placeholder="Optional internal name"
+                >
+            </div>
+
+
+            <div
+                class="tl-builder-field"
+                data-block-fields="hero callout"
+            >
+                <label>
+                    Headline
+                </label>
+
+                <div
+                    class="tl-rich-toolbar"
+                    data-editor-toolbar="tl-block-headline"
+                >
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-headline"
+                        data-rich-command="bold"
+                        title="Bold"
+                        aria-label="Bold"
+                    >
+                        B
+                    </button>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-headline"
+                        data-rich-command="italic"
+                        title="Italic"
+                        aria-label="Italic"
+                    >
+                        <em>I</em>
+                    </button>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-headline"
+                        data-rich-command="underline"
+                        title="Underline"
+                        aria-label="Underline"
+                    >
+                        <u>U</u>
+                    </button>
+
+                    <div class="tl-rich-separator"></div>
+
+                    <select
+                        class="tl-rich-select tl-rich-size"
+                        data-rich-target="tl-block-headline"
+                        aria-label="Headline size"
+                    >
+                        <option value="">Text Size</option>
+                        <option value="2">14 px</option>
+                        <option value="3">16 px</option>
+                        <option value="4">18 px</option>
+                        <option value="5">22 px</option>
+                        <option value="6">28 px</option>
+                        <option value="7">36 px</option>
+                    </select>
+
+                    <label
+                        class="tl-rich-color-wrap"
+                        title="Headline color"
+                    >
+                        Color
+
+                        <input
+                            type="color"
+                            class="tl-rich-color"
+                            data-rich-target="tl-block-headline"
+                            value="#222222"
+                            aria-label="Headline color"
+                        >
+                    </label>
+
+                    <div class="tl-rich-separator"></div>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-headline"
+                        data-rich-command="justifyLeft"
+                        title="Align left"
+                    >
+                        Left
+                    </button>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-headline"
+                        data-rich-command="justifyCenter"
+                        title="Align center"
+                    >
+                        Center
+                    </button>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-headline"
+                        data-rich-command="justifyRight"
+                        title="Align right"
+                    >
+                        Right
+                    </button>
+
+                    <div class="tl-rich-separator"></div>
+
+                    <select
+                        class="tl-rich-select tl-rich-direction"
+                        data-rich-target="tl-block-headline"
+                        aria-label="Headline direction"
+                    >
+                        <option value="">Auto Direction</option>
+                        <option value="ltr">LTR</option>
+                        <option value="rtl">RTL</option>
+                    </select>
+
+                    <div class="tl-rich-separator"></div>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-headline"
+                        data-rich-command="createLink"
+                        title="Add link"
+                    >
+                        Link
+                    </button>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-headline"
+                        data-rich-command="unlink"
+                        title="Remove link"
+                    >
+                        Unlink
+                    </button>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-headline"
+                        data-rich-command="removeFormat"
+                        title="Clear formatting"
+                    >
+                        Clear
+                    </button>
+
+                    <div class="tl-rich-separator"></div>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-headline"
+                        data-rich-command="undo"
+                        title="Undo"
+                        aria-label="Undo"
+                    >
+                        ↶
+                    </button>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-headline"
+                        data-rich-command="redo"
+                        title="Redo"
+                        aria-label="Redo"
+                    >
+                        ↷
+                    </button>
+                </div>
+
+                <div
+                    id="tl-block-headline"
+                    class="tl-rich-editor tl-rich-editor-headline"
+                    contenteditable="true"
+                    spellcheck="true"
+                ></div>
+
+                <div class="tl-help">
+                    Style the headline independently from the body content.
+                </div>
+            </div>
+
+
+            <div
+                class="tl-builder-field"
+                data-block-fields="hero text quote callout two_column"
+            >
+                <label id="tl-content-label">
+                    Content
+                </label>
+
+                <div
+                    class="tl-rich-toolbar"
+                    data-editor-toolbar="tl-block-content"
+                >
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-content"
+                        data-rich-command="bold"
+                        title="Bold"
+                        aria-label="Bold"
+                    >
+                        B
+                    </button>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-content"
+                        data-rich-command="italic"
+                        title="Italic"
+                        aria-label="Italic"
+                    >
+                        <em>I</em>
+                    </button>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-content"
+                        data-rich-command="underline"
+                        title="Underline"
+                        aria-label="Underline"
+                    >
+                        <u>U</u>
+                    </button>
+
+                    <div class="tl-rich-separator"></div>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-content"
+                        data-rich-command="insertUnorderedList"
+                        title="Bullet list"
+                        aria-label="Bullet list"
+                    >
+                        • List
+                    </button>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-content"
+                        data-rich-command="insertOrderedList"
+                        title="Numbered list"
+                        aria-label="Numbered list"
+                    >
+                        1. List
+                    </button>
+
+                    <div class="tl-rich-separator"></div>
+
+                    <select
+                        class="tl-rich-select tl-rich-size"
+                        data-rich-target="tl-block-content"
+                        aria-label="Text size"
+                    >
+                        <option value="">Text Size</option>
+                        <option value="1">12 px</option>
+                        <option value="2">14 px</option>
+                        <option value="3">16 px</option>
+                        <option value="4">18 px</option>
+                        <option value="5">22 px</option>
+                        <option value="6">28 px</option>
+                        <option value="7">36 px</option>
+                    </select>
+
+                    <label
+                        class="tl-rich-color-wrap"
+                        title="Text color"
+                    >
+                        Color
+
+                        <input
+                            type="color"
+                            class="tl-rich-color"
+                            data-rich-target="tl-block-content"
+                            value="#222222"
+                            aria-label="Text color"
+                        >
+                    </label>
+
+                    <div class="tl-rich-separator"></div>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-content"
+                        data-rich-command="justifyLeft"
+                        title="Align left"
+                    >
+                        Left
+                    </button>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-content"
+                        data-rich-command="justifyCenter"
+                        title="Align center"
+                    >
+                        Center
+                    </button>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-content"
+                        data-rich-command="justifyRight"
+                        title="Align right"
+                    >
+                        Right
+                    </button>
+
+                    <div class="tl-rich-separator"></div>
+
+                    <select
+                        class="tl-rich-select tl-rich-direction"
+                        data-rich-target="tl-block-content"
+                        aria-label="Text direction"
+                    >
+                        <option value="">Auto Direction</option>
+                        <option value="ltr">LTR</option>
+                        <option value="rtl">RTL</option>
+                    </select>
+
+                    <div class="tl-rich-separator"></div>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-content"
+                        data-rich-command="createLink"
+                        title="Add link"
+                    >
+                        Link
+                    </button>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-content"
+                        data-rich-command="unlink"
+                        title="Remove link"
+                    >
+                        Unlink
+                    </button>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-content"
+                        data-rich-command="removeFormat"
+                        title="Clear formatting"
+                    >
+                        Clear
+                    </button>
+
+                    <div class="tl-rich-separator"></div>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-content"
+                        data-rich-command="undo"
+                        title="Undo"
+                        aria-label="Undo"
+                    >
+                        ↶
+                    </button>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-content"
+                        data-rich-command="redo"
+                        title="Redo"
+                        aria-label="Redo"
+                    >
+                        ↷
+                    </button>
+
+                </div>
+
+                <div
+                    id="tl-block-content"
+                    class="tl-rich-editor"
+                    contenteditable="true"
+                    spellcheck="true"
+                ></div>
+            </div>
+
+
+            <div
+                class="tl-builder-field"
+                data-block-fields="two_column"
+            >
+                <label>
+                    Right Column Content
+                </label>
+
+                <div
+                    class="tl-rich-toolbar"
+                    data-editor-toolbar="tl-block-secondary-content"
+                >
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-secondary-content"
+                        data-rich-command="bold"
+                        title="Bold"
+                    >
+                        B
+                    </button>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-secondary-content"
+                        data-rich-command="italic"
+                        title="Italic"
+                    >
+                        <em>I</em>
+                    </button>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-secondary-content"
+                        data-rich-command="underline"
+                        title="Underline"
+                    >
+                        <u>U</u>
+                    </button>
+
+                    <div class="tl-rich-separator"></div>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-secondary-content"
+                        data-rich-command="insertUnorderedList"
+                        title="Bullet list"
+                        aria-label="Bullet list"
+                    >
+                        • List
+                    </button>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-secondary-content"
+                        data-rich-command="insertOrderedList"
+                        title="Numbered list"
+                        aria-label="Numbered list"
+                    >
+                        1. List
+                    </button>
+
+                    <div class="tl-rich-separator"></div>
+
+                    <select
+                        class="tl-rich-select tl-rich-size"
+                        data-rich-target="tl-block-secondary-content"
+                    >
+                        <option value="">Text Size</option>
+                        <option value="1">12 px</option>
+                        <option value="2">14 px</option>
+                        <option value="3">16 px</option>
+                        <option value="4">18 px</option>
+                        <option value="5">22 px</option>
+                        <option value="6">28 px</option>
+                        <option value="7">36 px</option>
+                    </select>
+
+                    <label class="tl-rich-color-wrap">
+                        Color
+
+                        <input
+                            type="color"
+                            class="tl-rich-color"
+                            data-rich-target="tl-block-secondary-content"
+                            value="#222222"
+                        >
+                    </label>
+
+                    <div class="tl-rich-separator"></div>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-secondary-content"
+                        data-rich-command="justifyLeft"
+                    >
+                        Left
+                    </button>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-secondary-content"
+                        data-rich-command="justifyCenter"
+                    >
+                        Center
+                    </button>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-secondary-content"
+                        data-rich-command="justifyRight"
+                    >
+                        Right
+                    </button>
+
+                    <div class="tl-rich-separator"></div>
+
+                    <select
+                        class="tl-rich-select tl-rich-direction"
+                        data-rich-target="tl-block-secondary-content"
+                    >
+                        <option value="">Auto Direction</option>
+                        <option value="ltr">LTR</option>
+                        <option value="rtl">RTL</option>
+                    </select>
+
+                    <div class="tl-rich-separator"></div>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-secondary-content"
+                        data-rich-command="createLink"
+                    >
+                        Link
+                    </button>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-secondary-content"
+                        data-rich-command="unlink"
+                    >
+                        Unlink
+                    </button>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-secondary-content"
+                        data-rich-command="removeFormat"
+                    >
+                        Clear
+                    </button>
+
+                    <div class="tl-rich-separator"></div>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-secondary-content"
+                        data-rich-command="undo"
+                        title="Undo"
+                        aria-label="Undo"
+                    >
+                        ↶
+                    </button>
+
+                    <button
+                        type="button"
+                        class="tl-rich-command"
+                        data-rich-target="tl-block-secondary-content"
+                        data-rich-command="redo"
+                        title="Redo"
+                        aria-label="Redo"
+                    >
+                        ↷
+                    </button>
+
+                </div>
+
+                <div
+                    id="tl-block-secondary-content"
+                    class="tl-rich-editor"
+                    contenteditable="true"
+                    spellcheck="true"
+                ></div>
+            </div>
+
+
+            <div
+                class="tl-builder-field"
+                data-block-fields="hero image"
+            >
+                <label for="tl-block-image-url">
+                    Image URL
+                </label>
+
+                <input
+                    type="url"
+                    id="tl-block-image-url"
+                    placeholder="https://..."
+                >
+            </div>
+
+
+            <div
+                class="tl-builder-field"
+                data-block-fields="image"
+            >
+                <label for="tl-block-image-alt">
+                    Image Alt Text
+                </label>
+
+                <input
+                    type="text"
+                    id="tl-block-image-alt"
+                >
+            </div>
+
+
+            <div
+                class="tl-builder-field"
+                data-block-fields="hero button"
+            >
+                <label for="tl-block-action-label">
+                    Button Label
+                </label>
+
+                <input
+                    type="text"
+                    id="tl-block-action-label"
+                >
+            </div>
+
+
+            <div
+                class="tl-builder-field"
+                data-block-fields="hero image button"
+            >
+                <label for="tl-block-action-url">
+                    Link URL
+                </label>
+
+                <input
+                    type="url"
+                    id="tl-block-action-url"
+                    placeholder="https://..."
+                >
+            </div>
+
+
+            <div
+                class="tl-builder-field"
+                data-block-fields="quote"
+            >
+                <label for="tl-block-attribution">
+                    Attribution
+                </label>
+
+                <input
+                    type="text"
+                    id="tl-block-attribution"
+                    placeholder="Name or source"
+                >
+            </div>
+
+
+            <div
+                class="tl-builder-field"
+                data-block-fields="hero text button"
+            >
+                <label for="tl-block-alignment">
+                    Block Layout Alignment
+                </label>
+
+                <div class="tl-help">
+                    Controls the overall block layout.
+                    Use the text toolbar for paragraph alignment.
+                </div>
+
+                <select id="tl-block-alignment">
+                    <option value="left">Left</option>
+                    <option value="center">Center</option>
+                    <option value="right">Right</option>
+                </select>
+            </div>
+
+
+            <div
+                class="tl-builder-field"
+                data-block-fields="spacer"
+            >
+                <label for="tl-block-spacer-height">
+                    Spacer Height
+                </label>
+
+                <input
+                    type="number"
+                    id="tl-block-spacer-height"
+                    min="4"
+                    max="120"
+                    value="24"
+                >
+            </div>
+
+
+            <div
+                class="tl-builder-field"
+                data-block-fields="social_links"
+            >
+                <label>
+                    Social Links
+                </label>
+
+                <div id="tl-social-links"></div>
+
+                <button
+                    type="button"
+                    class="tl-button"
+                    id="tl-add-social-link"
+                >
+                    + Add Social Link
+                </button>
+            </div>
+
+
+            <div
+                class="tl-builder-field"
+                data-block-fields="custom_html"
+            >
+                <label for="tl-block-custom-html">
+                    Custom HTML
+                </label>
+
+                <textarea
+                    id="tl-block-custom-html"
+                    placeholder="<table>...</table>"
+                ></textarea>
+
+                <div class="tl-help">
+                    Advanced use only.
+                </div>
+            </div>
+
+
+            <div class="tl-builder-field">
+                <label>
+                    <input
+                        type="checkbox"
+                        id="tl-block-enabled"
+                        checked
+                    >
+                    Enabled
+                </label>
+            </div>
+
+        </div>
+
+
+        <div class="tl-modal-footer">
+            <button
+                type="button"
+                class="tl-button"
+                data-close-modal="tl-block-editor-modal"
+            >
+                Cancel
+            </button>
+
+            <button
+                type="button"
+                class="tl-button tl-button-primary"
+                id="tl-save-block"
+            >
+                Save Block
+            </button>
+        </div>
+
+    </div>
+</div>
+
+{% endif %}
+
+{% comment %} -------------------------------------- {% endcomment %}
+{% if campaign %}
+<div
+    class="tl-modal"
+    id="tl-send-confirm-modal"
+    hidden
+>
+    <div class="tl-modal-card">
+
+        <div class="tl-modal-head">
+            <h2 id="tl-confirm-title">
+                Confirm Campaign
+            </h2>
+
+            <button
+                type="button"
+                class="tl-icon-button"
+                id="tl-close-confirm"
+            >
+                Close
+            </button>
+        </div>
+
+        <div class="tl-modal-body">
+
+            <div class="tl-confirm-warning">
+                Once delivery begins, it cannot be
+                reliably recalled.
+            </div>
+
+            <div class="tl-confirm-summary">
+                <div>
+                    <span>Expected Delivery</span>
+                    <strong id="tl-confirm-deliverable">
+                        —
+                    </strong>
+                </div>
+
+                <div>
+                    <span>Suppressed</span>
+                    <strong id="tl-confirm-suppressed">
+                        —
+                    </strong>
+                </div>
+            </div>
+
+            <div
+                id="tl-confirm-standard"
+                hidden
+            >
+                <label>
+                    <input
+                        type="checkbox"
+                        id="tl-confirm-checkbox"
+                    >
+                    I have reviewed the campaign and
+                    recipient estimate.
+                </label>
+            </div>
+
+            <div
+                class="tl-confirm-phrase"
+                id="tl-confirm-strong"
+                hidden
+            >
+                <label for="tl-confirm-input">
+                    Type
+                    <strong id="tl-confirm-required-word">
+                        SEND
+                    </strong>
+                    to continue.
+                </label>
+
+                <input
+                    type="text"
+                    id="tl-confirm-input"
+                    autocomplete="off"
+                >
+            </div>
+
+        </div>
+
+        <div class="tl-modal-footer">
+            <button
+                type="button"
+                class="tl-button"
+                id="tl-cancel-confirm"
+            >
+                Cancel
+            </button>
+
+            <button
+                type="button"
+                class="tl-button tl-button-primary"
+                id="tl-complete-confirm"
+            >
+                Confirm
+            </button>
+        </div>
+
+    </div>
+</div>
+{% endif %}
+
+{% comment %} -------------------------------------- {% endcomment %}
+<script>
+(function () {
+    const tabs = document.querySelectorAll(".tl-tab");
+    const sections = document.querySelectorAll(".tl-section");
+    const form = document.getElementById("campaign-workspace-form");
+
+    function activateTab(name) {
+        tabs.forEach((tab) => {
+            tab.classList.toggle(
+                "active",
+                tab.dataset.tab === name
+            );
+        });
+
+        sections.forEach((section) => {
+            section.classList.toggle(
+                "active",
+                section.dataset.section === name
+            );
+        });
+
+        if (name) {
+            window.location.hash = name;
+        }
+    }
+
+    tabs.forEach((tab) => {
+        tab.addEventListener("click", () => {
+            activateTab(tab.dataset.tab);
+        });
+    });
+
+    const initialTab = window.location.hash.replace("#", "");
+
+    if (
+        initialTab &&
+        document.querySelector(
+            '.tl-tab[data-tab="' + initialTab + '"]'
+        )
+    ) {
+        activateTab(initialTab);
+    }
+
+    let dirty = false;
+    let submitting = false;
+    form.dataset.dirty = "0";
+
+    form.addEventListener("change", () => {
+        dirty = true;
+        form.dataset.dirty = "1";
+    });
+
+    form.addEventListener("input", () => {
+        dirty = true;
+        form.dataset.dirty = "1";
+    });
+
+    form.addEventListener("submit", () => {
+        submitting = true;
+        form.dataset.dirty = "0";
+    });
+
+    window.addEventListener("beforeunload", (event) => {
+        if (!dirty || submitting) {
+            return;
+        }
+
+        event.preventDefault();
+        event.returnValue = "";
+    });
+})();
+</script>
+
+{% comment %} -------------------------------------- {% endcomment %}
+{% if campaign %}
+<script>
+(function () {
+    const editable = {{ block_builder_editable|yesno:"true,false" }};
+    const blockActionUrl = "{{ block_action_url|escapejs }}";
+    const previewUrl = "{{ preview_url|escapejs }}";
+    const templateBlockCount = {{ template_block_count|default:0 }};
+
+    let blocks = JSON.parse(
+        document.getElementById(
+            "tl-workspace-blocks-data"
+        ).textContent
+    );
+
+    const blockTypes = JSON.parse(
+        document.getElementById(
+            "tl-block-types-data"
+        ).textContent
+    );
+
+    const list = document.getElementById(
+        "tl-block-list"
+    );
+    const empty = document.getElementById(
+        "tl-block-empty"
+    );
+    const count = document.getElementById(
+        "tl-block-count"
+    );
+    const iframe = document.querySelector(
+        ".tl-preview iframe"
+    );
+    const csrfToken = document.querySelector(
+        '#campaign-workspace-form [name="csrfmiddlewaretoken"]'
+    ).value;
+
+    const typeModal = document.getElementById(
+        "tl-block-type-modal"
+    );
+    const editorModal = document.getElementById(
+        "tl-block-editor-modal"
+    );
+    const errorBox = document.getElementById(
+        "tl-builder-error"
+    );
+
+    const field = (id) => (
+        document.getElementById(id)
+    );
+
+
+    function escapeHtml(value) {
+        const div = document.createElement("div");
+        div.textContent = value || "";
+        return div.innerHTML;
+    }
+
+
+    function openModal(modal) {
+        modal.hidden = false;
+        document.body.style.overflow = "hidden";
+    }
+
+
+    function closeModal(modal) {
+        modal.hidden = true;
+        document.body.style.overflow = "";
+    }
+
+
+    document.querySelectorAll(
+        "[data-close-modal]"
+    ).forEach((button) => {
+        button.addEventListener(
+            "click",
+            () => {
+                closeModal(
+                    document.getElementById(
+                        button.dataset.closeModal
+                    )
+                );
+            }
+        );
+    });
+
+
+    function refreshPreview() {
+        if (!iframe || !previewUrl) {
+            return;
+        }
+
+        const separator = (
+            previewUrl.includes("?")
+            ? "&"
+            : "?"
+        );
+
+        iframe.src = (
+            previewUrl
+            + separator
+            + "_refresh="
+            + Date.now()
+        );
+    }
+
+
+    function renderBlocks() {
+        list.innerHTML = "";
+
+        count.textContent = (
+            blocks.length
+            + " Content Block"
+            + (blocks.length === 1 ? "" : "s")
+        );
+
+        empty.hidden = blocks.length > 0;
+
+        blocks.forEach((block) => {
+            const card = document.createElement("div");
+
+            card.className = (
+                "tl-builder-block"
+                + (
+                    block.is_enabled
+                    ? ""
+                    : " disabled"
+                )
+            );
+
+            card.dataset.blockId = block.id;
+
+            if (editable) {
+                card.draggable = true;
+            }
+
+            card.innerHTML = `
+                <div
+                    class="tl-drag-handle"
+                    title="Drag to reorder"
+                >
+                    ⋮⋮
+                </div>
+
+                <div>
+                    <div class="tl-builder-block-title">
+                        ${escapeHtml(block.block_type_label)}
+                    </div>
+
+                    <div class="tl-builder-block-meta">
+                        ${
+                            block.name
+                            ? `<span>${escapeHtml(block.name)}</span>`
+                            : ""
+                        }
+
+                        ${
+                            block.summary
+                            ? `<span>· ${escapeHtml(block.summary)}</span>`
+                            : ""
+                        }
+
+                        ${
+                            !block.is_enabled
+                            ? "<span>· Disabled</span>"
+                            : ""
+                        }
+                    </div>
+                </div>
+
+                ${
+                    editable
+                    ? `
+                        <div class="tl-builder-block-actions">
+                            <button
+                                type="button"
+                                class="tl-icon-button"
+                                data-block-action="edit"
+                            >
+                                Edit
+                            </button>
+
+                            <button
+                                type="button"
+                                class="tl-icon-button"
+                                data-block-action="duplicate"
+                            >
+                                Duplicate
+                            </button>
+
+                            <button
+                                type="button"
+                                class="tl-icon-button"
+                                data-block-action="toggle"
+                            >
+                                ${
+                                    block.is_enabled
+                                    ? "Disable"
+                                    : "Enable"
+                                }
+                            </button>
+
+                            <button
+                                type="button"
+                                class="tl-icon-button tl-icon-button-danger"
+                                data-block-action="delete"
+                            >
+                                Delete
+                            </button>
+                        </div>
+                    `
+                    : ""
+                }
+            `;
+
+            list.appendChild(card);
+        });
+
+        bindCardActions();
+        bindDragAndDrop();
+    }
+
+
+    function bindCardActions() {
+        list.querySelectorAll(
+            "[data-block-action]"
+        ).forEach((button) => {
+            button.addEventListener(
+                "click",
+                async () => {
+                    const card = button.closest(
+                        ".tl-builder-block"
+                    );
+
+                    const blockId = Number(
+                        card.dataset.blockId
+                    );
+
+                    const block = blocks.find(
+                        (item) => item.id === blockId
+                    );
+
+                    const action = (
+                        button.dataset.blockAction
+                    );
+
+                    if (action === "edit") {
+                        openEditor(block);
+                        return;
+                    }
+
+                    if (action === "delete") {
+                        if (!window.confirm(
+                            "Delete this block?"
+                        )) {
+                            return;
+                        }
+
+                        await runAction(
+                            "delete",
+                            {
+                                block_id: blockId,
+                            }
+                        );
+
+                        return;
+                    }
+
+                    if (action === "duplicate") {
+                        await runAction(
+                            "duplicate",
+                            {
+                                block_id: blockId,
+                            }
+                        );
+
+                        return;
+                    }
+
+                    if (action === "toggle") {
+                        await runAction(
+                            "toggle",
+                            {
+                                block_id: blockId,
+                                enabled: !block.is_enabled,
+                            }
+                        );
+                    }
+                }
+            );
+        });
+    }
+
+
+    async function runAction(
+        action,
+        payload = {},
+    ) {
+        try {
+            const response = await fetch(
+                blockActionUrl,
+                {
+                    method: "POST",
+                    credentials: "same-origin",
+                    headers: {
+                        "Content-Type": (
+                            "application/json"
+                        ),
+                        "X-CSRFToken": csrfToken,
+                        "X-Requested-With": (
+                            "XMLHttpRequest"
+                        ),
+                    },
+                    body: JSON.stringify({
+                        action,
+                        ...payload,
+                    }),
+                }
+            );
+
+            const data = await response.json();
+
+            if (!response.ok || !data.ok) {
+                throw new Error(
+                    data.error
+                    || "Block action failed."
+                );
+            }
+
+            blocks = data.blocks || [];
+
+            renderBlocks();
+            refreshPreview();
+
+            if (
+                window.tlRefreshCampaignReview
+            ) {
+                window.tlRefreshCampaignReview();
+            }
+
+            const notice = document.getElementById(
+                "tl-template-content-notice"
+            );
+
+            if (notice && blocks.length) {
+                notice.remove();
+            }
+
+            return data;
+
+        } catch (error) {
+            showBuilderError(
+                error.message
+            );
+
+            throw error;
+        }
+    }
+
+
+    function showBuilderError(message) {
+        errorBox.textContent = message;
+        errorBox.classList.add("visible");
+    }
+
+
+    function clearBuilderError() {
+        errorBox.textContent = "";
+        errorBox.classList.remove("visible");
+    }
+
+
+    function renderTypePalette() {
+        const container = document.getElementById(
+            "tl-block-types"
+        );
+
+        container.innerHTML = "";
+
+        const descriptions = {
+            hero: "Large opening section with image, title and button.",
+            text: "Rich text content for paragraphs and announcements.",
+            image: "Responsive campaign image with optional link.",
+            button: "Primary call-to-action button.",
+            quote: "Highlighted quotation with attribution.",
+            callout: "Highlighted message or important information.",
+            divider: "Visual separator between content sections.",
+            spacer: "Adjustable vertical space.",
+            two_column: "Two-column content section.",
+            social_links: "Links to TownLIT social channels.",
+            custom_html: "Advanced custom email HTML.",
+        };
+
+        blockTypes.forEach((type) => {
+            const button = document.createElement(
+                "button"
+            );
+
+            button.type = "button";
+            button.className = "tl-block-type";
+
+            button.innerHTML = `
+                <strong>${escapeHtml(type.label)}</strong>
+                <span class="tl-muted">
+                    ${
+                        escapeHtml(
+                            descriptions[type.value]
+                            || ""
+                        )
+                    }
+                </span>
+            `;
+
+            button.addEventListener(
+                "click",
+                () => {
+                    closeModal(typeModal);
+
+                    openEditor(
+                        null,
+                        type.value,
+                        type.label,
+                    );
+                }
+            );
+
+            container.appendChild(button);
+        });
+    }
+
+
+    function showFieldsForType(type) {
+        document.querySelectorAll(
+            "[data-block-fields]"
+        ).forEach((element) => {
+            const types = (
+                element.dataset.blockFields
+                .split(" ")
+            );
+
+            element.hidden = (
+                !types.includes(type)
+            );
+        });
+
+        const contentLabel = document.getElementById(
+            "tl-content-label"
+        );
+
+        if (type === "two_column") {
+            contentLabel.textContent = (
+                "Left Column Content"
+            );
+        } else if (type === "quote") {
+            contentLabel.textContent = (
+                "Quote"
+            );
+        } else {
+            contentLabel.textContent = (
+                "Content"
+            );
+        }
+    }
+
+
+    function openEditor(
+        block = null,
+        newType = "",
+        newTypeLabel = "",
+    ) {
+        clearBuilderError();
+
+        const type = (
+            block
+            ? block.block_type
+            : newType
+        );
+
+        const data = (
+            block
+            ? block.data || {}
+            : {}
+        );
+
+        field("tl-block-id").value = (
+            block ? block.id : ""
+        );
+
+        field("tl-block-type").value = type;
+
+        field("tl-block-name").value = (
+            block
+            ? block.name || ""
+            : ""
+        );
+
+        setRichEditorValue(
+            field("tl-block-headline"),
+            data.title || ""
+        );
+
+        setRichEditorValue(
+            field("tl-block-content"),
+            (
+                data.html
+                || data.quote
+                || data.left_html
+                || ""
+            )
+        );
+
+        setRichEditorValue(
+            field(
+                "tl-block-secondary-content"
+            ),
+            (
+                data.right_html
+                || ""
+            )
+        );
+
+        syncRichToolbarState();
+
+        field("tl-block-image-url").value = (
+            data.image_url
+            || data.url
+            || ""
+        );
+
+        field("tl-block-image-alt").value = (
+            data.alt || ""
+        );
+
+        field("tl-block-action-label").value = (
+            data.button_label
+            || data.label
+            || ""
+        );
+
+        field("tl-block-action-url").value = (
+            data.button_url
+            || data.link_url
+            || (
+                type === "button"
+                ? data.url
+                : ""
+            )
+            || ""
+        );
+
+        field("tl-block-attribution").value = (
+            data.attribution || ""
+        );
+
+        field("tl-block-alignment").value = (
+            data.align
+            || (
+                type === "hero"
+                ? "center"
+                : "left"
+            )
+        );
+
+        field("tl-block-spacer-height").value = (
+            data.height || 24
+        );
+
+        field("tl-block-custom-html").value = (
+            type === "custom_html"
+            ? data.html || ""
+            : ""
+        );
+
+        field("tl-block-enabled").checked = (
+            block
+            ? block.is_enabled
+            : true
+        );
+
+        renderSocialLinks(
+            data.links || []
+        );
+
+        document.getElementById(
+            "tl-editor-title"
+        ).textContent = (
+            block
+            ? "Edit Block"
+            : "Add Block"
+        );
+
+        document.getElementById(
+            "tl-editor-type-label"
+        ).textContent = (
+            block
+            ? block.block_type_label
+            : newTypeLabel
+        );
+
+        showFieldsForType(type);
+        openModal(editorModal);
+    }
+
+
+    function buildSocialRow(
+        label = "",
+        url = "",
+    ) {
+        const row = document.createElement(
+            "div"
+        );
+
+        row.className = "tl-social-row";
+
+        row.innerHTML = `
+            <input
+                type="text"
+                class="tl-social-label"
+                placeholder="Instagram"
+                value="${escapeHtml(label)}"
+            >
+
+            <input
+                type="url"
+                class="tl-social-url"
+                placeholder="https://..."
+                value="${escapeHtml(url)}"
+            >
+
+            <button
+                type="button"
+                class="tl-icon-button tl-icon-button-danger"
+            >
+                Remove
+            </button>
+        `;
+
+        row.querySelector(
+            "button"
+        ).addEventListener(
+            "click",
+            () => row.remove()
+        );
+
+        return row;
+    }
+
+
+    function renderSocialLinks(links) {
+        const container = document.getElementById(
+            "tl-social-links"
+        );
+
+        container.innerHTML = "";
+
+        links.forEach((link) => {
+            container.appendChild(
+                buildSocialRow(
+                    link.label || "",
+                    link.url || "",
+                )
+            );
+        });
+    }
+
+
+    document.getElementById(
+        "tl-add-social-link"
+    ).addEventListener(
+        "click",
+        () => {
+            document.getElementById(
+                "tl-social-links"
+            ).appendChild(
+                buildSocialRow()
+            );
+        }
+    );
+
+
+    function serializeSocialLinks() {
+        return Array.from(
+            document.querySelectorAll(
+                "#tl-social-links .tl-social-row"
+            )
+        )
+        .map((row) => {
+            const label = row.querySelector(
+                ".tl-social-label"
+            ).value.trim();
+
+            const url = row.querySelector(
+                ".tl-social-url"
+            ).value.trim();
+
+            if (!label && !url) {
+                return null;
+            }
+
+            return (
+                label
+                + " | "
+                + url
+            );
+        })
+        .filter(Boolean)
+        .join("\n");
+    }
+
+
+    /* Rich text editor ---------------------------------------------- */
+
+    const richSelections = new Map();
+
+    const fontSizeMap = {
+        "1": "12px",
+        "2": "14px",
+        "3": "16px",
+        "4": "18px",
+        "5": "22px",
+        "6": "28px",
+        "7": "36px",
+    };
+
+    const cssFontSizeMap = {
+        "xx-small": "12px",
+        "x-small": "14px",
+        "small": "16px",
+        "medium": "18px",
+        "large": "22px",
+        "x-large": "28px",
+        "xx-large": "36px",
+        "-webkit-xxx-large": "36px",
+    };
+
+    const pasteAllowedTags = new Set([
+        "P",
+        "DIV",
+        "SPAN",
+        "BR",
+        "STRONG",
+        "B",
+        "EM",
+        "I",
+        "U",
+        "S",
+        "A",
+        "UL",
+        "OL",
+        "LI",
+        "BLOCKQUOTE",
+    ]);
+
+    const pasteAllowedStyles = new Set([
+        "color",
+        "background-color",
+        "font-size",
+        "font-style",
+        "font-weight",
+        "text-decoration",
+        "text-align",
+        "direction",
+        "line-height",
+        "letter-spacing",
+    ]);
+
+    function cleanPastedHtml(html) {
+        const template = document.createElement(
+            "template"
+        );
+
+        template.innerHTML = html || "";
+
+        template.content.querySelectorAll(
+            "script,style,iframe,object,embed,"
+            + "form,meta,link,svg,math"
+        ).forEach(
+            (element) => element.remove()
+        );
+
+        const elements = Array.from(
+            template.content.querySelectorAll("*")
+        );
+
+        elements.forEach((element) => {
+            if (
+                !pasteAllowedTags.has(
+                    element.tagName
+                )
+            ) {
+                unwrapPastedElement(
+                    element
+                );
+                return;
+            }
+
+            cleanPastedAttributes(
+                element
+            );
+        });
+
+        normalizeSemanticFormatting(
+            template.content
+        );
+
+        normalizeLegacyFontTags(
+            template.content
+        );
+
+        return template.innerHTML.trim();
+    }
+
+
+    function unwrapPastedElement(element) {
+        const parent = element.parentNode;
+
+        if (!parent) {
+            return;
+        }
+
+        while (element.firstChild) {
+            parent.insertBefore(
+                element.firstChild,
+                element
+            );
+        }
+
+        element.remove();
+    }
+
+
+    function cleanPastedAttributes(element) {
+        const href = (
+            element.tagName === "A"
+            ? element.getAttribute("href")
+            : null
+        );
+
+        const direction = (
+            element.getAttribute("dir")
+            || ""
+        ).toLowerCase();
+
+        const sourceStyle = (
+            element.getAttribute("style")
+            || ""
+        );
+
+        Array.from(
+            element.attributes
+        ).forEach((attribute) => {
+            element.removeAttribute(
+                attribute.name
+            );
+        });
+
+        if (
+            element.tagName === "A"
+            && isSafeEditorUrl(href)
+        ) {
+            element.setAttribute(
+                "href",
+                href.trim()
+            );
+        }
+
+        if (
+            direction === "rtl"
+            || direction === "ltr"
+        ) {
+            element.setAttribute(
+                "dir",
+                direction
+            );
+        }
+
+        if (sourceStyle) {
+            const scratch = (
+                document.createElement("span")
+            );
+
+            scratch.setAttribute(
+                "style",
+                sourceStyle
+            );
+
+            pasteAllowedStyles.forEach(
+                (property) => {
+                    const value = (
+                        scratch.style
+                        .getPropertyValue(
+                            property
+                        )
+                    );
+
+                    if (!value) {
+                        return;
+                    }
+
+                    element.style.setProperty(
+                        property,
+                        value
+                    );
+                }
+            );
+        }
+    }
+
+
+    function isSafeEditorUrl(value) {
+        if (!value) {
+            return false;
+        }
+
+        return (
+            /^https?:\/\//i.test(value)
+            || /^mailto:/i.test(value)
+            || /^tel:/i.test(value)
+        );
+    }
+
+
+    function escapeEditorText(value) {
+        const div = document.createElement(
+            "div"
+        );
+
+        div.textContent = value || "";
+
+        return div.innerHTML;
+    }
+
+
+    function insertHtmlAtSelection(
+        editor,
+        html,
+    ) {
+        restoreRichSelection(
+            editor
+        );
+
+        const selection = (
+            window.getSelection()
+        );
+
+        if (
+            !selection
+            || !selection.rangeCount
+        ) {
+            editor.insertAdjacentHTML(
+                "beforeend",
+                html
+            );
+
+            rememberRichSelection(
+                editor
+            );
+            return;
+        }
+
+        const range = (
+            selection.getRangeAt(0)
+        );
+
+        if (
+            !editor.contains(
+                range.commonAncestorContainer
+            )
+        ) {
+            editor.insertAdjacentHTML(
+                "beforeend",
+                html
+            );
+
+            rememberRichSelection(
+                editor
+            );
+            return;
+        }
+
+        range.deleteContents();
+
+        const fragment = (
+            range.createContextualFragment(
+                html
+            )
+        );
+
+        const lastNode = (
+            fragment.lastChild
+        );
+
+        range.insertNode(
+            fragment
+        );
+
+        if (lastNode) {
+            range.setStartAfter(
+                lastNode
+            );
+            range.collapse(true);
+
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }
+
+        rememberRichSelection(
+            editor
+        );
+    }
+
+    function rememberRichSelection(editor) {
+        const selection = window.getSelection();
+
+        if (!selection || !selection.rangeCount) {
+            return;
+        }
+
+        const range = selection.getRangeAt(0);
+
+        if (
+            !editor.contains(
+                range.commonAncestorContainer
+            )
+        ) {
+            return;
+        }
+
+        richSelections.set(
+            editor.id,
+            range.cloneRange()
+        );
+    }
+
+
+    function restoreRichSelection(editor) {
+        const range = richSelections.get(
+            editor.id
+        );
+
+        editor.focus();
+
+        if (!range) {
+            return;
+        }
+
+        const selection = window.getSelection();
+
+        selection.removeAllRanges();
+        selection.addRange(range);
+    }
+
+
+    document.querySelectorAll(
+        ".tl-rich-editor"
+    ).forEach((editor) => {
+        [
+            "mouseup",
+            "keyup",
+            "input",
+            "focus",
+        ].forEach((eventName) => {
+            editor.addEventListener(
+                eventName,
+                () => {
+                    rememberRichSelection(
+                        editor
+                    );
+                }
+            );
+        });
+
+        editor.addEventListener(
+            "paste",
+            (event) => {
+                event.preventDefault();
+
+                const clipboard = (
+                    event.clipboardData
+                    || window.clipboardData
+                );
+
+                if (!clipboard) {
+                    return;
+                }
+
+                const html = (
+                    clipboard.getData(
+                        "text/html"
+                    )
+                    || ""
+                );
+
+                const text = (
+                    clipboard.getData(
+                        "text/plain"
+                    )
+                    || ""
+                );
+
+                let content = "";
+
+                if (html) {
+                    content = cleanPastedHtml(
+                        html
+                    );
+                } else {
+                    content = (
+                        escapeEditorText(text)
+                        .replace(
+                            /\r\n|\r|\n/g,
+                            "<br>"
+                        )
+                    );
+                }
+
+                insertHtmlAtSelection(
+                    editor,
+                    content
+                );
+            }
+        );
+    });
+
+
+    function executeRichCommand(
+        editor,
+        command,
+    ) {
+        restoreRichSelection(
+            editor
+        );
+
+        if (command === "createLink") {
+            const url = window.prompt(
+                "Enter the link URL:"
+            );
+
+            if (!url) {
+                return;
+            }
+
+            const trimmed = url.trim();
+
+            if (
+                !/^https?:\/\//i.test(trimmed)
+                && !/^mailto:/i.test(trimmed)
+                && !/^tel:/i.test(trimmed)
+            ) {
+                window.alert(
+                    "Use an http, https, mailto, or tel URL."
+                );
+                return;
+            }
+
+            document.execCommand(
+                "createLink",
+                false,
+                trimmed,
+            );
+
+        } else {
+            document.execCommand(
+                command,
+                false,
+                null,
+            );
+        }
+
+        rememberRichSelection(
+            editor
+        );
+    }
+
+    document.querySelectorAll(
+        ".tl-rich-command"
+    ).forEach((button) => {
+        button.addEventListener(
+            "mousedown",
+            (event) => {
+                /*
+                 * Prevent the toolbar button from stealing
+                 * the user's current text selection.
+                 */
+                event.preventDefault();
+            }
+        );
+
+        button.addEventListener(
+            "click",
+            () => {
+                const editor = document.getElementById(
+                    button.dataset.richTarget
+                );
+
+                executeRichCommand(
+                    editor,
+                    button.dataset.richCommand,
+                );
+            }
+        );
+    });
+
+
+    document.querySelectorAll(
+        ".tl-rich-size"
+    ).forEach((select) => {
+        select.addEventListener(
+            "change",
+            () => {
+                if (!select.value) {
+                    return;
+                }
+
+                const editor = document.getElementById(
+                    select.dataset.richTarget
+                );
+
+                restoreRichSelection(
+                    editor
+                );
+
+                /*
+                 * fontSize uses the classic HTML 1–7 scale.
+                 * We normalize it to exact inline px values
+                 * before storing the campaign HTML.
+                 */
+                document.execCommand(
+                    "fontSize",
+                    false,
+                    select.value,
+                );
+
+                rememberRichSelection(
+                    editor
+                );
+
+                select.value = "";
+            }
+        );
+    });
+
+
+    document.querySelectorAll(
+        ".tl-rich-color"
+    ).forEach((input) => {
+        input.addEventListener(
+            "change",
+            () => {
+                const editor = document.getElementById(
+                    input.dataset.richTarget
+                );
+
+                restoreRichSelection(
+                    editor
+                );
+
+                document.execCommand(
+                    "foreColor",
+                    false,
+                    input.value,
+                );
+
+                rememberRichSelection(
+                    editor
+                );
+            }
+        );
+    });
+
+
+    document.querySelectorAll(
+        ".tl-rich-direction"
+    ).forEach((select) => {
+        select.addEventListener(
+            "change",
+            () => {
+                const editor = document.getElementById(
+                    select.dataset.richTarget
+                );
+
+                setRichEditorDirection(
+                    editor,
+                    select.value
+                );
+            }
+        );
+    });
+
+    function setRichEditorDirection(
+        editor,
+        direction,
+    ) {
+        if (
+            direction !== "rtl"
+            && direction !== "ltr"
+        ) {
+            delete editor.dataset.direction;
+            editor.removeAttribute("dir");
+            editor.style.removeProperty(
+                "direction"
+            );
+            return;
+        }
+
+        editor.dataset.direction = direction;
+        editor.setAttribute(
+            "dir",
+            direction
+        );
+        editor.style.direction = direction;
+    }
+
+
+    document.getElementById(
+        "tl-save-block"
+    ).addEventListener(
+        "click",
+        async () => {
+            clearBuilderError();
+
+            const type = field(
+                "tl-block-type"
+            ).value;
+
+            const fields = {
+                block_type: type,
+                name: field(
+                    "tl-block-name"
+                ).value.trim(),
+                headline: serializeRichEditor(
+                    field("tl-block-headline")
+                ),
+                content: serializeRichEditor(
+                    field(
+                        "tl-block-content"
+                    )
+                ),
+
+                secondary_content: serializeRichEditor(
+                    field(
+                        "tl-block-secondary-content"
+                    )
+                ),
+                image_url: field(
+                    "tl-block-image-url"
+                ).value.trim(),
+                image_alt: field(
+                    "tl-block-image-alt"
+                ).value.trim(),
+                action_label: field(
+                    "tl-block-action-label"
+                ).value.trim(),
+                action_url: field(
+                    "tl-block-action-url"
+                ).value.trim(),
+                attribution: field(
+                    "tl-block-attribution"
+                ).value.trim(),
+                alignment: field(
+                    "tl-block-alignment"
+                ).value,
+                spacer_height: field(
+                    "tl-block-spacer-height"
+                ).value,
+                social_links: (
+                    serializeSocialLinks()
+                ),
+                custom_html: field(
+                    "tl-block-custom-html"
+                ).value,
+                is_enabled: field(
+                    "tl-block-enabled"
+                ).checked,
+            };
+
+            try {
+                await runAction(
+                    "save",
+                    {
+                        block_id: (
+                            field("tl-block-id").value
+                            || null
+                        ),
+                        fields,
+                    }
+                );
+
+                closeModal(
+                    editorModal
+                );
+
+            } catch (error) {
+                // Error is already shown.
+            }
+        }
+    );
+
+
+    const addBlockButton = document.getElementById(
+        "tl-add-block"
+    );
+
+    if (addBlockButton) {
+        addBlockButton.addEventListener(
+            "click",
+            async () => {
+                if (
+                    blocks.length === 0
+                    && templateBlockCount > 0
+                ) {
+                    const customize = window.confirm(
+                        "This campaign currently inherits "
+                        + "content from its template. "
+                        + "Would you like to copy those "
+                        + "template blocks into this campaign "
+                        + "before editing?"
+                    );
+
+                    if (customize) {
+                        try {
+                            await runAction(
+                                "materialize_template"
+                            );
+                        } catch (error) {
+                            return;
+                        }
+                    }
+                }
+
+                openModal(
+                    typeModal
+                );
+            }
+        );
+    }
+
+
+    const customizeTemplateButton = (
+        document.getElementById(
+            "tl-customize-template"
+        )
+    );
+
+    if (customizeTemplateButton) {
+        customizeTemplateButton.addEventListener(
+            "click",
+            async () => {
+                try {
+                    await runAction(
+                        "materialize_template"
+                    );
+                } catch (error) {
+                    return;
+                }
+            }
+        );
+    }
+
+
+    function bindDragAndDrop() {
+        if (!editable) {
+            return;
+        }
+
+        let dragged = null;
+
+        list.querySelectorAll(
+            ".tl-builder-block"
+        ).forEach((card) => {
+            card.addEventListener(
+                "dragstart",
+                () => {
+                    dragged = card;
+                    card.classList.add(
+                        "dragging"
+                    );
+                }
+            );
+
+            card.addEventListener(
+                "dragend",
+                async () => {
+                    card.classList.remove(
+                        "dragging"
+                    );
+
+                    dragged = null;
+
+                    const ids = Array.from(
+                        list.querySelectorAll(
+                            ".tl-builder-block"
+                        )
+                    ).map(
+                        (element) => Number(
+                            element.dataset.blockId
+                        )
+                    );
+
+                    try {
+                        await runAction(
+                            "reorder",
+                            {
+                                block_ids: ids,
+                            }
+                        );
+                    } catch (error) {
+                        renderBlocks();
+                    }
+                }
+            );
+
+            card.addEventListener(
+                "dragover",
+                (event) => {
+                    event.preventDefault();
+
+                    if (
+                        !dragged
+                        || dragged === card
+                    ) {
+                        return;
+                    }
+
+                    const box = (
+                        card.getBoundingClientRect()
+                    );
+
+                    const after = (
+                        event.clientY
+                        > box.top + box.height / 2
+                    );
+
+                    if (after) {
+                        card.after(dragged);
+                    } else {
+                        card.before(dragged);
+                    }
+                }
+            );
+        });
+    }
+
+    function setRichEditorValue(
+        editor,
+        html,
+    ) {
+        const container = document.createElement(
+            "div"
+        );
+
+        container.innerHTML = html || "";
+
+        const wrapper = (
+            container.children.length === 1
+            ? container.firstElementChild
+            : null
+        );
+
+        if (
+            wrapper
+            && wrapper.dataset.townlitRichDirection
+        ) {
+            const direction = (
+                wrapper.dataset.townlitRichDirection
+            );
+
+            editor.innerHTML = (
+                wrapper.innerHTML
+            );
+
+            setRichEditorDirection(
+                editor,
+                direction
+            );
+
+            return;
+        }
+
+        editor.innerHTML = html || "";
+
+        setRichEditorDirection(
+            editor,
+            ""
+        );
+    }
+
+    function syncRichToolbarState() {
+        document.querySelectorAll(
+            ".tl-rich-direction"
+        ).forEach((select) => {
+            const editor = document.getElementById(
+                select.dataset.richTarget
+            );
+
+            select.value = (
+                editor.dataset.direction
+                || ""
+            );
+        });
+    }
+
+    function serializeRichEditor(editor) {
+        const container = document.createElement(
+            "div"
+        );
+
+        container.innerHTML = (
+            editor.innerHTML.trim()
+        );
+
+        normalizeLegacyFontTags(
+            container
+        );
+
+        normalizeSemanticFormatting(
+            container
+        );
+
+        normalizeCssFontSizes(
+            container
+        );
+
+        const html = (
+            container.innerHTML.trim()
+        );
+
+        const direction = (
+            editor.dataset.direction
+            || ""
+        );
+
+        if (!direction || !html) {
+            return html;
+        }
+
+        return (
+            '<div '
+            + 'data-townlit-rich-direction="'
+            + direction
+            + '" '
+            + 'dir="'
+            + direction
+            + '" '
+            + 'style="direction:'
+            + direction
+            + ';">'
+            + html
+            + "</div>"
+        );
+    }
+
+
+    function normalizeLegacyFontTags(
+        container
+    ) {
+        container.querySelectorAll(
+            "font"
+        ).forEach((font) => {
+            const span = document.createElement(
+                "span"
+            );
+
+            const size = font.getAttribute(
+                "size"
+            );
+
+            const color = font.getAttribute(
+                "color"
+            );
+
+            if (
+                size
+                && fontSizeMap[size]
+            ) {
+                span.style.fontSize = (
+                    fontSizeMap[size]
+                );
+            }
+
+            if (color) {
+                span.style.color = color;
+            }
+
+            while (font.firstChild) {
+                span.appendChild(
+                    font.firstChild
+                );
+            }
+
+            font.replaceWith(
+                span
+            );
+        });
+    }
+
+
+    function normalizeSemanticFormatting(
+        container
+    ) {
+        container.querySelectorAll(
+            "b"
+        ).forEach((element) => {
+            replaceTag(
+                element,
+                "strong"
+            );
+        });
+
+        container.querySelectorAll(
+            "i"
+        ).forEach((element) => {
+            replaceTag(
+                element,
+                "em"
+            );
+        });
+    }
+
+
+    function replaceTag(
+        element,
+        tagName,
+    ) {
+        const replacement = (
+            document.createElement(
+                tagName
+            )
+        );
+
+        for (
+            const attribute
+            of element.attributes
+        ) {
+            replacement.setAttribute(
+                attribute.name,
+                attribute.value
+            );
+        }
+
+        while (element.firstChild) {
+            replacement.appendChild(
+                element.firstChild
+            );
+        }
+
+        element.replaceWith(
+            replacement
+        );
+    }
+
+
+    function normalizeCssFontSizes(
+        container
+    ) {
+        container.querySelectorAll(
+            "[style]"
+        ).forEach((element) => {
+            const value = (
+                element.style.fontSize
+            );
+
+            if (
+                value
+                && cssFontSizeMap[value]
+            ) {
+                element.style.fontSize = (
+                    cssFontSizeMap[value]
+                );
+            }
+        });
+    }
+
+    renderTypePalette();
+    renderBlocks();
+
+})();
+</script>
+{% endif %}
+
+
+{% comment %} ----------------------------------------------- {% endcomment %}
+{% if campaign %}
+<script>
+(function () {
+    const form = document.getElementById(
+        "campaign-workspace-form"
+    );
+
+    const reviewUrl = (
+        "{{ review_url|escapejs }}"
+    );
+
+    const reviewTab = document.querySelector(
+        '.tl-tab[data-tab="review"]'
+    );
+
+    const loading = document.getElementById(
+        "tl-review-loading"
+    );
+
+    const results = document.getElementById(
+        "tl-review-results"
+    );
+
+    const checksContainer = (
+        document.getElementById(
+            "tl-review-checks"
+        )
+    );
+
+    const modal = document.getElementById(
+        "tl-send-confirm-modal"
+    );
+
+    let reviewState = null;
+    let confirmationAction = "";
+    let confirmationToken = "";
+
+
+    function escapeReviewHtml(value) {
+        const div = document.createElement("div");
+        div.textContent = value || "";
+        return div.innerHTML;
+    }
+
+
+    async function loadReview(force = false) {
+        if (
+            reviewState
+            && !force
+        ) {
+            return reviewState;
+        }
+
+        loading.hidden = false;
+        loading.textContent = (
+            "Checking campaign..."
+        );
+
+        try {
+            const response = await fetch(
+                reviewUrl,
+                {
+                    credentials: "same-origin",
+                    headers: {
+                        "X-Requested-With": (
+                            "XMLHttpRequest"
+                        ),
+                    },
+                }
+            );
+
+            const data = await response.json();
+
+            if (
+                !response.ok
+                || !data.ok
+            ) {
+                throw new Error(
+                    data.error
+                    || "Review failed."
+                );
+            }
+
+            reviewState = data;
+
+            renderReview(data);
+
+            return data;
+
+        } catch (error) {
+            loading.hidden = false;
+            loading.textContent = (
+                error.message
+            );
+
+            throw error;
+        }
+    }
+
+
+    function renderReview(data) {
+        loading.hidden = true;
+        results.hidden = false;
+
+        document.getElementById(
+            "tl-review-total"
+        ).textContent = (
+            data.total_recipients
+            .toLocaleString()
+        );
+
+        document.getElementById(
+            "tl-review-suppressed"
+        ).textContent = (
+            data.suppressed_recipients
+            .toLocaleString()
+        );
+
+        document.getElementById(
+            "tl-review-deliverable"
+        ).textContent = (
+            data.deliverable_recipients
+            .toLocaleString()
+        );
+
+        document.getElementById(
+            "tl-review-audience"
+        ).textContent = (
+            "Audience: "
+            + data.audience_label
+        );
+
+        checksContainer.innerHTML = "";
+
+        const icons = {
+            pass: "✓",
+            warning: "!",
+            block: "×",
+        };
+
+        data.checks.forEach((check) => {
+            const row = document.createElement(
+                "div"
+            );
+
+            row.className = (
+                "tl-review-check "
+                + "tl-review-check-"
+                + check.state
+            );
+
+            row.innerHTML = `
+                <div class="tl-review-check-icon">
+                    ${icons[check.state] || "•"}
+                </div>
+
+                <div class="tl-review-check-label">
+                    ${escapeReviewHtml(check.label)}
+                </div>
+
+                <div class="tl-review-check-detail">
+                    ${escapeReviewHtml(check.detail)}
+                </div>
+            `;
+
+            checksContainer.appendChild(row);
+        });
+
+        renderSuppressionDetails(
+            data.suppression_reasons
+        );
+    }
+
+
+    function renderSuppressionDetails(items) {
+        const container = document.getElementById(
+            "tl-review-suppression-details"
+        );
+
+        container.innerHTML = "";
+
+        if (!items.length) {
+            return;
+        }
+
+        const box = document.createElement(
+            "div"
+        );
+
+        box.className = (
+            "tl-suppression-breakdown"
+        );
+
+        box.innerHTML = (
+            "<strong>Suppression Breakdown</strong>"
+        );
+
+        items.forEach((item) => {
+            const row = document.createElement(
+                "div"
+            );
+
+            row.className = (
+                "tl-suppression-row"
+            );
+
+            row.innerHTML = `
+                <span>
+                    ${escapeReviewHtml(item.label)}
+                </span>
+                <strong>
+                    ${item.count.toLocaleString()}
+                </strong>
+            `;
+
+            box.appendChild(row);
+        });
+
+        container.appendChild(box);
+    }
+
+
+    function showReviewTab() {
+        if (reviewTab) {
+            reviewTab.click();
+        }
+    }
+
+
+    async function beginConfirmation(action) {
+        if (
+            form.dataset.dirty === "1"
+        ) {
+            window.alert(
+                "Save your latest changes before "
+                + "sending or scheduling."
+            );
+
+            return;
+        }
+
+        let data;
+
+        try {
+            /*
+             * Always refresh immediately before a
+             * consequential delivery action.
+             */
+            data = await loadReview(true);
+
+        } catch (error) {
+            showReviewTab();
+            return;
+        }
+
+        if (!data.can_send) {
+            showReviewTab();
+
+            window.alert(
+                "This campaign is not ready yet. "
+                + "Review the blocked checks."
+            );
+
+            return;
+        }
+
+        if (
+            action === "schedule"
+            && !document.getElementById(
+                "id_scheduled_time"
+            ).value
+        ) {
+            showReviewTab();
+
+            window.alert(
+                "Choose and save a scheduled "
+                + "send time first."
+            );
+
+            return;
+        }
+
+        confirmationAction = action;
+
+        confirmationToken = (
+            action === "queue"
+            ? data.confirmation.queue_token
+            : data.confirmation.schedule_token
+        );
+
+        document.getElementById(
+            "tl-confirm-title"
+        ).textContent = (
+            action === "queue"
+            ? "Confirm Send Now"
+            : "Confirm Schedule"
+        );
+
+        document.getElementById(
+            "tl-confirm-deliverable"
+        ).textContent = (
+            data.deliverable_recipients
+            .toLocaleString()
+        );
+
+        document.getElementById(
+            "tl-confirm-suppressed"
+        ).textContent = (
+            data.suppressed_recipients
+            .toLocaleString()
+        );
+
+        const strong = (
+            data.confirmation.strong_required
+        );
+
+        const standardBox = (
+            document.getElementById(
+                "tl-confirm-standard"
+            )
+        );
+
+        const strongBox = (
+            document.getElementById(
+                "tl-confirm-strong"
+            )
+        );
+
+        standardBox.hidden = strong;
+        strongBox.hidden = !strong;
+
+        document.getElementById(
+            "tl-confirm-checkbox"
+        ).checked = false;
+
+        document.getElementById(
+            "tl-confirm-input"
+        ).value = "";
+
+        document.getElementById(
+            "tl-confirm-required-word"
+        ).textContent = (
+            action === "queue"
+            ? "SEND"
+            : "SCHEDULE"
+        );
+
+        modal.hidden = false;
+        document.body.style.overflow = (
+            "hidden"
+        );
+    }
+
+
+    function closeConfirmation() {
+        modal.hidden = true;
+        document.body.style.overflow = "";
+
+        confirmationAction = "";
+        confirmationToken = "";
+    }
+
+
+    function completeConfirmation() {
+        if (
+            !reviewState
+            || !confirmationToken
+        ) {
+            return;
+        }
+
+        const strong = (
+            reviewState
+            .confirmation
+            .strong_required
+        );
+
+        if (strong) {
+            const required = (
+                confirmationAction === "queue"
+                ? "SEND"
+                : "SCHEDULE"
+            );
+
+            const entered = (
+                document.getElementById(
+                    "tl-confirm-input"
+                ).value
+                .trim()
+                .toUpperCase()
+            );
+
+            if (entered !== required) {
+                window.alert(
+                    `Type ${required} to continue.`
+                );
+                return;
+            }
+
+        } else {
+            const checked = (
+                document.getElementById(
+                    "tl-confirm-checkbox"
+                ).checked
+            );
+
+            if (!checked) {
+                window.alert(
+                    "Confirm that you reviewed "
+                    + "the campaign first."
+                );
+                return;
+            }
+        }
+
+        const actionInput = (
+            document.createElement(
+                "input"
+            )
+        );
+
+        actionInput.type = "hidden";
+        actionInput.name = (
+            "workspace_action"
+        );
+        actionInput.value = (
+            confirmationAction
+        );
+
+        const tokenInput = (
+            document.createElement(
+                "input"
+            )
+        );
+
+        tokenInput.type = "hidden";
+        tokenInput.name = (
+            "confirmation_token"
+        );
+        tokenInput.value = (
+            confirmationToken
+        );
+
+        form.appendChild(
+            actionInput
+        );
+        form.appendChild(
+            tokenInput
+        );
+
+        form.requestSubmit();
+    }
+
+
+    if (reviewTab) {
+        reviewTab.addEventListener(
+            "click",
+            () => {
+                loadReview().catch(() => {});
+            }
+        );
+    }
+
+
+    document.getElementById(
+        "tl-refresh-review"
+    )?.addEventListener(
+        "click",
+        () => {
+            loadReview(true).catch(() => {});
+        }
+    );
+
+
+    document.getElementById(
+        "tl-send-now"
+    )?.addEventListener(
+        "click",
+        () => {
+            beginConfirmation(
+                "queue"
+            );
+        }
+    );
+
+
+    document.getElementById(
+        "tl-schedule-campaign"
+    )?.addEventListener(
+        "click",
+        () => {
+            beginConfirmation(
+                "schedule"
+            );
+        }
+    );
+
+
+    document.getElementById(
+        "tl-close-confirm"
+    )?.addEventListener(
+        "click",
+        closeConfirmation
+    );
+
+    document.getElementById(
+        "tl-cancel-confirm"
+    )?.addEventListener(
+        "click",
+        closeConfirmation
+    );
+
+    document.getElementById(
+        "tl-complete-confirm"
+    )?.addEventListener(
+        "click",
+        completeConfirmation
+    );
+
+
+    form.addEventListener(
+        "change",
+        () => {
+            reviewState = null;
+        }
+    );
+
+    form.addEventListener(
+        "input",
+        () => {
+            reviewState = null;
+        }
+    );
+
+
+    /*
+     * Block Builder calls this after an AJAX
+     * content change.
+     */
+    window.tlRefreshCampaignReview = function () {
+        reviewState = null;
+
+        if (
+            reviewTab
+            && reviewTab.classList.contains(
+                "active"
+            )
+        ) {
+            loadReview(true).catch(() => {});
+        }
+    };
+
+})();
+</script>
+{% endif %}
+
+
+
+{% endblock %}
+

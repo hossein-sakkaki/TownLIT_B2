@@ -1,11 +1,22 @@
 # utils/email/email_tools.py
+#
+# TownLIT
+#
+# Created by Hossein Sakkaki on 2026-08-19.
+# Last Update by Hossein Sakkaki on 2026-08-19.
 
-from django.template.loader import render_to_string, TemplateDoesNotExist
-from django.utils.html import strip_tags
 
-from utils.common.utils import send_email
-from utils.common.email_engine_with_attachments import send_email_with_attachments
 import logging
+
+from utils.email.core.renderer import (
+    render_email_template,
+)
+
+from utils.email.core.ses_sender import (
+    send_email,
+    send_email_with_attachments,
+)
+
 
 logger = logging.getLogger(__name__)
 
@@ -18,47 +29,40 @@ def send_custom_email(
     text_template_path=None,
     attachments=None,
 ):
-    context = context or {}
-    attachments = attachments or []
+    """
+    Render and send TownLIT email.
+    """
 
     try:
-        try:
-            html_content = render_to_string(template_path, context)
-        except TemplateDoesNotExist:
-            logger.warning(
-                "Email template not found: %s (fallback to minimal HTML)",
-                template_path,
-            )
-            html_content = f"<html><body><pre>{strip_tags(str(context))}</pre></body></html>"
 
-        if text_template_path:
-            try:
-                text_content = render_to_string(text_template_path, context)
-            except TemplateDoesNotExist:
-                logger.warning(
-                    "Text template not found: %s (fallback to strip_tags)",
-                    text_template_path,
-                )
-                text_content = strip_tags(html_content)
-        else:
-            text_content = strip_tags(html_content)
+        rendered = render_email_template(
+            template_path=template_path,
+            context=context,
+            text_template_path=text_template_path,
+        )
 
         if attachments:
-            success = send_email_with_attachments(
+
+            return send_email_with_attachments(
                 subject,
-                text_content,
-                html_content,
+                rendered.text,
+                rendered.html,
                 to,
-                attachments=attachments,
+                attachments,
             )
-        else:
-            success = send_email(subject, text_content, html_content, to)
 
-        if not success:
-            logger.warning("❌ Email not sent to %s. Check SES/SMTP logs.", to)
+        return send_email(
+            subject,
+            rendered.text,
+            rendered.html,
+            to,
+        )
 
-        return success
+    except Exception as error:
 
-    except Exception as e:
-        logger.exception("❌ Failed to send email to %s: %s", to, e)
+        logger.exception(
+            "Email failed: %s",
+            error,
+        )
+
         return False

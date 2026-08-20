@@ -1,4 +1,4 @@
-# utils/email/__init__.py
+# utils/email/tests/__init__.py
 #
 # TownLIT
 #
