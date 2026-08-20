@@ -559,6 +559,71 @@
         box-sizing: border-box;
     }
 
+    .tl-email-image-picker {
+        display: grid;
+        gap: 12px;
+    }
+
+    .tl-email-image-preview {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+
+        min-height: 130px;
+        padding: 14px;
+
+        overflow: hidden;
+
+        border: 1px solid var(--border-color);
+        border-radius: 10px;
+
+        background: var(--darkened-bg);
+    }
+
+    .tl-email-image-preview img {
+        display: block;
+        max-width: 100%;
+        max-height: 260px;
+        height: auto;
+        object-fit: contain;
+        transition:
+            width .15s ease,
+            max-width .15s ease;
+    }
+
+    .tl-email-image-empty {
+        color: var(--body-quiet-color);
+        font-size: 13px;
+    }
+
+    .tl-email-image-actions {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .tl-email-image-actions .tl-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+
+        width: auto;
+        min-height: 38px;
+        margin: 0;
+
+        box-sizing: border-box;
+    }
+
+    .tl-email-image-upload-status {
+        color: var(--body-quiet-color);
+        font-size: 12px;
+    }
+
+    .tl-email-image-upload-status.error {
+        color: var(--error-fg, #ba2121);
+    }
+
     @media (max-width: 700px) {
         .tl-review-metrics {
             grid-template-columns: 1fr;
@@ -2085,21 +2150,78 @@
                 class="tl-builder-field"
                 data-block-fields="hero image"
             >
-                <label for="tl-block-image-url">
-                    Image URL
+                <label>
+                    Image
                 </label>
 
                 <input
-                    type="url"
+                    type="hidden"
                     id="tl-block-image-url"
-                    placeholder="https://..."
                 >
+
+                <div class="tl-email-image-picker">
+
+                    <div
+                        class="tl-email-image-preview"
+                        id="tl-email-image-preview"
+                    >
+                        <img
+                            id="tl-email-image-preview-image"
+                            alt=""
+                            hidden
+                        >
+
+                        <div
+                            class="tl-email-image-empty"
+                            id="tl-email-image-empty"
+                        >
+                            No image selected
+                        </div>
+                    </div>
+
+                    <div class="tl-email-image-actions">
+
+                        <label
+                            class="tl-button tl-button-primary"
+                            for="tl-block-image-upload"
+                        >
+                            Upload Image
+                        </label>
+
+                        <input
+                            type="file"
+                            id="tl-block-image-upload"
+                            accept="image/png,image/jpeg,image/gif"
+                            hidden
+                        >
+
+                        <button
+                            type="button"
+                            class="tl-button"
+                            id="tl-remove-block-image"
+                        >
+                            Remove
+                        </button>
+
+                        <span
+                            class="tl-email-image-upload-status"
+                            id="tl-email-image-upload-status"
+                        ></span>
+
+                    </div>
+
+                    <div class="tl-help">
+                        PNG, JPG or GIF. Maximum 30 MB.
+                        The image is stored permanently for email delivery.
+                    </div>
+
+                </div>
             </div>
 
 
             <div
                 class="tl-builder-field"
-                data-block-fields="image"
+                data-block-fields="hero image"
             >
                 <label for="tl-block-image-alt">
                     Image Alt Text
@@ -2109,8 +2231,52 @@
                     type="text"
                     id="tl-block-image-alt"
                 >
+
+                <div class="tl-help">
+                    Describe the image for accessibility
+                    and email clients that cannot display it.
+                </div>
             </div>
 
+            <div
+                class="tl-builder-field"
+                data-block-fields="hero image"
+            >
+                <label for="tl-block-image-width">
+                    Image Size
+                </label>
+
+                <select id="tl-block-image-width">
+                    <option value="120">
+                        Extra Small
+                    </option>
+
+                    <option value="160">
+                        Small
+                    </option>
+
+                    <option value="240">
+                        Compact
+                    </option>
+
+                    <option value="320">
+                        Medium
+                    </option>
+
+                    <option value="520">
+                        Large
+                    </option>
+
+                    <option value="700">
+                        Full Width
+                    </option>
+                </select>
+
+                <div class="tl-help">
+                    Use Small or Compact for badges and logos.
+                    Use Large or Full Width for banners and photos.
+                </div>
+            </div>
 
             <div
                 class="tl-builder-field"
@@ -2129,10 +2295,31 @@
 
             <div
                 class="tl-builder-field"
-                data-block-fields="hero image button"
+                data-block-fields="hero image"
+            >
+                <label for="tl-block-image-link-url">
+                    Image Destination URL
+                </label>
+
+                <input
+                    type="url"
+                    id="tl-block-image-link-url"
+                    placeholder="https://..."
+                >
+
+                <div class="tl-help">
+                    Optional. When provided, clicking the image
+                    opens this destination.
+                </div>
+            </div>
+
+
+            <div
+                class="tl-builder-field"
+                data-block-fields="hero button"
             >
                 <label for="tl-block-action-url">
-                    Link URL
+                    Button Destination URL
                 </label>
 
                 <input
@@ -2140,6 +2327,11 @@
                     id="tl-block-action-url"
                     placeholder="https://..."
                 >
+
+                <div class="tl-help">
+                    Destination used by the Hero CTA
+                    or Button block.
+                </div>
             </div>
 
 
@@ -2161,15 +2353,15 @@
 
             <div
                 class="tl-builder-field"
-                data-block-fields="hero text button"
+                data-block-fields="hero text image button"
             >
                 <label for="tl-block-alignment">
-                    Block Layout Alignment
+                    Alignment
                 </label>
 
                 <div class="tl-help">
-                    Controls the overall block layout.
-                    Use the text toolbar for paragraph alignment.
+                    Controls the position of this block
+                    inside the email.
                 </div>
 
                 <select id="tl-block-alignment">
@@ -2459,6 +2651,8 @@
     const editable = {{ block_builder_editable|yesno:"true,false" }};
     const blockActionUrl = "{{ block_action_url|escapejs }}";
     const previewUrl = "{{ preview_url|escapejs }}";
+    const mediaUploadUrl = "{% url 'communication:email-media-upload' %}";
+    const campaignId = {{ campaign.pk }};
     const templateBlockCount = {{ template_block_count|default:0 }};
 
     let blocks = JSON.parse(
@@ -2823,6 +3017,285 @@
         errorBox.classList.remove("visible");
     }
 
+    function updateImagePickerPreview(
+        url
+    ) {
+        const previewImage = field(
+            "tl-email-image-preview-image"
+        );
+
+        const emptyState = field(
+            "tl-email-image-empty"
+        );
+
+        if (!previewImage || !emptyState) {
+            return;
+        }
+
+        const normalizedUrl = (
+            url || ""
+        ).trim();
+
+        if (normalizedUrl) {
+            previewImage.src = (
+                normalizedUrl
+            );
+
+            previewImage.hidden = false;
+            emptyState.hidden = true;
+
+            updateImagePickerPresentation();
+
+            return;
+        }
+
+        previewImage.removeAttribute(
+            "src"
+        );
+
+        previewImage.hidden = true;
+        emptyState.hidden = false;
+    }
+
+    function updateImagePickerPresentation() {
+        const preview = field(
+            "tl-email-image-preview"
+        );
+
+        const previewImage = field(
+            "tl-email-image-preview-image"
+        );
+
+        const widthField = field(
+            "tl-block-image-width"
+        );
+
+        const alignmentField = field(
+            "tl-block-alignment"
+        );
+
+        if (
+            !preview
+            || !previewImage
+            || !widthField
+            || !alignmentField
+        ) {
+            return;
+        }
+
+
+        let width = Number(
+            widthField.value
+            || 320
+        );
+
+        if (
+            !Number.isFinite(width)
+            || width <= 0
+        ) {
+            width = 320;
+        }
+
+        width = Math.min(
+            width,
+            700
+        );
+
+
+        const alignment = (
+            alignmentField.value
+            || "center"
+        );
+
+
+        /*
+        * The editor preview is only a visual
+        * representation of the final email.
+        */
+
+        previewImage.style.width = (
+            width + "px"
+        );
+
+        previewImage.style.maxWidth = (
+            "100%"
+        );
+
+        previewImage.style.height = (
+            "auto"
+        );
+
+
+        /*
+        * Alignment is applied to the preview
+        * container, not the image itself.
+        */
+
+        if (alignment === "left") {
+            preview.style.justifyContent = (
+                "flex-start"
+            );
+        } else if (
+            alignment === "right"
+        ) {
+            preview.style.justifyContent = (
+                "flex-end"
+            );
+        } else {
+            preview.style.justifyContent = (
+                "center"
+            );
+        }
+    }
+
+    function setImageUploadStatus(
+        message = "",
+        isError = false,
+    ) {
+        const status = field(
+            "tl-email-image-upload-status"
+        );
+
+        status.textContent = message;
+        status.classList.toggle(
+            "error",
+            isError,
+        );
+    }
+
+    function setImageUploadBusy(isBusy) {
+        field(
+            "tl-save-block"
+        ).disabled = isBusy;
+
+        field(
+            "tl-remove-block-image"
+        ).disabled = isBusy;
+
+        field(
+            "tl-block-image-upload"
+        ).disabled = isBusy;
+    }
+
+    const imageUploadInput = field(
+        "tl-block-image-upload"
+    );
+
+    imageUploadInput.addEventListener(
+        "change",
+        async () => {
+            const fileValue = (
+                imageUploadInput.files[0]
+            );
+
+            if (!fileValue) {
+                return;
+            }
+
+            clearBuilderError();
+            setImageUploadStatus(
+                "Uploading..."
+            );
+
+            setImageUploadBusy(true);
+
+            const formData = new FormData();
+
+            formData.append(
+                "campaign_id",
+                String(campaignId),
+            );
+
+            formData.append(
+                "image",
+                fileValue,
+            );
+
+            try {
+                const response = await fetch(
+                    mediaUploadUrl,
+                    {
+                        method: "POST",
+                        credentials: "same-origin",
+                        headers: {
+                            "X-CSRFToken": csrfToken,
+                            "X-Requested-With": (
+                                "XMLHttpRequest"
+                            ),
+                        },
+                        body: formData,
+                    }
+                );
+
+                const data = await response.json();
+
+                if (
+                    !response.ok
+                    || !data.ok
+                ) {
+                    throw new Error(
+                        data.error
+                        || "Image upload failed."
+                    );
+                }
+
+                field(
+                    "tl-block-image-url"
+                ).value = data.url;
+
+                updateImagePickerPreview(
+                    data.url
+                );
+
+                setImageUploadStatus(
+                    "Image uploaded."
+                );
+
+            } catch (error) {
+                setImageUploadStatus(
+                    error.message,
+                    true,
+                );
+
+                showBuilderError(
+                    error.message
+                );
+
+            } finally {
+                imageUploadInput.value = "";
+                setImageUploadBusy(false);
+            }
+        }
+    );
+
+    field(
+        "tl-remove-block-image"
+    ).addEventListener(
+        "click",
+        () => {
+            field(
+                "tl-block-image-url"
+            ).value = "";
+
+            updateImagePickerPreview("");
+
+            setImageUploadStatus("");
+        }
+    );
+
+    field(
+        "tl-block-image-width"
+    ).addEventListener(
+        "change",
+        updateImagePickerPresentation
+    );
+
+    field(
+        "tl-block-alignment"
+    ).addEventListener(
+        "change",
+        updateImagePickerPresentation
+    );
 
     function renderTypePalette() {
         const container = document.getElementById(
@@ -2916,6 +3389,32 @@
         }
     }
 
+    const imageWidthField = field(
+        "tl-block-image-width"
+    );
+
+    if (imageWidthField) {
+        imageWidthField.addEventListener(
+            "change",
+            () => {
+                updateImagePickerPresentation();
+            }
+        );
+    }
+
+
+    const blockAlignmentField = field(
+        "tl-block-alignment"
+    );
+
+    if (blockAlignmentField) {
+        blockAlignmentField.addEventListener(
+            "change",
+            () => {
+                updateImagePickerPresentation();
+            }
+        );
+    }
 
     function openEditor(
         block = null,
@@ -2936,25 +3435,41 @@
             : {}
         );
 
+
         field("tl-block-id").value = (
-            block ? block.id : ""
+            block
+            ? block.id
+            : ""
         );
 
-        field("tl-block-type").value = type;
+        field(
+            "tl-block-type"
+        ).value = type;
 
-        field("tl-block-name").value = (
+        field(
+            "tl-block-name"
+        ).value = (
             block
             ? block.name || ""
             : ""
         );
 
+
+        /*
+        * Rich content.
+        */
+
         setRichEditorValue(
-            field("tl-block-headline"),
+            field(
+                "tl-block-headline"
+            ),
             data.title || ""
         );
 
         setRichEditorValue(
-            field("tl-block-content"),
+            field(
+                "tl-block-content"
+            ),
             (
                 data.html
                 || data.quote
@@ -2975,25 +3490,86 @@
 
         syncRichToolbarState();
 
-        field("tl-block-image-url").value = (
+
+        /*
+        * Image.
+        *
+        * Hero schema:
+        *   image_url
+        *   image_alt
+        *   image_width
+        *   image_link_url
+        *
+        * Image block schema:
+        *   url
+        *   alt
+        *   width
+        *   link_url
+        */
+
+        const imageUrl = (
             data.image_url
-            || data.url
+            || (
+                type === "image"
+                ? data.url
+                : ""
+            )
             || ""
         );
 
-        field("tl-block-image-alt").value = (
-            data.alt || ""
-        );
+        field(
+            "tl-block-image-url"
+        ).value = imageUrl;
 
-        field("tl-block-action-label").value = (
-            data.button_label
-            || data.label
+        field(
+            "tl-block-image-alt"
+        ).value = (
+            data.image_alt
+            || data.alt
             || ""
         );
 
-        field("tl-block-action-url").value = (
-            data.button_url
+        field(
+            "tl-block-image-width"
+        ).value = String(
+            data.image_width
+            || data.width
+            || 320
+        );
+
+        field(
+            "tl-block-image-link-url"
+        ).value = (
+            data.image_link_url
             || data.link_url
+            || ""
+        );
+
+
+        /*
+        * CTA / Button.
+        *
+        * Important:
+        * Image destination and button destination
+        * are intentionally independent.
+        */
+
+        field(
+            "tl-block-action-label"
+        ).value = (
+            data.button_label
+            || (
+                type === "button"
+                ? data.label
+                : ""
+            )
+            || ""
+        );
+
+        field(
+            "tl-block-action-url"
+        ).value = (
+            data.button_url
             || (
                 type === "button"
                 ? data.url
@@ -3002,38 +3578,69 @@
             || ""
         );
 
-        field("tl-block-attribution").value = (
-            data.attribution || ""
+
+        /*
+        * Other block fields.
+        */
+
+        field(
+            "tl-block-attribution"
+        ).value = (
+            data.attribution
+            || ""
         );
 
-        field("tl-block-alignment").value = (
+        field(
+            "tl-block-alignment"
+        ).value = (
             data.align
             || (
-                type === "hero"
+                [
+                    "hero",
+                    "image",
+                    "button",
+                ].includes(type)
                 ? "center"
                 : "left"
             )
         );
 
-        field("tl-block-spacer-height").value = (
-            data.height || 24
+        field(
+            "tl-block-spacer-height"
+        ).value = (
+            data.height
+            || 24
         );
 
-        field("tl-block-custom-html").value = (
+        field(
+            "tl-block-custom-html"
+        ).value = (
             type === "custom_html"
             ? data.html || ""
             : ""
         );
 
-        field("tl-block-enabled").checked = (
+        field(
+            "tl-block-enabled"
+        ).checked = (
             block
             ? block.is_enabled
             : true
         );
 
+
+        /*
+        * Social links.
+        */
+
         renderSocialLinks(
             data.links || []
         );
+
+
+        /*
+        * Editor heading.
+        */
 
         document.getElementById(
             "tl-editor-title"
@@ -3051,10 +3658,38 @@
             : newTypeLabel
         );
 
-        showFieldsForType(type);
-        openModal(editorModal);
-    }
 
+        /*
+        * Show only fields relevant to
+        * the selected block type.
+        */
+
+        showFieldsForType(
+            type
+        );
+
+
+        /*
+        * Synchronize the local image preview
+        * only after width and alignment have
+        * already been restored.
+        */
+
+        updateImagePickerPreview(
+            imageUrl
+        );
+
+        updateImagePickerPresentation();
+
+        setImageUploadStatus(
+            ""
+        );
+
+
+        openModal(
+            editorModal
+        );
+    }
 
     function buildSocialRow(
         label = "",
@@ -3765,7 +4400,6 @@
         editor.style.direction = direction;
     }
 
-
     document.getElementById(
         "tl-save-block"
     ).addEventListener(
@@ -3777,14 +4411,21 @@
                 "tl-block-type"
             ).value;
 
+
             const fields = {
                 block_type: type,
+
                 name: field(
                     "tl-block-name"
                 ).value.trim(),
+
+
                 headline: serializeRichEditor(
-                    field("tl-block-headline")
+                    field(
+                        "tl-block-headline"
+                    )
                 ),
+
                 content: serializeRichEditor(
                     field(
                         "tl-block-content"
@@ -3796,46 +4437,83 @@
                         "tl-block-secondary-content"
                     )
                 ),
+
+
+                /*
+                * Image.
+                */
+
                 image_url: field(
                     "tl-block-image-url"
                 ).value.trim(),
+
                 image_alt: field(
                     "tl-block-image-alt"
                 ).value.trim(),
+
+                image_width: field(
+                    "tl-block-image-width"
+                ).value,
+
+                image_link_url: field(
+                    "tl-block-image-link-url"
+                ).value.trim(),
+
+
+                /*
+                * Button / CTA.
+                */
+
                 action_label: field(
                     "tl-block-action-label"
                 ).value.trim(),
+
                 action_url: field(
                     "tl-block-action-url"
                 ).value.trim(),
+
+
+                /*
+                * Other fields.
+                */
+
                 attribution: field(
                     "tl-block-attribution"
                 ).value.trim(),
+
                 alignment: field(
                     "tl-block-alignment"
                 ).value,
+
                 spacer_height: field(
                     "tl-block-spacer-height"
                 ).value,
+
                 social_links: (
                     serializeSocialLinks()
                 ),
+
                 custom_html: field(
                     "tl-block-custom-html"
                 ).value,
+
                 is_enabled: field(
                     "tl-block-enabled"
                 ).checked,
             };
+
 
             try {
                 await runAction(
                     "save",
                     {
                         block_id: (
-                            field("tl-block-id").value
+                            field(
+                                "tl-block-id"
+                            ).value
                             || null
                         ),
+
                         fields,
                     }
                 );
@@ -3845,11 +4523,13 @@
                 );
 
             } catch (error) {
-                // Error is already shown.
+                /*
+                * runAction already displays
+                * the builder error.
+                */
             }
         }
     );
-
 
     const addBlockButton = document.getElementById(
         "tl-add-block"

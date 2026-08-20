@@ -880,6 +880,7 @@ class EmailCampaignAdmin(admin.ModelAdmin):
         block_id = payload.get(
             "block_id"
         )
+
         fields = (
             payload.get("fields")
             or {}
@@ -906,16 +907,19 @@ class EmailCampaignAdmin(admin.ModelAdmin):
                 or block.block_type
                 or ""
             ),
+
             "name": (
                 fields.get("name")
                 or ""
             ),
+
             "sort_order": (
                 block.sort_order
                 or self._next_block_sort_order(
                     campaign
                 )
             ),
+
             "is_enabled": (
                 "on"
                 if fields.get(
@@ -924,52 +928,76 @@ class EmailCampaignAdmin(admin.ModelAdmin):
                 )
                 else ""
             ),
+
             "headline": (
                 fields.get("headline")
                 or ""
             ),
+
             "content": (
                 fields.get("content")
                 or ""
             ),
+
             "secondary_content": (
                 fields.get(
                     "secondary_content"
                 )
                 or ""
             ),
+
+            # Image fields.
             "image_url": (
                 fields.get("image_url")
                 or ""
             ),
+
             "image_alt": (
                 fields.get("image_alt")
                 or ""
             ),
+
+            "image_width": (
+                fields.get("image_width")
+                or 320
+            ),
+
+            "image_link_url": (
+                fields.get("image_link_url")
+                or ""
+            ),
+
+            # Button / CTA fields.
             "action_label": (
                 fields.get("action_label")
                 or ""
             ),
+
             "action_url": (
                 fields.get("action_url")
                 or ""
             ),
+
             "attribution": (
                 fields.get("attribution")
                 or ""
             ),
+
             "alignment": (
                 fields.get("alignment")
                 or "left"
             ),
+
             "spacer_height": (
                 fields.get("spacer_height")
                 or 24
             ),
+
             "social_links": (
                 fields.get("social_links")
                 or ""
             ),
+
             "custom_html": (
                 fields.get("custom_html")
                 or ""
@@ -991,7 +1019,9 @@ class EmailCampaignAdmin(admin.ModelAdmin):
         block = form.save(
             commit=False
         )
+
         block.campaign = campaign
+
         block.save()
 
 

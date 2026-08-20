@@ -19,7 +19,9 @@ from .views import (
     UnsubscribeHTMLView,
     preview_reset_password,
 )
-
+from apps.communication.views.media import (
+    email_media_upload,
+)
 
 app_name = "communication"
 
@@ -80,5 +82,12 @@ urlpatterns = [
         "email-preview/email-test/",
         preview_reset_password,
         name="email-test-preview",
+    ),
+    
+    # Media upload
+    path(
+        "admin/media/upload/",
+        email_media_upload,
+        name="email-media-upload",
     ),
 ]

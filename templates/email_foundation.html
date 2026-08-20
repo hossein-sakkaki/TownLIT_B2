@@ -1,0 +1,1115 @@
+<!-- templates/email_foundation.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+
+    <title>
+        {% block subject %}TownLIT Message{% endblock %}
+    </title>
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <meta
+        name="color-scheme"
+        content="light"
+    >
+
+    <meta
+        name="supported-color-schemes"
+        content="light"
+    >
+
+    <style>
+        /* ==========================================================
+           RESET
+           ========================================================== */
+
+        html,
+        body {
+            width: 100% !important;
+            min-width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+
+        body,
+        table,
+        td,
+        a {
+            -webkit-text-size-adjust: 100%;
+            -ms-text-size-adjust: 100%;
+        }
+
+        table,
+        td {
+            mso-table-lspace: 0pt;
+            mso-table-rspace: 0pt;
+        }
+
+        table {
+            border-spacing: 0;
+            border-collapse: collapse;
+        }
+
+        img {
+            display: block;
+            max-width: 100%;
+            height: auto;
+
+            border: 0;
+            outline: none;
+            text-decoration: none;
+
+            -ms-interpolation-mode: bicubic;
+        }
+
+
+        /* ==========================================================
+           CANVAS
+           ========================================================== */
+
+        body {
+            width: 100% !important;
+            min-width: 100% !important;
+
+            margin: 0 !important;
+            padding: 0 !important;
+
+            background-color: #F8F6F0;
+            color: #2B2C30;
+
+            font-family:
+                "Lato",
+                "Noto Sans",
+                "Helvetica Neue",
+                Helvetica,
+                Arial,
+                sans-serif;
+        }
+
+        .email-page {
+            width: 100%;
+            background-color: #F8F6F0;
+        }
+
+        .email-shell {
+            width: 100%;
+            margin: 0 auto;
+        }
+
+
+        /* ==========================================================
+           PREHEADER
+           ========================================================== */
+
+        .preheader {
+            display: none !important;
+            visibility: hidden;
+            opacity: 0;
+            overflow: hidden;
+            mso-hide: all;
+
+            width: 0;
+            height: 0;
+            max-width: 0;
+            max-height: 0;
+
+            color: transparent;
+            font-size: 1px;
+            line-height: 1px;
+        }
+
+
+        /* ==========================================================
+           REVELATION 21 BRAND RAIL
+           Twelve foundation stones — Revelation 21:19–20
+
+           The solid colors are the reliable email fallback.
+           The gradient sheen and shadow are progressive enhancement
+           for clients that support them.
+           ========================================================== */
+
+        .revelation-brand-rail-wrap {
+            width: 100% !important;
+            min-width: 100% !important;
+
+            margin: 0 !important;
+            padding: 0 !important;
+
+            background-color: #F8F6F0;
+
+            box-shadow:
+                0 2px 4px rgba(15, 82, 186, 0.07),
+                0 3px 8px rgba(246, 200, 96, 0.06),
+                0 2px 10px rgba(59, 170, 117, 0.05);
+        }
+
+        .revelation-brand-rail {
+            width: 100% !important;
+            min-width: 100% !important;
+            max-width: none !important;
+
+            margin: 0 !important;
+            padding: 0 !important;
+
+            border: 0;
+            border-spacing: 0;
+            border-collapse: collapse;
+
+            table-layout: fixed;
+        }
+
+        .revelation-brand-rail td {
+            width: 8.333333% !important;
+            height: 3px !important;
+
+            margin: 0 !important;
+            padding: 0 !important;
+
+            border: 0;
+
+            font-size: 0 !important;
+            line-height: 3px !important;
+
+            background-image: linear-gradient(
+                180deg,
+                rgba(255, 255, 255, 0.36) 0%,
+                rgba(255, 255, 255, 0.14) 34%,
+                rgba(255, 255, 255, 0) 58%,
+                rgba(0, 0, 0, 0.05) 100%
+            );
+        }
+
+        .revelation-jasper {
+            background-color: #D73F09;
+        }
+
+        .revelation-sapphire {
+            background-color: #0F52BA;
+        }
+
+        .revelation-chalcedony {
+            background-color: #F0E3C3;
+        }
+
+        .revelation-emerald {
+            background-color: #3BAA75;
+        }
+
+        .revelation-sardonyx {
+            background-color: #DFA58C;
+        }
+
+        .revelation-sardius {
+            background-color: #C40233;
+        }
+
+        .revelation-chrysolite {
+            background-color: #C5B84B;
+        }
+
+        .revelation-beryl {
+            background-color: #7FDBDA;
+        }
+
+        .revelation-topaz {
+            background-color: #F4A429;
+        }
+
+        .revelation-chrysoprase {
+            background-color: #52D89D;
+        }
+
+        .revelation-jacinth {
+            background-color: #A23BEC;
+        }
+
+        .revelation-amethyst {
+            background-color: #7A5CA2;
+        }
+
+
+        /* ==========================================================
+           BRAND HEADER
+           ========================================================== */
+
+        .email-header {
+            padding: 24px 0 21px;
+            border-bottom: 1px solid #DFDAD1;
+        }
+
+        .email-brand-table {
+            width: 100%;
+        }
+
+        .email-brand-logo-cell {
+            width: 48px;
+            padding-right: 11px;
+
+            vertical-align: middle;
+        }
+
+        .email-logo {
+            width: 46px;
+            height: 46px;
+        }
+
+        .email-brand-name-cell {
+            vertical-align: middle;
+            text-align: left;
+        }
+
+        .email-brand-name {
+            margin: 0;
+
+            color: #0F52BA;
+
+            font-size: 21px;
+            line-height: 1.1;
+            font-weight: 700;
+            letter-spacing: 0.2px;
+        }
+
+        .email-brand-mark {
+            margin-top: 4px;
+
+            color: #7A7A7A;
+
+            font-size: 11px;
+            line-height: 1.2;
+            font-weight: 600;
+            letter-spacing: 1.4px;
+
+            text-transform: uppercase;
+        }
+
+        .email-header-accent-cell {
+            width: 70px;
+
+            vertical-align: middle;
+            text-align: right;
+        }
+
+        .email-header-accent {
+            display: inline-block;
+
+            width: 52px;
+            height: 3px;
+
+            background-color: #F6C860;
+
+            font-size: 0;
+            line-height: 0;
+        }
+
+
+        /* ==========================================================
+           CONTENT DEFAULTS
+           ========================================================== */
+
+        .email-content {
+            margin: 0;
+
+            color: #2B2C30;
+
+            font-size: 16px;
+            line-height: 1.65;
+        }
+
+        /*
+         * Defaults only.
+         *
+         * Inline styles created by Campaign Builder remain
+         * authoritative over these values.
+         */
+
+        .email-content h1 {
+            margin: 0 0 18px;
+
+            color: #0F52BA;
+
+            font-size: 28px;
+            line-height: 1.24;
+            font-weight: 700;
+            letter-spacing: -0.25px;
+        }
+
+        .email-content h2 {
+            margin: 28px 0 12px;
+
+            color: #2B2C30;
+
+            font-size: 21px;
+            line-height: 1.35;
+            font-weight: 700;
+        }
+
+        .email-content h3 {
+            margin: 22px 0 9px;
+
+            color: #0F52BA;
+
+            font-size: 17px;
+            line-height: 1.4;
+            font-weight: 700;
+        }
+
+        .email-content p {
+            margin: 0 0 17px;
+
+            color: #2B2C30;
+
+            font-size: 16px;
+            line-height: 1.65;
+        }
+
+        .email-content strong {
+            font-weight: 700;
+        }
+
+        .email-content em,
+        .email-content i {
+            font-style: italic;
+        }
+
+        .email-content a {
+            color: #0F52BA;
+            text-decoration: underline;
+        }
+
+        .email-content ul,
+        .email-content ol {
+            margin: 12px 0 18px;
+            padding-left: 25px;
+        }
+
+        .email-content li {
+            margin: 6px 0;
+            line-height: 1.6;
+        }
+
+
+        /* ==========================================================
+        SHARED BUTTONS
+        Compact, soft and iOS-inspired
+        ========================================================== */
+
+        .email-button-container {
+            margin: 18px 0;
+            text-align: center;
+        }
+
+        .email-button-container a {
+            background-color: #0F52BA !important;
+            color: #FDFDFD !important;
+        }
+
+        .email-button {
+            display: inline-block;
+            box-sizing: border-box;
+
+            width: auto;
+            max-width: 100%;
+
+            padding: 9px 18px;
+
+            border: 1px solid rgba(15, 82, 186, 0.12);
+            border-radius: 14px;
+
+            background-color: #0F52BA;
+            color: #FDFDFD !important;
+
+            font-size: 14px;
+            line-height: 1.25;
+            font-weight: 600;
+
+            letter-spacing: -0.05px;
+
+            text-align: center;
+            text-decoration: none !important;
+
+            box-shadow:
+                0 1px 2px rgba(15, 82, 186, 0.12),
+                0 2px 5px rgba(15, 82, 186, 0.08);
+        }
+
+        .email-button:hover,
+        .email-button-container a:hover {
+            background-color: #0C469F !important;
+            color: #FDFDFD !important;
+        }
+
+        .warning-button {
+            background-color: #F4A429 !important;
+            border-color: rgba(244, 164, 41, 0.14) !important;
+            color: #FFFFFF !important;
+        }
+
+
+        /* ==========================================================
+           SHARED CONTENT HELPERS
+           ========================================================== */
+
+        .middle-container {
+            margin: 22px 0;
+            text-align: center;
+        }
+
+        .title-paraf {
+            color: #0F52BA;
+            font-weight: 700;
+        }
+
+        .email-reflection {
+            margin: 28px 0;
+            padding: 0 15px;
+
+            color: #3BAA75;
+
+            font-size: 17px;
+            line-height: 1.6;
+            font-weight: 700;
+
+            text-align: center;
+        }
+
+        .email-signature {
+            margin-top: 27px;
+
+            color: #2B2C30;
+
+            font-size: 15px;
+            line-height: 1.45;
+            font-weight: 700;
+        }
+
+
+        /* ==========================================================
+           SHARED SAFETY / INFORMATION BOXES
+           ========================================================== */
+
+        .alert-box {
+            margin: 22px 0;
+            padding: 15px 17px;
+
+            border: 1px solid #F0CDD6;
+            border-left: 4px solid #C40233;
+            border-radius: 8px;
+
+            background-color: #FFF4F4;
+            color: #2B2C30;
+        }
+
+        .info-box {
+            margin: 22px 0;
+            padding: 15px 17px;
+
+            border: 1px solid #F0DDBF;
+            border-left: 4px solid #F4A429;
+            border-radius: 8px;
+
+            background-color: #FFF8EC;
+            color: #2B2C30;
+        }
+
+
+        /* ==========================================================
+           SHARED FOOTER
+           ========================================================== */
+
+        .email-footer-wrap {
+            padding: 16px 0 2px;
+            border-top: 1px solid #DFDAD1;
+        }
+
+        .email-support-text {
+            margin: 0 0 7px;
+
+            color: #6F6F6F;
+
+            font-size: 12px;
+            line-height: 1.4;
+
+            text-align: center;
+        }
+
+        .email-support-text a {
+            color: #0F52BA;
+
+            font-weight: 700;
+            text-decoration: none;
+        }
+
+        .email-footer {
+            color: #7A7A7A;
+
+            font-size: 11px;
+            line-height: 1.35;
+
+            text-align: center;
+        }
+
+        .email-footer-links {
+            margin: 0 0 5px;
+        }
+
+        .email-footer-links a {
+            color: #0F52BA;
+
+            font-size: 11px;
+            font-weight: 600;
+
+            text-decoration: none;
+        }
+
+        .email-footer-separator {
+            padding: 0 5px;
+            color: #A6A6A3;
+        }
+
+        .email-footer p {
+            margin: 2px 0;
+
+            color: #7A7A7A;
+
+            font-size: 11px;
+            line-height: 1.4;
+        }
+
+
+        /* ==========================================================
+           SHARED MOBILE
+           ========================================================== */
+
+        @media only screen and (max-width: 620px) {
+
+            .email-header {
+                padding: 20px 0 18px !important;
+            }
+
+            .email-logo {
+                width: 43px !important;
+                height: 43px !important;
+            }
+
+            .email-brand-name {
+                font-size: 20px !important;
+            }
+
+            .email-header-accent-cell {
+                display: none !important;
+            }
+
+            .email-button {
+                width: auto !important;
+                max-width: 100% !important;
+                padding: 9px 18px !important;
+            }
+        }
+
+        /* ==========================================================
+           LAYOUT-SPECIFIC STYLES
+           ========================================================== */
+
+        {% block layout_styles %}{% endblock %}
+
+
+        /* ==========================================================
+           OPTIONAL CHILD STYLES
+           ========================================================== */
+
+        {% block extra_email_styles %}{% endblock %}
+    </style>
+</head>
+
+<body>
+
+    <!-- Inbox Preview -->
+    <div class="preheader">
+        {{ preheader_text|default:"A message from TownLIT" }}
+    </div>
+
+
+    <!-- Revelation 21 Brand Rail -->
+    <table
+        class="revelation-brand-rail-wrap"
+        role="presentation"
+        width="100%"
+        border="0"
+        cellpadding="0"
+        cellspacing="0"
+        bgcolor="#F8F6F0"
+        aria-hidden="true"
+        style="
+            width:100% !important;
+            min-width:100% !important;
+            margin:0 !important;
+            padding:0 !important;
+            border:0;
+            border-spacing:0;
+            border-collapse:collapse;
+            background-color:#F8F6F0;
+            box-shadow:
+                0 2px 4px rgba(15,82,186,0.07),
+                0 3px 8px rgba(246,200,96,0.06),
+                0 2px 10px rgba(59,170,117,0.05);
+        "
+    >
+        <tr>
+            <td
+                width="100%"
+                style="
+                    width:100%;
+                    margin:0;
+                    padding:0;
+                "
+            >
+
+                <table
+                    class="revelation-brand-rail"
+                    role="presentation"
+                    width="100%"
+                    border="0"
+                    cellpadding="0"
+                    cellspacing="0"
+                    style="
+                        width:100% !important;
+                        min-width:100% !important;
+                        max-width:none !important;
+                        margin:0 !important;
+                        padding:0 !important;
+                        border:0;
+                        border-spacing:0;
+                        border-collapse:collapse;
+                        table-layout:fixed;
+                    "
+                >
+                    <tr>
+
+                        <td
+                            class="revelation-jasper"
+                            width="8.333333%"
+                            height="3"
+                            bgcolor="#D73F09"
+                            style="
+                                width:8.333333%;
+                                height:3px;
+                                padding:0;
+                                background-color:#D73F09;
+                                background-image:linear-gradient(
+                                    180deg,
+                                    rgba(255,255,255,0.36) 0%,
+                                    rgba(255,255,255,0.14) 34%,
+                                    rgba(255,255,255,0) 58%,
+                                    rgba(0,0,0,0.05) 100%
+                                );
+                                font-size:0;
+                                line-height:3px;
+                            "
+                        >&nbsp;</td>
+
+                        <td
+                            class="revelation-beryl"
+                            width="8.333333%"
+                            height="5"
+                            bgcolor="#7FDBDA"
+                            style="
+                                width:8.333333%;
+                                height:5px;
+                                padding:0;
+                                background-color:#7FDBDA;
+                                background-image:linear-gradient(
+                                    180deg,
+                                    rgba(255,255,255,0.36) 0%,
+                                    rgba(255,255,255,0.14) 34%,
+                                    rgba(255,255,255,0) 58%,
+                                    rgba(0,0,0,0.05) 100%
+                                );
+                                font-size:0;
+                                line-height:5px;
+                            "
+                        >&nbsp;</td>
+
+                        <td
+                            class="revelation-topaz"
+                            width="8.333333%"
+                            height="5"
+                            bgcolor="#F4A429"
+                            style="
+                                width:8.333333%;
+                                height:5px;
+                                padding:0;
+                                background-color:#F4A429;
+                                background-image:linear-gradient(
+                                    180deg,
+                                    rgba(255,255,255,0.36) 0%,
+                                    rgba(255,255,255,0.14) 34%,
+                                    rgba(255,255,255,0) 58%,
+                                    rgba(0,0,0,0.05) 100%
+                                );
+                                font-size:0;
+                                line-height:5px;
+                            "
+                        >&nbsp;</td>
+
+                        <td
+                            class="revelation-amethyst"
+                            width="8.333333%"
+                            height="5"
+                            bgcolor="#7A5CA2"
+                            style="
+                                width:8.333333%;
+                                height:5px;
+                                padding:0;
+                                background-color:#7A5CA2;
+                                background-image:linear-gradient(
+                                    180deg,
+                                    rgba(255,255,255,0.36) 0%,
+                                    rgba(255,255,255,0.14) 34%,
+                                    rgba(255,255,255,0) 58%,
+                                    rgba(0,0,0,0.05) 100%
+                                );
+                                font-size:0;
+                                line-height:5px;
+                            "
+                        >&nbsp;</td>
+
+                        <td
+                            class="revelation-emerald"
+                            width="8.333333%"
+                            height="5"
+                            bgcolor="#3BAA75"
+                            style="
+                                width:8.333333%;
+                                height:5px;
+                                padding:0;
+                                background-color:#3BAA75;
+                                background-image:linear-gradient(
+                                    180deg,
+                                    rgba(255,255,255,0.36) 0%,
+                                    rgba(255,255,255,0.14) 34%,
+                                    rgba(255,255,255,0) 58%,
+                                    rgba(0,0,0,0.05) 100%
+                                );
+                                font-size:0;
+                                line-height:5px;
+                            "
+                        >&nbsp;</td>
+
+                        <td
+                            class="revelation-sardonyx"
+                            width="8.333333%"
+                            height="5"
+                            bgcolor="#DFA58C"
+                            style="
+                                width:8.333333%;
+                                height:5px;
+                                padding:0;
+                                background-color:#DFA58C;
+                                background-image:linear-gradient(
+                                    180deg,
+                                    rgba(255,255,255,0.36) 0%,
+                                    rgba(255,255,255,0.14) 34%,
+                                    rgba(255,255,255,0) 58%,
+                                    rgba(0,0,0,0.05) 100%
+                                );
+                                font-size:0;
+                                line-height:5px;
+                            "
+                        >&nbsp;</td>
+
+                        <td
+                            class="revelation-sapphire"
+                            width="8.333333%"
+                            height="5"
+                            bgcolor="#0F52BA"
+                            style="
+                                width:8.333333%;
+                                height:5px;
+                                padding:0;
+                                background-color:#0F52BA;
+                                background-image:linear-gradient(
+                                    180deg,
+                                    rgba(255,255,255,0.36) 0%,
+                                    rgba(255,255,255,0.14) 34%,
+                                    rgba(255,255,255,0) 58%,
+                                    rgba(0,0,0,0.05) 100%
+                                );
+                                font-size:0;
+                                line-height:5px;
+                            "
+                        >&nbsp;</td>
+
+                        <td
+                            class="revelation-chrysolite"
+                            width="8.333333%"
+                            height="5"
+                            bgcolor="#C5B84B"
+                            style="
+                                width:8.333333%;
+                                height:5px;
+                                padding:0;
+                                background-color:#C5B84B;
+                                background-image:linear-gradient(
+                                    180deg,
+                                    rgba(255,255,255,0.36) 0%,
+                                    rgba(255,255,255,0.14) 34%,
+                                    rgba(255,255,255,0) 58%,
+                                    rgba(0,0,0,0.05) 100%
+                                );
+                                font-size:0;
+                                line-height:5px;
+                            "
+                        >&nbsp;</td>
+
+                        <td
+                            class="revelation-jacinth"
+                            width="8.333333%"
+                            height="5"
+                            bgcolor="#A23BEC"
+                            style="
+                                width:8.333333%;
+                                height:5px;
+                                padding:0;
+                                background-color:#A23BEC;
+                                background-image:linear-gradient(
+                                    180deg,
+                                    rgba(255,255,255,0.36) 0%,
+                                    rgba(255,255,255,0.14) 34%,
+                                    rgba(255,255,255,0) 58%,
+                                    rgba(0,0,0,0.05) 100%
+                                );
+                                font-size:0;
+                                line-height:5px;
+                            "
+                        >&nbsp;</td>
+
+                        <td
+                            class="revelation-chalcedony"
+                            width="8.333333%"
+                            height="5"
+                            bgcolor="#F0E3C3"
+                            style="
+                                width:8.333333%;
+                                height:5px;
+                                padding:0;
+                                background-color:#F0E3C3;
+                                background-image:linear-gradient(
+                                    180deg,
+                                    rgba(255,255,255,0.36) 0%,
+                                    rgba(255,255,255,0.14) 34%,
+                                    rgba(255,255,255,0) 58%,
+                                    rgba(0,0,0,0.05) 100%
+                                );
+                                font-size:0;
+                                line-height:5px;
+                            "
+                        >&nbsp;</td>
+
+                        <td
+                            class="revelation-sardius"
+                            width="8.333333%"
+                            height="5"
+                            bgcolor="#C40233"
+                            style="
+                                width:8.333333%;
+                                height:5px;
+                                padding:0;
+                                background-color:#C40233;
+                                background-image:linear-gradient(
+                                    180deg,
+                                    rgba(255,255,255,0.36) 0%,
+                                    rgba(255,255,255,0.14) 34%,
+                                    rgba(255,255,255,0) 58%,
+                                    rgba(0,0,0,0.05) 100%
+                                );
+                                font-size:0;
+                                line-height:5px;
+                            "
+                        >&nbsp;</td>
+
+                        <td
+                            class="revelation-chrysoprase"
+                            width="8.333333%"
+                            height="5"
+                            bgcolor="#52D89D"
+                            style="
+                                width:8.333333%;
+                                height:5px;
+                                padding:0;
+                                background-color:#52D89D;
+                                background-image:linear-gradient(
+                                    180deg,
+                                    rgba(255,255,255,0.36) 0%,
+                                    rgba(255,255,255,0.14) 34%,
+                                    rgba(255,255,255,0) 58%,
+                                    rgba(0,0,0,0.05) 100%
+                                );
+                                font-size:0;
+                                line-height:5px;
+                            "
+                        >&nbsp;</td>
+
+                    </tr>
+                </table>
+
+            </td>
+        </tr>
+    </table>
+
+
+    <!-- Email Canvas -->
+    <table
+        class="email-page"
+        role="presentation"
+        width="100%"
+        border="0"
+        cellpadding="0"
+        cellspacing="0"
+        bgcolor="#F8F6F0"
+    >
+        <tr>
+            <td
+                align="center"
+                bgcolor="#F8F6F0"
+            >
+
+                <table
+                    class="email-shell"
+                    role="presentation"
+                    width="100%"
+                    border="0"
+                    cellpadding="0"
+                    cellspacing="0"
+                    bgcolor="#F8F6F0"
+                >
+                    <tr>
+                        <td
+                            class="email-shell-cell"
+                            bgcolor="#F8F6F0"
+                        >
+
+                            <!-- Shared Brand Header -->
+                            <div class="email-header">
+
+                                <table
+                                    class="email-brand-table"
+                                    role="presentation"
+                                    width="100%"
+                                    border="0"
+                                    cellpadding="0"
+                                    cellspacing="0"
+                                >
+                                    <tr>
+
+                                        <td class="email-brand-logo-cell">
+                                            <img
+                                                src="https://townlit.com/images/logo/TownLITLogo.png"
+                                                alt="TownLIT"
+                                                class="email-logo"
+                                                width="46"
+                                                height="46"
+                                            >
+                                        </td>
+
+                                        <td class="email-brand-name-cell">
+
+                                            <div class="email-brand-name">
+                                                TownLIT
+                                            </div>
+
+                                            <div class="email-brand-mark">
+                                                One Community. Wherever You Are.
+                                            </div>
+
+                                        </td>
+
+                                        <td class="email-header-accent-cell">
+                                            <span class="email-header-accent">
+                                                &nbsp;
+                                            </span>
+                                        </td>
+
+                                    </tr>
+                                </table>
+
+                            </div>
+
+
+                            <!-- Dynamic Content -->
+                            <div class="email-content">
+                                {% block content %}
+                                    {{ content|safe }}
+                                {% endblock %}
+                            </div>
+
+
+                            <!-- Shared Footer -->
+                            <div class="email-footer-wrap">
+
+                                <p class="email-support-text">
+
+                                    {% block footer_support_label %}
+                                        Need help?
+                                    {% endblock %}
+
+                                    <a href="mailto:support@townlit.com">
+                                        support@townlit.com
+                                    </a>
+
+                                </p>
+
+                                <div class="email-footer">
+
+                                    <div class="email-footer-links">
+
+                                        <a href="https://townlit.com/app">
+                                            TownLIT
+                                        </a>
+
+                                        <span class="email-footer-separator">
+                                            |
+                                        </span>
+
+                                        <a href="https://townlit.com/townlit-official/foundation/townlit_beliefs">
+                                            Statement of Faith
+                                        </a>
+
+                                        <span class="email-footer-separator">
+                                            |
+                                        </span>
+
+                                        <a href="https://townlit.com/townlit-official/foundation/vision_and_mission">
+                                            Vision &amp; Mission
+                                        </a>
+
+                                    </div>
+
+
+                                    {% block footer_context_line %}
+                                    {% endblock %}
+
+
+                                    <p>
+                                        &copy; 2022–{{ current_year }}
+                                        TownLIT. All rights reserved.
+                                    </p>
+
+                                </div>
+
+                            </div>
+
+                        </td>
+                    </tr>
+                </table>
+
+            </td>
+        </tr>
+    </table>
+
+</body>
+</html>
