@@ -1,9 +1,11 @@
+#
 # apps/posts/services/prayer_media_content_safety.py
 #
 # TownLIT
 #
 # Created by Hossein Sakkaki on 2026-08-14.
-# Last Update by Hossein Sakkaki on 2026-08-14.
+# Last Update by Hossein Sakkaki on 2026-08-25.
+#
 
 from __future__ import annotations
 
@@ -15,14 +17,8 @@ from apps.content_safety.enums import (
 from apps.content_safety.services.image import (
     enforce_image_file_safety,
 )
-from apps.content_safety.services.video import (
-    enforce_video_file_safety,
-)
 
 
-# -----------------------------------------------------------------------------
-# Internal image gate
-# -----------------------------------------------------------------------------
 def _enforce_image_asset(
     *,
     file_obj,
@@ -34,10 +30,9 @@ def _enforce_image_asset(
     Require one newly supplied Prayer image asset to pass Content Safety.
 
     Content Safety exceptions intentionally propagate unchanged so the
-    API error handler can preserve the structured content_safety_* envelope.
+    structured API safety contract remains intact.
 
-    File-shape / media-format errors are exposed as normal DRF validation
-    errors under the correct upload field.
+    Media-format errors are exposed as ordinary DRF validation errors.
     """
 
     if not file_obj:
@@ -69,52 +64,6 @@ def _enforce_image_asset(
         ) from exc
 
 
-# -----------------------------------------------------------------------------
-# Internal video gate
-# -----------------------------------------------------------------------------
-def _enforce_video_asset(
-    *,
-    file_obj,
-    actor,
-    audit_field_name: str,
-    validation_field_name: str,
-) -> None:
-    """
-    Require one newly supplied Prayer video asset to pass Content Safety.
-    """
-
-    if not file_obj:
-        return
-
-    try:
-        enforce_video_file_safety(
-            file_obj=file_obj,
-            context=SafetyContext.PRAYER_MEDIA,
-            actor=actor,
-            field_name=audit_field_name,
-            mime_type=getattr(
-                file_obj,
-                "content_type",
-                None,
-            ),
-        )
-
-    except (
-        TypeError,
-        ValueError,
-    ) as exc:
-        raise serializers.ValidationError(
-            {
-                validation_field_name: str(
-                    exc
-                )
-            }
-        ) from exc
-
-
-# -----------------------------------------------------------------------------
-# Shared Prayer / PrayerResponse media gate
-# -----------------------------------------------------------------------------
 def _enforce_prayer_media_payload(
     *,
     validated_data,
@@ -122,16 +71,12 @@ def _enforce_prayer_media_payload(
     audit_prefix: str,
 ) -> None:
     """
-    Inspect only newly supplied media from one validated Prayer payload.
+    Inspect only newly supplied inexpensive image assets.
 
-    Order is intentional:
-    1. image
-    2. thumbnail
-    3. video
+    Image and thumbnail safety remains synchronous.
 
-    Image checks are cheaper than full Video Safety. If one of the image
-    assets is rejected, we avoid unnecessary frame extraction,
-    transcription, and visual-video analysis.
+    Raw video safety is intentionally asynchronous:
+    persistent source -> ContentSafetyJob -> ALLOW -> MediaConversionJob.
     """
 
     image = validated_data.get(
@@ -142,13 +87,6 @@ def _enforce_prayer_media_payload(
         "thumbnail"
     )
 
-    video = validated_data.get(
-        "video"
-    )
-
-    # -----------------------------------------------------------------
-    # Required/main image
-    # -----------------------------------------------------------------
     if image:
         _enforce_image_asset(
             file_obj=image,
@@ -159,9 +97,6 @@ def _enforce_prayer_media_payload(
             validation_field_name="image",
         )
 
-    # -----------------------------------------------------------------
-    # Optional thumbnail
-    # -----------------------------------------------------------------
     if thumbnail:
         _enforce_image_asset(
             file_obj=thumbnail,
@@ -172,39 +107,16 @@ def _enforce_prayer_media_payload(
             validation_field_name="thumbnail",
         )
 
-    # -----------------------------------------------------------------
-    # Optional video
-    # -----------------------------------------------------------------
-    if video:
-        _enforce_video_asset(
-            file_obj=video,
-            actor=actor,
-            audit_field_name=(
-                f"{audit_prefix}video"
-            ),
-            validation_field_name="video",
-        )
 
-
-# -----------------------------------------------------------------------------
-# Public Prayer gate
-# -----------------------------------------------------------------------------
 def enforce_prayer_media_content_safety(
     *,
     validated_data,
     actor,
 ) -> None:
     """
-    Require all newly supplied Prayer media to pass before persistence.
+    Synchronous image safety for newly supplied Prayer media.
 
-    CREATE:
-    - required Prayer image
-    - optional thumbnail
-    - optional video
-
-    UPDATE:
-    - only media fields explicitly supplied in the update are inspected
-    - existing unchanged media is not redundantly reprocessed
+    Video is handled by the generic asynchronous ContentSafetyJob pipeline.
     """
 
     _enforce_prayer_media_payload(
@@ -214,24 +126,15 @@ def enforce_prayer_media_content_safety(
     )
 
 
-# -----------------------------------------------------------------------------
-# Public PrayerResponse gate
-# -----------------------------------------------------------------------------
 def enforce_prayer_response_media_content_safety(
     *,
     validated_data,
     actor,
 ) -> None:
     """
-    Require all newly supplied PrayerResponse media to pass before persistence.
+    Synchronous image safety for newly supplied PrayerResponse media.
 
-    CREATE:
-    - required response image
-    - optional response thumbnail
-    - optional response video
-
-    UPDATE:
-    - only newly supplied/replaced media is inspected
+    Video is handled by the generic asynchronous ContentSafetyJob pipeline.
     """
 
     _enforce_prayer_media_payload(

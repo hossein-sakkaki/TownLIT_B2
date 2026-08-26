@@ -876,43 +876,102 @@ class MomentSerializer(
     # -------------------------------------------------
     # Representation hardening
     # -------------------------------------------------
-    def to_representation(self, obj):
-        request = self.context.get("request")
-        viewer = request.user if request and request.user.is_authenticated else None
+    def to_representation(
+        self,
+        obj,
+    ):
+        request = self.context.get(
+            "request"
+        )
 
-        # Hard media visibility gate.
-        if obj.video and not obj.is_converted:
-            owner = resolve_owner_from_request(request) if request else None
+        viewer = (
+            request.user
+            if (
+                request
+                and request.user.is_authenticated
+            )
+            else None
+        )
 
-            # Visitor or non-owner cannot see in-progress media.
-            if not owner or (
+        # -------------------------------------------------
+        # Pre-publication video visibility
+        # -------------------------------------------------
+        if (
+            obj.video
+            and obj.is_converted is not True
+        ):
+            owner = (
+                resolve_owner_from_request(
+                    request
+                )
+                if request
+                else None
+            )
+
+            # A pending/failed/rejected raw video is owner-only.
+            if not owner:
+                return None
+
+            owner_ct = (
+                ContentType.objects
+                .get_for_model(
+                    owner.__class__
+                )
+            )
+
+            if (
                 obj.content_type_id
-                != ContentType.objects.get_for_model(owner.__class__).id
-                or obj.object_id != owner.id
+                != owner_ct.id
+                or obj.object_id
+                != owner.id
             ):
                 return None
 
-        data = super().to_representation(obj)
+        data = super().to_representation(
+            obj
+        )
 
-        # Owner-safe conversion payload.
-        if obj.video and not obj.is_converted:
-            data["video"] = None
-            data["thumbnail"] = None
-
+        # -------------------------------------------------
+        # Shared Safety -> Conversion pipeline
+        # -------------------------------------------------
+        if obj.video:
             data = gate_media_payload(
                 obj=obj,
                 data=data,
                 viewer=viewer,
                 field_name="video",
-                require_job=True,
+
+                # Legacy converted Moment videos may predate
+                # MediaConversionJob entirely.
+                #
+                # is_converted=True remains sufficient for those
+                # grandfathered canonical HLS assets.
+                #
+                # Unconverted media still fails closed inside
+                # serializer_gate even when require_job=False.
+                require_job=False,
+
                 include_job_target=True,
             )
 
-        # Visitor hardening.
+        # -------------------------------------------------
+        # Visitor hardening
+        # -------------------------------------------------
         if not viewer:
-            data.pop("visibility", None)
-            data.pop("is_hidden", None)
-            data.pop("reactions_breakdown", None)
+            data.pop(
+                "visibility",
+                None,
+            )
+
+            data.pop(
+                "is_hidden",
+                None,
+            )
+
+            data.pop(
+                "reactions_breakdown",
+                None,
+            )
 
         return held_representation_or_none(
             target=obj,
@@ -952,6 +1011,7 @@ class MomentProfileGridSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Moment
+        list_serializer_class = FilterNoneListSerializer
         fields = [
             "id",
             "slug",
@@ -1177,32 +1237,90 @@ class MomentProfileGridSerializer(serializers.ModelSerializer):
     # -------------------------------------------------
     # Representation hardening
     # -------------------------------------------------
-    def to_representation(self, obj):
-        request = self.context.get("request")
-        viewer = request.user if request and request.user.is_authenticated else None
+    def to_representation(
+        self,
+        obj,
+    ):
+        request = self.context.get(
+            "request"
+        )
 
-        data = super().to_representation(obj)
+        request_user = getattr(
+            request,
+            "user",
+            None,
+        )
 
-        # Owner-safe conversion payload.
-        if obj.video and not obj.is_converted:
-            data["video"] = None
-            data["thumbnail"] = None
+        viewer = (
+            request_user
+            if (
+                request_user is not None
+                and bool(
+                    getattr(
+                        request_user,
+                        "is_authenticated",
+                        False,
+                    )
+                )
+            )
+            else None
+        )
 
+        data = super().to_representation(
+            obj
+        )
+
+        # /me/ is owner-facing, so expose the authoritative pipeline state.
+        if obj.video:
             data = gate_media_payload(
                 obj=obj,
                 data=data,
                 viewer=viewer,
                 field_name="video",
-                require_job=True,
+
+                # Legacy converted Moment videos may predate
+                # MediaConversionJob entirely.
+                #
+                # New/pending media with is_converted=False still
+                # fails closed inside serializer_gate.
+                require_job=False,
+
                 include_job_target=True,
             )
 
-        return held_representation_or_none(
+        result = held_representation_or_none(
             target=obj,
             viewer=viewer,
             data=data,
         )
 
+        if result is None:
+            logger.warning(
+                (
+                    "Moment profile representation omitted by active safety hold: "
+                    "moment_id=%s content_type_id=%s object_id=%s "
+                    "viewer_id=%s is_active=%s is_hidden=%s "
+                    "is_converted=%s visibility=%s"
+                ),
+                obj.id,
+                obj.content_type_id,
+                obj.object_id,
+                getattr(
+                    viewer,
+                    "id",
+                    None,
+                ),
+                getattr(
+                    obj,
+                    "is_active",
+                    None,
+                ),
+                obj.is_hidden,
+                obj.is_converted,
+                obj.visibility,
+            )
+
+        return result
 
 
 # -------------------------------------------------
@@ -1312,15 +1430,40 @@ class MomentStreamPayloadSerializer(
 
         return _build_asset_cdn_url(key)
     
-    def to_representation(self, obj):
-        request = self.context.get("request")
+    def to_representation(
+        self,
+        obj,
+    ):
+        request = self.context.get(
+            "request"
+        )
+
         viewer = (
             request.user
-            if request and request.user.is_authenticated
+            if (
+                request
+                and request.user.is_authenticated
+            )
             else None
         )
 
-        data = super().to_representation(obj)
+        data = super().to_representation(
+            obj
+        )
+
+        # Defensive last line of protection:
+        # raw/unconverted video keys must never leave the Stream serializer.
+        if (
+            obj.video
+            and obj.is_converted is not True
+        ):
+            data[
+                "video"
+            ] = None
+
+            data[
+                "thumbnail"
+            ] = None
 
         return held_representation_or_none(
             target=obj,

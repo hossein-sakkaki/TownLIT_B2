@@ -48,11 +48,18 @@ from validators.mediaValidators.image_validators import (
     validate_image_size,
 )
 from validators.security_validators import validate_no_executable_file
+from apps.content_safety.view_mixins import (
+    ContentSafetyJobResponseMixin,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class TestimonyViewSet(OwnerGateMixin, viewsets.ModelViewSet):
+class TestimonyViewSet(
+    ContentSafetyJobResponseMixin,
+    OwnerGateMixin,
+    viewsets.ModelViewSet,
+):
     """
     Testimony API (post-like)
 
@@ -98,6 +105,9 @@ class TestimonyViewSet(OwnerGateMixin, viewsets.ModelViewSet):
         # even if media state is temporarily changing during the request.
         if self.action in {
             "retrieve",
+            "update",
+            "partial_update",
+            "destroy",
             "thumbnail",
             "audio_artwork",
         }:
@@ -254,17 +264,18 @@ class TestimonyViewSet(OwnerGateMixin, viewsets.ModelViewSet):
     # -------------------------------------------------
     # Create
     # -------------------------------------------------
-    def perform_create(self, serializer):
+    def perform_create(
+        self,
+        serializer,
+    ):
         """
-        Create a Testimony after ownership, uniqueness and Content Safety checks.
+        Create one Testimony.
 
-        Safety provider calls intentionally run outside the DB transaction.
+        Text and inexpensive synchronous safety checks happen before persistence.
 
-        Safety order:
-        1. title / written content
-        2. image-like media
-        3. audio transcription or video safety
-        4. persistence
+        Configured asynchronous media safety:
+        raw media -> persistent private target -> ContentSafetyJob
+                -> ALLOW -> existing MediaConversion pipeline
         """
 
         owner = self._get_owner()
@@ -278,63 +289,87 @@ class TestimonyViewSet(OwnerGateMixin, viewsets.ModelViewSet):
             "type"
         )
 
-        owner_ct = ContentType.objects.get_for_model(
-            owner.__class__
+        owner_ct = (
+            ContentType.objects
+            .get_for_model(
+                owner.__class__
+            )
         )
 
-        # Cheap duplicate check before external Safety calls.
-        exists = Testimony.objects.filter(
-            content_type=owner_ct,
-            object_id=owner.id,
-            type=ttype,
-        ).exists()
+        exists = (
+            Testimony.objects
+            .filter(
+                content_type=owner_ct,
+                object_id=owner.id,
+                type=ttype,
+            )
+            .exists()
+        )
 
         if exists:
             raise PermissionDenied(
                 f"You already have a '{ttype}' testimony."
             )
 
-        # Text/title Safety first.
+        # Text/title safety remains synchronous.
         enforce_testimony_content_safety(
-            validated_data=serializer.validated_data,
+            validated_data=(
+                serializer.validated_data
+            ),
             actor=self.request.user,
         )
 
-        # Media Safety before any Testimony/media persistence.
+        # Audio and image-like Testimony safety remains synchronous.
+        #
+        # Video itself is intentionally deferred to the generic async
+        # ContentSafetyJob pipeline.
         enforce_testimony_media_content_safety(
-            validated_data=serializer.validated_data,
+            validated_data=(
+                serializer.validated_data
+            ),
             actor=self.request.user,
         )
 
-        # Re-check uniqueness after external provider calls.
         with transaction.atomic():
-            exists = Testimony.objects.filter(
-                content_type=owner_ct,
-                object_id=owner.id,
-                type=ttype,
-            ).exists()
+            exists = (
+                Testimony.objects
+                .filter(
+                    content_type=owner_ct,
+                    object_id=owner.id,
+                    type=ttype,
+                )
+                .exists()
+            )
 
             if exists:
                 raise PermissionDenied(
                     f"You already have a '{ttype}' testimony."
                 )
 
-            serializer.save(
+            instance = serializer.save(
                 content_type=owner_ct,
                 object_id=owner.id,
+            )
+
+            self.schedule_content_safety_jobs(
+                instance=instance,
+                submitted_data=(
+                    serializer.validated_data
+                ),
             )
             
     # -------------------------------------------------
     # Update
     # -------------------------------------------------
-    def perform_update(self, serializer):
+    def perform_update(
+        self,
+        serializer,
+    ):
         """
         Owner-safe Testimony update.
 
-        Content Safety:
-        - supplied changed text fields are rechecked
-        - only newly supplied media is inspected
-        - unchanged existing media is not redundantly processed
+        Newly supplied configured video media is persisted and routed through
+        the same generic asynchronous Content Safety pipeline.
         """
 
         obj = self.get_object()
@@ -344,19 +379,32 @@ class TestimonyViewSet(OwnerGateMixin, viewsets.ModelViewSet):
         )
 
         enforce_testimony_content_safety(
-            validated_data=serializer.validated_data,
+            validated_data=(
+                serializer.validated_data
+            ),
             actor=self.request.user,
             instance=obj,
         )
 
         enforce_testimony_media_content_safety(
-            validated_data=serializer.validated_data,
+            validated_data=(
+                serializer.validated_data
+            ),
             actor=self.request.user,
+            instance=obj,
         )
 
-        serializer.save(
-            updated_at=timezone.now()
-        )
+        with transaction.atomic():
+            instance = serializer.save(
+                updated_at=timezone.now()
+            )
+
+            self.schedule_content_safety_jobs(
+                instance=instance,
+                submitted_data=(
+                    serializer.validated_data
+                ),
+            )
 
     # -------------------------------------------------
     # Delete
@@ -837,7 +885,10 @@ class TestimonyViewSet(OwnerGateMixin, viewsets.ModelViewSet):
             .filter(
                 content_type_id=owner_ct.id,
                 object_id=owner.id,
-                is_active=True,
+            )
+            .filter(
+                Q(is_active=True)
+                | Q(is_converted=False)
             )
             .only(
                 "id",
@@ -946,7 +997,10 @@ class TestimonyViewSet(OwnerGateMixin, viewsets.ModelViewSet):
             .filter(
                 content_type_id=owner_ct.id,
                 object_id=owner.id,
-                is_active=True,
+            )
+            .filter(
+                Q(is_active=True)
+                | Q(is_converted=False)
             )
             .only(
                 "id",
@@ -1004,6 +1058,7 @@ class TestimonyViewSet(OwnerGateMixin, viewsets.ModelViewSet):
                 "converting": False,
                 "ready_status": None,
                 "job_id": None,
+                "media_pipeline": None,
                 "owner": {
                     "type": "member",
                     "id": owner.id,
@@ -1031,12 +1086,33 @@ class TestimonyViewSet(OwnerGateMixin, viewsets.ModelViewSet):
             # Backward-compatible web contract
             # -------------------------------------------------
             data["exists"] = True
-            data["converting"] = bool(
-                item.type in (Testimony.TYPE_VIDEO, Testimony.TYPE_AUDIO)
-                and not item.is_converted
+
+            is_media_testimony = (
+                item.type
+                in (
+                    Testimony.TYPE_VIDEO,
+                    Testimony.TYPE_AUDIO,
+                )
             )
-            data["ready_status"] = "done" if item.is_converted else None
-            data["job_id"] = None
+
+            if "converting" not in data:
+                data[
+                    "converting"
+                ] = False
+
+            if "ready_status" not in data:
+                data[
+                    "ready_status"
+                ] = (
+                    "done"
+                    if item.is_converted
+                    else None
+                )
+
+            if "job_id" not in data:
+                data[
+                    "job_id"
+                ] = None
 
             # Older frontend aliases.
             if item.type == Testimony.TYPE_AUDIO:

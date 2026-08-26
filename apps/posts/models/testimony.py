@@ -32,6 +32,13 @@ from validators.mediaValidators.image_validators import (
     validate_image_size,
 )
 from validators.security_validators import validate_no_executable_file
+from apps.content_safety.enums import (
+    SafetyContext,
+    SafetyInputType,
+)
+from apps.content_safety.mixins import (
+    ContentSafetyMediaTargetMixin,
+)
 
 from django.contrib.auth import get_user_model
 CustomUser = get_user_model()
@@ -43,6 +50,7 @@ class Testimony(
     InteractionCounterMixin,      # 💬 comments / recomments / reactions_count
     ReactionBreakdownMixin,       # ❤️ per-reaction-type counters
     MediaAssetsMixin,             # 🖼️ Media metadata
+    ContentSafetyMediaTargetMixin,
     MediaAutoConvertMixin,
     MediaConversionMixin,
     SlugMixin,
@@ -207,10 +215,37 @@ class Testimony(
     url_name = "posts:testimony-detail"
 
     media_conversion_config = {
-        "audio": {"upload": AUDIO, "kind": "audio"},
-        "video": {"upload": VIDEO, "kind": "video"},
-        "thumbnail": {"upload": THUMBNAIL, "kind": "image"},
-        "audio_artwork": {"upload": AUDIO_ARTWORK, "kind": "image"},
+        "audio": {
+            "upload": AUDIO,
+            "kind": "audio",
+            "required_for_availability": True,
+        },
+
+        "video": {
+            "upload": VIDEO,
+            "kind": "video",
+            "required_for_availability": True,
+        },
+
+        "thumbnail": {
+            "upload": THUMBNAIL,
+            "kind": "image",
+            "required_for_availability": False,
+        },
+
+        "audio_artwork": {
+            "upload": AUDIO_ARTWORK,
+            "kind": "image",
+            "required_for_availability": False,
+        },
+    }
+
+    content_safety_media_config = {
+        "video": {
+            "input_type": SafetyInputType.VIDEO,
+            "context": SafetyContext.TESTIMONY_MEDIA,
+            "conversion_kind": "video",
+        },
     }
 
     # -------------------------------------------------

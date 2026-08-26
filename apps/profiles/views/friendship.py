@@ -336,7 +336,10 @@ class FriendshipViewSet(viewsets.ModelViewSet):
 
             users = (
                 CustomUser.objects
-                .select_related("label", "member_profile")
+                .select_related(
+                    "label",
+                    "member_profile",
+                )
                 .only(
                     "id",
                     "username",
@@ -354,14 +357,52 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                     "member_profile__is_townlit_verified",
                 )
                 .filter(
-                    Q(username__icontains=query) |
-                    Q(name__icontains=query) |
-                    Q(family__icontains=query) |
-                    Q(email__icontains=query)
+                    Q(username__icontains=query)
+                    | Q(name__icontains=query)
+                    | Q(family__icontains=query)
+                    | Q(email__icontains=query)
                 )
-                .exclude(id=request.user.id)
-                .exclude(id__in=boundary_excluded_ids)
-                .filter(is_active=True, is_deleted=False, is_suspended=False)
+                .exclude(
+                    id=request.user.id
+                )
+                .exclude(
+                    id__in=boundary_excluded_ids
+                )
+                .filter(
+                    is_active=True,
+                    is_deleted=False,
+                    is_suspended=False,
+                )
+                .annotate(
+                    search_rank=Case(
+                        When(
+                            username__iexact=query,
+                            then=Value(0),
+                        ),
+                        When(
+                            username__istartswith=query,
+                            then=Value(1),
+                        ),
+                        When(
+                            name__istartswith=query,
+                            then=Value(2),
+                        ),
+                        When(
+                            family__istartswith=query,
+                            then=Value(3),
+                        ),
+                        default=Value(4),
+                        output_field=IntegerField(),
+                    ),
+                    username_lower=Lower(
+                        "username"
+                    ),
+                )
+                .order_by(
+                    "search_rank",
+                    "username_lower",
+                    "id",
+                )
                 .distinct()
             )
 

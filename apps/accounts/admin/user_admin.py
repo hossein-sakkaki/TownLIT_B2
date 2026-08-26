@@ -70,7 +70,6 @@ class CustomUserAdmin(UserAdmin):
         "is_active", "is_admin", "is_superuser", "gender", "label",
         "is_suspended", "is_deleted", "is_account_paused", "register_date",
     ]
-    list_editable = ["is_active", "is_admin", "is_member"]
     search_fields = ["email", "username", "mobile_number", "name", "family"]
     readonly_fields = ["register_date", "last_login", "email", "is_verified_identity", "identity_level"]
     ordering = ["-id"]

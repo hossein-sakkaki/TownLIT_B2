@@ -35,7 +35,13 @@ from validators.mediaValidators.video_validators import (
     validate_prayer_video_file,
 )
 from validators.security_validators import validate_no_executable_file
-
+from apps.content_safety.enums import (
+    SafetyContext,
+    SafetyInputType,
+)
+from apps.content_safety.mixins import (
+    ContentSafetyMediaTargetMixin,
+)
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -67,6 +73,7 @@ class Prayer(
     InteractionCounterMixin,      # 🧮 counters
     ReactionBreakdownMixin,       # ❤️ reactions
     MediaAssetsMixin,             # 🖼️ Media metadata
+    ContentSafetyMediaTargetMixin,
     MediaAutoConvertMixin,        # 🎞 raw → converted detection
     MediaConversionMixin,         # 🔄 async conversion
     SlugMixin,
@@ -150,9 +157,34 @@ class Prayer(
     url_name = "posts:prayer-detail"
 
     media_conversion_config = {
-        "image": {"upload": PRAY_IMAGE, "kind": "image"},
-        "video": {"upload": PRAY_VIDEO, "kind": "video"},
-        "thumbnail": {"upload": PRAY_IMAGE, "kind": "image"},
+        # Prayer image is required by the domain and must be ready.
+        "image": {
+            "upload": PRAY_IMAGE,
+            "kind": "image",
+            "required_for_availability": True,
+        },
+
+        # Video is optional, but when present it must be fully ready.
+        "video": {
+            "upload": PRAY_VIDEO,
+            "kind": "video",
+            "required_for_availability": True,
+        },
+
+        # Thumbnail is secondary presentation media.
+        "thumbnail": {
+            "upload": PRAY_IMAGE,
+            "kind": "image",
+            "required_for_availability": False,
+        },
+    }
+
+    content_safety_media_config = {
+        "video": {
+            "input_type": SafetyInputType.VIDEO,
+            "context": SafetyContext.PRAYER_MEDIA,
+            "conversion_kind": "video",
+        },
     }
 
     # --- validation ---
@@ -218,7 +250,8 @@ class Prayer(
 # Model: PrayerResponse (OneToOne)
 # -----------------------------------------------------------------------------
 class PrayerResponse(
-     MediaAssetsMixin,            # 🖼️ Media metadata
+    MediaAssetsMixin,            # 🖼️ Media metadata
+    ContentSafetyMediaTargetMixin,
     MediaAutoConvertMixin,        # 🎞 raw → converted detection
     MediaConversionMixin,         # 🔄 async conversion
     AvailabilityAware,
@@ -276,9 +309,34 @@ class PrayerResponse(
     is_converted = models.BooleanField(default=False)
 
     media_conversion_config = {
-        "image": {"upload": PRAY_IMAGE, "kind": "image"},
-        "video": {"upload": PRAY_VIDEO, "kind": "video"},
-        "thumbnail": {"upload": PRAY_IMAGE, "kind": "image"},
+        # Response image is required by the domain.
+        "image": {
+            "upload": PRAY_IMAGE,
+            "kind": "image",
+            "required_for_availability": True,
+        },
+
+        # Video is optional, but required for readiness whenever present.
+        "video": {
+            "upload": PRAY_VIDEO,
+            "kind": "video",
+            "required_for_availability": True,
+        },
+
+        # Thumbnail is secondary presentation media.
+        "thumbnail": {
+            "upload": PRAY_IMAGE,
+            "kind": "image",
+            "required_for_availability": False,
+        },
+    }
+
+    content_safety_media_config = {
+        "video": {
+            "input_type": SafetyInputType.VIDEO,
+            "context": SafetyContext.PRAYER_MEDIA,
+            "conversion_kind": "video",
+        },
     }
 
     def clean(self):

@@ -26,23 +26,33 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------
 class MediaConversionCanceled(Exception):
     """
-    Raised when a user cancels a media conversion job.
+    Raised when the authoritative media job was canceled or removed.
+    """
+
+
+class MediaConversionTaskSuperseded(Exception):
+    """
+    Raised when this Celery task no longer owns the MediaConversionJob row.
     """
 
 
 class MediaConversionSuperseded(Exception):
     """
     Raised when a queued task no longer targets the model's current source.
+
+    The positional message form keeps the exception pickle-safe if it ever
+    escapes a worker boundary.
     """
 
     def __init__(
         self,
+        message: str | None = None,
         *,
-        model_name: str,
-        instance_id: int,
-        field_name: str,
-        expected_source_path: str,
-        current_source_path: str,
+        model_name: str = "",
+        instance_id: int = 0,
+        field_name: str = "",
+        expected_source_path: str = "",
+        current_source_path: str = "",
     ):
         self.model_name = model_name
         self.instance_id = instance_id
@@ -50,36 +60,165 @@ class MediaConversionSuperseded(Exception):
         self.expected_source_path = expected_source_path
         self.current_source_path = current_source_path
 
-        super().__init__(
-            (
+        if message is None:
+            message = (
                 "Media conversion source was replaced: "
                 f"{model_name}[{instance_id}].{field_name} "
                 f"expected={expected_source_path!r} "
                 f"current={current_source_path!r}"
             )
-        )
+
+        super().__init__(message)
         
 
-def is_job_canceled(job: Optional[MediaConversionJob]) -> bool:
+def get_current_task_id() -> str:
     """
-    Fresh DB check. Never trust a stale job instance inside a long task.
+    Return the active Celery task id, if called from a worker task.
     """
+
+    try:
+        return str(
+            getattr(
+                getattr(
+                    current_task,
+                    "request",
+                    None,
+                ),
+                "id",
+                "",
+            )
+            or ""
+        )
+
+    except Exception:
+        return ""
+
+
+def _get_authoritative_job(
+    job: Optional[MediaConversionJob],
+) -> Optional[MediaConversionJob]:
+    """
+    Reload the current DB row without mutating the worker's stale instance.
+    """
+
+    if not job or not getattr(job, "pk", None):
+        return None
+
+    try:
+        return (
+            MediaConversionJob.objects
+            .select_related("content_type")
+            .filter(pk=job.pk)
+            .first()
+        )
+
+    except Exception:
+        return None
+
+
+def is_job_current_task(
+    job: Optional[MediaConversionJob],
+) -> bool:
+    """
+    True when this worker still owns the authoritative job row.
+
+    Missing jobs are no longer authoritative.
+    """
+
+    if not job:
+        return True
+
+    authoritative = _get_authoritative_job(job)
+
+    if authoritative is None:
+        return False
+
+    current_task_id = get_current_task_id()
+
+    if not current_task_id:
+        return True
+
+    authoritative_task_id = str(
+        authoritative.task_id
+        or ""
+    )
+
+    if not authoritative_task_id:
+        return True
+
+    return authoritative_task_id == current_task_id
+
+
+def is_job_canceled(
+    job: Optional[MediaConversionJob],
+) -> bool:
+    """
+    Fresh DB check.
+
+    A job that existed when this worker started but was later deleted is
+    treated as canceled. Continuing without an authoritative job would allow
+    stale work to bind output after cancellation cleanup.
+    """
+
     if not job:
         return False
 
-    try:
-        job.refresh_from_db(fields=["status", "updated_at"])
-        return job.status == MediaJobStatus.CANCELED
-    except Exception:
-        return False
+    authoritative = _get_authoritative_job(job)
+
+    if authoritative is None:
+        return True
+
+    return (
+        authoritative.status
+        == MediaJobStatus.CANCELED
+    )
 
 
-def raise_if_job_canceled(job: Optional[MediaConversionJob]) -> None:
+def raise_if_job_canceled(
+    job: Optional[MediaConversionJob],
+) -> None:
     """
-    Stop the worker flow if the user canceled this job.
+    Stop when this worker is canceled or no longer owns the job.
     """
-    if is_job_canceled(job):
-        raise MediaConversionCanceled("Media conversion was canceled.")
+
+    if not job:
+        return
+
+    authoritative = _get_authoritative_job(job)
+
+    if authoritative is None:
+        raise MediaConversionCanceled(
+            "Media conversion job no longer exists."
+        )
+
+    current_task_id = get_current_task_id()
+    authoritative_task_id = str(
+        authoritative.task_id
+        or ""
+    )
+
+    if (
+        current_task_id
+        and authoritative_task_id
+        and current_task_id
+        != authoritative_task_id
+    ):
+        raise MediaConversionTaskSuperseded(
+            (
+                "Media conversion task was superseded: "
+                f"job={authoritative.pk} "
+                f"worker_task={current_task_id!r} "
+                f"current_task={authoritative_task_id!r}"
+            )
+        )
+
+    if (
+        authoritative.status
+        == MediaJobStatus.CANCELED
+    ):
+        raise MediaConversionCanceled(
+            "Media conversion was canceled."
+        )
 
 
 # ---------------------------------------------------------------------
@@ -215,71 +354,20 @@ def get_job_by_current_task() -> Optional[MediaConversionJob]:
 # ---------------------------------------------------------------------
 # Target availability
 # ---------------------------------------------------------------------
-def _maybe_mark_target_available(job: MediaConversionJob):
+def _maybe_mark_target_available(
+    job: MediaConversionJob,
+):
     """
-    Mark target converted / available only when all jobs for that target are DONE.
-
-    Important:
-    FAILED or CANCELED jobs must NOT make the object available.
+    Delegate target readiness to the shared field-aware availability service.
     """
-    try:
-        ct = job.content_type
-        object_id = job.object_id
 
-        jobs = MediaConversionJob.objects.filter(
-            content_type=ct,
-            object_id=object_id,
-        )
+    from apps.media_conversion.services.availability import (
+        maybe_mark_media_target_available,
+    )
 
-        has_unfinished = jobs.exclude(
-            status__in=[
-                MediaJobStatus.DONE,
-                MediaJobStatus.FAILED,
-                MediaJobStatus.CANCELED,
-            ]
-        ).exists()
-
-        if has_unfinished:
-            return
-
-        has_failed_or_canceled = jobs.filter(
-            status__in=[
-                MediaJobStatus.FAILED,
-                MediaJobStatus.CANCELED,
-            ]
-        ).exists()
-
-        if has_failed_or_canceled:
-            return
-
-        all_done = jobs.exists() and not jobs.exclude(
-            status=MediaJobStatus.DONE
-        ).exists()
-
-        if not all_done:
-            return
-
-        model_class = ct.model_class()
-        if not model_class:
-            return
-
-        target = model_class._base_manager.filter(pk=object_id).first()
-        if not target:
-            return
-
-        if hasattr(target, "is_converted") and not target.is_converted:
-            target.is_converted = True
-            target.save(update_fields=["is_converted"])
-
-        if hasattr(target, "is_available") and hasattr(target, "on_available"):
-            if target.is_available():
-                target.on_available()
-
-    except Exception:
-        logger.exception(
-            "Failed to mark target available for MediaConversionJob id=%s",
-            getattr(job, "id", None),
-        )
+    maybe_mark_media_target_available(
+        job
+    )
 
 
 # ---------------------------------------------------------------------
@@ -306,24 +394,48 @@ def job_update(
     finished: bool = False,
 ) -> None:
     """
-    Best-effort MediaConversionJob update.
-    MUST NEVER raise.
+    Best-effort authoritative MediaConversionJob update.
 
-    Cancel safety:
-    - If the job was canceled by user, do not overwrite it with processing/done/failed.
-    - Only allow status=canceled to pass through.
+    Safety:
+    - CANCELED cannot be overwritten by worker progress/failure.
+    - A stale Celery task cannot mutate a job row that has been reassigned.
+    - A deleted job is never recreated or treated as authoritative.
     """
+
     if not job:
         return
 
     try:
-        try:
-            job.refresh_from_db()
-        except Exception:
-            pass
+        authoritative = _get_authoritative_job(
+            job
+        )
 
-        if job.status == MediaJobStatus.CANCELED and status != MediaJobStatus.CANCELED:
+        if authoritative is None:
             return
+
+        current_task_id = get_current_task_id()
+        authoritative_task_id = str(
+            authoritative.task_id
+            or ""
+        )
+
+        if (
+            current_task_id
+            and authoritative_task_id
+            and current_task_id
+            != authoritative_task_id
+        ):
+            return
+
+        if (
+            authoritative.status
+            == MediaJobStatus.CANCELED
+            and status
+            != MediaJobStatus.CANCELED
+        ):
+            return
+
+        job = authoritative
 
         now = timezone.now()
         fields: list[str] = []
@@ -331,16 +443,39 @@ def job_update(
         job.heartbeat_at = now
         fields.append("heartbeat_at")
 
-        if status is not None and job.status != status:
+        if (
+            status is not None
+            and job.status != status
+        ):
             job.status = status
             fields.append("status")
 
-        weighted_active = bool(getattr(job, "stage_plan", None)) and (
-            int(getattr(job, "stage_total_weight", 0) or 0) > 0
+        weighted_active = bool(
+            getattr(
+                job,
+                "stage_plan",
+                None,
+            )
+        ) and (
+            int(
+                getattr(
+                    job,
+                    "stage_total_weight",
+                    0,
+                )
+                or 0
+            )
+            > 0
         )
 
         if progress is not None:
-            p = max(0, min(100, int(progress)))
+            normalized_progress = max(
+                0,
+                min(
+                    100,
+                    int(progress),
+                ),
+            )
 
             terminal_statuses = {
                 MediaJobStatus.DONE,
@@ -349,92 +484,194 @@ def job_update(
             }
 
             is_terminal = (
-                getattr(job, "status", None) in terminal_statuses
-            ) or bool(finished)
+                job.status
+                in terminal_statuses
+            ) or bool(
+                finished
+            )
 
-            if (not weighted_active) or is_terminal or p in (0, 100):
-                if job.progress != p:
-                    job.progress = p
-                    fields.append("progress")
+            if (
+                not weighted_active
+                or is_terminal
+                or normalized_progress
+                in {
+                    0,
+                    100,
+                }
+            ):
+                if (
+                    job.progress
+                    != normalized_progress
+                ):
+                    job.progress = (
+                        normalized_progress
+                    )
 
-        if message is not None and job.message != message:
+                    fields.append(
+                        "progress"
+                    )
+
+        if (
+            message is not None
+            and job.message != message
+        ):
             job.message = message
             fields.append("message")
 
         if error is not None:
-            cleaned_error = (error or "")[:20000]
+            cleaned_error = (
+                error
+                or ""
+            )[:20000]
+
             if job.error != cleaned_error:
                 job.error = cleaned_error
                 fields.append("error")
 
-        if source_path is not None and job.source_path != source_path:
+        if (
+            source_path is not None
+            and job.source_path != source_path
+        ):
             job.source_path = source_path
             fields.append("source_path")
 
-        if output_path is not None and job.output_path != output_path:
+        if (
+            output_path is not None
+            and job.output_path != output_path
+        ):
             job.output_path = output_path
             fields.append("output_path")
 
-        if started and not job.started_at:
+        if (
+            started
+            and not job.started_at
+        ):
             job.started_at = now
             fields.append("started_at")
 
-        if finished and not job.finished_at:
+        if (
+            finished
+            and not job.finished_at
+        ):
             job.finished_at = now
             fields.append("finished_at")
 
-        previous_stage = getattr(job, "stage", None)
+        previous_stage = (
+            job.stage
+        )
 
-        if stage is not None and job.stage != stage:
+        if (
+            stage is not None
+            and job.stage != stage
+        ):
             job.stage = stage
             fields.append("stage")
 
-        if stage_index is not None and job.stage_index != stage_index:
+        if (
+            stage_index is not None
+            and job.stage_index
+            != stage_index
+        ):
             job.stage_index = stage_index
             fields.append("stage_index")
 
-        if stage_count is not None and job.stage_count != stage_count:
+        if (
+            stage_count is not None
+            and job.stage_count
+            != stage_count
+        ):
             job.stage_count = stage_count
             fields.append("stage_count")
 
-        if stage_weight is not None and job.stage_weight != stage_weight:
+        if (
+            stage_weight is not None
+            and job.stage_weight
+            != stage_weight
+        ):
             job.stage_weight = stage_weight
             fields.append("stage_weight")
 
         if stage_progress is not None:
             normalized_stage_progress = max(
                 0.0,
-                min(1.0, float(stage_progress)),
+                min(
+                    1.0,
+                    float(
+                        stage_progress
+                    ),
+                ),
             )
 
-            if job.stage_progress != normalized_stage_progress:
-                job.stage_progress = normalized_stage_progress
-                fields.append("stage_progress")
+            if (
+                job.stage_progress
+                != normalized_stage_progress
+            ):
+                job.stage_progress = (
+                    normalized_stage_progress
+                )
 
-        stage_changed = stage is not None and previous_stage != stage
+                fields.append(
+                    "stage_progress"
+                )
 
-        if stage_started or stage_changed:
+        stage_changed = (
+            stage is not None
+            and previous_stage != stage
+        )
+
+        if (
+            stage_started
+            or stage_changed
+        ):
             job.stage_started_at = now
-            fields.append("stage_started_at")
-
-        if finished and job.started_at and job.finished_at and job.duration_ms is None:
-            job.duration_ms = int(
-                (job.finished_at - job.started_at).total_seconds() * 1000
+            fields.append(
+                "stage_started_at"
             )
-            fields.append("duration_ms")
 
-        fields.append("updated_at")
+        if (
+            finished
+            and job.started_at
+            and job.finished_at
+            and job.duration_ms is None
+        ):
+            job.duration_ms = int(
+                (
+                    job.finished_at
+                    - job.started_at
+                ).total_seconds()
+                * 1000
+            )
 
-        job.save(update_fields=list(dict.fromkeys(fields)))
+            fields.append(
+                "duration_ms"
+            )
 
-        if status == MediaJobStatus.DONE:
+        fields.append(
+            "updated_at"
+        )
+
+        job.save(
+            update_fields=list(
+                dict.fromkeys(
+                    fields
+                )
+            )
+        )
+
+        if (
+            status
+            == MediaJobStatus.DONE
+        ):
             transaction.on_commit(
-                lambda: _maybe_mark_target_available(job)
+                lambda: (
+                    _maybe_mark_target_available(
+                        job
+                    )
+                )
             )
 
     except Exception:
-        pass
-
+        return
 
 # ---------------------------------------------------------------------
 # Thumbnail helpers
@@ -673,12 +910,16 @@ def bind_converted_file(
         relative_path
     )
 
-    if not default_storage.exists(normalized_output_path):
-        logger.error(
-            "Converted file missing: %s",
-            normalized_output_path,
+    if not default_storage.exists(
+        normalized_output_path
+    ):
+        raise FileNotFoundError(
+            (
+                "Converted media output does not "
+                "exist in storage: "
+                f"{normalized_output_path}"
+            )
         )
-        return
 
     try:
         if expected_source_path is None:

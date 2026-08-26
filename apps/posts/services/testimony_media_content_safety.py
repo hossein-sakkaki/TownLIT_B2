@@ -16,7 +16,6 @@ from rest_framework import serializers
 
 from apps.content_safety.enums import (
     SafetyContext,
-    SafetyReason,
 )
 from apps.content_safety.exceptions import (
     ContentSafetyUnavailableError,
@@ -26,9 +25,6 @@ from apps.content_safety.services.image import (
 )
 from apps.content_safety.services.text import (
     enforce_text_safety,
-)
-from apps.content_safety.services.video import (
-    enforce_video_file_safety,
 )
 from apps.content_safety.services.video_transcription import (
     transcribe_video_audio,
@@ -89,55 +85,6 @@ def enforce_testimony_image_asset_safety(
                 )
             }
         ) from exc
-
-
-# -----------------------------------------------------------------------------
-# Video safety
-# -----------------------------------------------------------------------------
-def _enforce_testimony_video_safety(
-    *,
-    file_obj,
-    actor,
-) -> None:
-    """
-    Inspect a newly supplied Testimony video.
-
-    Video Safety includes:
-    - sampled visual frames
-    - visual moderation / guard / adjudication
-    - audio extraction
-    - transcription
-    - TESTIMONY contextual text safety
-    """
-
-    if not file_obj:
-        return
-
-    try:
-        enforce_video_file_safety(
-            file_obj=file_obj,
-            context=SafetyContext.TESTIMONY_MEDIA,
-            actor=actor,
-            field_name="video",
-            mime_type=getattr(
-                file_obj,
-                "content_type",
-                None,
-            ),
-        )
-
-    except (
-        TypeError,
-        ValueError,
-    ) as exc:
-        raise serializers.ValidationError(
-            {
-                "video": str(
-                    exc
-                )
-            }
-        ) from exc
-
 
 # -----------------------------------------------------------------------------
 # Audio helpers
@@ -452,9 +399,7 @@ def _enforce_testimony_audio_safety(
                 exc_info=True,
             )
 
-            raise ContentSafetyUnavailableError(
-                reason_code=SafetyReason.PROVIDER_UNAVAILABLE
-            ) from exc
+            raise ContentSafetyUnavailableError() from exc
 
         transcript = _normalized_transcript(
             transcription.get(
@@ -527,6 +472,7 @@ def enforce_testimony_media_content_safety(
     *,
     validated_data,
     actor,
+    instance=None,
 ) -> None:
     """
     Require newly supplied Testimony media to pass before persistence.
@@ -545,8 +491,15 @@ def enforce_testimony_media_content_safety(
     Existing unchanged media is intentionally not reprocessed.
     """
 
-    testimony_type = validated_data.get(
-        "type"
+    testimony_type = (
+        validated_data.get(
+            "type"
+        )
+        or getattr(
+            instance,
+            "type",
+            None,
+        )
     )
 
     if testimony_type == Testimony.TYPE_WRITTEN:
@@ -582,11 +535,7 @@ def enforce_testimony_media_content_safety(
             "thumbnail"
         )
 
-        video = validated_data.get(
-            "video"
-        )
-
-        # Cheaper image gate first.
+        # Thumbnail remains an inexpensive synchronous image gate.
         if thumbnail:
             enforce_testimony_image_asset_safety(
                 file_obj=thumbnail,
@@ -594,10 +543,8 @@ def enforce_testimony_media_content_safety(
                 field_name="thumbnail",
             )
 
-        if video:
-            _enforce_testimony_video_safety(
-                file_obj=video,
-                actor=actor,
-            )
-
+        # The video itself is intentionally NOT inspected here.
+        #
+        # It is persisted privately and scheduled through the shared
+        # asynchronous ContentSafetyJob pipeline after serializer.save().
         return

@@ -1,7 +1,7 @@
 {% extends "base_email.html" %}
 
 {% comment %}
-apps/bookstore_inventory/templates/bookstore_inventory/email/daily_inventory_summary.html
+apps/bookstore_inventory/templates/bookstore_inventory/email/inventory_movement_summary.html
 
 TownLIT
 
@@ -10,19 +10,33 @@ Last Update by Hossein Sakkaki on 2026-08-18.
 {% endcomment %}
 
 {% block subject %}
-TownLIT Daily Bookstore Inventory
+TownLIT Bookstore Inventory
 {% endblock %}
 
 {% block content %}
-  <h1>Daily bookstore inventory</h1>
+  {% if report_source == "manual" %}
+    <h1>Current bookstore inventory</h1>
+  {% else %}
+    <h1>Inventory updated</h1>
+  {% endif %}
 
   <p>Hello {{ recipient_name }},</p>
 
-  <p>
-    Here is your TownLIT inventory position for the active
-    warehouse(s) included in your responsibility scope as of
-    <strong>{{ generated_at|date:"F j, Y, g:i A" }}</strong>.
-  </p>
+  {% if report_source == "manual" %}
+    <p>
+      A current TownLIT bookstore inventory snapshot was requested.
+      Below is the latest inventory position across all active
+      warehouses as of
+      <strong>{{ generated_at|date:"F j, Y, g:i A" }}</strong>.
+    </p>
+  {% else %}
+    <p>
+      A confirmed bookstore stock change has been completed.
+      Below is the updated inventory position across all active
+      TownLIT warehouses as of
+      <strong>{{ generated_at|date:"F j, Y, g:i A" }}</strong>.
+    </p>
+  {% endif %}
 
   <table
     role="presentation"

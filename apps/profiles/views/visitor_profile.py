@@ -45,6 +45,9 @@ from apps.posts.services.journeys.profile_ring import (
     build_journey_profile_ring,
     empty_journey_profile_ring,
 )
+from apps.sanctuary.services.held_content_access import (
+    exclude_active_safety_held_targets,
+)
 
 CustomUser = get_user_model()
 SAFE_PROFILE_UNAVAILABLE_REASON = "temporarily_unavailable"
@@ -57,7 +60,7 @@ class VisitorProfileViewSet(viewsets.GenericViewSet):
     """
     permission_classes = [AllowAny]
     pagination_class = ConfigurablePagination
-    pagination_page_size = 12
+    pagination_page_size = 21
 
     # --- helpers -------------------------------------------------
     def _resolve_user(self, username: str):
@@ -340,15 +343,19 @@ class VisitorProfileViewSet(viewsets.GenericViewSet):
             .order_by("-published_at", "-id")
         )
 
-        if not request.user or not request.user.is_authenticated:
+        viewer = getattr(request, "user", None)
+
+        if not viewer or not viewer.is_authenticated:
             base = base.filter(visibility=VISIBILITY_GLOBAL)
         else:
             base = VisibilityQuery.for_viewer(
-                viewer=request.user,
+                viewer=viewer,
                 base_queryset=base,
             )
 
-        owner_ct = ContentType.objects.get_for_model(owner_profile.__class__)
+        owner_ct = ContentType.objects.get_for_model(
+            owner_profile.__class__
+        )
 
         qs = base.filter(
             content_type_id=owner_ct.id,
@@ -356,9 +363,15 @@ class VisitorProfileViewSet(viewsets.GenericViewSet):
         )
 
         qs = qs.exclude(
-            Q(video__isnull=False) &
-            ~Q(video="") &
-            ~Q(is_converted=True)
+            Q(video__isnull=False)
+            & ~Q(video="")
+            & ~Q(is_converted=True)
+        )
+
+        qs = exclude_active_safety_held_targets(
+            qs,
+            target_model=Moment,
+            viewer=viewer,
         )
 
         return qs

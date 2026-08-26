@@ -22,7 +22,9 @@ from apps.bookstore_inventory.services.access import (
     require_capability_for_warehouses, require_warehouse_capability,
 )
 from apps.bookstore_inventory.services.numbering import generate_lot_number
-
+from apps.bookstore_inventory.services.inventory_notifications import (
+    queue_inventory_change_notification,
+)
 
 def get_order_movement_type(order_type):
     return {
@@ -102,7 +104,20 @@ def post_inbound_shipment_to_stock(shipment_id, user=None):
 
     shipment.stock_posted_at = timezone.now()
     shipment.stock_posted_by = user or shipment.created_by
-    shipment.save(update_fields=("stock_posted_at", "stock_posted_by", "updated_at"))
+    shipment.save(
+        update_fields=(
+            "stock_posted_at",
+            "stock_posted_by",
+            "updated_at",
+        )
+    )
+
+    transaction.on_commit(
+        lambda: queue_inventory_change_notification(
+            created_movements
+        )
+    )
+
     return created_movements
 
 
@@ -308,6 +323,12 @@ def fulfill_book_order(
             "fulfilled_at",
             "fulfilled_by",
             "updated_at",
+        )
+    )
+
+    transaction.on_commit(
+        lambda: queue_inventory_change_notification(
+            created_movements
         )
     )
 

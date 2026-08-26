@@ -108,11 +108,6 @@ class PrayerAdmin(admin.ModelAdmin):
     ordering = ("-published_at",)
     list_per_page = 50
 
-    list_editable = (
-        "is_converted",
-        "visibility",
-    )
-
     actions = (
         "mark_waiting",
         "mark_answered",

@@ -24,6 +24,7 @@ from apps.media_conversion.services.media_manifest import (
 from .base import (
     MediaConversionCanceled,
     MediaConversionSuperseded,
+    MediaConversionTaskSuperseded,
     bind_converted_file,
     get_instance,
     get_job_by_current_task,
@@ -382,13 +383,13 @@ def convert_image_to_jpg_task(
             message="Finalizing output",
         )
 
-        mark_model_converted = not (
-            model_name == "Testimony"
-            and field_name in {
-                "thumbnail",
-                "audio_artwork",
-            }
-        )
+        # mark_model_converted = not (
+        #     model_name == "Testimony"
+        #     and field_name in {
+        #         "thumbnail",
+        #         "audio_artwork",
+        #     }
+        # )
 
         # Guard 3:
         # bind_converted_file performs an atomic row-locked comparison.
@@ -399,7 +400,7 @@ def convert_image_to_jpg_task(
             instance_id=instance_id,
             field_name=field_name,
             relative_path=relative_output_path,
-            mark_converted=mark_model_converted,
+            mark_converted=False,
             expected_source_path=normalized_source_path,
         )
 
@@ -435,6 +436,20 @@ def convert_image_to_jpg_task(
             relative_output_path,
         )
 
+    except MediaConversionTaskSuperseded as exc:
+        logger.info(
+            (
+                "Image worker superseded by newer task: "
+                "%s[%s].%s %s"
+            ),
+            model_name,
+            instance_id,
+            field_name,
+            exc,
+        )
+
+        return
+    
     except MediaConversionSuperseded as exc:
         job_update(
             job,
@@ -891,6 +906,20 @@ def convert_moment_image_item_to_jpg_task(
                     instance_id,
                 )
 
+    except MediaConversionTaskSuperseded as exc:
+        logger.info(
+            (
+                "Moment image item worker superseded "
+                "by newer task: %s[%s] %s %s"
+            ),
+            model_name,
+            instance_id,
+            field_name,
+            exc,
+        )
+
+        return
+    
     except MomentImageItemSuperseded as exc:
         job_update(
             job,

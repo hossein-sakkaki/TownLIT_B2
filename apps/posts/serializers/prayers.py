@@ -244,18 +244,38 @@ class PrayerResponseSerializer(
     # -------------------------------------------------
     # Representation hardening
     # -------------------------------------------------
-    def to_representation(self, obj):
-        request = self.context.get("request")
-        viewer = request.user if request and request.user.is_authenticated else None
+    def to_representation(
+        self,
+        obj,
+    ):
+        request = self.context.get(
+            "request"
+        )
 
-        data = super().to_representation(obj)
+        viewer = (
+            request.user
+            if (
+                request
+                and request.user.is_authenticated
+            )
+            else None
+        )
 
-        # Conversion-safe payload for response video.
-        # Response image remains available because it is required.
-        if obj.video and not obj.is_converted:
-            data["video"] = None
-            data["thumbnail"] = None
+        data = super().to_representation(
+            obj
+        )
 
+        # Always resolve the complete shared pipeline for video:
+        #
+        # Content Safety
+        #     ↓
+        # Media Conversion
+        #     ↓
+        # Ready
+        #
+        # gate_media_payload() removes raw video/thumbnail delivery keys
+        # whenever the exact video generation is not ready.
+        if obj.video:
             data = gate_media_payload(
                 obj=obj,
                 data=data,
@@ -270,7 +290,6 @@ class PrayerResponseSerializer(
             viewer=viewer,
             data=data,
         )
-
 
 # -------------------------------------------------
 # Full Prayer serializer
@@ -544,29 +563,31 @@ class PrayerSerializer(
     # -------------------------------------------------
     # Representation hardening
     # -------------------------------------------------
-    def to_representation(self, obj):
-        request = self.context.get("request")
-        viewer = request.user if request and request.user.is_authenticated else None
+    def to_representation(
+        self,
+        obj,
+    ):
+        request = self.context.get(
+            "request"
+        )
 
-        # Hard gate: visitors cannot see unconverted prayer video.
-        if obj.video and not obj.is_converted:
-            owner = resolve_owner_from_request(request) if request else None
+        viewer = (
+            request.user
+            if (
+                request
+                and request.user.is_authenticated
+            )
+            else None
+        )
 
-            if not owner or (
-                obj.content_type_id
-                != ContentType.objects.get_for_model(owner.__class__).id
-                or obj.object_id != owner.id
-            ):
-                return None
+        data = super().to_representation(
+            obj
+        )
 
-        data = super().to_representation(obj)
-
-        # Conversion-safe payload for prayer video.
-        # Prayer image remains available because image is required.
-        if obj.video and not obj.is_converted:
-            data["video"] = None
-            data["thumbnail"] = None
-
+        # -------------------------------------------------
+        # Shared video pipeline
+        # -------------------------------------------------
+        if obj.video:
             data = gate_media_payload(
                 obj=obj,
                 data=data,
@@ -576,10 +597,75 @@ class PrayerSerializer(
                 include_job_target=True,
             )
 
+            pipeline = data.get(
+                "media_pipeline"
+            )
+
+            pipeline_ready = bool(
+                isinstance(
+                    pipeline,
+                    dict,
+                )
+                and pipeline.get(
+                    "phase"
+                )
+                == "ready"
+            )
+
+            # Pre-publication video Prayer remains owner-only regardless
+            # of the model-level is_converted flag.
+            #
+            # This deliberately relies on the shared pipeline contract,
+            # because Prayer has multiple media fields sharing one
+            # is_converted field.
+            if not pipeline_ready:
+                owner = (
+                    resolve_owner_from_request(
+                        request
+                    )
+                    if request
+                    else None
+                )
+
+                if not owner:
+                    return None
+
+                owner_ct = (
+                    ContentType.objects
+                    .get_for_model(
+                        owner.__class__,
+                        for_concrete_model=False,
+                    )
+                )
+
+                is_owner = (
+                    obj.content_type_id
+                    == owner_ct.id
+                    and obj.object_id
+                    == owner.id
+                )
+
+                if not is_owner:
+                    return None
+
+        # -------------------------------------------------
+        # Visitor hardening
+        # -------------------------------------------------
         if not viewer:
-            data.pop("visibility", None)
-            data.pop("is_hidden", None)
-            data.pop("reactions_breakdown", None)
+            data.pop(
+                "visibility",
+                None,
+            )
+
+            data.pop(
+                "is_hidden",
+                None,
+            )
+
+            data.pop(
+                "reactions_breakdown",
+                None,
+            )
 
         return held_representation_or_none(
             target=obj,
@@ -686,18 +772,28 @@ class PrayerResponseProfileGridSerializer(serializers.ModelSerializer):
             )
             return None
 
-    def to_representation(self, obj):
-        request = self.context.get("request")
-        viewer = request.user if request and request.user.is_authenticated else None
+    def to_representation(
+        self,
+        obj,
+    ):
+        request = self.context.get(
+            "request"
+        )
 
-        data = super().to_representation(obj)
+        viewer = (
+            request.user
+            if (
+                request
+                and request.user.is_authenticated
+            )
+            else None
+        )
 
-        # Conversion-safe payload for response video.
-        # Response image remains available.
-        if obj.video and not obj.is_converted:
-            data["video"] = None
-            data["thumbnail"] = None
+        data = super().to_representation(
+            obj
+        )
 
+        if obj.video:
             data = gate_media_payload(
                 obj=obj,
                 data=data,
@@ -851,18 +947,30 @@ class PrayerProfileGridSerializer(serializers.ModelSerializer):
     # -------------------------------------------------
     # Representation hardening
     # -------------------------------------------------
-    def to_representation(self, obj):
-        request = self.context.get("request")
-        viewer = request.user if request and request.user.is_authenticated else None
+    def to_representation(
+        self,
+        obj,
+    ):
+        request = self.context.get(
+            "request"
+        )
 
-        data = super().to_representation(obj)
+        viewer = (
+            request.user
+            if (
+                request
+                and request.user.is_authenticated
+            )
+            else None
+        )
 
-        # Conversion-safe payload for main prayer video.
-        # Prayer image remains available because image is required.
-        if obj.video and not obj.is_converted:
-            data["video"] = None
-            data["thumbnail"] = None
+        data = super().to_representation(
+            obj
+        )
 
+        # /me/ is owner-facing, so pending/failed Safety state is returned
+        # instead of hiding the whole Prayer.
+        if obj.video:
             data = gate_media_payload(
                 obj=obj,
                 data=data,
@@ -877,8 +985,7 @@ class PrayerProfileGridSerializer(serializers.ModelSerializer):
             viewer=viewer,
             data=data,
         )
-    
-    
+        
     
 # -------------------------------------------------
 # Lightweight response serializer for Stream payload
@@ -953,10 +1060,67 @@ class PrayerResponseStreamPayloadSerializer(serializers.ModelSerializer):
 
         return _build_asset_cdn_url(key)
 
-    def to_representation(self, obj):
-        request = self.context.get("request")
-        viewer = request.user if request and request.user.is_authenticated else None
-        data = super().to_representation(obj)
+    def to_representation(
+        self,
+        obj,
+    ):
+        request = self.context.get(
+            "request"
+        )
+
+        viewer = (
+            request.user
+            if (
+                request
+                and request.user.is_authenticated
+            )
+            else None
+        )
+
+        data = super().to_representation(
+            obj
+        )
+
+        # Stream is intentionally lightweight and does not resolve job state.
+        #
+        # A raw/non-HLS video key must never leave this serializer.
+        if obj.video:
+            video_key = _clean_asset_key(
+                getattr(
+                    obj,
+                    "video",
+                    None,
+                )
+            )
+
+            normalized_video_key = str(
+                video_key
+                or ""
+            ).strip().lower()
+
+            is_final_video = bool(
+                normalized_video_key
+                and (
+                    normalized_video_key.endswith(
+                        ".m3u8"
+                    )
+                    or normalized_video_key.endswith(
+                        "master.m3u8"
+                    )
+                )
+            )
+
+            if (
+                obj.is_converted is not True
+                or not is_final_video
+            ):
+                data[
+                    "video"
+                ] = None
+
+                data[
+                    "thumbnail"
+                ] = None
 
         return held_representation_or_none(
             target=obj,
@@ -1075,15 +1239,68 @@ class PrayerStreamPayloadSerializer(
 
         return _build_asset_cdn_url(key)
     
-    def to_representation(self, obj):
-        request = self.context.get("request")
+    def to_representation(
+        self,
+        obj,
+    ):
+        request = self.context.get(
+            "request"
+        )
+
         viewer = (
             request.user
-            if request and request.user.is_authenticated
+            if (
+                request
+                and request.user.is_authenticated
+            )
             else None
         )
 
-        data = super().to_representation(obj)
+        data = super().to_representation(
+            obj
+        )
+
+        # Defensive Stream hardening.
+        #
+        # Stream query filtering remains the primary publication gate,
+        # but a raw video storage key must never escape from this serializer.
+        if obj.video:
+            video_key = _clean_asset_key(
+                getattr(
+                    obj,
+                    "video",
+                    None,
+                )
+            )
+
+            normalized_video_key = str(
+                video_key
+                or ""
+            ).strip().lower()
+
+            is_final_video = bool(
+                normalized_video_key
+                and (
+                    normalized_video_key.endswith(
+                        ".m3u8"
+                    )
+                    or normalized_video_key.endswith(
+                        "master.m3u8"
+                    )
+                )
+            )
+
+            if (
+                obj.is_converted is not True
+                or not is_final_video
+            ):
+                data[
+                    "video"
+                ] = None
+
+                data[
+                    "thumbnail"
+                ] = None
 
         return held_representation_or_none(
             target=obj,

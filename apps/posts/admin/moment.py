@@ -56,7 +56,7 @@ class MomentAdmin(admin.ModelAdmin):
         "updated_at",
     )
 
-    list_editable = ("visibility",)
+    list_editable = ("is_active",)
 
     fieldsets = (
         (

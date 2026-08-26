@@ -262,3 +262,77 @@ class SafetyReason(models.TextChoices):
         "provider_unavailable",
         "Provider Unavailable",
     )
+    
+    
+class ContentSafetyJobStatus(models.TextChoices):
+    QUEUED = (
+        "queued",
+        "Queued",
+    )
+
+    PROCESSING = (
+        "processing",
+        "Processing",
+    )
+
+    DONE = (
+        "done",
+        "Done",
+    )
+
+    FAILED = (
+        "failed",
+        "Failed",
+    )
+
+    CANCELED = (
+        "canceled",
+        "Canceled",
+    )
+
+
+class ContentSafetyJobStage(models.TextChoices):
+    QUEUED = (
+        "queued",
+        "Queued",
+    )
+
+    CHECKING = (
+        "checking",
+        "Checking",
+    )
+
+    HANDOFF = (
+        "handoff",
+        "Handoff",
+    )
+
+    APPROVED_WAITING = (
+        "approved_waiting",
+        "Approved - Waiting",
+    )
+
+    HANDED_OFF = (
+        "handed_off",
+        "Handed Off",
+    )
+
+    FINISHED = (
+        "finished",
+        "Finished",
+    )
+
+    HANDOFF_FAILED = (
+        "handoff_failed",
+        "Handoff Failed",
+    )
+
+    FAILED = (
+        "failed",
+        "Failed",
+    )
+
+    CANCELED = (
+        "canceled",
+        "Canceled",
+    )

@@ -97,6 +97,10 @@ NOTIFICATION_TYPES = [
     ("new_prayer_video", "New Video Prayer"),
     ("prayer_result_answered", "Prayer Answered Update"),
     ("prayer_result_not_answered", "Prayer Update (Not Answered)"),
+
+    # --- Journey ---
+    ("new_journey", "New Journey"),
+
 ]
 
 
@@ -201,6 +205,7 @@ NOTIFICATION_TYPES_NO_EMAIL = {
     "new_testimony_written",
     "new_testimony_audio",
     "new_testimony_video",
+    "new_journey",
 }
 
 
@@ -533,6 +538,18 @@ NOTIFICATION_PREF_METADATA = {
         "category": "Prayers",
         "label": "Prayer follow-up update",
         "description": "You will be notified when a friend shares a follow-up update on their prayer request.",
+    },
+
+    # ------------------------
+    # JOURNEYS
+    # ------------------------
+    "new_journey": {
+        "category": "Journey",
+        "label": "New Journey from a friend",
+        "description": (
+            "You will be notified when a friend "
+            "adds a new Journey for the day."
+        ),
     },
 
     # ------------------------

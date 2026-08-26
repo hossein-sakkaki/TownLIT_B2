@@ -1,6 +1,7 @@
 # apps/media_conversion/tasks/video.py
 
 import logging
+import os
 
 from celery import shared_task
 from celery.exceptions import Retry
@@ -24,19 +25,94 @@ from utils.common.utils import FileUpload
 from utils.common.video_utils import convert_video_to_multi_hls
 
 from .base import (
-    get_instance,
-    get_job_by_current_task,
-    job_update,
+    MediaConversionCanceled,
+    MediaConversionSuperseded,
+    MediaConversionTaskSuperseded,
+    bind_converted_file,
     can_autogen_thumbnail,
     extract_video_thumbnail,
-    bind_converted_file,
-    raise_if_job_canceled,
+    get_instance,
+    get_job_by_current_task,
     is_job_canceled,
-    MediaConversionCanceled,
+    is_job_current_task,
+    job_update,
+    normalize_storage_key,
+    raise_if_job_canceled,
+    raise_if_source_superseded,
 )
 
 logger = logging.getLogger(__name__)
 
+def _safe_delete_video_output(
+    master_path: str | None,
+) -> None:
+    """
+    Remove an unbound HLS output tree created by this worker.
+
+    The HLS output directory is conversion-specific, so a canceled or stale
+    worker can safely remove its own generated variants and playlists.
+    """
+
+    normalized_path = normalize_storage_key(
+        master_path
+    )
+
+    if not normalized_path:
+        return
+
+    prefix = os.path.dirname(
+        normalized_path
+    ).strip("/")
+
+    if not prefix:
+        return
+
+    def _delete_prefix(
+        current_prefix: str,
+    ) -> None:
+        try:
+            directories, files = (
+                default_storage.listdir(
+                    current_prefix
+                )
+            )
+        except Exception:
+            return
+
+        for filename in files:
+            key = (
+                f"{current_prefix}/"
+                f"{filename}"
+            )
+
+            try:
+                if default_storage.exists(
+                    key
+                ):
+                    default_storage.delete(
+                        key
+                    )
+            except Exception:
+                logger.warning(
+                    (
+                        "Could not delete stale "
+                        "video output: %s"
+                    ),
+                    key,
+                    exc_info=True,
+                )
+
+        for directory in directories:
+            _delete_prefix(
+                (
+                    f"{current_prefix}/"
+                    f"{directory}"
+                )
+            )
+
+    _delete_prefix(
+        prefix
+    )
 
 @shared_task(
     bind=True,
@@ -54,30 +130,55 @@ def convert_video_to_multi_hls_task(
     fileupload: dict,
 ):
     """
-    Celery task:
-    - optional thumbnail
-    - video -> multi-bitrate HLS
-    - bind result to model
-    - cancel-aware
-    - cleanup-aware
+    Convert one authoritative uploaded video to canonical HLS.
+
+    Guarantees:
+    - cancellation-aware
+    - source-identity-aware
+    - task-ownership-aware
+    - stale workers never bind or mutate newer jobs
+    - unbound stale HLS output is removed
     """
+
     close_old_connections()
+
     job = get_job_by_current_task()
+
+    normalized_source_path = (
+        normalize_storage_key(
+            source_path
+        )
+    )
+
+    conversion_result = None
+    output_bound = False
 
     job_update(
         job,
         status=MediaJobStatus.PROCESSING,
-        progress=max(int(getattr(job, "progress", 0) or 0), 1),
+        progress=max(
+            int(
+                getattr(
+                    job,
+                    "progress",
+                    0,
+                )
+                or 0
+            ),
+            1,
+        ),
         message="Preparing video conversion",
-        source_path=source_path,
+        source_path=normalized_source_path,
         started=True,
     )
 
     try:
-        raise_if_job_canceled(job)
+        raise_if_job_canceled(
+            job
+        )
 
         # -------------------------------------------------
-        # Fetch target instance
+        # Fetch target
         # -------------------------------------------------
         try:
             instance = get_instance(
@@ -87,12 +188,36 @@ def convert_video_to_multi_hls_task(
             )
 
         except Exception as exc:
-            current_retry = int(getattr(self.request, "retries", 0) or 0)
-            max_retries = int(getattr(self, "max_retries", 0) or 0)
+            # A deleted job means API cancellation already
+            # removed the authoritative lifecycle.
+            raise_if_job_canceled(
+                job
+            )
+
+            current_retry = int(
+                getattr(
+                    self.request,
+                    "retries",
+                    0,
+                )
+                or 0
+            )
+
+            max_retries = int(
+                getattr(
+                    self,
+                    "max_retries",
+                    0,
+                )
+                or 0
+            )
 
             if current_retry < max_retries:
                 logger.warning(
-                    "⏳ Target %s[%s] not visible yet; retrying %s/%s",
+                    (
+                        "⏳ Target %s[%s] not visible yet; "
+                        "retrying %s/%s"
+                    ),
                     model_name,
                     instance_id,
                     current_retry + 1,
@@ -103,54 +228,114 @@ def convert_video_to_multi_hls_task(
                     job,
                     message=(
                         "Waiting for target object visibility "
-                        f"(retry {current_retry + 1}/{max_retries})…"
+                        f"(retry {current_retry + 1}/"
+                        f"{max_retries})…"
                     ),
                 )
 
-                raise self.retry(exc=exc)
+                raise self.retry(
+                    exc=exc
+                )
 
             job_update(
                 job,
                 status=MediaJobStatus.CANCELED,
                 progress=100,
-                message="Canceled: target object not found after retries",
+                message=(
+                    "Canceled: target object "
+                    "not found after retries"
+                ),
                 finished=True,
             )
 
             cleanup_canceled_media_job(
                 job,
-                reason="target-not-found-after-retries",
+                reason=(
+                    "target-not-found-after-retries"
+                ),
             )
 
             logger.warning(
-                "🚫 Target %s[%s] still missing after %s retries; canceling video task",
+                (
+                    "🚫 Target %s[%s] still missing after "
+                    "%s retries; canceling video task"
+                ),
                 model_name,
                 instance_id,
                 max_retries,
             )
+
             return
 
-        raise_if_job_canceled(job)
+        raise_if_job_canceled(
+            job
+        )
 
-        upload = FileUpload(**fileupload)
+        # Never spend CPU on a source that has already
+        # been removed or replaced.
+        raise_if_source_superseded(
+            instance=instance,
+            model_name=model_name,
+            instance_id=instance_id,
+            field_name=field_name,
+            expected_source_path=(
+                normalized_source_path
+            ),
+        )
+
+        upload = FileUpload(
+            **fileupload
+        )
 
         # -------------------------------------------------
-        # Optional thumbnail generation
+        # Optional thumbnail
         # -------------------------------------------------
         try:
-            touch_job(job, message="Checking thumbnail…")
-            raise_if_job_canceled(job)
+            touch_job(
+                job,
+                message="Checking thumbnail…",
+            )
+
+            raise_if_job_canceled(
+                job
+            )
 
             if (
-                getattr(instance, "AUTO_THUMBNAIL_FROM_VIDEO", False)
-                and can_autogen_thumbnail(instance)
-            ):
-                thumbnail_path = extract_video_thumbnail(
+                getattr(
                     instance,
-                    source_path,
+                    "AUTO_THUMBNAIL_FROM_VIDEO",
+                    False,
+                )
+                and can_autogen_thumbnail(
+                    instance
+                )
+            ):
+                thumbnail_path = (
+                    extract_video_thumbnail(
+                        instance,
+                        normalized_source_path,
+                    )
                 )
 
-                raise_if_job_canceled(job)
+                raise_if_job_canceled(
+                    job
+                )
+
+                refreshed_source = get_instance(
+                    app_label,
+                    model_name,
+                    instance_id,
+                )
+
+                raise_if_source_superseded(
+                    instance=refreshed_source,
+                    model_name=model_name,
+                    instance_id=instance_id,
+                    field_name=field_name,
+                    expected_source_path=(
+                        normalized_source_path
+                    ),
+                )
 
                 if thumbnail_path:
                     bind_converted_file(
@@ -163,46 +348,64 @@ def convert_video_to_multi_hls_task(
                     )
 
                     try:
-                        refreshed_for_thumbnail = get_instance(
-                            app_label,
-                            model_name,
-                            instance_id,
+                        refreshed_for_thumbnail = (
+                            get_instance(
+                                app_label,
+                                model_name,
+                                instance_id,
+                            )
                         )
 
-                        thumbnail_meta = image_metadata_from_storage(
-                            thumbnail_path,
+                        thumbnail_meta = (
+                            image_metadata_from_storage(
+                                thumbnail_path
+                            )
                         )
 
-                        thumbnail_asset = build_asset_payload(
-                            key=thumbnail_path,
-                            metadata=thumbnail_meta,
+                        thumbnail_asset = (
+                            build_asset_payload(
+                                key=thumbnail_path,
+                                metadata=thumbnail_meta,
+                            )
                         )
 
                         update_instance_media_asset(
-                            instance=refreshed_for_thumbnail,
+                            instance=(
+                                refreshed_for_thumbnail
+                            ),
                             field_name="thumbnail",
                             payload=thumbnail_asset,
                         )
 
                     except Exception:
                         logger.warning(
-                            "Thumbnail metadata update skipped for %s[%s]",
+                            (
+                                "Thumbnail metadata update "
+                                "skipped for %s[%s]"
+                            ),
                             model_name,
                             instance_id,
                             exc_info=True,
                         )
-    
+
                     logger.info(
                         "🖼️ Thumbnail generated: %s",
                         thumbnail_path,
                     )
 
-        except MediaConversionCanceled:
+        except (
+            MediaConversionCanceled,
+            MediaConversionSuperseded,
+            MediaConversionTaskSuperseded,
+        ):
             raise
 
         except Exception as exc:
             logger.warning(
-                "Thumbnail generation skipped for %s[%s]: %s",
+                (
+                    "Thumbnail generation skipped "
+                    "for %s[%s]: %s"
+                ),
                 model_name,
                 instance_id,
                 exc,
@@ -211,48 +414,112 @@ def convert_video_to_multi_hls_task(
         # -------------------------------------------------
         # Video -> HLS
         # -------------------------------------------------
-        raise_if_job_canceled(job)
-
-        touch_job(job, message="Starting video encoding…")
-
-        conversion_result = convert_video_to_multi_hls(
-            source_path=source_path,
-            instance=instance,
-            fileupload=upload,
-            job=job,
-            field_name=field_name,
+        raise_if_job_canceled(
+            job
         )
 
-        relative_output_path = conversion_result.master_path
+        # Re-check immediately before the expensive encoder.
+        refreshed_before_encoding = (
+            get_instance(
+                app_label,
+                model_name,
+                instance_id,
+            )
+        )
+
+        raise_if_source_superseded(
+            instance=refreshed_before_encoding,
+            model_name=model_name,
+            instance_id=instance_id,
+            field_name=field_name,
+            expected_source_path=(
+                normalized_source_path
+            ),
+        )
+
+        touch_job(
+            job,
+            message="Starting video encoding…",
+        )
+
+        conversion_result = (
+            convert_video_to_multi_hls(
+                source_path=normalized_source_path,
+                instance=refreshed_before_encoding,
+                fileupload=upload,
+                job=job,
+                field_name=field_name,
+            )
+        )
+
+        relative_output_path = (
+            conversion_result.master_path
+        )
+
+        # Cancellation or retry/source replacement may
+        # have happened while FFmpeg was running.
+        raise_if_job_canceled(
+            job
+        )
+
+        refreshed_before_bind = get_instance(
+            app_label,
+            model_name,
+            instance_id,
+        )
+
+        raise_if_source_superseded(
+            instance=refreshed_before_bind,
+            model_name=model_name,
+            instance_id=instance_id,
+            field_name=field_name,
+            expected_source_path=(
+                normalized_source_path
+            ),
+        )
 
         video_asset = build_asset_payload(
             key=relative_output_path,
             metadata={
-                "width": conversion_result.width,
-                "height": conversion_result.height,
-                "aspect_ratio": conversion_result.aspect_ratio,
-                "duration_ms": conversion_result.duration_ms,
-                "mime_type": "application/vnd.apple.mpegurl",
+                "width": (
+                    conversion_result.width
+                ),
+                "height": (
+                    conversion_result.height
+                ),
+                "aspect_ratio": (
+                    conversion_result.aspect_ratio
+                ),
+                "duration_ms": (
+                    conversion_result.duration_ms
+                ),
+                "mime_type": (
+                    "application/vnd.apple.mpegurl"
+                ),
                 "size": 0,
             },
             extra={
-                "qualities": conversion_result.variants,
-                "preview": conversion_result.preview,
+                "qualities": (
+                    conversion_result.variants
+                ),
+                "preview": (
+                    conversion_result.preview
+                ),
             },
         )
 
-        raise_if_job_canceled(job)
-
-        # Store output_path early so cleanup can remove HLS output if cancel
-        # happens after conversion but before final DONE.
         job_update(
             job,
             output_path=relative_output_path,
             message="Binding converted output…",
         )
 
+        raise_if_job_canceled(
+            job
+        )
+
         # -------------------------------------------------
-        # Bind converted output
+        # Atomic guarded bind
         # -------------------------------------------------
         bind_converted_file(
             model_name=model_name,
@@ -261,8 +528,12 @@ def convert_video_to_multi_hls_task(
             field_name=field_name,
             relative_path=relative_output_path,
             mark_converted=False,
-            expected_source_path=source_path,
+            expected_source_path=(
+                normalized_source_path
+            ),
         )
+
+        output_bound = True
 
         refreshed_instance = get_instance(
             app_label,
@@ -275,11 +546,13 @@ def convert_video_to_multi_hls_task(
             field_name=field_name,
             payload=video_asset,
         )
-        
-        raise_if_job_canceled(job)
+
+        raise_if_job_canceled(
+            job
+        )
 
         # -------------------------------------------------
-        # Finalize conversion
+        # Finalize
         # -------------------------------------------------
         job_update(
             job,
@@ -296,13 +569,18 @@ def convert_video_to_multi_hls_task(
         )
 
         # -------------------------------------------------
-        # Testimony STT audio
+        # Testimony STT
         # -------------------------------------------------
         try:
-            if model_name == "Testimony" and field_name == "video":
+            if (
+                model_name == "Testimony"
+                and field_name == "video"
+            ):
                 from django.db import transaction
 
-                raise_if_job_canceled(job)
+                raise_if_job_canceled(
+                    job
+                )
 
                 instance = get_instance(
                     app_label,
@@ -310,25 +588,50 @@ def convert_video_to_multi_hls_task(
                     instance_id,
                 )
 
-                transcript = get_or_create_transcript_for_object(instance)
-                stt_source_path = relative_output_path or source_path
+                transcript = (
+                    get_or_create_transcript_for_object(
+                        instance
+                    )
+                )
 
-                if not stt_source_path or not default_storage.exists(stt_source_path):
+                stt_source_path = (
+                    relative_output_path
+                    or normalized_source_path
+                )
+
+                if (
+                    not stt_source_path
+                    or not default_storage.exists(
+                        stt_source_path
+                    )
+                ):
                     raise FileNotFoundError(
-                        f"STT source missing: {stt_source_path}"
+                        (
+                            "STT source missing: "
+                            f"{stt_source_path}"
+                        )
                     )
 
                 output_audio_path = (
-                    f"posts/audios/testimony/stt/{instance_id}/audio.wav"
+                    "posts/audios/testimony/"
+                    f"stt/{instance_id}/audio.wav"
                 )
 
-                audio_path = build_stt_audio_from_source_video(
-                    source_path=stt_source_path,
-                    out_rel_path=output_audio_path,
+                audio_path = (
+                    build_stt_audio_from_source_video(
+                        source_path=stt_source_path,
+                        out_rel_path=output_audio_path,
+                    )
                 )
 
-                transcript.stt_audio.name = audio_path
-                transcript.stt_audio_format = "wav"
+                transcript.stt_audio.name = (
+                    audio_path
+                )
+
+                transcript.stt_audio_format = (
+                    "wav"
+                )
+
                 transcript.save(
                     update_fields=[
                         "stt_audio",
@@ -338,16 +641,26 @@ def convert_video_to_multi_hls_task(
                 )
 
                 logger.info(
-                    "🎧 STT audio persisted: transcript=%s path=%s",
+                    (
+                        "🎧 STT audio persisted: "
+                        "transcript=%s path=%s"
+                    ),
                     transcript.id,
                     transcript.stt_audio.name,
                 )
 
                 transaction.on_commit(
-                    lambda: build_transcript_for_video.delay(transcript.id)
+                    lambda: (
+                        build_transcript_for_video.delay(
+                            transcript.id
+                        )
+                    )
                 )
 
-        except MediaConversionCanceled:
+        except (
+            MediaConversionCanceled,
+            MediaConversionTaskSuperseded,
+        ):
             raise
 
         except Exception as exc:
@@ -358,23 +671,101 @@ def convert_video_to_multi_hls_task(
             )
 
         # -------------------------------------------------
-        # Cleanup original uploaded video after success
+        # Delete original only after authoritative success
         # -------------------------------------------------
         try:
-            if source_path and default_storage.exists(source_path):
-                default_storage.delete(source_path)
+            if (
+                normalized_source_path
+                and default_storage.exists(
+                    normalized_source_path
+                )
+            ):
+                default_storage.delete(
+                    normalized_source_path
+                )
 
                 logger.info(
-                    "🗑️ Deleted original uploaded video: %s",
-                    source_path,
+                    (
+                        "🗑️ Deleted original uploaded "
+                        "video: %s"
+                    ),
+                    normalized_source_path,
                 )
+
         except Exception:
             logger.warning(
-                "Could not delete original uploaded video: %s",
-                source_path,
+                (
+                    "Could not delete original "
+                    "uploaded video: %s"
+                ),
+                normalized_source_path,
+                exc_info=True,
             )
 
+    except MediaConversionTaskSuperseded as exc:
+        if (
+            conversion_result is not None
+            and not output_bound
+        ):
+            _safe_delete_video_output(
+                conversion_result.master_path
+            )
+
+        # Never mutate or clean the authoritative newer job.
+        logger.info(
+            (
+                "Video worker superseded by newer task: "
+                "%s[%s].%s %s"
+            ),
+            model_name,
+            instance_id,
+            field_name,
+            exc,
+        )
+
+        return
+
+    except MediaConversionSuperseded as exc:
+        if (
+            conversion_result is not None
+            and not output_bound
+        ):
+            _safe_delete_video_output(
+                conversion_result.master_path
+            )
+
+        job_update(
+            job,
+            status=MediaJobStatus.CANCELED,
+            progress=100,
+            message="Canceled: source was replaced",
+            error="",
+            finished=True,
+        )
+
+        logger.info(
+            (
+                "Video conversion superseded: "
+                "%s[%s].%s expected=%s current=%s"
+            ),
+            model_name,
+            instance_id,
+            field_name,
+            exc.expected_source_path,
+            exc.current_source_path,
+        )
+
+        return
+
     except MediaConversionCanceled:
+        if (
+            conversion_result is not None
+            and not output_bound
+        ):
+            _safe_delete_video_output(
+                conversion_result.master_path
+            )
+
         cleanup_canceled_media_job(
             job,
             reason="worker-cancel-checkpoint",
@@ -389,22 +780,58 @@ def convert_video_to_multi_hls_task(
         )
 
         logger.info(
-            "🚫 Video conversion canceled: %s[%s]",
+            (
+                "🚫 Video conversion canceled: "
+                "%s[%s]"
+            ),
             model_name,
             instance_id,
         )
+
         return
 
     except Retry:
         raise
 
     except Exception as exc:
-        # If API cancel happened while ffmpeg/storage code was running,
-        # do not overwrite CANCELED with FAILED.
-        if is_job_canceled(job):
+        if not is_job_current_task(
+            job
+        ):
+            if (
+                conversion_result is not None
+                and not output_bound
+            ):
+                _safe_delete_video_output(
+                    conversion_result.master_path
+                )
+
+            logger.info(
+                (
+                    "Video worker exited after losing "
+                    "job ownership: %s[%s]"
+                ),
+                model_name,
+                instance_id,
+            )
+
+            return
+
+        if is_job_canceled(
+            job
+        ):
+            if (
+                conversion_result is not None
+                and not output_bound
+            ):
+                _safe_delete_video_output(
+                    conversion_result.master_path
+                )
+
             cleanup_canceled_media_job(
                 job,
-                reason="worker-exception-after-cancel",
+                reason=(
+                    "worker-exception-after-cancel"
+                ),
             )
 
             job_update(
@@ -416,10 +843,14 @@ def convert_video_to_multi_hls_task(
             )
 
             logger.info(
-                "🚫 Video conversion stopped after cancel: %s[%s]",
+                (
+                    "🚫 Video conversion stopped "
+                    "after cancel: %s[%s]"
+                ),
                 model_name,
                 instance_id,
             )
+
             return
 
         job_update(
@@ -432,8 +863,15 @@ def convert_video_to_multi_hls_task(
         )
 
         logger.exception(
-            "❌ Video conversion failed for %s[%s]",
+            (
+                "❌ Video conversion failed "
+                "for %s[%s]"
+            ),
             model_name,
             instance_id,
         )
+
         raise
+
+    finally:
+        close_old_connections()

@@ -350,6 +350,12 @@ class JourneyEntry(
     last_viewed_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    notification_dispatched_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+    )
+
     url_name = "posts:journey-entry-detail"
 
     def get_slug_source(self) -> str:
@@ -536,10 +542,22 @@ class JourneyEntry(
 
     def on_available(self):
         """
-        Journey publication does not create a public notification.
+        Dispatch the JourneyEntry publication event once the
+        immutable Journey asset is actually available.
+
+        We intentionally use the AvailabilityAware lifecycle hook
+        instead of Django post_save because Journey publication
+        can pass through render/conversion/moderation states before
+        becoming deliverable.
         """
 
-        return
+        from apps.notifications.signals.journey_signals import (
+            notify_journey_entry_ready,
+        )
+
+        notify_journey_entry_ready(
+            self
+        )
 
     def archive(self, *, at=None) -> None:
         if self.archived_at:

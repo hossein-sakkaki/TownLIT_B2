@@ -20,6 +20,7 @@ from utils.common.utils import FileUpload
 from .base import (
     MediaConversionCanceled,
     MediaConversionSuperseded,
+    MediaConversionTaskSuperseded,
     bind_converted_file,
     get_instance,
     get_job_by_current_task,
@@ -267,6 +268,30 @@ def convert_audio_to_mp3_task(
             result.channels,
         )
 
+    except MediaConversionTaskSuperseded as exc:
+        if (
+            result is not None
+            and not output_bound
+        ):
+            _delete_storage_file_if_present(
+                result.storage_path
+            )
+
+        # The newer task owns the job row.
+        # Never mutate or clean its state.
+        logger.info(
+            (
+                "Audio worker superseded by newer task: "
+                "%s[%s].%s %s"
+            ),
+            model_name,
+            instance_id,
+            field_name,
+            exc,
+        )
+
+        return
+    
     except MediaConversionCanceled:
         if result is not None and not output_bound:
             _delete_storage_file_if_present(
@@ -334,3 +359,5 @@ def convert_audio_to_mp3_task(
 
     finally:
         close_old_connections()
+        
+        

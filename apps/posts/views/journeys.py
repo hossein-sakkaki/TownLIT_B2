@@ -25,7 +25,10 @@ from apps.core.visibility.policy import VisibilityPolicy
 from apps.core.visibility.query import VisibilityQuery
 
 from apps.posts.models.journey import Journey, JourneyEntry
-from apps.posts.constants.journeys import JourneyViewSource
+from apps.posts.constants.journeys import (
+    JourneyRetentionPolicy,
+    JourneyViewSource,
+)
 from apps.posts.serializers.journeys import (
     JourneyAnalyticsSerializer,
     JourneyCloseSerializer,
@@ -67,7 +70,6 @@ from apps.posts.services.journeys.processing import (
     JOURNEY_WORKFLOW_FIELD,
     submit_journey_workflow,
 )
-
 logger = logging.getLogger(__name__)
 
 
@@ -236,39 +238,60 @@ class JourneyViewSet(
     ):
         journey = self.get_object()
         now = timezone.now()
+
         visible_entries = []
 
         for entry in journey.ordered_entries:
-            self.apply_hard_owner_gate(request, entry)
+            self.apply_hard_owner_gate(
+                request,
+                entry,
+            )
 
             is_owner = self._is_entry_owner(
                 request=request,
                 entry=entry,
             )
 
-            if not is_owner:
-                if entry.archived_at is not None:
-                    continue
+            if not entry.is_available():
+                continue
 
+            if not is_owner:
                 if entry.published_at > now:
                     continue
 
-                if entry.expires_at <= now:
+                is_historical = bool(
+                    entry.archived_at is not None
+                    or entry.expires_at <= now
+                )
+
+                if (
+                    is_historical
+                    and entry.retention_policy
+                    != JourneyRetentionPolicy.KEEP
+                ):
                     continue
 
             if VisibilityPolicy.can_view(
                 viewer=request.user,
                 obj=entry,
             ):
-                visible_entries.append(entry)
+                visible_entries.append(
+                    entry
+                )
 
         if not visible_entries:
-            raise NotFound("Journey not found.")
+            raise NotFound(
+                "Journey not found."
+            )
 
-        journey.ordered_entries = visible_entries
+        journey.ordered_entries = (
+            visible_entries
+        )
 
         return Response(
-            self.get_serializer(journey).data,
+            self.get_serializer(
+                journey
+            ).data,
             status=status.HTTP_200_OK,
         )
 
@@ -1415,18 +1438,27 @@ class JourneyEntryViewSet(
 
         now = timezone.now()
 
-        if not is_owner:
-            if entry.archived_at is not None:
-                raise NotFound(
-                    "Journey entry not found."
-                )
+        if not entry.is_available():
+            raise NotFound(
+                "Journey entry not found."
+            )
 
+        if not is_owner:
             if entry.published_at > now:
                 raise NotFound(
                     "Journey entry not found."
                 )
 
-            if entry.expires_at <= now:
+            is_historical = bool(
+                entry.archived_at is not None
+                or entry.expires_at <= now
+            )
+
+            if (
+                is_historical
+                and entry.retention_policy
+                != JourneyRetentionPolicy.KEEP
+            ):
                 raise NotFound(
                     "Journey entry not found."
                 )
@@ -1504,15 +1536,28 @@ class JourneyEntryViewSet(
                 "Journey entry not found."
             )
 
-        is_profile_archive_view = (
-            source == JourneyViewSource.PROFILE_ARCHIVE
+        is_historical_entry = bool(
+            entry.archived_at is not None
+            or entry.expires_at <= now
         )
 
-        # Live surfaces require a live Entry.
-        if not is_profile_archive_view:
+        allows_historical_view = (
+            source
+            in {
+                JourneyViewSource.PROFILE_ARCHIVE,
+                JourneyViewSource.DEEP_LINK,
+            }
+        )
+
+        if is_historical_entry:
+            if not allows_historical_view:
+                raise NotFound(
+                    "Journey entry not found."
+                )
+
             if (
-                entry.archived_at is not None
-                or entry.expires_at <= now
+                entry.retention_policy
+                != JourneyRetentionPolicy.KEEP
             ):
                 raise NotFound(
                     "Journey entry not found."

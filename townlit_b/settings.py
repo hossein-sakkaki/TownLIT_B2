@@ -559,6 +559,35 @@ CELERY_TASK_ALWAYS_EAGER = False
 CELERY_ACKS_LATE = True
 CELERY_TASK_DEFAULT_QUEUE = 'default'
 
+# ---------------------------------------------------------------------
+# Bookstore Inventory Report Email
+# ---------------------------------------------------------------------
+
+BOOKSTORE_INVENTORY_REPORT_RECIPIENT_ROLES = [
+    value.strip()
+    for value in os.getenv(
+        "BOOKSTORE_INVENTORY_REPORT_RECIPIENT_ROLES",
+        "",
+    ).split(",")
+    if value.strip()
+]
+
+BOOKSTORE_INVENTORY_REPORT_EXTRA_RECIPIENTS = [
+    value.strip()
+    for value in os.getenv(
+        "BOOKSTORE_INVENTORY_REPORT_EXTRA_RECIPIENTS",
+        "",
+    ).split(",")
+    if value.strip()
+]
+
+BOOKSTORE_INVENTORY_REPORT_COVER_TTL_SECONDS = env_int(
+    "BOOKSTORE_INVENTORY_REPORT_COVER_TTL_SECONDS",
+    default=7 * 24 * 60 * 60,
+    minimum=60 * 60,
+    maximum=30 * 24 * 60 * 60,
+)
+
 
 broker_connection_retry_on_startup = True
 

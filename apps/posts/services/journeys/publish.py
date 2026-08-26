@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -45,6 +46,9 @@ from apps.posts.services.journeys.timezone import (
     resolve_user_timezone_name,
 )
 from apps.profiles.models.member import Member
+logger = logging.getLogger(__name__)
+
+
 
 
 @dataclass(frozen=True)
@@ -623,6 +627,82 @@ def _next_available_sequence(
     )
 
 
+def _fire_journey_entry_available(
+    *,
+    entry_id: int,
+) -> None:
+    """
+    Fire JourneyEntry availability after publication has committed.
+
+    Journey media is fully rendered before publication, so JourneyEntry
+    does not pass through the normal async media-conversion availability
+    transition used by other content types.
+
+    This callback must never fail an already committed publication.
+    """
+
+    try:
+        entry = (
+            JourneyEntry.objects
+            .select_related(
+                "journey",
+                "content_type",
+            )
+            .get(pk=entry_id)
+        )
+    except JourneyEntry.DoesNotExist:
+        logger.warning(
+            "Journey availability callback skipped because entry "
+            "no longer exists | entry_id=%s",
+            entry_id,
+        )
+        return
+
+    try:
+        if not entry.is_available():
+            logger.warning(
+                "Journey availability callback skipped because entry "
+                "is not available | entry_id=%s",
+                entry_id,
+            )
+            return
+
+        if not entry.is_live:
+            logger.info(
+                "Journey availability callback skipped because entry "
+                "is not live | entry_id=%s",
+                entry_id,
+            )
+            return
+
+        entry.on_available()
+
+    except Exception:
+        logger.exception(
+            "Journey availability callback failed after publication "
+            "commit | entry_id=%s",
+            entry_id,
+        )
+
+
+def _schedule_journey_entry_available(
+    *,
+    entry_id: int,
+) -> None:
+    """
+    Schedule the Journey availability event only after the current
+    database transaction commits successfully.
+    """
+
+    transaction.on_commit(
+        lambda entry_id=entry_id: (
+            _fire_journey_entry_available(
+                entry_id=entry_id,
+            )
+        )
+    )
+    
+
 def publish_journey_entry(
     *,
     user,
@@ -797,6 +877,10 @@ def publish_journey_entry(
             )
 
             if existing_entry is not None:
+                _schedule_journey_entry_available(
+                    entry_id=existing_entry.pk,
+                )
+
                 return JourneyPublishResult(
                     journey=existing_entry.journey,
                     entry=existing_entry,
@@ -995,6 +1079,10 @@ def publish_journey_entry(
                             "music": str(exc),
                         }
                     ) from exc
+
+            _schedule_journey_entry_available(
+                entry_id=entry.pk,
+            )
 
         return JourneyPublishResult(
             journey=journey,

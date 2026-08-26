@@ -27,7 +27,9 @@ from apps.sanctuary.services.held_content_access import (
     held_representation_or_none,
 )
 from apps.accounts.serializers.user_serializers import UserMiniSerializer
-
+from apps.posts.services.journeys.links import (
+    build_journey_entry_link,
+)
 
 # -------------------------------------------------
 # Cached identities
@@ -347,6 +349,12 @@ class JourneyEntryBaseSerializer(serializers.ModelSerializer):
     thumbnail_asset = serializers.SerializerMethodField()
     reaction_target = serializers.SerializerMethodField()
 
+    journey_id = serializers.IntegerField(
+        read_only=True,
+    )
+    journey_slug = serializers.SerializerMethodField()
+    deep_link = serializers.SerializerMethodField()
+
     view_count = serializers.IntegerField(
         source="view_count_internal",
         read_only=True,
@@ -362,6 +370,14 @@ class JourneyEntryBaseSerializer(serializers.ModelSerializer):
         fields = (
             "id",
             "slug",
+
+            # Parent identity
+            "journey_id",
+            "journey_slug",
+
+            # Canonical TownLIT navigation identity
+            "deep_link",
+
             "sequence",
             "media_type",
             "visual_source_type",
@@ -384,6 +400,36 @@ class JourneyEntryBaseSerializer(serializers.ModelSerializer):
 
         read_only_fields = fields
 
+    def get_journey_slug(
+        self,
+        obj,
+    ):
+        journey = getattr(
+            obj,
+            "journey",
+            None,
+        )
+
+        return (
+            getattr(
+                journey,
+                "slug",
+                None,
+            )
+            if journey is not None
+            else None
+        )
+
+    def get_deep_link(
+        self,
+        obj,
+    ):
+        return build_journey_entry_link(
+            entry_slug=obj.slug,
+            entry_id=obj.pk,
+            journey_id=obj.journey_id,
+        )
+
     def get_rendered_asset(self, obj):
         return journey_rendered_asset_target(
             obj
@@ -402,7 +448,8 @@ class JourneyEntryBaseSerializer(serializers.ModelSerializer):
     def get_reaction_target(self, obj):
         return {
             "content_type": "posts.journeyentry",
-            "content_type_id": journey_entry_content_type_id(),
+            "content_type_id":
+                journey_entry_content_type_id(),
             "object_id": obj.pk,
         }
 
@@ -414,13 +461,19 @@ class JourneyEntryBaseSerializer(serializers.ModelSerializer):
 
     def to_representation(self, obj):
         request = self.context.get("request")
+
         viewer = (
             request.user
-            if request and request.user.is_authenticated
+            if (
+                request
+                and request.user.is_authenticated
+            )
             else None
         )
 
-        data = super().to_representation(obj)
+        data = super().to_representation(
+            obj
+        )
 
         return held_representation_or_none(
             target=obj,
@@ -634,6 +687,12 @@ class JourneyStreamEntrySerializer(serializers.ModelSerializer):
     music = serializers.SerializerMethodField()
     reaction_target = serializers.SerializerMethodField()
 
+    journey_id = serializers.IntegerField(
+        read_only=True,
+    )
+    journey_slug = serializers.SerializerMethodField()
+    deep_link = serializers.SerializerMethodField()
+    
     view_count = serializers.IntegerField(
         source="view_count_internal",
         read_only=True,
@@ -645,6 +704,11 @@ class JourneyStreamEntrySerializer(serializers.ModelSerializer):
         fields = (
             "id",
             "slug",
+            
+            "journey_id",
+            "journey_slug",
+            "deep_link",
+            
             "sequence",
             "media_type",
             "visual_source_type",
@@ -662,6 +726,36 @@ class JourneyStreamEntrySerializer(serializers.ModelSerializer):
 
         read_only_fields = fields
 
+    def get_journey_slug(
+        self,
+        obj,
+    ):
+        journey = getattr(
+            obj,
+            "journey",
+            None,
+        )
+
+        return (
+            getattr(
+                journey,
+                "slug",
+                None,
+            )
+            if journey is not None
+            else None
+        )
+
+    def get_deep_link(
+        self,
+        obj,
+    ):
+        return build_journey_entry_link(
+            entry_slug=obj.slug,
+            entry_id=obj.pk,
+            journey_id=obj.journey_id,
+        )
+        
     def get_rendered_asset(self, obj):
         return journey_rendered_asset_target(
             obj

@@ -526,12 +526,34 @@ def submit_journey_workflow(
 
     return job, True
 
+def _expected_media_conversion_field(
+    media: CreativeCompositionMedia,
+) -> str | None:
+    if (
+        media.source_mode
+        != CreativeCompositionMedia.SourceMode.UPLOAD
+    ):
+        return None
+
+    if (
+        media.media_type
+        == CreativeCompositionMedia.MediaType.IMAGE
+    ):
+        return "source_image"
+
+    if (
+        media.media_type
+        == CreativeCompositionMedia.MediaType.VIDEO
+    ):
+        return "source_video"
+
+    return None
 
 def _resolve_pending_composition_media(
     composition: CreativeComposition,
 ) -> tuple[
     list[CreativeCompositionMedia],
-    list[MediaConversionJob],
+    dict[tuple[int, str], MediaConversionJob],
 ]:
     references = extract_document_references(
         composition.document or {}
@@ -540,7 +562,7 @@ def _resolve_pending_composition_media(
     media_ids = references.media_public_ids
 
     if not media_ids:
-        return [], []
+        return [], {}
 
     media_items = list(
         CreativeCompositionMedia.objects
@@ -562,14 +584,28 @@ def _resolve_pending_composition_media(
     ]
 
     if not pending_media:
-        return [], []
+        return [], {}
 
     media_ct = ContentType.objects.get_for_model(
         CreativeCompositionMedia,
         for_concrete_model=False,
     )
 
-    jobs = list(
+    expected_fields = {
+        field_name
+        for media in pending_media
+        if (
+            field_name
+            := _expected_media_conversion_field(
+                media
+            )
+        )
+    }
+
+    if not expected_fields:
+        return pending_media, {}
+
+    jobs = (
         MediaConversionJob.objects
         .filter(
             content_type=media_ct,
@@ -577,14 +613,20 @@ def _resolve_pending_composition_media(
                 media.pk
                 for media in pending_media
             ],
-        )
-        .order_by(
-            "-updated_at",
-            "-id",
+            field_name__in=expected_fields,
         )
     )
 
-    return pending_media, jobs
+    jobs_by_target = {
+        (
+            conversion_job.object_id,
+            conversion_job.field_name,
+        ):
+            conversion_job
+        for conversion_job in jobs
+    }
+
+    return pending_media, jobs_by_target
 
 def run_workflow(job: MediaConversionJob) -> None:
     job.refresh_from_db()
@@ -633,73 +675,148 @@ def run_workflow(job: MediaConversionJob) -> None:
     )
 
     if pending_media:
-        jobs_by_object_id = {
-            job.object_id: job
-            for job in media_jobs
-        }
+        active_jobs: list[
+            MediaConversionJob
+        ] = []
 
         for media in pending_media:
-            conversion_job = jobs_by_object_id.get(
-                media.pk
+            # Refresh before deciding that a terminal
+            # conversion left the media unavailable.
+
+            # The conversion worker may have completed
+            # between the initial media query and this
+            # workflow iteration.
+            media.refresh_from_db()
+
+            if media.is_available():
+                continue
+
+            expected_field = (
+                _expected_media_conversion_field(
+                    media
+                )
+            )
+
+            if expected_field is None:
+                raise ValidationError(
+                    (
+                        "Journey referenced media is "
+                        "currently unavailable."
+                    )
+                )
+
+            conversion_job = media_jobs.get(
+                (
+                    media.pk,
+                    expected_field,
+                )
             )
 
             if conversion_job is None:
-                continue
+                raise ValidationError(
+                    (
+                        "Journey source media conversion "
+                        "job is missing."
+                    )
+                )
 
-            if conversion_job.status == MediaJobStatus.FAILED:
+            conversion_job.refresh_from_db()
+
+            if (
+                conversion_job.status
+                == MediaJobStatus.FAILED
+            ):
                 raise ValidationError(
                     conversion_job.error
-                    or "Journey source media processing failed."
+                    or (
+                        "Journey source media "
+                        "processing failed."
+                    )
                 )
 
-            if conversion_job.status == MediaJobStatus.CANCELED:
+            if (
+                conversion_job.status
+                == MediaJobStatus.CANCELED
+            ):
                 raise ValidationError(
-                    "Journey source media processing was canceled."
+                    (
+                        "Journey source media "
+                        "processing was canceled."
+                    )
                 )
 
-        active_jobs = [
-            job
-            for job in media_jobs
-            if job.status in {
+            if (
+                conversion_job.status
+                == MediaJobStatus.DONE
+            ):
+                # DONE is only valid when the target
+                # actually became deliverable.
+                media.refresh_from_db()
+
+                if media.is_available():
+                    continue
+
+                raise ValidationError(
+                    (
+                        "Journey source media conversion "
+                        "completed without making the "
+                        "media available."
+                    )
+                )
+
+            if conversion_job.status not in {
                 MediaJobStatus.QUEUED,
                 MediaJobStatus.PROCESSING,
-            }
-        ]
+            }:
+                raise ValidationError(
+                    (
+                        "Journey source media conversion "
+                        "entered an invalid state."
+                    )
+                )
 
-        progress_values = [
-            int(job.progress or 0)
-            for job in active_jobs
-        ]
+            active_jobs.append(
+                conversion_job
+            )
 
-        media_progress = (
-            sum(progress_values)
-            / len(progress_values)
-            if progress_values
-            else 0
-        )
+        if active_jobs:
+            progress_values = [
+                int(
+                    conversion_job.progress
+                    or 0
+                )
+                for conversion_job
+                in active_jobs
+            ]
 
-        touch_job(
-            job,
-            status=MediaJobStatus.PROCESSING,
-            stage_plan=JOURNEY_STAGE_PLAN,
-            stage="preparing",
-            stage_index=0,
-            stage_progress=max(
-                0.0,
-                min(
-                    0.99,
-                    media_progress / 100.0,
+            media_progress = (
+                sum(progress_values)
+                / len(progress_values)
+            )
+
+            touch_job(
+                job,
+                status=MediaJobStatus.PROCESSING,
+                stage_plan=JOURNEY_STAGE_PLAN,
+                stage="preparing",
+                stage_index=0,
+                stage_progress=max(
+                    0.0,
+                    min(
+                        0.99,
+                        media_progress
+                        / 100.0,
+                    ),
                 ),
-            ),
-            message="Preparing Journey media",
-        )
+                message="Preparing Journey media",
+            )
 
-        enqueue_workflow_job(
-            job,
-            countdown=2,
-        )
+            enqueue_workflow_job(
+                job,
+                countdown=2,
+            )
 
-        return
+            return
 
     render_result = request_render(
         composition=composition,

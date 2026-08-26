@@ -1,6 +1,6 @@
 # apps/conversation/models.py
 
-from django.db import models
+from django.db import models, transaction
 from django.db.models import Q
 from datetime import timedelta
 from django.utils import timezone
@@ -24,6 +24,10 @@ from apps.conversation.constants import (
     MESSAGE_PIN_DURATION_CHOICES,
     PIN_NONE,
     MESSAGE_REACTION_TYPE_CHOICES,
+)
+from apps.content_safety.enums import (
+    SafetyContext,
+    SafetyInputType,
 )
 from validators.mediaValidators.image_validators import validate_image_file, validate_image_size
 from validators.security_validators import validate_no_executable_file
@@ -121,40 +125,101 @@ class Dialogue(models.Model):
         self.restore_dialogue_visibility_only(user)
     # Get last message ----------------------------------------------------------------------
     def get_last_message(self):
-        """Return the latest message globally (not user-specific)."""
-        return self.messages.order_by("-timestamp").first()
+        """
+        Return the latest delivery-ready message globally.
+        """
 
-    def get_last_message_for_user(self, user):
-        """
-        Return the latest visible non-system message for one user.
-        """
         return (
-            self.visible_non_system_messages_for_user(user)
-            .order_by("-timestamp")
+            self.messages
+            .filter(
+                is_delivery_ready=True
+            )
+            .order_by(
+                "-timestamp",
+                "-id",
+            )
+            .first()
+        )
+
+    def get_last_message_for_user(
+        self,
+        user,
+    ):
+        """
+        Return the latest visible delivery-ready non-system message
+        for one user.
+        """
+
+        return (
+            self.visible_non_system_messages_for_user(
+                user
+            )
+            .order_by(
+                "-timestamp",
+                "-id",
+            )
             .first()
         )
 
     # Get visible messages ------------------------------------------------------------------
-    def visible_messages_for_user(self, user):
+    def visible_messages_for_user(
+        self,
+        user,
+    ):
         """
-        Return messages visible to one user.
-        """
-        return self.messages.exclude(deleted_by_users=user)
+        Return messages that are both:
+        - delivery-ready
+        - visible to this user
 
-    def visible_non_system_messages_for_user(self, user):
+        Pending asynchronous Group Messenger video stays server-side
+        until Content Safety ALLOW finalizes its delivery state.
         """
-        Return visible non-system messages for one user.
-        """
-        return self.visible_messages_for_user(user).filter(is_system=False)
 
-    def unread_messages_for_user(self, user):
-        """
-        Return unread incoming visible messages for one user.
-        """
         return (
-            self.visible_messages_for_user(user)
-            .exclude(seen_by_users=user)
-            .exclude(sender=user)
+            self.messages
+            .filter(
+                is_delivery_ready=True
+            )
+            .exclude(
+                deleted_by_users=user
+            )
+        )
+
+    def visible_non_system_messages_for_user(
+        self,
+        user,
+    ):
+        """
+        Return visible delivery-ready non-system messages.
+        """
+
+        return (
+            self.visible_messages_for_user(
+                user
+            )
+            .filter(
+                is_system=False
+            )
+        )
+
+    def unread_messages_for_user(
+        self,
+        user,
+    ):
+        """
+        Return unread incoming delivery-ready messages for one user.
+        """
+
+        return (
+            self.visible_messages_for_user(
+                user
+            )
+            .exclude(
+                seen_by_users=user
+            )
+            .exclude(
+                sender=user
+            )
         )
         
     #  Get markers -------------------------------------------------------------------------
@@ -219,21 +284,45 @@ class Dialogue(models.Model):
         return not self.should_hide_incoming_for_user(user)
 
     # Refresh last message cache --------------------------------------------
-    def refresh_last_message_cache(self, save: bool = True):
+    def refresh_last_message_cache(
+        self,
+        save: bool = True,
+    ):
         """
-        Refresh the global last_message cache using the latest non-system message.
-        This cache must stay user-agnostic.
+        Refresh the global last_message cache using the latest
+        delivery-ready non-system message.
+
+        Pending or rejected asynchronous Group Messenger video must
+        never become the dialogue's canonical last message.
         """
+
         last_msg = (
             self.messages
-            .exclude(is_system=True)
-            .order_by("-timestamp")
+            .filter(
+                is_delivery_ready=True
+            )
+            .exclude(
+                is_system=True
+            )
+            .order_by(
+                "-timestamp",
+                "-id",
+            )
             .first()
         )
-        self.last_message = last_msg if last_msg else None
+
+        self.last_message = (
+            last_msg
+            if last_msg
+            else None
+        )
 
         if save:
-            self.save(update_fields=["last_message"])
+            self.save(
+                update_fields=[
+                    "last_message"
+                ]
+            )
 
         return self.last_message
     
@@ -298,7 +387,16 @@ class Message(models.Model):
     encrypted_for_device = models.CharField(max_length=100, null=True, blank=True)
     
     is_encrypted_file = models.BooleanField(default=False, verbose_name="Is File Encrypted")
-        
+    is_delivery_ready = models.BooleanField(
+        default=True,
+        db_index=True,
+        verbose_name="Is Delivery Ready",
+        help_text=(
+            "False while backend-readable Group Messenger media "
+            "is waiting for asynchronous safety approval."
+        ),
+    )
+
     image = models.ImageField(upload_to=get_upload_path('conversation', 'image', 'message'), blank=True, null=True, verbose_name="Image")
     video = models.FileField(upload_to=get_upload_path('conversation', 'video', 'message'), blank=True, null=True, verbose_name="Video")
     file = models.FileField(upload_to=get_upload_path('conversation', 'file', 'message'), blank=True, null=True, verbose_name="File")
@@ -393,6 +491,176 @@ class Message(models.Model):
             tmp.write(decrypted_bytes)
             return tmp.name
 
+    def get_content_safety_media_config(
+        self,
+    ) -> dict:
+        """
+        Configure asynchronous Content Safety only for
+        backend-readable Group Messenger video.
+
+        Messenger media is already prepared by the client.
+        It must never enter the server Media Conversion pipeline.
+        """
+
+        if not self.dialogue_id:
+            return {}
+
+        if self.is_encrypted_file:
+            return {}
+
+        dialogue = getattr(
+            self,
+            "dialogue",
+            None,
+        )
+
+        if (
+            dialogue is None
+            or not dialogue.is_group
+        ):
+            return {}
+
+        video = getattr(
+            self,
+            "video",
+            None,
+        )
+
+        video_path = str(
+            getattr(
+                video,
+                "name",
+                "",
+            )
+            or ""
+        ).strip()
+
+        if not video_path:
+            return {}
+
+        return {
+            "video": {
+                "input_type": (
+                    SafetyInputType.VIDEO
+                ),
+                "context": (
+                    SafetyContext.GROUP_MESSAGE_MEDIA
+                ),
+                "conversion_kind": "video",
+                "handoff_to_conversion": False,
+            },
+        }
+
+
+    def on_content_safety_media_approved(
+        self,
+        *,
+        field_name: str,
+        source_path: str,
+    ) -> None:
+        """
+        Finalize one safety-approved Group Messenger video.
+
+        This is a delivery-readiness transition only.
+        Messenger media must never enter Media Conversion here.
+        """
+
+        normalized_field = str(
+            field_name
+            or ""
+        ).strip()
+
+        expected_source = str(
+            source_path
+            or ""
+        ).strip().lstrip(
+            "/"
+        )
+
+        if normalized_field != "video":
+            raise ValueError(
+                "Only Messenger video uses asynchronous media safety."
+            )
+
+        if self.is_encrypted_file:
+            raise ValueError(
+                "Encrypted Messenger media cannot use backend Content Safety."
+            )
+
+        if not self.pk:
+            raise ValueError(
+                "Messenger message must be persisted before safety finalization."
+            )
+
+        with transaction.atomic():
+            locked = (
+                type(self).objects
+                .select_for_update()
+                .select_related(
+                    "dialogue"
+                )
+                .get(
+                    pk=self.pk
+                )
+            )
+
+            if (
+                not locked.dialogue.is_group
+                or locked.is_encrypted_file
+            ):
+                raise ValueError(
+                    "Only backend-readable Group Messenger video can be finalized."
+                )
+
+            current_source = str(
+                getattr(
+                    locked.video,
+                    "name",
+                    "",
+                )
+                or ""
+            ).strip().lstrip(
+                "/"
+            )
+
+            if (
+                not current_source
+                or current_source
+                != expected_source
+            ):
+                raise ValueError(
+                    "The Messenger video source has changed."
+                )
+
+            if not locked.is_delivery_ready:
+                locked.is_delivery_ready = True
+
+                locked.save(
+                    update_fields=[
+                        "is_delivery_ready",
+                    ]
+                )
+
+            # Lock the dialogue before rebuilding the global cache.
+            #
+            # Important:
+            # If a newer delivery-ready message arrived while this video
+            # was under Safety, the older approved video must not overwrite
+            # that newer message as dialogue.last_message.
+            dialogue = (
+                Dialogue.objects
+                .select_for_update()
+                .get(
+                    pk=locked.dialogue_id
+                )
+            )
+
+            dialogue.refresh_last_message_cache(
+                save=True
+            )
+
+            self.is_delivery_ready = True
+            
     def edit_message(self, new_content, receiver_public_key=None, receiver_device_id=None):
         if self.is_encrypted and receiver_public_key:
             self.encrypt_message(new_content, receiver_public_key)
@@ -405,7 +673,6 @@ class Message(models.Model):
         self.is_edited = True
         self.save()
 
-        
     def can_edit(self):
         return timezone.now() <= self.timestamp + timedelta(hours=12)
 
@@ -459,11 +726,34 @@ class Message(models.Model):
 
 
     @classmethod
-    def update_is_read_bulk(cls, dialogue, user):
-        """ Update read status for all unread messages in a dialogue """
-        unread_messages = cls.objects.filter(dialogue=dialogue).exclude(seen_by_users=user)
+    def update_is_read_bulk(
+        cls,
+        dialogue,
+        user,
+    ):
+        """
+        Update read state only for delivery-ready messages.
+
+        Pending asynchronous Group Messenger video must not enter
+        read/unread accounting before Safety approval.
+        """
+
+        unread_messages = (
+            cls.objects
+            .filter(
+                dialogue=dialogue,
+                is_delivery_ready=True,
+            )
+            .exclude(
+                seen_by_users=user
+            )
+        )
+
         for message in unread_messages:
-            message.seen_by_users.add(user)
+            message.seen_by_users.add(
+                user
+            )
+
         dialogue.save()
 
     def __str__(self):

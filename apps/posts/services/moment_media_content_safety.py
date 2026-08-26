@@ -1,9 +1,11 @@
+#
 # apps/posts/services/moment_media_content_safety.py
 #
 # TownLIT
 #
 # Created by Hossein Sakkaki on 2026-08-14.
-# Last Update by Hossein Sakkaki on 2026-08-14.
+# Last Update by Hossein Sakkaki on 2026-08-25.
+#
 
 from __future__ import annotations
 
@@ -13,6 +15,7 @@ from concurrent.futures import (
 )
 
 from django.db import close_old_connections
+
 from rest_framework import serializers
 
 from apps.content_safety.enums import (
@@ -20,9 +23,6 @@ from apps.content_safety.enums import (
 )
 from apps.content_safety.services.image import (
     enforce_image_file_safety,
-)
-from apps.content_safety.services.video import (
-    enforce_video_file_safety,
 )
 
 
@@ -116,7 +116,7 @@ def _resolve_new_photo_uploads(
     Return only newly supplied Moment photo files.
 
     Multipart request files are preferred because MomentSerializer
-    intentionally supports both images and images[] conventions.
+    supports both images and images[] conventions.
     """
 
     multipart_images = _request_multi_images(
@@ -181,10 +181,8 @@ def _enforce_one_image(
         ) as exc:
             raise serializers.ValidationError(
                 {
-                    validation_field_name: (
-                        str(
-                            exc
-                        )
+                    validation_field_name: str(
+                        exc
                     )
                 }
             ) from exc
@@ -199,11 +197,10 @@ def _enforce_photo_uploads(
     actor,
 ) -> None:
     """
-    Require all new Moment photos to pass before persistence.
+    Require all newly supplied Moment photos to pass before persistence.
 
     Multi-photo Moments are inspected concurrently with a small bounded
-    worker pool to keep upload latency low without creating excessive
-    provider/database concurrency.
+    worker pool.
     """
 
     if not images:
@@ -213,9 +210,7 @@ def _enforce_photo_uploads(
         images
     ) == 1:
         _enforce_one_image(
-            file_obj=images[
-                0
-            ],
+            file_obj=images[0],
             actor=actor,
             audit_field_name="image",
             validation_field_name="image",
@@ -253,7 +248,6 @@ def _enforce_photo_uploads(
         for future in as_completed(
             futures
         ):
-            # Propagate Content Safety / validation failures.
             future.result()
 
 
@@ -263,10 +257,11 @@ def _enforce_thumbnail_upload(
     actor,
 ) -> None:
     """
-    Inspect a user-supplied video thumbnail.
+    Inspect a newly supplied Moment video thumbnail.
 
-    Automatically generated thumbnails are not inspected here because
-    their source video is already inspected by Video Safety.
+    The raw video itself is intentionally not inspected here.
+    Video Safety is asynchronous and begins after persistence through
+    the shared ContentSafetyJob pipeline.
     """
 
     if not thumbnail:
@@ -280,44 +275,6 @@ def _enforce_thumbnail_upload(
     )
 
 
-def _enforce_video_upload(
-    *,
-    video,
-    actor,
-) -> None:
-    """
-    Inspect one newly uploaded Moment video.
-    """
-
-    if not video:
-        return
-
-    try:
-        enforce_video_file_safety(
-            file_obj=video,
-            context=SafetyContext.MOMENT_MEDIA,
-            actor=actor,
-            field_name="video",
-            mime_type=getattr(
-                video,
-                "content_type",
-                None,
-            ),
-        )
-
-    except (
-        TypeError,
-        ValueError,
-    ) as exc:
-        raise serializers.ValidationError(
-            {
-                "video": str(
-                    exc
-                )
-            }
-        ) from exc
-
-
 def enforce_moment_media_content_safety(
     *,
     validated_data,
@@ -325,20 +282,22 @@ def enforce_moment_media_content_safety(
     actor,
 ) -> None:
     """
-    Require all newly supplied Moment media to pass before persistence.
+    Run synchronous Content Safety only for inexpensive Moment image assets.
 
     CREATE:
     - legacy single image
     - multi-photo images / images[]
-    - video
     - user-supplied video thumbnail
 
-    UPDATE:
-    - only newly supplied thumbnail requires inspection because Moment
-      image/video replacement is prohibited by MomentSerializer.
+    VIDEO:
+    - raw video is intentionally NOT inspected here
+    - it is persisted first
+    - a generic ContentSafetyJob is then scheduled
+    - Media Conversion remains blocked for that exact source until ALLOW
 
-    Existing stored media is intentionally not reprocessed on caption,
-    visibility, or cover-selection updates.
+    UPDATE:
+    - only newly supplied thumbnail requires inspection because
+      Moment image/video replacement is prohibited.
     """
 
     images = _resolve_new_photo_uploads(
@@ -350,13 +309,6 @@ def enforce_moment_media_content_safety(
         "thumbnail"
     )
 
-    video = validated_data.get(
-        "video"
-    )
-
-    # Cheapest/newly supplied visual assets first.
-    #
-    # If an image/thumbnail fails, avoid unnecessary Video Safety work.
     _enforce_photo_uploads(
         images=images,
         actor=actor,
@@ -364,10 +316,5 @@ def enforce_moment_media_content_safety(
 
     _enforce_thumbnail_upload(
         thumbnail=thumbnail,
-        actor=actor,
-    )
-
-    _enforce_video_upload(
-        video=video,
         actor=actor,
     )

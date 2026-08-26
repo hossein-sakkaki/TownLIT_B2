@@ -35,6 +35,9 @@ from apps.notifications.services.delivery_policy import (
 )
 
 from apps.notifications.tasks import send_email_notification  # Celery async task
+from apps.posts.services.journeys.links import (
+    build_journey_entry_link,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -406,82 +409,171 @@ def _profile_key_path_for_content_obj(
     return None
 
 
-def _smart_ui_link(target_obj, action_obj, extra_payload: dict | None) -> str | None:
+def _smart_ui_link(
+    target_obj,
+    action_obj,
+    extra_payload: dict | None,
+) -> str | None:
     """
-    Build a universal /content deep-link for supported content types.
+    Build a precise TownLIT deep link.
 
-    Important:
-    - Web uses /content/<slug> directly.
-    - iOS currently opens content through profile-scoped routing, so we also
-      include non-breaking hints:
-        u = owner username
-        k = profile key path
-    - For comment/reply/reaction notifications, focus remains the interaction
-      target, for example:
-        comment-123
-        reply-456:parent-123
-        reaction-789
+    JourneyEntry is routed through its dedicated canonical
+    Journey viewer.
+
+    Other supported content continues to use /content/<slug>.
     """
 
-    # 0) Resolve root content from action when the action is Comment/Reaction.
-    root = _resolve_root_content_from_action(action_obj) or target_obj
+    root = (
+        _resolve_root_content_from_action(
+            action_obj
+        )
+        or target_obj
+    )
 
     if not root:
         return None
 
-    # 1) Only build /content links for explicitly registered content models.
-    ct_key = _ct_key_for_obj(root) or ""
+    ct_key = (
+        _ct_key_for_obj(root)
+        or ""
+    )
 
     if ct_key not in ENTRY_BY_CT:
         return None
 
-    # 2) Build interaction focus.
-    comment_id = parent_id = reaction_id = None
+    comment_id = None
+    parent_id = None
+    reaction_id = None
 
-    if isinstance(extra_payload, dict):
-        comment_id = extra_payload.get("comment_id")
-        parent_id = extra_payload.get("parent_id")
-        reaction_id = extra_payload.get("reaction_id")
+    if isinstance(
+        extra_payload,
+        dict,
+    ):
+        comment_id = (
+            extra_payload.get(
+                "comment_id"
+            )
+        )
+        parent_id = (
+            extra_payload.get(
+                "parent_id"
+            )
+        )
+        reaction_id = (
+            extra_payload.get(
+                "reaction_id"
+            )
+        )
 
     focus = None
 
     if comment_id:
         focus = (
-            f"reply-{comment_id}:parent-{parent_id}"
+            f"reply-{comment_id}:"
+            f"parent-{parent_id}"
             if parent_id
             else f"comment-{comment_id}"
         )
-    elif reaction_id:
-        focus = f"reaction-{reaction_id}"
 
-    # 3) Content slug is required. Do not fallback to pk here.
-    slug = getattr(root, "slug", None)
+    elif reaction_id:
+        focus = (
+            f"reaction-{reaction_id}"
+        )
+
+    slug = getattr(
+        root,
+        "slug",
+        None,
+    )
 
     if not slug:
         return None
 
-    # 4) Mode + section for web.
-    mode = _guess_mode_for_obj(root)
-    section = guess_entry_section(ct_key)
-
-    # 5) Extra iOS-safe hints. Web can ignore these.
-    owner_username = _owner_username_for_content_obj(root)
-    key_path = _profile_key_path_for_content_obj(root, ct_key)
-
     extra_link_params = {}
 
-    if isinstance(extra_payload, dict):
-        if extra_payload.get("comment_id"):
-            extra_link_params["comment_id"] = extra_payload.get("comment_id")
+    if isinstance(
+        extra_payload,
+        dict,
+    ):
+        if extra_payload.get(
+            "comment_id"
+        ):
+            extra_link_params[
+                "comment_id"
+            ] = extra_payload[
+                "comment_id"
+            ]
 
-        if extra_payload.get("parent_id"):
-            extra_link_params["parent_id"] = extra_payload.get("parent_id")
+        if extra_payload.get(
+            "parent_id"
+        ):
+            extra_link_params[
+                "parent_id"
+            ] = extra_payload[
+                "parent_id"
+            ]
 
-        if extra_payload.get("reaction_id"):
-            extra_link_params["reaction_id"] = extra_payload.get("reaction_id")
+        if extra_payload.get(
+            "reaction_id"
+        ):
+            extra_link_params[
+                "reaction_id"
+            ] = extra_payload[
+                "reaction_id"
+            ]
 
-        if extra_payload.get("reaction_type"):
-            extra_link_params["reaction_type"] = extra_payload.get("reaction_type")
+        if extra_payload.get(
+            "reaction_type"
+        ):
+            extra_link_params[
+                "reaction_type"
+            ] = extra_payload[
+                "reaction_type"
+            ]
+
+    # -------------------------------------------------
+    # JourneyEntry owns a dedicated exact-entry route.
+    # -------------------------------------------------
+    if ct_key == "posts.journeyentry":
+        return build_journey_entry_link(
+            entry_slug=str(slug),
+            entry_id=getattr(
+                root,
+                "pk",
+                None,
+            ),
+            journey_id=getattr(
+                root,
+                "journey_id",
+                None,
+            ),
+            focus=focus,
+            extra_params=extra_link_params,
+        )
+
+    # -------------------------------------------------
+    # Standard content routes.
+    # -------------------------------------------------
+    mode = _guess_mode_for_obj(
+        root
+    )
+
+    section = guess_entry_section(
+        ct_key
+    )
+
+    owner_username = (
+        _owner_username_for_content_obj(
+            root
+        )
+    )
+
+    key_path = (
+        _profile_key_path_for_content_obj(
+            root,
+            ct_key,
+        )
+    )
 
     return build_content_link(
         slug=str(slug),
@@ -536,6 +628,9 @@ def _push_title_for_notification(
 
     if notification_type == "messenger_message_pinned":
         return "Pinned message"
+
+    if notification_type == "new_journey":
+        return "New Journey"
 
     if notification_type in {
         "messenger_reaction_direct",

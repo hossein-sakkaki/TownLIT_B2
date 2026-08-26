@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Iterable
 
 from django.core.files.storage import default_storage
 from django.db import transaction
+from django.utils import timezone
 
-from apps.media_conversion.models import MediaConversionJob, MediaJobStatus
+from apps.media_conversion.models import (
+    MediaConversionJob,
+    MediaJobKind,
+    MediaJobStatus,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -18,94 +22,236 @@ class MediaConversionCanceled(Exception):
     pass
 
 
-def raise_if_job_canceled(job: MediaConversionJob | None):
+def raise_if_job_canceled(
+    job: MediaConversionJob | None,
+):
     if not job:
         return
 
     try:
-        job.refresh_from_db(fields=["status"])
+        job.refresh_from_db(
+            fields=[
+                "status",
+            ]
+        )
     except Exception:
         return
 
     if job.status == MediaJobStatus.CANCELED:
-        raise MediaConversionCanceled("Media conversion was canceled.")
+        raise MediaConversionCanceled(
+            "Media conversion was canceled."
+        )
 
 
 # ---------------------------------------------------------------------
 # Storage cleanup helpers
 # ---------------------------------------------------------------------
-def _clean_key(value) -> str | None:
+def _clean_key(
+    value,
+) -> str | None:
     if not value:
         return None
 
-    raw = getattr(value, "name", value)
+    raw = getattr(
+        value,
+        "name",
+        value,
+    )
 
     if not raw:
         return None
 
-    cleaned = str(raw).strip().lstrip("/")
+    cleaned = str(
+        raw
+    ).strip().lstrip("/")
+
     return cleaned or None
 
 
-def _delete_storage_key(key: str | None, *, label: str) -> None:
+def _normalize_protected_keys(
+    values: Iterable[str | None] | None,
+) -> set[str]:
+    result: set[str] = set()
+
+    for value in values or []:
+        key = _clean_key(
+            value
+        )
+
+        if key:
+            result.add(
+                key
+            )
+
+    return result
+
+
+def _delete_storage_key(
+    key: str | None,
+    *,
+    label: str,
+    protected_keys: Iterable[str | None] | None = None,
+) -> None:
     """
     Delete one storage object safely.
     """
-    key = _clean_key(key)
+
+    key = _clean_key(
+        key
+    )
 
     if not key:
         return
 
+    protected = _normalize_protected_keys(
+        protected_keys
+    )
+
+    if key in protected:
+        return
+
     try:
-        if default_storage.exists(key):
-            default_storage.delete(key)
-            logger.info("🧹 Deleted %s: %s", label, key)
+        if default_storage.exists(
+            key
+        ):
+            default_storage.delete(
+                key
+            )
+
+            logger.info(
+                "🧹 Deleted %s: %s",
+                label,
+                key,
+            )
+
     except Exception:
-        logger.exception("Failed deleting %s: %s", label, key)
+        logger.exception(
+            "Failed deleting %s: %s",
+            label,
+            key,
+        )
 
 
-def _delete_storage_tree(path: str | None, *, label: str) -> None:
+def _delete_storage_tree(
+    path: str | None,
+    *,
+    label: str,
+    protected_keys: Iterable[str | None] | None = None,
+) -> None:
     """
-    Delete either a single file or a folder-like prefix.
+    Delete exactly the supplied storage key and, when the supplied path
+    itself represents a directory/prefix, recursively delete only that
+    prefix.
 
-    Useful for HLS outputs:
-      posts/videos/.../master.m3u8
-      posts/videos/.../segments/...
+    Never infer a parent directory from a file path.
     """
-    path = _clean_key(path)
+
+    path = _clean_key(
+        path
+    )
 
     if not path:
         return
 
-    # Delete exact object first.
-    _delete_storage_key(path, label=label)
+    protected = _normalize_protected_keys(
+        protected_keys
+    )
 
-    # If path looks like a file, try deleting its parent prefix too.
-    prefix = path
+    if path in protected:
+        return
 
-    if "." in os.path.basename(path):
-        prefix = os.path.dirname(path)
+    # Delete the exact key first.
+    _delete_storage_key(
+        path,
+        label=label,
+        protected_keys=protected,
+    )
 
-    prefix = prefix.strip("/")
+    # If `path` itself is a directory/prefix, clean only descendants
+    # beneath that exact prefix.
+    #
+    # Importantly, a file path such as:
+    # posts/videos/.../source.mov
+    # will never be expanded to its parent directory.
+    _delete_prefix_recursive(
+        path,
+        label=label,
+        protected_keys=protected,
+    )
+
+def _delete_hls_output_tree(
+    master_path: str | None,
+    *,
+    label: str,
+    protected_keys: Iterable[str | None] | None = None,
+) -> None:
+    """
+    Delete one conversion-specific HLS output directory.
+
+    HLS output directories are generated by get_hls_output_dir()
+    using a unique UUID directory, so deleting the parent of the
+    master playlist is scoped to this conversion only.
+    """
+
+    master_path = _clean_key(
+        master_path
+    )
+
+    if not master_path:
+        return
+
+    if not master_path.lower().endswith(
+        ".m3u8"
+    ):
+        _delete_storage_tree(
+            master_path,
+            label=label,
+            protected_keys=protected_keys,
+        )
+        return
+
+    prefix = os.path.dirname(
+        master_path
+    ).strip(
+        "/"
+    )
 
     if not prefix:
         return
 
-    _delete_prefix_recursive(prefix, label=label)
+    _delete_prefix_recursive(
+        prefix,
+        label=label,
+        protected_keys=protected_keys,
+    )
 
+def _delete_prefix_recursive(
+    prefix: str,
+    *,
+    label: str,
+    protected_keys: Iterable[str | None] | None = None,
+) -> None:
+    """
+    Best-effort recursive storage cleanup.
+    """
 
-def _delete_prefix_recursive(prefix: str, *, label: str) -> None:
-    """
-    Best-effort recursive delete using Django storage listdir.
-    Works with S3 storages that implement listdir.
-    """
-    prefix = prefix.strip("/")
+    prefix = prefix.strip(
+        "/"
+    )
 
     if not prefix:
         return
+
+    protected = _normalize_protected_keys(
+        protected_keys
+    )
 
     try:
-        directories, files = default_storage.listdir(prefix)
+        directories, files = (
+            default_storage.listdir(
+                prefix
+            )
+        )
     except Exception:
         return
 
@@ -113,31 +259,80 @@ def _delete_prefix_recursive(prefix: str, *, label: str) -> None:
         _delete_storage_key(
             f"{prefix}/{filename}",
             label=f"{label}.file",
+            protected_keys=protected,
         )
 
     for directory in directories:
         _delete_prefix_recursive(
             f"{prefix}/{directory}",
             label=f"{label}.dir",
+            protected_keys=protected,
         )
 
 
-# ---------------------------------------------------------------------
-# Target cleanup helpers
-# ---------------------------------------------------------------------
-def _safe_get_target(job: MediaConversionJob):
+def _storage_key_exists(
+    key: str | None,
+) -> bool | None:
+    """
+    Return None when storage availability is unknown.
+    """
+
+    key = _clean_key(
+        key
+    )
+
+    if not key:
+        return False
+
     try:
-        model_class = job.content_type.model_class()
+        return bool(
+            default_storage.exists(
+                key
+            )
+        )
+
+    except Exception:
+        logger.warning(
+            "Could not verify storage key during cancellation: %s",
+            key,
+            exc_info=True,
+        )
+
+        return None
+
+
+# ---------------------------------------------------------------------
+# Target helpers
+# ---------------------------------------------------------------------
+def _safe_get_target(
+    job: MediaConversionJob,
+):
+    try:
+        model_class = (
+            job.content_type
+            .model_class()
+        )
 
         if model_class is None:
             return None
 
-        return model_class._base_manager.filter(pk=job.object_id).first()
+        return (
+            model_class
+            ._base_manager
+            .filter(
+                pk=job.object_id
+            )
+            .first()
+        )
+
     except Exception:
         return None
 
 
-def _target_field_keys(target, field_names: Iterable[str]) -> list[str]:
+def _target_field_keys(
+    target,
+    field_names: Iterable[str],
+) -> list[str]:
     keys: list[str] = []
 
     if target is None:
@@ -145,84 +340,422 @@ def _target_field_keys(target, field_names: Iterable[str]) -> list[str]:
 
     for field_name in field_names:
         try:
-            if not hasattr(target, field_name):
+            if not hasattr(
+                target,
+                field_name,
+            ):
                 continue
 
-            value = getattr(target, field_name, None)
-            key = _clean_key(value)
+            value = getattr(
+                target,
+                field_name,
+                None,
+            )
+
+            key = _clean_key(
+                value
+            )
 
             if key:
-                keys.append(key)
+                keys.append(
+                    key
+                )
+
         except Exception:
             continue
 
     return keys
 
 
-def _clear_target_file_fields(target, field_names: Iterable[str]) -> None:
+def _clear_target_file_fields(
+    target,
+    field_names: Iterable[str],
+) -> None:
     """
-    Clear FileField/ImageField references when we keep the target row.
+    Clear explicitly requested media references without invoking
+    model.save(), signals or MediaAutoConvertMixin.
 
-    This is used for edit/retry-safe cases where deleting the whole object
-    would be too destructive.
+    Existing global is_converted behavior is preserved.
     """
+
     if target is None:
         return
 
-    update_fields: list[str] = []
+    updates: dict = {}
 
     for field_name in field_names:
         try:
-            if not hasattr(target, field_name):
+            if not hasattr(
+                target,
+                field_name,
+            ):
                 continue
 
-            value = getattr(target, field_name, None)
+            value = getattr(
+                target,
+                field_name,
+                None,
+            )
 
-            if value and getattr(value, "name", None):
-                setattr(target, field_name, None)
-                update_fields.append(field_name)
+            if (
+                value
+                and getattr(
+                    value,
+                    "name",
+                    None,
+                )
+            ):
+                updates[
+                    field_name
+                ] = None
+
         except Exception:
             continue
 
     try:
-        if hasattr(target, "is_converted") and target.is_converted:
-            target.is_converted = False
-            update_fields.append("is_converted")
+        if (
+            hasattr(
+                target,
+                "is_converted",
+            )
+            and target.is_converted
+        ):
+            updates[
+                "is_converted"
+            ] = False
+
     except Exception:
         pass
 
-    if hasattr(target, "updated_at"):
-        update_fields.append("updated_at")
-
-    if not update_fields:
+    if not updates:
         return
 
+    if hasattr(
+        target,
+        "updated_at",
+    ):
+        updates[
+            "updated_at"
+        ] = timezone.now()
+
     try:
-        target.save(update_fields=list(dict.fromkeys(update_fields)))
+        type(
+            target
+        )._base_manager.filter(
+            pk=target.pk
+        ).update(
+            **updates
+        )
+
     except Exception:
         logger.exception(
-            "Failed clearing media fields for canceled target %s[%s]",
+            (
+                "Failed clearing media fields for "
+                "canceled target %s[%s]"
+            ),
             target.__class__.__name__,
-            getattr(target, "pk", None),
+            getattr(
+                target,
+                "pk",
+                None,
+            ),
         )
+
+
+# ---------------------------------------------------------------------
+# Creative Editor cancellation policy
+# ---------------------------------------------------------------------
+def _is_creative_composition_media_job(
+    job: MediaConversionJob,
+) -> bool:
+    try:
+        return (
+            job.content_type.app_label
+            == "creative_editor"
+            and job.content_type.model
+            == "creativecompositionmedia"
+        )
+
+    except Exception:
+        return False
+
+
+def _creative_conversion_flag_field(
+    field_name: str,
+) -> str | None:
+    if field_name == "source_image":
+        return "source_image_is_converted"
+
+    if field_name == "source_video":
+        return "source_video_is_converted"
+
+    return None
+
+
+def _cleanup_canceled_creative_media_job(
+    job: MediaConversionJob,
+    target,
+    *,
+    reason: str,
+) -> None:
+    """
+    Preserve Creative Editor source identity and retryability.
+
+    Keeps:
+    - composition
+    - media row
+    - media UUID
+    - original uploaded source
+    - canceled job
+
+    Removes only disposable converted output when safe.
+    """
+
+    source_path = _clean_key(
+        job.source_path
+    )
+
+    output_path = _clean_key(
+        job.output_path
+    )
+
+    field_name = str(
+        job.field_name
+        or ""
+    ).strip()
+
+    if field_name not in {
+        "source_image",
+        "source_video",
+    }:
+        logger.warning(
+            (
+                "Creative media cancel received "
+                "unsupported field job=%s field=%s"
+            ),
+            job.pk,
+            field_name,
+        )
+
+        return
+
+    current_field_key: str | None = None
+    asset_key: str | None = None
+    source_exists: bool | None = None
+
+    if target is not None:
+        current_field_key = _clean_key(
+            getattr(
+                target,
+                field_name,
+                None,
+            )
+        )
+
+        assets = dict(
+            getattr(
+                target,
+                "media_assets",
+                None,
+            )
+            or {}
+        )
+
+        asset_payload = assets.get(
+            field_name
+        )
+
+        if isinstance(
+            asset_payload,
+            dict,
+        ):
+            asset_key = _clean_key(
+                asset_payload.get(
+                    "key"
+                )
+            )
+
+        source_exists = _storage_key_exists(
+            source_path
+        )
+
+        updates: dict = {}
+
+        # Restore the immutable upload source when
+        # converted output was already bound.
+        if (
+            source_path
+            and source_exists is True
+            and current_field_key != source_path
+        ):
+            updates[
+                field_name
+            ] = source_path
+
+        # Avoid leaving a field pointing to a
+        # disposable output when the source is gone.
+        elif (
+            source_exists is False
+            and current_field_key
+            and current_field_key != source_path
+        ):
+            updates[
+                field_name
+            ] = None
+
+        flag_field = (
+            _creative_conversion_flag_field(
+                field_name
+            )
+        )
+
+        if (
+            flag_field
+            and hasattr(
+                target,
+                flag_field,
+            )
+        ):
+            updates[
+                flag_field
+            ] = False
+
+        if field_name in assets:
+            assets.pop(
+                field_name,
+                None,
+            )
+
+            updates[
+                "media_assets"
+            ] = assets
+
+        if (
+            updates
+            and hasattr(
+                target,
+                "updated_at",
+            )
+        ):
+            updates[
+                "updated_at"
+            ] = timezone.now()
+
+        if updates:
+            try:
+                type(
+                    target
+                )._base_manager.filter(
+                    pk=target.pk
+                ).update(
+                    **updates
+                )
+
+            except Exception:
+                logger.exception(
+                    (
+                        "Failed restoring canceled "
+                        "CreativeCompositionMedia[%s]"
+                    ),
+                    getattr(
+                        target,
+                        "pk",
+                        None,
+                    ),
+                )
+
+    protected_keys = {
+        source_path
+    } if source_path else set()
+
+    cleanup_candidates = {
+        output_path,
+    }
+
+    # Only remove target-bound artifacts when storage
+    # state was successfully resolved.
+    if source_exists is not None:
+        cleanup_candidates.add(
+            current_field_key
+        )
+
+        cleanup_candidates.add(
+            asset_key
+        )
+
+    for key in cleanup_candidates:
+        key = _clean_key(
+            key
+        )
+
+        if (
+            not key
+            or key == source_path
+        ):
+            continue
+
+        if job.kind == MediaJobKind.VIDEO:
+            _delete_storage_tree(
+                key,
+                label="creative_media.output",
+                protected_keys=protected_keys,
+            )
+
+        else:
+            _delete_storage_key(
+                key,
+                label="creative_media.output",
+                protected_keys=protected_keys,
+            )
+
+    logger.info(
+        (
+            "🧹 Preserved canceled CreativeCompositionMedia "
+            "job=%s target=%s source=%s reason=%s"
+        ),
+        job.pk,
+        getattr(
+            target,
+            "pk",
+            None,
+        ),
+        source_path,
+        reason,
+    )
 
 
 # ---------------------------------------------------------------------
 # Delete-target policy
 # ---------------------------------------------------------------------
-def _is_posts_model(job: MediaConversionJob, model_name: str) -> bool:
+def _is_posts_model(
+    job: MediaConversionJob,
+    model_name: str,
+) -> bool:
     try:
         return (
-            job.content_type.app_label == "posts"
-            and job.content_type.model == model_name
+            job.content_type.app_label
+            == "posts"
+            and job.content_type.model
+            == model_name
         )
+
     except Exception:
         return False
 
 
-def _target_is_not_converted(target) -> bool:
+def _target_is_not_converted(
+    target,
+) -> bool:
     try:
-        return getattr(target, "is_converted", False) is not True
+        return (
+            getattr(
+                target,
+                "is_converted",
+                False,
+            )
+            is not True
+        )
+
     except Exception:
         return True
 
@@ -231,109 +764,222 @@ def _should_delete_unconverted_moment(
     job: MediaConversionJob,
     target,
 ) -> bool:
-    """
-    New unconverted Moment video cancel should remove the whole Moment.
-
-    Existing converted Moment edits should not be destroyed.
-    """
-    if not _is_posts_model(job, "moment"):
+    if not _is_posts_model(
+        job,
+        "moment",
+    ):
         return False
 
     if job.field_name != "video":
         return False
 
-    return _target_is_not_converted(target)
+    return _target_is_not_converted(
+        target
+    )
 
 
 def _should_delete_unconverted_testimony(
     job: MediaConversionJob,
     target,
 ) -> bool:
-    """
-    New unconverted media Testimony cancel should remove the whole Testimony.
-
-    Covers:
-    - video testimony: delete video + user thumbnail + db row
-    - audio testimony: delete audio + db row
-
-    Written testimony has no conversion job here.
-    Existing converted testimony edits should not be destroyed.
-    """
-    if not _is_posts_model(job, "testimony"):
+    if not _is_posts_model(
+        job,
+        "testimony",
+    ):
         return False
 
-    if job.field_name not in {"video", "audio"}:
+    if job.field_name not in {
+        "video",
+        "audio",
+    }:
         return False
 
-    return _target_is_not_converted(target)
+    return _target_is_not_converted(
+        target
+    )
 
 
 def _should_delete_unconverted_prayer(
     job: MediaConversionJob,
     target,
 ) -> bool:
-    """
-    New unconverted Prayer media cancel should remove the whole Prayer.
-
-    Covers:
-    - prayer video upload
-    - prayer image conversion/upload when conversion job exists
-
-    Existing converted Prayer edits should not be destroyed.
-    """
-    if not _is_posts_model(job, "prayer"):
+    if not _is_posts_model(
+        job,
+        "prayer",
+    ):
         return False
 
-    if job.field_name not in {"video", "image", "thumbnail"}:
+    if job.field_name not in {
+        "video",
+        "image",
+        "thumbnail",
+    }:
         return False
 
-    return _target_is_not_converted(target)
+    return _target_is_not_converted(
+        target
+    )
 
 
 def _should_delete_unconverted_prayer_response(
     job: MediaConversionJob,
     target,
 ) -> bool:
-    """
-    New unconverted PrayerResponse media cancel should remove only the response.
-
-    The parent Prayer remains.
-    Existing converted response edits should not be destroyed.
-    """
-    if not _is_posts_model(job, "prayerresponse"):
+    if not _is_posts_model(
+        job,
+        "prayerresponse",
+    ):
         return False
 
-    if job.field_name not in {"video", "image", "thumbnail"}:
+    if job.field_name not in {
+        "video",
+        "image",
+        "thumbnail",
+    }:
         return False
 
-    return _target_is_not_converted(target)
+    return _target_is_not_converted(
+        target
+    )
 
 
 def _should_delete_unconverted_target(
     job: MediaConversionJob,
     target,
 ) -> bool:
-    """
-    Central policy for canceling newly-created conversion targets.
-    """
     if target is None:
         return False
 
-    if _should_delete_unconverted_moment(job, target):
+    if _should_delete_unconverted_moment(
+        job,
+        target,
+    ):
         return True
 
-    if _should_delete_unconverted_testimony(job, target):
+    if _should_delete_unconverted_testimony(
+        job,
+        target,
+    ):
         return True
 
-    if _should_delete_unconverted_prayer(job, target):
+    if _should_delete_unconverted_prayer(
+        job,
+        target,
+    ):
         return True
 
-    if _should_delete_unconverted_prayer_response(job, target):
+    if _should_delete_unconverted_prayer_response(
+        job,
+        target,
+    ):
         return True
 
     return False
 
+def _normalized_task_id(
+    value,
+) -> str:
+    return str(
+        value
+        or ""
+    ).strip()
 
+
+def _normalized_attempt(
+    value,
+) -> int:
+    try:
+        return int(
+            value
+            or 0
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return 0
+
+
+def _same_job_generation(
+    *,
+    snapshot: MediaConversionJob,
+    authoritative: MediaConversionJob,
+) -> bool:
+    """
+    Ensure cleanup still belongs to the same logical task generation.
+
+    MediaConversionJob rows are reused across retries, so matching only
+    by primary key is not sufficient.
+    """
+
+    return (
+        _normalized_task_id(
+            snapshot.task_id
+        )
+        == _normalized_task_id(
+            authoritative.task_id
+        )
+        and _normalized_attempt(
+            snapshot.attempt
+        )
+        == _normalized_attempt(
+            authoritative.attempt
+        )
+    )
+  
+
+def _normalized_task_id(
+    value,
+) -> str:
+    return str(
+        value
+        or ""
+    ).strip()
+
+
+def _normalized_attempt(
+    value,
+) -> int:
+    try:
+        return int(
+            value
+            or 0
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return 0
+
+
+def _same_job_generation(
+    *,
+    snapshot: MediaConversionJob,
+    authoritative: MediaConversionJob,
+) -> bool:
+    """
+    MediaConversionJob rows are reused across retries.
+
+    Cleanup may proceed only when task identity and attempt still
+    match the canceled generation.
+    """
+
+    return (
+        _normalized_task_id(
+            snapshot.task_id
+        )
+        == _normalized_task_id(
+            authoritative.task_id
+        )
+        and _normalized_attempt(
+            snapshot.attempt
+        )
+        == _normalized_attempt(
+            authoritative.attempt
+        )
+    )
+      
 # ---------------------------------------------------------------------
 # Public cleanup
 # ---------------------------------------------------------------------
@@ -345,80 +991,145 @@ def cleanup_canceled_media_job(
     delete_unconverted_target: bool = True,
 ) -> None:
     """
-    Root cleanup after cancel.
+    Root cleanup after cancellation.
 
-    Removes:
-    - original source_path
-    - output_path / HLS output folder
-    - target video
-    - target audio
-    - target thumbnail
-    - target image
-    - unconverted Moment row for canceled video Moment
-    - unconverted Testimony row for canceled video/audio Testimony
-    - unconverted Prayer row for canceled prayer media
-    - unconverted PrayerResponse row for canceled response media
-    - MediaConversionJob row if delete_job=True
+    Safety invariants:
+    - Cleanup must still own the same job generation.
+    - Cleanup requires authoritative CANCELED state.
+    - Non-target-deleting cleanup may touch only job.field_name.
+    - Cleanup never invokes target.save().
+    - Existing domain target-deletion policies remain unchanged.
     """
+
     if not job:
         return
 
+    snapshot_pk = getattr(
+        job,
+        "pk",
+        None,
+    )
+
+    if not snapshot_pk:
+        return
+
     try:
-        job = (
-            MediaConversionJob.objects
-            .select_related("content_type")
-            .filter(pk=job.pk)
-            .first()
-        )
-
-        if not job:
-            return
-
-        target = _safe_get_target(job)
-
-        # Collect keys before clearing or deleting the target row.
-        # IMPORTANT:
-        # - audio is included for audio testimony cleanup.
-        # - image/thumbnail are included for prayer/response/testimony thumbnails.
-        target_keys = _target_field_keys(
-            target,
-            field_names=[
-                job.field_name,
-                "video",
-                "audio",
-                "thumbnail",
-                "image",
-            ],
-        )
-
-        source_path = _clean_key(job.source_path)
-        output_path = _clean_key(job.output_path)
-
-        target_model_name = None
-        target_pk = None
-
-        if target is not None:
-            target_model_name = target.__class__.__name__
-            target_pk = getattr(target, "pk", None)
-
-        should_delete_target = (
-            delete_unconverted_target
-            and _should_delete_unconverted_target(job, target)
-        )
-
         with transaction.atomic():
-            if should_delete_target and target is not None:
-                target.delete()
+            authoritative_job = (
+                MediaConversionJob.objects
+                .select_for_update()
+                .select_related(
+                    "content_type"
+                )
+                .filter(
+                    pk=snapshot_pk
+                )
+                .first()
+            )
 
+            if not authoritative_job:
+                return
+
+            if (
+                authoritative_job.status
+                != MediaJobStatus.CANCELED
+            ):
                 logger.info(
-                    "🧹 Deleted unconverted target after cancel: %s[%s] reason=%s",
-                    target_model_name,
-                    target_pk,
+                    (
+                        "Skipped cancellation cleanup "
+                        "for non-canceled job=%s "
+                        "status=%s reason=%s"
+                    ),
+                    snapshot_pk,
+                    authoritative_job.status,
                     reason,
                 )
+                return
 
-            else:
-                _clear_target_file_fields(
+            if not _same_job_generation(
+                snapshot=job,
+                authoritative=authoritative_job,
+            ):
+                logger.info(
+                    (
+                        "Skipped stale cancellation cleanup "
+                        "job=%s expected_task=%s current_task=%s "
+                        "expected_attempt=%s current_attempt=%s "
+                        "reason=%s"
+                    ),
+                    snapshot_pk,
+                    _normalized_task_id(
+                        job.task_id
+                    ),
+                    _normalized_task_id(
+                        authoritative_job.task_id
+                    ),
+                    _normalized_attempt(
+                        job.attempt
+                    ),
+                    _normalized_attempt(
+                        authoritative_job.attempt
+                    ),
+                    reason,
+                )
+                return
+
+            job = authoritative_job
+
+            target = _safe_get_target(
+                job
+            )
+
+            # Creative media keeps its existing persistent-draft policy.
+            if _is_creative_composition_media_job(
+                job
+            ):
+                _cleanup_canceled_creative_media_job(
+                    job,
+                    target,
+                    reason=reason,
+                )
+                return
+
+            source_path = _clean_key(
+                job.source_path
+            )
+
+            output_path = _clean_key(
+                job.output_path
+            )
+
+            target_model_name = None
+            target_pk = None
+
+            if target is not None:
+                target_model_name = (
+                    target
+                    .__class__
+                    .__name__
+                )
+
+                target_pk = getattr(
+                    target,
+                    "pk",
+                    None,
+                )
+
+            should_delete_target = (
+                delete_unconverted_target
+                and _should_delete_unconverted_target(
+                    job,
+                    target,
+                )
+            )
+
+            # Whole-target deletion preserves the existing legacy
+            # cleanup scope.
+            #
+            # When the target remains alive, this job owns only
+            # its own field.
+            if should_delete_target:
+                target_keys = _target_field_keys(
                     target,
                     field_names=[
                         job.field_name,
@@ -429,36 +1140,83 @@ def cleanup_canceled_media_job(
                     ],
                 )
 
+            else:
+                target_keys = _target_field_keys(
+                    target,
+                    field_names=[
+                        job.field_name,
+                    ],
+                )
+
+            if (
+                should_delete_target
+                and target is not None
+            ):
+                target.delete()
+
+                logger.info(
+                    (
+                        "🧹 Deleted unconverted target "
+                        "after cancel: %s[%s] reason=%s"
+                    ),
+                    target_model_name,
+                    target_pk,
+                    reason,
+                )
+
+            else:
+                _clear_target_file_fields(
+                    target,
+                    field_names=[
+                        job.field_name,
+                    ],
+                )
+
             if delete_job:
                 job_pk = job.pk
+
                 job.delete()
 
                 logger.info(
-                    "🧹 Deleted MediaConversionJob after cancel: id=%s reason=%s",
+                    (
+                        "🧹 Deleted MediaConversionJob "
+                        "after cancel: id=%s reason=%s"
+                    ),
                     job_pk,
                     reason,
                 )
 
-        # Storage deletes outside DB transaction.
-        _delete_storage_key(
-            source_path,
-            label="media_job.source",
-        )
-
-        _delete_storage_tree(
-            output_path,
-            label="media_job.output",
-        )
-
-        for key in set(target_keys):
-            _delete_storage_tree(
-                key,
-                label="media_job.target_media",
+            _delete_storage_key(
+                source_path,
+                label="media_job.source",
             )
+
+            if job.kind == MediaJobKind.VIDEO:
+                _delete_hls_output_tree(
+                    output_path,
+                    label="media_job.output",
+                )
+
+            else:
+                _delete_storage_tree(
+                    output_path,
+                    label="media_job.output",
+                )
+
+            for key in set(
+                target_keys
+            ):
+                _delete_storage_tree(
+                    key,
+                    label="media_job.target_media",
+                )
 
     except Exception:
         logger.exception(
-            "cleanup_canceled_media_job failed job=%s reason=%s",
-            getattr(job, "pk", None),
+            (
+                "cleanup_canceled_media_job failed "
+                "job=%s reason=%s"
+            ),
+            snapshot_pk,
             reason,
         )

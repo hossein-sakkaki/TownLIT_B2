@@ -7,7 +7,7 @@ from functools import lru_cache
 from django.contrib.contenttypes.models import ContentType
 
 from apps.sanctuary.models import SanctuarySafetyHold
-from apps.sanctuary.services.admin_pool import sanctuary_admin_queryset
+from apps.sanctuary.services.admin_pool import sanctuary_admin_queryset 
 
 
 HELD_CONTENT_MESSAGE = (
@@ -178,3 +178,39 @@ def resolve_sanctuary_hold_target(target):
         return None
 
     return target
+
+def exclude_active_safety_held_targets(
+    queryset,
+    *,
+    target_model,
+    viewer,
+):
+    """
+    Exclude active safety-held targets before pagination.
+
+    This keeps pagination counts aligned with visible results.
+    Review admins may still inspect held content.
+    """
+    if (
+        viewer is not None
+        and is_sanctuary_review_admin(viewer)
+    ):
+        return queryset
+
+    target_content_type = ContentType.objects.get_for_model(
+        target_model
+    )
+
+    active_held_object_ids = (
+        SanctuarySafetyHold.objects
+        .filter(
+            content_type=target_content_type,
+            status=SanctuarySafetyHold.STATUS_ACTIVE,
+            ended_at__isnull=True,
+        )
+        .values("object_id")
+    )
+
+    return queryset.exclude(
+        pk__in=active_held_object_ids
+    )

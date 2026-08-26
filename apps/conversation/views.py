@@ -15,7 +15,7 @@ from django.db.models import (
     OuterRef,
     Subquery,
     IntegerField,
-    Case,
+    Case, 
     When,
 )
 from django.db import transaction
@@ -169,6 +169,9 @@ from apps.conversation.services.messenger_notification_adapter import (
     notify_message_pinned,
     notify_message_reaction,
 )
+from apps.content_safety.serializers.jobs import (
+    ContentSafetyJobSerializer,
+)
 
 import logging
 logger = logging.getLogger(__name__)
@@ -271,43 +274,84 @@ class DialogueViewSet(viewsets.ModelViewSet):
                 .filter(participants=self.request.user)
                 .exclude(deleted_by_users=self.request.user))
 
-    def _with_last_activity(self, qs):
+    def _with_last_activity(
+        self,
+        qs,
+    ):
         """
         Order dialogues by:
-        1) pinned dialogues first (per-user)
+        1) pinned dialogues first
         2) pinned position ascending
-        3) latest visible non-system activity
+        3) latest visible delivery-ready non-system activity
         4) created_at fallback
+
+        Pending asynchronous Group Messenger video must not reorder
+        the dialogue list before Content Safety approval.
 
         Notes:
         - pin state is per-user
         - activity is visibility-aware per-user
         """
+
         user = self.request.user
 
         visible_last_message_ts = Subquery(
             Message.objects
-            .filter(dialogue=OuterRef("pk"), is_system=False)
-            .exclude(deleted_by_users=user)
-            .order_by("-timestamp")
-            .values("timestamp")[:1]
+            .filter(
+                dialogue=OuterRef(
+                    "pk"
+                ),
+                is_system=False,
+                is_delivery_ready=True,
+            )
+            .exclude(
+                deleted_by_users=user
+            )
+            .order_by(
+                "-timestamp",
+                "-id",
+            )
+            .values(
+                "timestamp"
+            )[:1]
         )
 
         pinned_position_subquery = Subquery(
             DialoguePin.objects
-            .filter(user=user, dialogue=OuterRef("pk"))
-            .values("position")[:1],
+            .filter(
+                user=user,
+                dialogue=OuterRef(
+                    "pk"
+                ),
+            )
+            .values(
+                "position"
+            )[:1],
             output_field=IntegerField(),
         )
 
         return (
             qs.annotate(
-                last_msg_ts=visible_last_message_ts,
-                last_activity=Coalesce("last_msg_ts", "created_at"),
-                pinned_position=pinned_position_subquery,
+                last_msg_ts=(
+                    visible_last_message_ts
+                ),
+                last_activity=Coalesce(
+                    "last_msg_ts",
+                    "created_at",
+                ),
+                pinned_position=(
+                    pinned_position_subquery
+                ),
                 is_pinned_sort=Case(
-                    When(pinned_position__isnull=False, then=Value(1)),
-                    default=Value(0),
+                    When(
+                        pinned_position__isnull=False,
+                        then=Value(
+                            1
+                        ),
+                    ),
+                    default=Value(
+                        0
+                    ),
                     output_field=IntegerField(),
                 ),
             )
@@ -317,9 +361,13 @@ class DialogueViewSet(viewsets.ModelViewSet):
                 "-last_activity",
                 "-created_at",
             )
-            .prefetch_related("participants", "participants_roles", "marked_users")
+            .prefetch_related(
+                "participants",
+                "participants_roles",
+                "marked_users",
+            )
         )
-
+    
     def get_queryset(self):
         # used by default list/retrieve
         base = self._base_qs()
@@ -1526,180 +1574,502 @@ class MessageViewSet(viewsets.ModelViewSet):
         permission_classes=[IsAuthenticated],
         parser_classes=[MultiPartParser, FormParser],
     )
-    def upload_file(self, request):
+    def upload_file(
+        self,
+        request,
+    ):
         user = request.user
-        dialogue_slug = request.data.get("dialogue_slug")
-        uploaded_file = request.FILES.get("file")
-        reply_to_message_id = request.data.get("reply_to_message_id")
-        forwarded_from_message_id = request.data.get("forwarded_from_message_id")
+
+        dialogue_slug = (
+            request.data.get(
+                "dialogue_slug"
+            )
+        )
+
+        uploaded_file = (
+            request.FILES.get(
+                "file"
+            )
+        )
+
+        reply_to_message_id = (
+            request.data.get(
+                "reply_to_message_id"
+            )
+        )
+
+        forwarded_from_message_id = (
+            request.data.get(
+                "forwarded_from_message_id"
+            )
+        )
 
         if not dialogue_slug:
             return Response(
-                {"error": "Dialogue slug is required."},
-                status=status.HTTP_400_BAD_REQUEST,
+                {
+                    "error":
+                        "Dialogue slug is required."
+                },
+                status=(
+                    status.HTTP_400_BAD_REQUEST
+                ),
             )
 
-        validation = validate_upload_input(uploaded_file=uploaded_file)
-        if not validation.get("ok"):
+        validation = validate_upload_input(
+            uploaded_file=uploaded_file
+        )
+
+        if not validation.get(
+            "ok"
+        ):
             return Response(
-                {"error": validation["message"], "code": validation["code"]},
-                status=validation["status"],
+                {
+                    "error":
+                        validation["message"],
+                    "code":
+                        validation["code"],
+                },
+                status=validation[
+                    "status"
+                ],
             )
 
-        validation_payload = validation["payload"]
-        field_name = validation_payload["field_name"]
-        file_type = validation_payload["file_type"]
+        validation_payload = (
+            validation[
+                "payload"
+            ]
+        )
 
-        dialogue = get_object_or_404(Dialogue, slug=dialogue_slug, participants=user)
+        field_name = (
+            validation_payload[
+                "field_name"
+            ]
+        )
 
-        boundary_payload = private_dialogue_boundary_response_payload(
-            dialogue=dialogue,
-            acting_user=user,
+        file_type = (
+            validation_payload[
+                "file_type"
+            ]
+        )
+
+        dialogue = get_object_or_404(
+            Dialogue,
+            slug=dialogue_slug,
+            participants=user,
+        )
+
+        boundary_payload = (
+            private_dialogue_boundary_response_payload(
+                dialogue=dialogue,
+                acting_user=user,
+            )
         )
 
         if boundary_payload:
             return Response(
                 boundary_payload,
-                status=status.HTTP_403_FORBIDDEN,
+                status=(
+                    status.HTTP_403_FORBIDDEN
+                ),
             )
-            
-        # Validate forwarded source when iOS performs client-side media forwarding.
+
+        # --------------------------------------------------------------
+        # Forward source validation
+        # --------------------------------------------------------------
         forwarded_from_message = None
 
         if forwarded_from_message_id:
             try:
-                forwarded_from_message = Message.objects.select_related(
-                    "dialogue",
-                    "sender",
-                ).get(id=forwarded_from_message_id)
+                forwarded_from_message = (
+                    Message.objects
+                    .select_related(
+                        "dialogue",
+                        "sender",
+                    )
+                    .get(
+                        id=(
+                            forwarded_from_message_id
+                        )
+                    )
+                )
+
             except Message.DoesNotExist:
                 return Response(
                     {
-                        "error": "Forward source message not found.",
-                        "code": "FORWARD_SOURCE_NOT_FOUND",
+                        "error":
+                            "Forward source message not found.",
+                        "code":
+                            "FORWARD_SOURCE_NOT_FOUND",
                     },
-                    status=status.HTTP_404_NOT_FOUND,
+                    status=(
+                        status.HTTP_404_NOT_FOUND
+                    ),
                 )
 
-            if not forwarded_from_message.dialogue.participants.filter(id=user.id).exists():
+            if not (
+                forwarded_from_message
+                .dialogue
+                .participants
+                .filter(
+                    id=user.id
+                )
+                .exists()
+            ):
                 return Response(
                     {
-                        "error": "You do not have access to the forward source message.",
-                        "code": "FORWARD_SOURCE_FORBIDDEN",
+                        "error":
+                            (
+                                "You do not have access to "
+                                "the forward source message."
+                            ),
+                        "code":
+                            "FORWARD_SOURCE_FORBIDDEN",
                     },
-                    status=status.HTTP_403_FORBIDDEN,
+                    status=(
+                        status.HTTP_403_FORBIDDEN
+                    ),
                 )
 
-            if forwarded_from_message.deleted_by_users.filter(id=user.id).exists():
+            if (
+                forwarded_from_message
+                .deleted_by_users
+                .filter(
+                    id=user.id
+                )
+                .exists()
+            ):
                 return Response(
                     {
-                        "error": "Forward source message is not visible to you.",
-                        "code": "FORWARD_SOURCE_NOT_VISIBLE",
+                        "error":
+                            (
+                                "Forward source message is "
+                                "not visible to you."
+                            ),
+                        "code":
+                            "FORWARD_SOURCE_NOT_VISIBLE",
                     },
-                    status=status.HTTP_403_FORBIDDEN,
+                    status=(
+                        status.HTTP_403_FORBIDDEN
+                    ),
+                )
+
+            if not (
+                forwarded_from_message
+                .is_delivery_ready
+            ):
+                return Response(
+                    {
+                        "error":
+                            (
+                                "Forward source message is "
+                                "not ready for delivery."
+                            ),
+                        "code":
+                            "FORWARD_SOURCE_NOT_READY",
+                    },
+                    status=(
+                        status.HTTP_409_CONFLICT
+                    ),
                 )
 
             if forwarded_from_message.is_system:
                 return Response(
                     {
-                        "error": "System messages cannot be forwarded.",
-                        "code": "INVALID_FORWARD_SOURCE",
+                        "error":
+                            "System messages cannot be forwarded.",
+                        "code":
+                            "INVALID_FORWARD_SOURCE",
                     },
-                    status=status.HTTP_400_BAD_REQUEST,
+                    status=(
+                        status.HTTP_400_BAD_REQUEST
+                    ),
                 )
 
-        # Re-open dialogue on first outgoing file.
-        dialogue.release_inbound_block_on_outgoing(user)
+        # --------------------------------------------------------------
+        # Dialogue restore / inbound state
+        # --------------------------------------------------------------
+        dialogue.release_inbound_block_on_outgoing(
+            user
+        )
 
         recipient_hidden_on_incoming = False
         recipient = None
 
         if not dialogue.is_group:
-            recipient = dialogue.participants.exclude(id=user.id).first()
+            recipient = (
+                dialogue.participants
+                .exclude(
+                    id=user.id
+                )
+                .first()
+            )
+
             if recipient:
-                if dialogue.should_restore_on_incoming_for_user(recipient):
-                    dialogue.restore_dialogue(recipient)
+                if (
+                    dialogue
+                    .should_restore_on_incoming_for_user(
+                        recipient
+                    )
+                ):
+                    dialogue.restore_dialogue(
+                        recipient
+                    )
 
-                recipient_hidden_on_incoming = dialogue.should_hide_incoming_for_user(recipient)
+                recipient_hidden_on_incoming = (
+                    dialogue
+                    .should_hide_incoming_for_user(
+                        recipient
+                    )
+                )
 
-        # Sender PoP.
-        header_device = (request.headers.get("X-Device-ID") or "").strip().lower()
+        # --------------------------------------------------------------
+        # Sender PoP
+        # --------------------------------------------------------------
+        header_device = (
+            request.headers.get(
+                "X-Device-ID"
+            )
+            or ""
+        ).strip().lower()
+
         if not header_device:
             return Response(
-                {"error": "X-Device-ID header is required."},
-                status=status.HTTP_400_BAD_REQUEST,
+                {
+                    "error":
+                        "X-Device-ID header is required."
+                },
+                status=(
+                    status.HTTP_400_BAD_REQUEST
+                ),
             )
 
         if not is_sender_device_verified(
             user,
             header_device,
-            dialogue_is_group=bool(dialogue.is_group),
+            dialogue_is_group=bool(
+                dialogue.is_group
+            ),
         ):
             return Response(
                 {
-                    "error": "Sender device is not verified.",
-                    "code": "SENDER_DEVICE_UNVERIFIED",
+                    "error":
+                        "Sender device is not verified.",
+                    "code":
+                        "SENDER_DEVICE_UNVERIFIED",
                 },
-                status=status.HTTP_403_FORBIDDEN,
+                status=(
+                    status.HTTP_403_FORBIDDEN
+                ),
             )
 
-        encrypted_prepare = prepare_encrypted_file_request(
-            is_encrypted_file=str(request.data.get("is_encrypted_file", "")).strip().lower()
-            in ("true", "1", "yes"),
-            encrypted_for_device=request.data.get("encrypted_for_device"),
-            aes_key_encrypted=request.data.get("aes_key_encrypted"),
-            encrypted_keys_per_device=request.data.get("encrypted_keys_per_device"),
+        # --------------------------------------------------------------
+        # E2EE request normalization
+        # --------------------------------------------------------------
+        encrypted_prepare = (
+            prepare_encrypted_file_request(
+                is_encrypted_file=(
+                    str(
+                        request.data.get(
+                            "is_encrypted_file",
+                            "",
+                        )
+                    )
+                    .strip()
+                    .lower()
+                    in (
+                        "true",
+                        "1",
+                        "yes",
+                    )
+                ),
+                encrypted_for_device=(
+                    request.data.get(
+                        "encrypted_for_device"
+                    )
+                ),
+                aes_key_encrypted=(
+                    request.data.get(
+                        "aes_key_encrypted"
+                    )
+                ),
+                encrypted_keys_per_device=(
+                    request.data.get(
+                        "encrypted_keys_per_device"
+                    )
+                ),
+            )
         )
 
-        if not encrypted_prepare.get("ok"):
+        if not encrypted_prepare.get(
+            "ok"
+        ):
             return Response(
                 {
-                    "error": encrypted_prepare["message"],
-                    "code": encrypted_prepare["code"],
+                    "error":
+                        encrypted_prepare[
+                            "message"
+                        ],
+                    "code":
+                        encrypted_prepare[
+                            "code"
+                        ],
                 },
-                status=encrypted_prepare["status"],
+                status=(
+                    encrypted_prepare[
+                        "status"
+                    ]
+                ),
             )
 
-        encrypted_payload = encrypted_prepare["payload"]
+        encrypted_payload = (
+            encrypted_prepare[
+                "payload"
+            ]
+        )
 
+        # --------------------------------------------------------------
+        # Create
+        # --------------------------------------------------------------
         result = create_file_message(
             dialogue=dialogue,
             sender=user,
             uploaded_file=uploaded_file,
             field_name=field_name,
-            is_encrypted_file=encrypted_payload["is_encrypted_file"],
-            encrypted_for_device=encrypted_payload["encrypted_for_device"],
-            aes_key_encrypted_bytes=encrypted_payload["aes_key_encrypted_bytes"],
-            encrypted_keys_per_device=encrypted_payload["encrypted_keys_per_device"],
-            recipient_hidden_on_incoming=recipient_hidden_on_incoming,
+            is_encrypted_file=(
+                encrypted_payload[
+                    "is_encrypted_file"
+                ]
+            ),
+            encrypted_for_device=(
+                encrypted_payload[
+                    "encrypted_for_device"
+                ]
+            ),
+            aes_key_encrypted_bytes=(
+                encrypted_payload[
+                    "aes_key_encrypted_bytes"
+                ]
+            ),
+            encrypted_keys_per_device=(
+                encrypted_payload[
+                    "encrypted_keys_per_device"
+                ]
+            ),
+            recipient_hidden_on_incoming=(
+                recipient_hidden_on_incoming
+            ),
             recipient=recipient,
-            reply_to_message_id=reply_to_message_id,
-            forwarded_from_message=forwarded_from_message,
+            reply_to_message_id=(
+                reply_to_message_id
+            ),
+            forwarded_from_message=(
+                forwarded_from_message
+            ),
         )
 
-        if not result.get("ok"):
+        if not result.get(
+            "ok"
+        ):
             return Response(
-                {"error": result["message"], "code": result["code"]},
-                status=result["status"],
+                {
+                    "error":
+                        result["message"],
+                    "code":
+                        result["code"],
+                },
+                status=result[
+                    "status"
+                ],
             )
 
-        payload = result["payload"]
-        message = payload["message"]
+        payload = result[
+            "payload"
+        ]
 
-        stored_file = getattr(message, field_name)
-        file_key = getattr(stored_file, "name", None)
-        file_url = get_file_url(file_key) if (file_key and not message.is_encrypted_file) else None
+        message = payload[
+            "message"
+        ]
+
+        content_safety_jobs = (
+            payload.get(
+                "content_safety_jobs"
+            )
+            or []
+        )
+
+        # --------------------------------------------------------------
+        # File URL
+        # --------------------------------------------------------------
+        stored_file = getattr(
+            message,
+            field_name,
+        )
+
+        file_key = getattr(
+            stored_file,
+            "name",
+            None,
+        )
+
+        file_url = (
+            get_file_url(
+                file_key
+            )
+            if (
+                file_key
+                and not message.is_encrypted_file
+            )
+            else None
+        )
+
+        # --------------------------------------------------------------
+        # Response
+        # --------------------------------------------------------------
+        response_payload = {
+            "file_url":
+                file_url,
+            "message_id":
+                payload[
+                    "message_id"
+                ],
+            "file_type":
+                file_type,
+            "dialogue_slug":
+                payload[
+                    "dialogue_slug"
+                ],
+            "is_encrypted_file":
+                bool(
+                    message.is_encrypted_file
+                ),
+            "websocket_url":
+                get_websocket_url(
+                    request
+                ),
+        }
+
+        if content_safety_jobs:
+            response_payload[
+                "content_safety_jobs"
+            ] = (
+                ContentSafetyJobSerializer(
+                    content_safety_jobs,
+                    many=True,
+                ).data
+            )
+
+            return Response(
+                response_payload,
+                status=(
+                    status.HTTP_202_ACCEPTED
+                ),
+            )
 
         return Response(
-            {
-                "file_url": file_url,
-                "message_id": payload["message_id"],
-                "file_type": file_type,
-                "dialogue_slug": payload["dialogue_slug"],
-                "is_encrypted_file": bool(message.is_encrypted_file),
-                "websocket_url": get_websocket_url(request),
-            },
-            status=status.HTTP_201_CREATED,
+            response_payload,
+            status=(
+                status.HTTP_201_CREATED
+            ),
         )
 
     # -------------------------------------------------------------------------------------------------
@@ -2118,13 +2488,22 @@ class MessageViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["get"], url_path="get-message", permission_classes=[IsAuthenticated])
     def get_message(self, request, pk=None):
         device_id = (
-            request.query_params.get("device_id", "")
-            or request.headers.get("X-Device-ID", "")
+            request.query_params.get(
+                "device_id",
+                "",
+            )
+            or request.headers.get(
+                "X-Device-ID",
+                "",
+            )
         ).strip().lower()
 
         message = get_object_or_404(
             Message.objects
-            .select_related("dialogue", "sender")
+            .select_related(
+                "dialogue",
+                "sender",
+            )
             .prefetch_related(
                 "seen_by_users",
                 "encryptions",
@@ -2133,21 +2512,77 @@ class MessageViewSet(viewsets.ModelViewSet):
             pk=pk,
         )
 
-        if not message.dialogue.participants.filter(id=request.user.id).exists():
-            return Response({"error": "Access denied."}, status=403)
+        if not (
+            message.dialogue
+            .participants
+            .filter(
+                id=request.user.id
+            )
+            .exists()
+        ):
+            return Response(
+                {
+                    "error":
+                        "Access denied."
+                },
+                status=(
+                    status.HTTP_403_FORBIDDEN
+                ),
+            )
 
-        if message.deleted_by_users.filter(id=request.user.id).exists():
-            return Response({"error": "Message not found."}, status=404)
+        if (
+            message.deleted_by_users
+            .filter(
+                id=request.user.id
+            )
+            .exists()
+        ):
+            return Response(
+                {
+                    "error":
+                        "Message not found."
+                },
+                status=(
+                    status.HTTP_404_NOT_FOUND
+                ),
+            )
+
+        # Pending asynchronous Group Messenger media is not
+        # available to other participants before Safety ALLOW.
+        #
+        # The sender may still resolve their own accepted upload
+        # for recovery/debug flows.
+        if (
+            not message.is_delivery_ready
+            and message.sender_id
+            != request.user.id
+        ):
+            return Response(
+                {
+                    "error":
+                        "Message not found."
+                },
+                status=(
+                    status.HTTP_404_NOT_FOUND
+                ),
+            )
 
         serializer = MessageSerializer(
             message,
             context={
-                "request": request,
-                "device_id": device_id,
+                "request":
+                    request,
+                "device_id":
+                    device_id,
             },
         )
 
-        return Response(serializer.data)
+        return Response(
+            serializer.data,
+            status=(
+                status.HTTP_200_OK
+            ),
+        )
 
     # Pin Message -------------------------------------------------------------------------------------------
     @action(detail=True, methods=["post"], url_path="pin-message", permission_classes=[IsAuthenticated])

@@ -24,8 +24,21 @@ urlpatterns = [
     # Interactions (reactions, comments, counters)
     path('interactions/', include('apps.core.interactions.urls')),
 
+    # Content Safety (async pre-publication media checks)
+    path(
+        "content-safety/",
+        include(
+            "apps.content_safety.urls"
+        ),
+    ),
+
     # Media processing (async jobs)
-    path("media-conversion/", include("apps.media_conversion.urls")),
+    path(
+        "media-conversion/",
+        include(
+            "apps.media_conversion.urls"
+        ),
+    ),
 
     # Asset delivery gateway
     path("assets/", include("apps.asset_delivery.urls")),

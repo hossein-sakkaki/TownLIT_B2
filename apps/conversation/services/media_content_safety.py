@@ -29,9 +29,6 @@ from apps.content_safety.services.normalization import (
 from apps.content_safety.services.text import (
     enforce_text_safety,
 )
-from apps.content_safety.services.video import (
-    enforce_video_file_safety,
-)
 from apps.content_safety.services.video_transcription import (
     transcribe_video_audio,
 )
@@ -526,20 +523,15 @@ def enforce_group_message_media_content_safety(
     mime_type: str | None = None,
 ) -> None:
     """
-    Require backend-readable Group Messenger media to pass.
+    Protect backend-readable Group Messenger media.
 
-    Important privacy boundary:
-    - Group media: backend-readable -> inspect.
-    - Private DM E2EE media: never inspect here.
+    Safety policy:
+    - image: synchronous before persistence
+    - video: asynchronous after persistence through ContentSafetyJob
+    - audio: synchronous transcript inspection
+    - private E2EE media: never inspected here
 
-    Supported semantic media:
-    - image
-    - video
-    - audio transcript
-
-    Generic files such as PDF/ZIP continue through the existing
-    security and MIME validation pipeline. No document semantic
-    classifier currently exists in Content Safety Core.
+    Generic files remain outside semantic media classification.
     """
 
     if dialogue is None:
@@ -578,6 +570,9 @@ def enforce_group_message_media_content_safety(
     )
 
     try:
+        # --------------------------------------------------------------
+        # Image
+        # --------------------------------------------------------------
         if normalized_field == "image":
             enforce_image_file_safety(
                 file_obj=file_obj,
@@ -592,20 +587,20 @@ def enforce_group_message_media_content_safety(
 
             return
 
+        # --------------------------------------------------------------
+        # Video
+        # --------------------------------------------------------------
         if normalized_field == "video":
-            enforce_video_file_safety(
-                file_obj=file_obj,
-                context=(
-                    SafetyContext
-                    .GROUP_MESSAGE_MEDIA
-                ),
-                actor=actor,
-                field_name=audit_name,
-                mime_type=resolved_mime_type,
-            )
-
+            # Group Messenger video is intentionally NOT inspected here.
+            #
+            # The Message and its authoritative storage source must first
+            # be persisted. A ContentSafetyJob is then scheduled and the
+            # media remains non-deliverable until asynchronous ALLOW.
             return
 
+        # --------------------------------------------------------------
+        # Audio
+        # --------------------------------------------------------------
         if normalized_field == "audio":
             _enforce_audio_file_safety(
                 file_obj=file_obj,
@@ -620,11 +615,10 @@ def enforce_group_message_media_content_safety(
 
             return
 
-        
         # Generic file attachments intentionally remain outside the
         # semantic media safety core until a document-content scanner
         # is introduced.
-        
+
     except (
         TypeError,
         ValueError,

@@ -18,20 +18,23 @@ from apps.core.pagination import FeedCursorPagination
 logger = logging.getLogger(__name__)
 
 
+SQUARE_PAGE_SIZE = 20
+
+
+class SquareCursorPagination(FeedCursorPagination):
+    page_size = SQUARE_PAGE_SIZE
+    page_size_query_param = None
+    max_page_size = SQUARE_PAGE_SIZE
+    
+    
 class SquareViewSet(viewsets.ViewSet):
     """
     Square feed endpoints.
-
-    Notes:
-    - Engines annotate only (NO ordering).
-    - ViewSet applies cursor-safe ordering per mode.
-    - For kind=all: we merge multiple sources in Python.
-    - Serializer may gate items (return None) => we filter them out.
     """
 
     permission_classes = [permissions.AllowAny]
-    pagination_class = FeedCursorPagination
-    pagination_page_size = 12
+    pagination_class = SquareCursorPagination
+    pagination_page_size = SQUARE_PAGE_SIZE
 
     # ------------------------------------------------------------------
     # Score helpers
@@ -234,7 +237,13 @@ class SquareViewSet(viewsets.ViewSet):
         # 2) ALL + FRIENDS => merge multiple sources
         # -------------------------------------------------
         if kind in (SQUARE_KIND_ALL, SQUARE_KIND_FRIENDS):
-            page_size = int(getattr(self, "pagination_page_size", 12))
+            page_size = int(
+                getattr(
+                    self,
+                    "pagination_page_size",
+                    SQUARE_PAGE_SIZE,
+                )
+            )
 
             # Bigger fetch window for production skew.
             per_source_limit = page_size * 40

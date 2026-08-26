@@ -8,14 +8,22 @@
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
+import uuid
 
+from django.contrib.contenttypes.fields import (
+    GenericForeignKey,
+)
+from django.contrib.contenttypes.models import (
+    ContentType,
+)
 from apps.content_safety.enums import (
+    ContentSafetyJobStage,
+    ContentSafetyJobStatus,
     SafetyContext,
     SafetyDecision,
     SafetyInputType,
     SafetyRiskLevel,
 )
-
 
 class ContentSafetyAnalysisCache(models.Model):
     """
@@ -380,4 +388,259 @@ class ContentSafetyEvent(models.Model):
             f"SafetyEvent<{self.context} "
             f"{self.decision} "
             f"{self.reason_code}>"
+        )
+        
+
+class ContentSafetyJob(models.Model):
+    """
+    Persistent asynchronous Content Safety lifecycle.
+
+    One row represents the latest safety generation for one
+    target model field.
+
+    Content Safety owns pre-publication approval.
+    MediaConversionJob owns conversion after approval.
+    """
+
+    id = models.BigAutoField(
+        primary_key=True
+    )
+
+    public_id = models.UUIDField(
+        default=uuid.uuid4,
+        unique=True,
+        editable=False,
+        db_index=True,
+    )
+
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="content_safety_jobs",
+    )
+
+    content_type = models.ForeignKey(
+        ContentType,
+        on_delete=models.CASCADE,
+        related_name="content_safety_jobs",
+    )
+
+    object_id = models.PositiveBigIntegerField(
+        db_index=True
+    )
+
+    content_object = GenericForeignKey(
+        "content_type",
+        "object_id",
+    )
+
+    field_name = models.CharField(
+        max_length=80,
+        db_index=True,
+    )
+
+    input_type = models.CharField(
+        max_length=16,
+        choices=SafetyInputType.choices,
+        db_index=True,
+    )
+
+    context = models.CharField(
+        max_length=40,
+        choices=SafetyContext.choices,
+        db_index=True,
+    )
+
+    source_path = models.CharField(
+        max_length=1000,
+    )
+
+    mime_type = models.CharField(
+        max_length=120,
+        blank=True,
+        default="",
+    )
+
+    input_hash = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        db_index=True,
+    )
+
+    status = models.CharField(
+        max_length=16,
+        choices=ContentSafetyJobStatus.choices,
+        default=ContentSafetyJobStatus.QUEUED,
+        db_index=True,
+    )
+
+    stage = models.CharField(
+        max_length=32,
+        choices=ContentSafetyJobStage.choices,
+        default=ContentSafetyJobStage.QUEUED,
+        db_index=True,
+    )
+
+    decision = models.CharField(
+        max_length=16,
+        choices=SafetyDecision.choices,
+        blank=True,
+        default="",
+        db_index=True,
+    )
+
+    risk_level = models.CharField(
+        max_length=16,
+        choices=SafetyRiskLevel.choices,
+        blank=True,
+        default="",
+        db_index=True,
+    )
+
+    reason_code = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        db_index=True,
+    )
+
+    retryable = models.BooleanField(
+        default=False,
+        db_index=True,
+    )
+
+    progress = models.PositiveSmallIntegerField(
+        default=0
+    )
+
+    message = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+    )
+
+    error = models.TextField(
+        blank=True,
+        default="",
+    )
+
+    task_id = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        db_index=True,
+    )
+
+    attempt = models.PositiveIntegerField(
+        default=1
+    )
+
+    max_attempts = models.PositiveIntegerField(
+        default=3
+    )
+
+    # Loose service-level bridge to MediaConversionJob.
+    #
+    # We intentionally do not make Content Safety own the
+    # MediaConversionJob lifecycle through a hard FK.
+    conversion_job_id = models.PositiveBigIntegerField(
+        null=True,
+        blank=True,
+        db_index=True,
+    )
+
+    heartbeat_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+    )
+
+    started_at = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
+
+    finished_at = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
+
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        db_index=True,
+    )
+
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        db_index=True,
+    )
+
+    class Meta:
+        verbose_name = "Content Safety Job"
+        verbose_name_plural = "Content Safety Jobs"
+
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    "content_type",
+                    "object_id",
+                    "field_name",
+                ],
+                name="uniq_content_safety_target_field",
+            ),
+        ]
+
+        indexes = [
+            models.Index(
+                fields=[
+                    "content_type",
+                    "object_id",
+                    "field_name",
+                ],
+                name="safety_job_target_idx",
+            ),
+            models.Index(
+                fields=[
+                    "actor",
+                    "status",
+                ],
+                name="safety_job_actor_status_idx",
+            ),
+            models.Index(
+                fields=[
+                    "status",
+                    "updated_at",
+                ],
+                name="safety_job_status_time_idx",
+            ),
+        ]
+
+    @property
+    def can_retry(self) -> bool:
+        return (
+            self.status
+            == ContentSafetyJobStatus.FAILED
+            and self.retryable
+            and self.attempt
+            < self.max_attempts
+        )
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.status in {
+            ContentSafetyJobStatus.DONE,
+            ContentSafetyJobStatus.FAILED,
+            ContentSafetyJobStatus.CANCELED,
+        }
+
+    def __str__(self) -> str:
+        return (
+            f"ContentSafetyJob<{self.public_id} "
+            f"{self.status} "
+            f"{self.content_type_id}:"
+            f"{self.object_id}:"
+            f"{self.field_name}>"
         )

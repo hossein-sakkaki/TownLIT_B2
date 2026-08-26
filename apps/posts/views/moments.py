@@ -8,6 +8,7 @@
 from django.contrib.contenttypes.models import ContentType
 from django.utils import timezone
 from django.db.models import F, Q
+from django.db import transaction
 
 from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -27,6 +28,9 @@ from apps.posts.services.moment_content_safety import (
 from apps.posts.services.moment_media_content_safety import (
     enforce_moment_media_content_safety,
 )
+from apps.content_safety.view_mixins import (
+    ContentSafetyJobResponseMixin,
+)
 
 from apps.core.visibility.query import VisibilityQuery
 from apps.core.visibility.policy import VisibilityPolicy
@@ -39,13 +43,22 @@ from apps.core.ownership.owner_gate_mixins import OwnerGateMixin
 from apps.core.ownership.utils import resolve_owner_from_request
 from apps.core.visibility.constants import VISIBILITY_GLOBAL
 from apps.core.boundaries.query import BoundaryVisibilityQuery
+from apps.sanctuary.services.held_content_access import (
+    exclude_active_safety_held_targets,
+)
 
 import logging
 
 logger = logging.getLogger(__name__)
 
+MOMENT_PAGE_SIZE = 21
 
-class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
+
+class MomentViewSet(
+    ContentSafetyJobResponseMixin,
+    OwnerGateMixin,
+    viewsets.ModelViewSet,
+):
     """
     Moment API
     -------------------------
@@ -62,7 +75,7 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     lookup_field = "slug"
     pagination_class = ConfigurablePagination
-    pagination_page_size = 12
+    pagination_page_size = MOMENT_PAGE_SIZE
 
     # -------------------------------------------------
     # Permissions
@@ -83,35 +96,69 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
     # -------------------------------------------------
     # Base queryset
     # -------------------------------------------------
-    def get_queryset(self):
+    def get_queryset(
+        self,
+    ):
         base = (
             Moment.objects
-            .select_related("content_type")
-            .order_by("-published_at", "-id")
+            .select_related(
+                "content_type"
+            )
+            .order_by(
+                "-published_at",
+                "-id",
+            )
         )
 
-        # Retrieve stays open; hard gating happens later.
-        if self.action == "retrieve":
+        # Owner mutation/detail actions must be able to reach the target even
+        # while Content Safety or Media Conversion is incomplete.
+        #
+        # Authorization is enforced later by the action-specific owner gates.
+        if self.action in {
+            "retrieve",
+            "update",
+            "partial_update",
+            "destroy",
+        }:
             return base
 
-        if not self.request.user or not self.request.user.is_authenticated:
-            qs = base.filter(visibility=VISIBILITY_GLOBAL)
+        if (
+            not self.request.user
+            or not self.request.user.is_authenticated
+        ):
+            qs = base.filter(
+                visibility=VISIBILITY_GLOBAL
+            )
+
         else:
             qs = VisibilityQuery.for_viewer(
                 viewer=self.request.user,
                 base_queryset=base,
             )
 
-            qs = BoundaryVisibilityQuery.exclude_boundary_conflicts(
-                qs,
-                viewer=self.request.user,
+            qs = (
+                BoundaryVisibilityQuery
+                .exclude_boundary_conflicts(
+                    qs,
+                    viewer=self.request.user,
+                )
             )
 
-        # Visitors must never see not-yet-converted videos.
-        if not self.request.user.is_authenticated:
-            qs = qs.exclude(
-                Q(video__isnull=False) & ~Q(is_converted=True)
-            )
+        qs = exclude_active_safety_held_targets(
+            qs,
+            target_model=Moment,
+            viewer=self.request.user,
+        )
+
+        # A raw/unconverted video is pre-publication media.
+        #
+        # It must never enter list/feed/explore/trending results, regardless
+        # of whether the viewer is authenticated.
+        qs = qs.exclude(
+            Q(is_converted=False)
+            & Q(video__isnull=False)
+            & ~Q(video="")
+        )
 
         return qs
 
@@ -150,14 +197,22 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
     # -------------------------------------------------
     # Create
     # -------------------------------------------------
-    def perform_create(self, serializer):
+    def perform_create(
+        self,
+        serializer,
+    ):
         """
-        Attach active owner to the new Moment.
+        Attach the active owner and schedule configured asynchronous
+        Content Safety jobs.
 
-        Content Safety is enforced before any Moment/media persistence:
-        1. caption
-        2. uploaded images / thumbnail / video
+        Safety order:
+        1. caption safety
+        2. synchronous image/thumbnail safety
+        3. persist raw media privately
+        4. schedule configured async media safety
+        5. approved raw video is handed to Media Conversion later
         """
+
         owner = self._get_request_owner()
 
         if not owner:
@@ -165,69 +220,101 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
                 "Only members or guest users can create moments."
             )
 
+        submitted_data = dict(
+            serializer.validated_data
+        )
+
         # Cheap text gate first.
         enforce_moment_content_safety(
-            validated_data=serializer.validated_data,
+            validated_data=(
+                serializer.validated_data
+            ),
             actor=self.request.user,
         )
 
-        # Media gate before serializer.save().
+        # Important:
+        # This service must inspect synchronous assets only.
+        #
+        # - uploaded photos: synchronous
+        # - video thumbnail: synchronous
+        # - raw video: asynchronous through ContentSafetyJob
         enforce_moment_media_content_safety(
-            validated_data=serializer.validated_data,
+            validated_data=(
+                serializer.validated_data
+            ),
             request=self.request,
             actor=self.request.user,
         )
 
-        serializer.save(
-            content_type=ContentType.objects.get_for_model(
+        owner_ct = (
+            ContentType.objects
+            .get_for_model(
                 owner.__class__
-            ),
-            object_id=owner.id,
+            )
         )
-    
+
+        with transaction.atomic():
+            instance = serializer.save(
+                content_type=owner_ct,
+                object_id=owner.id,
+            )
+
+            self.schedule_content_safety_jobs(
+                instance=instance,
+                submitted_data=submitted_data,
+            )
+        
     # -------------------------------------------------
     # Update
     # -------------------------------------------------
-    def perform_update(self, serializer):
+    def perform_update(
+        self,
+        serializer,
+    ):
         """
-        Owner-safe update.
+        Owner-safe Moment update.
 
-        Serializer controls which fields are editable:
-        - caption
-        - visibility
-        - cover_image_id
-        - video thumbnail
-
-        Content Safety:
-        - caption is rechecked only when changed
-        - newly supplied thumbnail is checked before persistence
-        - existing image/video media is never redundantly reprocessed
+        Current Moment policy does not permit photo/video replacement.
+        The shared async Safety scheduling hook remains in place so future
+        editable safety-gated fields do not require another ViewSet design.
         """
+
         obj = self.get_object()
 
         self._assert_is_owner(
             obj
         )
 
-        # Cheap text gate first.
+        submitted_data = dict(
+            serializer.validated_data
+        )
+
         enforce_moment_content_safety(
-            validated_data=serializer.validated_data,
+            validated_data=(
+                serializer.validated_data
+            ),
             actor=self.request.user,
             instance=obj,
         )
 
-        # Only newly supplied media is inspected.
-        # MomentSerializer already prohibits image/video replacement.
         enforce_moment_media_content_safety(
-            validated_data=serializer.validated_data,
+            validated_data=(
+                serializer.validated_data
+            ),
             request=self.request,
             actor=self.request.user,
         )
 
-        serializer.save(
-            updated_at=timezone.now()
-        )
+        with transaction.atomic():
+            instance = serializer.save(
+                updated_at=timezone.now()
+            )
 
+            self.schedule_content_safety_jobs(
+                instance=instance,
+                submitted_data=submitted_data,
+            )
+        
     # -------------------------------------------------
     # Delete
     # -------------------------------------------------
@@ -388,6 +475,12 @@ class MomentViewSet(OwnerGateMixin, viewsets.ModelViewSet):
             )
         )
 
+        qs = exclude_active_safety_held_targets(
+            qs,
+            target_model=Moment,
+            viewer=request.user,
+        )
+         
         try:
             page = self.paginate_queryset(
                 qs

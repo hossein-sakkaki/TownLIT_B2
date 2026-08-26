@@ -3,7 +3,7 @@
 # TownLIT
 #
 # Created by Hossein Sakkaki on 2026-04-01.
-# Last Update by Hossein Sakkaki on 2026-08-17.
+# Last Update by Hossein Sakkaki on 2026-08-24.
 
 import csv
 import logging
@@ -18,7 +18,6 @@ from django.core.exceptions import (
 
 from django.conf import settings
 from django.contrib import admin, messages
-from django.core.exceptions import PermissionDenied
 from django.db.models import Q, Sum
 from django.db.models.functions import Coalesce
 from django.http import (
@@ -915,10 +914,10 @@ class BookstoreWorkspaceAdmin(admin.ModelAdmin):
                 ),
             ),
             self._group(
-                "8. Reports and daily summary",
+                "8. Reports and inventory updates",
                 (
-                    "Operational reporting and the manager-facing "
-                    "morning inventory email."
+                    "Operational reporting and manager-facing "
+                    "inventory status notifications."
                 ),
                 (
                     self._reports_link(request),
@@ -1213,17 +1212,15 @@ class BookstoreWorkspaceAdmin(admin.ModelAdmin):
             },
         )
 
-    def _can_queue_daily_report(
+    def _can_send_inventory_report(
         self,
         request,
     ):
         return bool(
             request.user.is_superuser
             or request.user.has_perm(
-                (
-                    "bookstore_inventory."
-                    "change_warehousestaffassignment"
-                )
+                "bookstore_inventory."
+                "change_warehousestaffassignment"
             )
         )
 
@@ -1246,67 +1243,21 @@ class BookstoreWorkspaceAdmin(admin.ModelAdmin):
                 f"{query.urlencode()}"
             )
 
-        daily_schedule = {
-            "configured": False,
-            "enabled": False,
-            "description": (
-                "Run the configuration command to create "
-                "the morning schedule."
-            ),
-        }
-
         try:
-            from django_celery_beat.models import (
-                PeriodicTask,
+            from apps.bookstore_inventory.services.inventory_reports import (
+                inventory_report_recipients,
             )
 
-            periodic_task = (
-                PeriodicTask.objects.select_related(
-                    "crontab"
-                )
-                .filter(
-                    name=(
-                        "TownLIT daily bookstore "
-                        "inventory summary"
-                    )
-                )
-                .first()
-            )
-
-            if periodic_task:
-                daily_schedule = {
-                    "configured": True,
-                    "enabled": getattr(
-                        settings,
-                        "BOOKSTORE_DAILY_REPORT_ENABLED",
-                        True,
-                    ),
-                    "description": (
-                        "Daily at "
-                        f"{getattr(settings, 'BOOKSTORE_DAILY_REPORT_HOUR', 7):02d}:"
-                        f"{getattr(settings, 'BOOKSTORE_DAILY_REPORT_MINUTE', 0):02d} "
-                        f"{getattr(settings, 'CELERY_TIMEZONE', settings.TIME_ZONE)}"
-                    ),
-                }
-
-        except Exception:
-            pass
-
-        try:
-            from apps.bookstore_inventory.services.daily_reports import (
-                daily_report_recipients,
-            )
-
-            daily_recipient_count = len(
-                daily_report_recipients()
+            inventory_recipient_count = len(
+                inventory_report_recipients()
             )
 
         except Exception:
             logger.exception(
                 "bookstore.admin."
-                "daily_report_recipient_count_failed"
+                "inventory_report_recipient_count_failed"
             )
-            daily_recipient_count = 0
+            inventory_recipient_count = 0
 
         return {
             **self.admin_site.each_context(
@@ -1330,14 +1281,13 @@ class BookstoreWorkspaceAdmin(admin.ModelAdmin):
             "result": result,
             "report_error": error,
             "export_url": export_url,
-            "can_queue_daily_report": (
-                self._can_queue_daily_report(
+            "can_send_inventory_report": (
+                self._can_send_inventory_report(
                     request
                 )
             ),
-            "daily_schedule": daily_schedule,
-            "daily_recipient_count": (
-                daily_recipient_count
+            "inventory_recipient_count": (
+                inventory_recipient_count
             ),
         }
 
@@ -1353,29 +1303,30 @@ class BookstoreWorkspaceAdmin(admin.ModelAdmin):
             raise PermissionDenied
 
         if request.method == "POST":
-            if not self._can_queue_daily_report(
+            if not self._can_send_inventory_report(
                 request
             ):
                 raise PermissionDenied
 
             try:
                 from apps.bookstore_inventory.tasks import (
-                    send_daily_inventory_report,
+                    send_inventory_report,
                 )
 
-                async_result = (
-                    send_daily_inventory_report.delay()
+                async_result = send_inventory_report.delay(
+                    source="manual"
                 )
 
             except Exception:
                 logger.exception(
                     "bookstore.admin."
-                    "daily_report_queue_failed"
+                    "inventory_report_queue_failed"
                 )
+
                 self.message_user(
                     request,
                     (
-                        "The daily inventory email could not be queued. "
+                        "The inventory status email could not be queued. "
                         "Check the Celery broker and worker."
                     ),
                     level=messages.ERROR,
@@ -1385,7 +1336,7 @@ class BookstoreWorkspaceAdmin(admin.ModelAdmin):
                 self.message_user(
                     request,
                     (
-                        "Daily inventory email queued successfully "
+                        "Current inventory status email queued successfully "
                         f"(task {async_result.id})."
                     ),
                     level=messages.SUCCESS,

@@ -282,27 +282,39 @@ Last Update by Hossein Sakkaki on 2026-08-18.
 
     <section class="townlit-email-panel">
       <div>
-        <h2>Daily manager inventory email</h2>
+        <h2>Manager inventory status email</h2>
+
         <p>
-          Current primary managers and managers receive a concise summary of every active warehouse.
-          The scheduled task is safe to run once each morning and does not include warehouse addresses.
+          Current primary managers and managers receive the complete
+          inventory position across all active TownLIT warehouses
+          after confirmed inventory changes.
+          You can also send the current snapshot manually when needed.
         </p>
+
         <p>
-          <strong>{{ daily_recipient_count }} current recipient(s)</strong> ·
-          {% if daily_schedule.configured %}
-            Schedule {{ daily_schedule.description }} ·
-            {% if daily_schedule.enabled %}enabled{% else %}disabled{% endif %}
-          {% else %}
-            {{ daily_schedule.description }}
-          {% endif %}
+          <strong>
+            {{ inventory_recipient_count }} current recipient(s)
+          </strong>
+          · Automatic after confirmed stock changes
         </p>
       </div>
-      {% if can_queue_daily_report %}
-        <form method="post" onsubmit="return confirm('Queue the inventory summary email to all current warehouse managers now?');">
+
+      {% if can_send_inventory_report %}
+        <form
+          method="post"
+          onsubmit="return confirm('Send the current complete inventory status to all eligible warehouse managers now?');"
+        >
           {% csrf_token %}
-          <button class="townlit-button" type="submit">Queue email now</button>
+
+          <button
+            class="townlit-button"
+            type="submit"
+          >
+            Send inventory email now
+          </button>
         </form>
       {% endif %}
     </section>
+
   </div>
 {% endblock %}

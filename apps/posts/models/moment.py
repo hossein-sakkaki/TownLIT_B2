@@ -43,8 +43,17 @@ from apps.posts.constants.moments import (
     MOMENT_MEDIA_KIND_VIDEO,
     MOMENT_MAX_IMAGES,
 )
+from apps.content_safety.enums import (
+    SafetyContext,
+    SafetyInputType,
+)
+from apps.content_safety.mixins import (
+    ContentSafetyMediaTargetMixin,
+)
+
 import logging
 logger = logging.getLogger(__name__)
+
 
 class Moment(
     ModerationTargetMixin,        # 🔐 Sanctuary / moderation contract
@@ -52,6 +61,7 @@ class Moment(
     InteractionCounterMixin,      # 🧮 counters
     ReactionBreakdownMixin,       # ❤️ reaction types
     MediaAssetsMixin,             # 🖼️ Media metadata
+    ContentSafetyMediaTargetMixin,
     MediaAutoConvertMixin,        # 🎞️ RAW → converted detection
     MediaConversionMixin,         # 🔄 async conversion
     SlugMixin,
@@ -204,10 +214,27 @@ class Moment(
     url_name = "posts:moment-detail"
 
     media_conversion_config = {
-        # Photo Moments are handled through image_items conversion below.
-        # Keep video/thumbnail in the generic conversion pipeline.
-        "video": {"upload": VIDEO, "kind": "video"},
-        "thumbnail": {"upload": IMAGE, "kind": "image"},
+        # Video is the authoritative availability-critical media.
+        "video": {
+            "upload": VIDEO,
+            "kind": "video",
+            "required_for_availability": True,
+        },
+
+        # Thumbnail is secondary and must never make the Moment ready by itself.
+        "thumbnail": {
+            "upload": IMAGE,
+            "kind": "image",
+            "required_for_availability": False,
+        },
+    }
+
+    content_safety_media_config = {
+        "video": {
+            "input_type": SafetyInputType.VIDEO,
+            "context": SafetyContext.MOMENT_MEDIA,
+            "conversion_kind": "video",
+        },
     }
 
     # -------------------------------------------------
@@ -379,38 +406,64 @@ class Moment(
                 ):
                     continue
 
-                if not self._acquire_enqueue_lock(
+                lease = self._acquire_enqueue_lock(
                     field_name,
                     kind,
                     source_path,
-                ):
+                )
+
+                if lease is None:
                     continue
 
-                job = upsert_job(
-                    instance=self,
-                    field_name=field_name,
-                    kind=kind,
-                    status=MediaJobStatus.QUEUED,
-                    source_path=source_path,
-                    message="Queued for Moment photo processing",
-                )
+                try:
+                    # Re-check while owning the enqueue lease.
+                    if self._should_skip_duplicate_enqueue(
+                        field_name,
+                        kind,
+                        source_path,
+                    ):
+                        continue
 
-                self._dispatch_conversion_task(
-                    job=job,
-                    task=convert_moment_image_item_to_jpg_task,
-                    queue="video",
-                    task_kwargs={
-                        "model_name": self.__class__.__name__,
-                        "app_label": self._meta.app_label,
-                        "instance_id": self.pk,
-                        "field_name": field_name,
-                        "source_path": source_path,
-                        "fileupload": self.IMAGE.to_dict(),
-                    },
-                )
+                    job = upsert_job(
+                        instance=self,
+                        field_name=field_name,
+                        kind=kind,
+                        status=MediaJobStatus.QUEUED,
+                        source_path=source_path,
+                        message=(
+                            "Queued for Moment photo processing"
+                        ),
+                    )
 
-                scheduled_any = True
+                    self._dispatch_conversion_task(
+                        job=job,
+                        task=(
+                            convert_moment_image_item_to_jpg_task
+                        ),
+                        queue="video",
+                        task_kwargs={
+                            "model_name": (
+                                self.__class__.__name__
+                            ),
+                            "app_label": (
+                                self._meta.app_label
+                            ),
+                            "instance_id": self.pk,
+                            "field_name": field_name,
+                            "source_path": source_path,
+                            "fileupload": (
+                                self.IMAGE.to_dict()
+                            ),
+                        },
+                    )
 
+                    scheduled_any = True
+
+                finally:
+                    self._release_enqueue_lock(
+                        lease
+                    )
+                
             except Exception:
                 logger.exception(
                     "❌ Failed to enqueue Moment image item conversion: moment=%s field=%s path=%s",

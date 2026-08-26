@@ -15,6 +15,10 @@ from apps.conversation.services.content_safety import (
 from apps.conversation.services.media_content_safety import (
     enforce_group_message_media_content_safety,
 )
+from apps.content_safety.services.media_jobs import (
+    schedule_configured_content_safety_jobs,
+)
+
 
 def _error(code: str, message: str, status_code: int):
     """Build a stable service error payload."""
@@ -371,9 +375,12 @@ def create_file_message(
     - Forward metadata for client-side media forwarding
 
     Content Safety:
-    - Backend-readable Group image/video/audio is inspected before
-      Message creation.
-    - Private E2EE media is never decrypted or inspected here.
+    - Group image: synchronous before persistence
+    - Group audio: synchronous transcript safety before persistence
+    - Group video: asynchronous after persistence
+    - Private E2EE media: never inspected by backend Content Safety
+
+    Messenger media never enters server Media Conversion.
     """
 
     reply_validation = validate_reply_target(
@@ -382,7 +389,9 @@ def create_file_message(
         reply_to_message_id=reply_to_message_id,
     )
 
-    if not reply_validation.get("ok"):
+    if not reply_validation.get(
+        "ok"
+    ):
         return _error(
             reply_validation["code"],
             reply_validation["message"],
@@ -390,12 +399,16 @@ def create_file_message(
         )
 
     reply_to_message = (
-        reply_validation["message_obj"]
+        reply_validation[
+            "message_obj"
+        ]
     )
 
-    boundary_check = check_private_dialogue_boundary(
-        dialogue=dialogue,
-        acting_user=sender,
+    boundary_check = (
+        check_private_dialogue_boundary(
+            dialogue=dialogue,
+            acting_user=sender,
+        )
     )
 
     if not boundary_check.allowed:
@@ -413,7 +426,6 @@ def create_file_message(
     # --------------------------------------------------------------
     # Group media
     # --------------------------------------------------------------
-
     if dialogue.is_group:
         if is_encrypted_file:
             return _error(
@@ -422,7 +434,15 @@ def create_file_message(
                 400,
             )
 
-        # Safety runs before Message creation/storage.
+        requires_async_video_safety = (
+            field_name == "video"
+        )
+
+        # Image/audio remain synchronous.
+        #
+        # Video intentionally returns immediately from this service and
+        # enters the asynchronous ContentSafetyJob pipeline only after
+        # the authoritative Message.video source has been persisted.
         enforce_group_message_media_content_safety(
             dialogue=dialogue,
             file_obj=uploaded_file,
@@ -437,28 +457,57 @@ def create_file_message(
             ),
         )
 
-        message = Message.objects.create(
-            dialogue=dialogue,
-            sender=sender,
-            is_encrypted_file=False,
-            reply_to=reply_to_message,
-            is_forwarded=is_forwarded,
-            forwarded_from=(
-                forwarded_from_message
-            ),
-            **{
-                field_name:
-                    uploaded_file
-            },
-        )
+        content_safety_jobs = []
 
-        dialogue.last_message = message
+        with transaction.atomic():
+            message = Message.objects.create(
+                dialogue=dialogue,
+                sender=sender,
+                is_encrypted_file=False,
+                is_delivery_ready=(
+                    not requires_async_video_safety
+                ),
+                reply_to=reply_to_message,
+                is_forwarded=is_forwarded,
+                forwarded_from=(
+                    forwarded_from_message
+                ),
+                **{
+                    field_name:
+                        uploaded_file
+                },
+            )
 
-        dialogue.save(
-            update_fields=[
-                "last_message"
-            ]
-        )
+            if requires_async_video_safety:
+                content_safety_jobs = (
+                    schedule_configured_content_safety_jobs(
+                        instance=message,
+                        actor=sender,
+                        submitted_data={
+                            "video":
+                                uploaded_file
+                        },
+                    )
+                )
+
+                if not content_safety_jobs:
+                    raise RuntimeError(
+                        (
+                            "Group Messenger video did not create "
+                            "a Content Safety job."
+                        )
+                    )
+
+            else:
+                # Existing non-video Group Messenger behavior remains
+                # unchanged.
+                dialogue.last_message = message
+
+                dialogue.save(
+                    update_fields=[
+                        "last_message"
+                    ]
+                )
 
         return _success(
             {
@@ -474,6 +523,8 @@ def create_file_message(
                     False,
                 "field_name":
                     field_name,
+                "content_safety_jobs":
+                    content_safety_jobs,
                 "reply_to_message_id":
                     (
                         reply_to_message.id
@@ -494,7 +545,6 @@ def create_file_message(
     # --------------------------------------------------------------
     # Private E2EE media
     # --------------------------------------------------------------
-
     if not is_encrypted_file:
         return _error(
             "BAD_REQUEST",
@@ -527,6 +577,7 @@ def create_file_message(
             dialogue=dialogue,
             sender=sender,
             is_encrypted_file=True,
+            is_delivery_ready=True,
             encrypted_for_device=(
                 encrypted_for_device
             ),
@@ -598,6 +649,8 @@ def create_file_message(
                 True,
             "field_name":
                 field_name,
+            "content_safety_jobs":
+                [],
             "reply_to_message_id":
                 (
                     reply_to_message.id

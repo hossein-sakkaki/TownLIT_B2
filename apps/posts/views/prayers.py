@@ -36,11 +36,18 @@ from apps.core.feed.personalized_trending import PersonalizedTrendingEngine
 from apps.core.ownership.owner_gate_mixins import OwnerGateMixin
 from apps.core.visibility.constants import VISIBILITY_GLOBAL
 from apps.core.boundaries.query import BoundaryVisibilityQuery
+from apps.content_safety.view_mixins import (
+    ContentSafetyJobResponseMixin,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class PrayViewSet(OwnerGateMixin, viewsets.ModelViewSet):
+class PrayViewSet(
+    ContentSafetyJobResponseMixin,
+    OwnerGateMixin,
+    viewsets.ModelViewSet,
+):
     """
     Prayer API
     -------------------------
@@ -69,34 +76,65 @@ class PrayViewSet(OwnerGateMixin, viewsets.ModelViewSet):
     # -------------------------------------------------------------------------
     # Base queryset
     # -------------------------------------------------------------------------
-    def get_queryset(self):
+    def get_queryset(
+        self,
+    ):
         base = (
             Prayer.objects
-            .select_related("content_type")
-            .select_related("response")
-            .order_by("-published_at", "-id")
+            .select_related(
+                "content_type"
+            )
+            .select_related(
+                "response"
+            )
+            .order_by(
+                "-published_at",
+                "-id",
+            )
         )
 
-        if self.action == "retrieve":
+        # Domain mutation/detail actions must still reach owner content while
+        # Safety or Conversion is incomplete.
+        if self.action in {
+            "retrieve",
+            "update",
+            "partial_update",
+            "destroy",
+            "respond",
+            "delete_response",
+        }:
             return base
 
-        # Visibility filtering
-        if not self.request.user or not self.request.user.is_authenticated:
-            qs = base.filter(visibility=VISIBILITY_GLOBAL)
+        if (
+            not self.request.user
+            or not self.request.user.is_authenticated
+        ):
+            qs = base.filter(
+                visibility=VISIBILITY_GLOBAL
+            )
+
         else:
             qs = VisibilityQuery.for_viewer(
                 viewer=self.request.user,
                 base_queryset=base,
             )
 
-            qs = BoundaryVisibilityQuery.exclude_boundary_conflicts(
-                qs,
-                viewer=self.request.user,
+            qs = (
+                BoundaryVisibilityQuery
+                .exclude_boundary_conflicts(
+                    qs,
+                    viewer=self.request.user,
+                )
             )
 
-        # Visitor: hide unconverted prayer videos
-        if not self.request.user.is_authenticated:
-            qs = qs.exclude(Q(video__isnull=False) & ~Q(is_converted=True))
+        # Pre-publication video optimization.
+        #
+        # Serializer gating remains the final authority.
+        qs = qs.exclude(
+            Q(is_converted=False)
+            & Q(video__isnull=False)
+            & ~Q(video="")
+        )
 
         return qs
 
@@ -123,16 +161,19 @@ class PrayViewSet(OwnerGateMixin, viewsets.ModelViewSet):
     # -------------------------------------------------------------------------
     # Create / Update / Delete
     # -------------------------------------------------------------------------
-    def perform_create(self, serializer):
+    def perform_create(
+        self,
+        serializer,
+    ):
         """
-        Attach the active owner and enforce Prayer Content Safety
-        before any Prayer or media persistence.
+        Create one Prayer.
 
-        Safety order:
-        1. Prayer text
-        2. Prayer image / thumbnail / video
-        3. persistence
+        Text and inexpensive image safety run synchronously.
+
+        Newly supplied configured video media is persisted first and then
+        enters the generic asynchronous Content Safety pipeline.
         """
+
         owner = self._get_request_owner()
 
         if not owner:
@@ -140,56 +181,89 @@ class PrayViewSet(OwnerGateMixin, viewsets.ModelViewSet):
                 "Only members or guest users can create prayers."
             )
 
-        # Cheapest gate first.
+        submitted_data = dict(
+            serializer.validated_data
+        )
+
         enforce_prayer_content_safety(
-            validated_data=serializer.validated_data,
-            actor=self.request.user,
-        )
-
-        # All newly supplied media must pass before save().
-        enforce_prayer_media_content_safety(
-            validated_data=serializer.validated_data,
-            actor=self.request.user,
-        )
-
-        serializer.save(
-            content_type=ContentType.objects.get_for_model(
-                owner.__class__
+            validated_data=(
+                serializer.validated_data
             ),
-            object_id=owner.id,
+            actor=self.request.user,
         )
 
-    def perform_update(self, serializer):
+        # Image + thumbnail only.
+        # Raw video safety is asynchronous.
+        enforce_prayer_media_content_safety(
+            validated_data=(
+                serializer.validated_data
+            ),
+            actor=self.request.user,
+        )
+
+        owner_ct = (
+            ContentType.objects
+            .get_for_model(
+                owner.__class__
+            )
+        )
+
+        with transaction.atomic():
+            instance = serializer.save(
+                content_type=owner_ct,
+                object_id=owner.id,
+            )
+
+            self.schedule_content_safety_jobs(
+                instance=instance,
+                submitted_data=submitted_data,
+            )
+            
+    def perform_update(
+        self,
+        serializer,
+    ):
         """
         Owner-safe Prayer update.
 
-        Content Safety:
-        - caption is rechecked only when supplied and changed
-        - only newly supplied/replaced media is inspected
-        - existing unchanged media is not redundantly reprocessed
+        Newly supplied video generations use the generic asynchronous
+        Content Safety pipeline.
         """
+
         obj = self.get_object()
 
         self._assert_is_owner(
             obj
         )
 
-        # Text gate first.
+        submitted_data = dict(
+            serializer.validated_data
+        )
+
         enforce_prayer_content_safety(
-            validated_data=serializer.validated_data,
+            validated_data=(
+                serializer.validated_data
+            ),
             actor=self.request.user,
             instance=obj,
         )
 
-        # Only fields present in validated_data are inspected.
         enforce_prayer_media_content_safety(
-            validated_data=serializer.validated_data,
+            validated_data=(
+                serializer.validated_data
+            ),
             actor=self.request.user,
         )
 
-        serializer.save(
-            updated_at=timezone.now()
-        )
+        with transaction.atomic():
+            instance = serializer.save(
+                updated_at=timezone.now()
+            )
+
+            self.schedule_content_safety_jobs(
+                instance=instance,
+                submitted_data=submitted_data,
+            )
 
     # -------------------------------------------------------------------------
     # Feed (cursor-based)
@@ -360,19 +434,42 @@ class PrayViewSet(OwnerGateMixin, viewsets.ModelViewSet):
     # -------------------------------------------------------------------------
     @action(
         detail=True,
-        methods=["post", "patch"],
-        permission_classes=[IsAuthenticated],
+        methods=[
+            "post",
+            "patch",
+        ],
+        permission_classes=[
+            IsAuthenticated
+        ],
     )
-    def respond(self, request, slug=None):
+    def respond(
+        self,
+        request,
+        slug=None,
+    ):
         """
         Create or update PrayerResponse.
 
-        Validation and Content Safety run before the database transaction.
-        Persistence and parent lifecycle synchronization remain atomic.
+        Pipeline:
+        1. validate domain payload
+        2. run synchronous text safety
+        3. run synchronous image / thumbnail safety
+        4. persist the response atomically
+        5. schedule async Content Safety for newly supplied video
+        6. return 202 when an async Safety job was created
+
+        Raw video Safety never runs inside this HTTP request.
         """
+
+        # Custom actions do not pass through ModelViewSet.create()/update(),
+        # so the shared response-job accumulator must be reset explicitly.
+        self.reset_content_safety_response_jobs()
+
         prayer: Prayer = self.get_object()
 
-        self._assert_is_owner(prayer)
+        self._assert_is_owner(
+            prayer
+        )
 
         existing = getattr(
             prayer,
@@ -389,9 +486,20 @@ class PrayViewSet(OwnerGateMixin, viewsets.ModelViewSet):
             PrayerStatus.NOT_ANSWERED,
         ):
             logger.warning(
-                "[PrayerRespond] invalid result_status prayer_id=%s slug=%s result_status=%r allowed=%s",
-                getattr(prayer, "id", None),
-                getattr(prayer, "slug", None),
+                (
+                    "[PrayerRespond] invalid result_status "
+                    "prayer_id=%s slug=%s result_status=%r allowed=%s"
+                ),
+                getattr(
+                    prayer,
+                    "id",
+                    None,
+                ),
+                getattr(
+                    prayer,
+                    "slug",
+                    None,
+                ),
                 result_status,
                 [
                     PrayerStatus.ANSWERED,
@@ -399,14 +507,16 @@ class PrayViewSet(OwnerGateMixin, viewsets.ModelViewSet):
                 ],
             )
 
-            raise ValidationError({
-                "result_status": (
-                    "Must be 'answered' or 'not_answered'."
-                )
-            })
+            raise ValidationError(
+                {
+                    "result_status": (
+                        "Must be 'answered' or 'not_answered'."
+                    )
+                }
+            )
 
         # -----------------------------------------------------------------
-        # Create response
+        # Create PrayerResponse
         # -----------------------------------------------------------------
         if existing is None:
             serializer = PrayerResponseSerializer(
@@ -418,25 +528,59 @@ class PrayViewSet(OwnerGateMixin, viewsets.ModelViewSet):
 
             if not serializer.is_valid():
                 logger.warning(
-                    "[PrayerRespond] create serializer invalid prayer_id=%s slug=%s errors=%s data_keys=%s file_keys=%s",
-                    getattr(prayer, "id", None),
-                    getattr(prayer, "slug", None),
+                    (
+                        "[PrayerRespond] create serializer invalid "
+                        "prayer_id=%s slug=%s errors=%s "
+                        "data_keys=%s file_keys=%s"
+                    ),
+                    getattr(
+                        prayer,
+                        "id",
+                        None,
+                    ),
+                    getattr(
+                        prayer,
+                        "slug",
+                        None,
+                    ),
                     serializer.errors,
-                    list(request.data.keys()),
-                    list(request.FILES.keys()),
+                    list(
+                        request.data.keys()
+                    ),
+                    list(
+                        request.FILES.keys()
+                    ),
                 )
 
                 raise ValidationError(
                     serializer.errors
                 )
 
+            # Capture the exact request generation before save().
+            #
+            # schedule_content_safety_jobs() only schedules configured fields
+            # that were actually supplied by this request.
+            submitted_data = dict(
+                serializer.validated_data
+            )
+
+            # Text Safety remains synchronous.
             enforce_prayer_response_content_safety(
-                validated_data=serializer.validated_data,
+                validated_data=(
+                    serializer.validated_data
+                ),
                 actor=request.user,
             )
 
+            # Image / thumbnail Safety remains synchronous.
+            #
+            # Raw video is intentionally NOT inspected here. It is routed
+            # through the generic asynchronous ContentSafetyJob pipeline
+            # after persistence.
             enforce_prayer_response_media_content_safety(
-                validated_data=serializer.validated_data,
+                validated_data=(
+                    serializer.validated_data
+                ),
                 actor=request.user,
             )
 
@@ -445,7 +589,12 @@ class PrayViewSet(OwnerGateMixin, viewsets.ModelViewSet):
                     prayer=prayer
                 )
 
-            return Response(
+                self.schedule_content_safety_jobs(
+                    instance=response_obj,
+                    submitted_data=submitted_data,
+                )
+
+            response = Response(
                 PrayerResponseSerializer(
                     response_obj,
                     context={
@@ -455,14 +604,24 @@ class PrayViewSet(OwnerGateMixin, viewsets.ModelViewSet):
                 status=status.HTTP_201_CREATED,
             )
 
+            # No async Safety job:
+            #   201 Created
+            #
+            # Video Safety job created:
+            #   202 Accepted + content_safety_jobs
+            return self.finalize_content_safety_response(
+                response
+            )
+
         # -----------------------------------------------------------------
-        # Update response
+        # Update PrayerResponse
         # -----------------------------------------------------------------
         serializer = PrayerResponseSerializer(
             existing,
             data=request.data,
             partial=(
-                request.method == "PATCH"
+                request.method
+                == "PATCH"
             ),
             context={
                 "request": request,
@@ -471,27 +630,60 @@ class PrayViewSet(OwnerGateMixin, viewsets.ModelViewSet):
 
         if not serializer.is_valid():
             logger.warning(
-                "[PrayerRespond] update serializer invalid prayer_id=%s response_id=%s slug=%s errors=%s data_keys=%s file_keys=%s",
-                getattr(prayer, "id", None),
-                getattr(existing, "id", None),
-                getattr(prayer, "slug", None),
+                (
+                    "[PrayerRespond] update serializer invalid "
+                    "prayer_id=%s response_id=%s slug=%s errors=%s "
+                    "data_keys=%s file_keys=%s"
+                ),
+                getattr(
+                    prayer,
+                    "id",
+                    None,
+                ),
+                getattr(
+                    existing,
+                    "id",
+                    None,
+                ),
+                getattr(
+                    prayer,
+                    "slug",
+                    None,
+                ),
                 serializer.errors,
-                list(request.data.keys()),
-                list(request.FILES.keys()),
+                list(
+                    request.data.keys()
+                ),
+                list(
+                    request.FILES.keys()
+                ),
             )
 
             raise ValidationError(
                 serializer.errors
             )
 
+        # Capture only fields supplied by this update generation.
+        submitted_data = dict(
+            serializer.validated_data
+        )
+
+        # Re-check changed response text.
         enforce_prayer_response_content_safety(
-            validated_data=serializer.validated_data,
+            validated_data=(
+                serializer.validated_data
+            ),
             actor=request.user,
             instance=existing,
         )
 
+        # Re-check newly supplied image/thumbnail only.
+        #
+        # A newly supplied raw video is handled asynchronously after save().
         enforce_prayer_response_media_content_safety(
-            validated_data=serializer.validated_data,
+            validated_data=(
+                serializer.validated_data
+            ),
             actor=request.user,
         )
 
@@ -500,7 +692,12 @@ class PrayViewSet(OwnerGateMixin, viewsets.ModelViewSet):
                 updated_at=timezone.now()
             )
 
-        return Response(
+            self.schedule_content_safety_jobs(
+                instance=response_obj,
+                submitted_data=submitted_data,
+            )
+
+        response = Response(
             PrayerResponseSerializer(
                 response_obj,
                 context={
@@ -508,6 +705,15 @@ class PrayViewSet(OwnerGateMixin, viewsets.ModelViewSet):
                 },
             ).data,
             status=status.HTTP_200_OK,
+        )
+
+        # Ordinary update:
+        #   200 OK
+        #
+        # New video generation:
+        #   202 Accepted + content_safety_jobs
+        return self.finalize_content_safety_response(
+            response
         )
             
     # -------------------------------------------------------------------------
