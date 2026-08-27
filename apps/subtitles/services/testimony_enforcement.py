@@ -13,6 +13,12 @@ from django.db import transaction
 from django.db.models import Exists, OuterRef, Q
 
 from apps.media_conversion.models import MediaConversionJob
+from apps.media_conversion.services.storage_cleanup import (
+    clean_storage_key as _clean_key,
+    delete_job_output as _delete_job_output,
+    delete_media_path as _delete_media_path,
+    delete_storage_key as _delete_storage_key,
+)
 from apps.subtitles.models import (
     VideoTranscript,
     VoiceTrack,
@@ -31,83 +37,8 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------
-# Storage helpers
+# helpers
 # ---------------------------------------------------------------------
-def _clean_key(value) -> str | None:
-    if not value:
-        return None
-
-    raw = getattr(value, "name", value)
-
-    if not raw:
-        return None
-
-    key = str(raw).strip().lstrip("/")
-    return key or None
-
-
-def _delete_storage_key(key: str | None, *, label: str) -> None:
-    key = _clean_key(key)
-
-    if not key:
-        return
-
-    try:
-        if default_storage.exists(key):
-            default_storage.delete(key)
-    except Exception:
-        logger.exception("Failed deleting %s: %s", label, key)
-
-
-def _delete_storage_tree(path: str | None, *, label: str) -> None:
-    """
-    Delete a file and its folder-like prefix.
-    Useful for HLS master.m3u8 outputs.
-    """
-    path = _clean_key(path)
-
-    if not path:
-        return
-
-    _delete_storage_key(path, label=label)
-
-    prefix = path
-
-    if "." in os.path.basename(path):
-        prefix = os.path.dirname(path)
-
-    prefix = prefix.strip("/")
-
-    if not prefix:
-        return
-
-    _delete_prefix_recursive(prefix, label=label)
-
-
-def _delete_prefix_recursive(prefix: str, *, label: str) -> None:
-    prefix = prefix.strip("/")
-
-    if not prefix:
-        return
-
-    try:
-        directories, files = default_storage.listdir(prefix)
-    except Exception:
-        return
-
-    for filename in files:
-        _delete_storage_key(
-            f"{prefix}/{filename}",
-            label=f"{label}.file",
-        )
-
-    for directory in directories:
-        _delete_prefix_recursive(
-            f"{prefix}/{directory}",
-            label=f"{label}.dir",
-        )
-
-
 def _target_field_keys(target, field_names: Iterable[str]) -> list[str]:
     keys: list[str] = []
 
@@ -656,19 +587,6 @@ def delete_rejected_testimony_media(
     *,
     reason: str = "",
 ) -> None:
-    """
-    Delete a rejected Testimony video and all related conversion/subtitle assets.
-
-    Deletes:
-    - Testimony DB row
-    - VideoTranscript row
-    - SubtitleTrack/VoiceTrack rows via cascade
-    - MediaConversionJob rows for the target
-    - target media files: video/audio/image/thumbnail
-    - transcript STT audio
-    - generated voice audio
-    - HLS output folder(s)
-    """
     if not transcript:
         return
 
@@ -679,16 +597,12 @@ def delete_rejected_testimony_media(
         .first()
     )
 
-    if not transcript:
-        return
-
-    if not _is_posts_testimony_transcript(transcript):
+    if not transcript or not _is_posts_testimony_transcript(transcript):
         return
 
     target = _safe_target_for_transcript(transcript)
 
     if target is None:
-        # Orphan transcript. Remove it safely.
         transcript.delete()
         return
 
@@ -700,13 +614,11 @@ def delete_rejected_testimony_media(
         or "This content was not approved as a personal testimony."
     )
 
-    # Notify before deleting the target.
     _notify_user_about_rejected_testimony(
         user=user,
         reason=reason_text,
     )
 
-    # Collect storage keys before DB deletion.
     target_keys = _target_field_keys(
         target,
         field_names=[
@@ -730,38 +642,30 @@ def delete_rejected_testimony_media(
     ct = transcript.content_type
     object_id = transcript.object_id
 
-    job_output_keys = list(
+    jobs = list(
         MediaConversionJob.objects
-        .filter(content_type=ct, object_id=object_id)
-        .exclude(output_path__isnull=True)
-        .exclude(output_path="")
-        .values_list("output_path", flat=True)
-    )
-
-    job_source_keys = list(
-        MediaConversionJob.objects
-        .filter(content_type=ct, object_id=object_id)
-        .exclude(source_path__isnull=True)
-        .exclude(source_path="")
-        .values_list("source_path", flat=True)
+        .filter(
+            content_type=ct,
+            object_id=object_id,
+        )
+        .values_list(
+            "kind",
+            "source_path",
+            "output_path",
+        )
     )
 
     with transaction.atomic():
-        # Remove conversion job rows for this target.
         MediaConversionJob.objects.filter(
             content_type=ct,
             object_id=object_id,
         ).delete()
 
-        # Remove transcript + tracks.
         transcript.delete()
-
-        # Remove rejected testimony target.
         target.delete()
 
-    # Storage cleanup outside transaction.
     for key in set(target_keys):
-        _delete_storage_tree(
+        _delete_media_path(
             key,
             label="rejected_testimony.target_media",
         )
@@ -777,15 +681,15 @@ def delete_rejected_testimony_media(
             label="rejected_testimony.voice_audio",
         )
 
-    for key in set(job_source_keys):
+    for kind, source_path, output_path in jobs:
         _delete_storage_key(
-            key,
+            source_path,
             label="rejected_testimony.job_source",
         )
 
-    for key in set(job_output_keys):
-        _delete_storage_tree(
-            key,
+        _delete_job_output(
+            kind,
+            output_path,
             label="rejected_testimony.job_output",
         )
 

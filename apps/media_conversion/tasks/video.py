@@ -2,6 +2,7 @@
 
 import logging
 import os
+import uuid
 
 from celery import shared_task
 from celery.exceptions import Retry
@@ -47,10 +48,13 @@ def _safe_delete_video_output(
     master_path: str | None,
 ) -> None:
     """
-    Remove an unbound HLS output tree created by this worker.
+    Remove one unbound HLS output tree created by this worker.
 
-    The HLS output directory is conversion-specific, so a canceled or stale
-    worker can safely remove its own generated variants and playlists.
+    Safety:
+    - Never infer or recursively delete a shared date/model directory.
+    - Recursive cleanup is allowed only when master_path is an HLS playlist
+      whose direct parent directory is UUID-scoped.
+    - Unsafe or malformed paths fall back to exact-key deletion only.
     """
 
     normalized_path = normalize_storage_key(
@@ -60,11 +64,95 @@ def _safe_delete_video_output(
     if not normalized_path:
         return
 
+    def _delete_exact(
+        key: str,
+    ) -> None:
+        try:
+            if default_storage.exists(
+                key
+            ):
+                default_storage.delete(
+                    key
+                )
+
+                logger.info(
+                    "🧹 Deleted stale video output: %s",
+                    key,
+                )
+
+        except Exception:
+            logger.warning(
+                "Could not delete stale video output: %s",
+                key,
+                exc_info=True,
+            )
+
+    # Never recurse from a non-playlist file path.
+    if not normalized_path.lower().endswith(
+        ".m3u8"
+    ):
+        logger.error(
+            (
+                "Blocked recursive video cleanup for "
+                "non-HLS path: %s"
+            ),
+            normalized_path,
+        )
+
+        _delete_exact(
+            normalized_path
+        )
+
+        return
+
     prefix = os.path.dirname(
         normalized_path
     ).strip("/")
 
     if not prefix:
+        logger.error(
+            (
+                "Blocked recursive video cleanup "
+                "with empty prefix: %s"
+            ),
+            normalized_path,
+        )
+
+        _delete_exact(
+            normalized_path
+        )
+
+        return
+
+    prefix_leaf = os.path.basename(
+        prefix
+    )
+
+    try:
+        uuid.UUID(
+            prefix_leaf
+        )
+
+    except (
+        TypeError,
+        ValueError,
+        AttributeError,
+    ):
+        logger.error(
+            (
+                "Blocked unsafe recursive video cleanup: "
+                "master=%s prefix=%s "
+                "reason=parent_not_uuid_scoped"
+            ),
+            normalized_path,
+            prefix,
+        )
+
+        # Exact master deletion is safe.
+        _delete_exact(
+            normalized_path
+        )
+
         return
 
     def _delete_prefix(
@@ -76,31 +164,26 @@ def _safe_delete_video_output(
                     current_prefix
                 )
             )
+
         except Exception:
+            logger.warning(
+                (
+                    "Could not list stale video "
+                    "output prefix: %s"
+                ),
+                current_prefix,
+                exc_info=True,
+            )
+
             return
 
         for filename in files:
-            key = (
-                f"{current_prefix}/"
-                f"{filename}"
-            )
-
-            try:
-                if default_storage.exists(
-                    key
-                ):
-                    default_storage.delete(
-                        key
-                    )
-            except Exception:
-                logger.warning(
-                    (
-                        "Could not delete stale "
-                        "video output: %s"
-                    ),
-                    key,
-                    exc_info=True,
+            _delete_exact(
+                (
+                    f"{current_prefix}/"
+                    f"{filename}"
                 )
+            )
 
         for directory in directories:
             _delete_prefix(
@@ -109,6 +192,14 @@ def _safe_delete_video_output(
                     f"{directory}"
                 )
             )
+
+    logger.info(
+        (
+            "🧹 Cleaning UUID-scoped stale "
+            "HLS output tree: %s"
+        ),
+        prefix,
+    )
 
     _delete_prefix(
         prefix

@@ -16,7 +16,6 @@ from apps.media_conversion.models import MediaJobStatus
 from utils.common.utils import FileUpload
 from utils.common.image_utils import convert_image_to_jpg
 from apps.media_conversion.services.media_metadata import image_metadata_from_storage
-from apps.media_conversion.services.image_variants import build_image_variants
 from apps.media_conversion.services.media_manifest import (
     build_asset_payload,
     update_instance_media_asset,
@@ -31,6 +30,10 @@ from .base import (
     job_update,
     raise_if_job_canceled,
     raise_if_source_superseded,
+)
+from apps.media_conversion.services.image_variants import (
+    IMAGE_VARIANT_WIDTHS,
+    build_image_variants,
 )
 
 logger = logging.getLogger(__name__)
@@ -53,19 +56,75 @@ def _safe_delete_storage_key(
         if default_storage.exists(key):
             default_storage.delete(key)
             logger.info(
-                "🧹 Deleted original %s file: %s",
+                "🧹 Deleted %s file: %s",
                 label,
                 key,
             )
 
     except Exception:
         logger.exception(
-            "❌ Failed deleting original %s file: %s",
+            "❌ Failed deleting %s file: %s",
             label,
             key,
         )
 
 
+def _safe_delete_generated_image_bundle(
+    output_path: str | None,
+) -> None:
+    """
+    Delete one unbound generated JPG and only its deterministic variants.
+
+    No directory listing or recursive prefix deletion is used.
+    """
+
+    normalized_output = str(
+        output_path
+        or ""
+    ).strip().lstrip("/")
+
+    if not normalized_output:
+        return
+
+    _safe_delete_storage_key(
+        normalized_output,
+        label="unbound image output",
+    )
+
+    directory = os.path.dirname(
+        normalized_output
+    )
+
+    basename = os.path.splitext(
+        os.path.basename(
+            normalized_output
+        )
+    )[0]
+
+    if not basename:
+        return
+
+    variant_directory = (
+        f"{directory}/variants"
+        if directory
+        else "variants"
+    )
+
+    for variant_name in IMAGE_VARIANT_WIDTHS:
+        
+        variant_key = (
+            f"{variant_directory}/"
+            f"{basename}_{variant_name}.jpg"
+        )
+
+        _safe_delete_storage_key(
+            variant_key,
+            label=(
+                "unbound image "
+                f"{variant_name} variant"
+            ),
+        )
+        
 class MomentImageItemSuperseded(Exception):
     """
     Raised when a Moment image-item task no longer matches current JSON state.
@@ -256,6 +315,9 @@ def convert_image_to_jpg_task(
     close_old_connections()
     job = get_job_by_current_task()
 
+    relative_output_path: str | None = None
+    output_bound = False
+
     normalized_source_path = str(
         source_path or ""
     ).strip().lstrip("/")
@@ -403,6 +465,8 @@ def convert_image_to_jpg_task(
             mark_converted=False,
             expected_source_path=normalized_source_path,
         )
+        
+        output_bound = True
 
         refreshed_instance = get_instance(
             app_label,
@@ -437,6 +501,14 @@ def convert_image_to_jpg_task(
         )
 
     except MediaConversionTaskSuperseded as exc:
+        if (
+            relative_output_path
+            and not output_bound
+        ):
+            _safe_delete_generated_image_bundle(
+                relative_output_path
+            )
+
         logger.info(
             (
                 "Image worker superseded by newer task: "
@@ -451,6 +523,14 @@ def convert_image_to_jpg_task(
         return
     
     except MediaConversionSuperseded as exc:
+        if (
+            relative_output_path
+            and not output_bound
+        ):
+            _safe_delete_generated_image_bundle(
+                relative_output_path
+            )
+        
         job_update(
             job,
             status=MediaJobStatus.CANCELED,
@@ -475,6 +555,13 @@ def convert_image_to_jpg_task(
         return
 
     except MediaConversionCanceled:
+        if (
+            relative_output_path
+            and not output_bound
+        ):
+            _safe_delete_generated_image_bundle(
+                relative_output_path
+            )
         job_update(
             job,
             status=MediaJobStatus.CANCELED,
@@ -493,6 +580,14 @@ def convert_image_to_jpg_task(
         return
 
     except Exception as exc:
+        if (
+            relative_output_path
+            and not output_bound
+        ):
+            _safe_delete_generated_image_bundle(
+                relative_output_path
+            )
+        
         job_update(
             job,
             status=MediaJobStatus.FAILED,
@@ -535,6 +630,9 @@ def convert_moment_image_item_to_jpg_task(
 
     close_old_connections()
     job = get_job_by_current_task()
+
+    relative_output_path: str | None = None
+    output_committed = False
 
     normalized_source_path = (
         _normalize_moment_storage_key(
@@ -848,6 +946,8 @@ def convert_moment_image_item_to_jpg_task(
             ).update(
                 **update_values
             )
+            
+        output_committed = True
 
         if (
             normalized_source_path
@@ -907,6 +1007,14 @@ def convert_moment_image_item_to_jpg_task(
                 )
 
     except MediaConversionTaskSuperseded as exc:
+        if (
+            relative_output_path
+            and not output_committed
+        ):
+            _safe_delete_generated_image_bundle(
+                relative_output_path
+            )
+            
         logger.info(
             (
                 "Moment image item worker superseded "
@@ -921,6 +1029,13 @@ def convert_moment_image_item_to_jpg_task(
         return
     
     except MomentImageItemSuperseded as exc:
+        if (
+            relative_output_path
+            and not output_committed
+        ):
+            _safe_delete_generated_image_bundle(
+                relative_output_path
+            )
         job_update(
             job,
             status=MediaJobStatus.CANCELED,
@@ -950,6 +1065,14 @@ def convert_moment_image_item_to_jpg_task(
         return
 
     except MediaConversionCanceled:
+        if (
+            relative_output_path
+            and not output_committed
+        ):
+            _safe_delete_generated_image_bundle(
+                relative_output_path
+            )
+            
         job_update(
             job,
             status=MediaJobStatus.CANCELED,
@@ -972,6 +1095,13 @@ def convert_moment_image_item_to_jpg_task(
         return
 
     except Exception as exc:
+        if (
+            relative_output_path
+            and not output_committed
+        ):
+            _safe_delete_generated_image_bundle(
+                relative_output_path
+            )
         job_update(
             job,
             status=MediaJobStatus.FAILED,
