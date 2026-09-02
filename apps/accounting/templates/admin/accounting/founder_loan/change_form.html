@@ -1,0 +1,12 @@
+{% extends "admin/change_form.html" %}
+
+{% block object-tools-items %}
+{% if original and original.outstanding_amount > 0 and original.status != 'cancelled' %}
+<li>
+    <a href="{% url 'accounting_admin:accounting_founderloan_repay' original.id %}">
+        Record Repayment
+    </a>
+</li>
+{% endif %}
+{{ block.super }}
+{% endblock %}

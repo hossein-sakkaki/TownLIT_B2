@@ -1,0 +1,20 @@
+{% extends "admin/change_form.html" %}
+
+{% block object-tools-items %}
+    {{ block.super }}
+    {% if original %}
+        {% if original.status == "draft" %}
+            <li>
+                <form method="post" action="{% url 'accounting_admin:accounting_vendorbill_post' original.pk %}" style="display:inline;">
+                    {% csrf_token %}
+                    <button type="submit" class="button" style="padding:7px 12px;">Post Bill to AP</button>
+                </form>
+            </li>
+        {% elif original.status == "open" or original.status == "partial" %}
+            <li><a href="{% url 'accounting_admin:accounting-ap-pay-vendor' original.vendor_id %}?bill_id={{ original.pk }}">Pay Bill</a></li>
+        {% endif %}
+        {% if original.posting_journal_entry_id %}
+            <li><a href="{% url 'accounting_admin:accounting_journalentry_change' original.posting_journal_entry_id %}">View Journal</a></li>
+        {% endif %}
+    {% endif %}
+{% endblock %}

@@ -1,0 +1,96 @@
+{% extends "admin/base_site.html" %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+    .tl-funds { max-width: 1500px; margin: 0 auto; }
+    .tl-hero, .tl-panel { border: 1px solid var(--hairline-color); border-radius: 14px; background: var(--body-bg); }
+    .tl-hero { padding: 22px; display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; margin-bottom: 18px; }
+    .tl-hero h1 { margin: 0 0 7px; font-size: 27px; }
+    .tl-muted { color: var(--body-quiet-color); }
+    .tl-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .tl-btn { display: inline-flex; align-items: center; min-height: 34px; padding: 6px 11px; border: 1px solid var(--hairline-color); border-radius: 8px; text-decoration: none !important; color: var(--body-fg) !important; background: var(--body-bg); font-weight: 700; }
+    .tl-btn-primary { background: var(--primary); color: #fff !important; border-color: var(--primary); }
+    .tl-panel { overflow: hidden; }
+    .tl-panel table { width: 100%; border-collapse: collapse; }
+    .tl-panel th, .tl-panel td { padding: 12px 13px; border-bottom: 1px solid var(--hairline-color); text-align: left; vertical-align: top; }
+    .tl-panel th { font-size: 11px; text-transform: uppercase; color: var(--body-quiet-color); }
+    .tl-panel tr:last-child td { border-bottom: 0; }
+    .tl-pill { display: inline-flex; padding: 4px 8px; border-radius: 999px; border: 1px solid var(--hairline-color); font-size: 11px; font-weight: 700; margin: 1px 3px 1px 0; }
+    .tl-warning { color: #9a6700; }
+    .tl-danger { color: #b42318; }
+    .tl-success { color: #087443; }
+    .tl-money { white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .tl-fund-name strong { display: block; margin-bottom: 3px; }
+    .tl-fund-name small { color: var(--body-quiet-color); }
+    @media (max-width: 1000px) { .tl-panel { overflow-x: auto; } .tl-hero { flex-direction: column; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="tl-funds">
+    <section class="tl-hero">
+        <div>
+            <h1>Funds & Budgets</h1>
+            <div class="tl-muted">
+                Monitor restricted and unrestricted funding, budget usage, operating spend and capital deployment from one place.
+            </div>
+        </div>
+        <div class="tl-actions">
+            {% if fund_attention_count %}<span class="tl-pill tl-warning">{{ fund_attention_count }} setup item{{ fund_attention_count|pluralize }} need review</span>{% endif %}
+            <a class="tl-btn" href="{{ home_url }}">Accounting Home</a>
+            <a class="tl-btn" href="{{ budgets_url }}">Budget Setup</a>
+            <a class="tl-btn tl-btn-primary" href="{{ add_fund_url }}">Add Fund</a>
+        </div>
+    </section>
+
+    <section class="tl-panel">
+        <table>
+            <thead>
+                <tr>
+                    <th>Fund</th>
+                    <th>Status</th>
+                    <th>Awarded</th>
+                    <th>Received</th>
+                    <th>Operating Spend</th>
+                    <th>Capital Deployed</th>
+                    <th>Available Funding</th>
+                    <th>Next</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in fund_rows %}
+                <tr>
+                    <td class="tl-fund-name">
+                        <strong><a href="{{ row.detail_url }}">{{ row.fund.code }} — {{ row.fund.name }}</a></strong>
+                        <small>{{ row.fund.get_fund_type_display }} · {{ row.fund.currency }}</small><br>
+                        {% if row.fund.is_restricted %}<span class="tl-pill tl-warning">Restricted</span>{% else %}<span class="tl-pill tl-success">Unrestricted</span>{% endif %}
+                        {% for issue in row.issues %}<span class="tl-pill tl-danger">{{ issue }}</span>{% endfor %}
+                    </td>
+                    <td>{{ row.fund.get_status_display }}</td>
+                    <td class="tl-money">{{ row.fund.total_awarded|default:"—" }}</td>
+                    <td class="tl-money">{{ row.metrics.revenue }}</td>
+                    <td class="tl-money">{{ row.metrics.operating_expense }}</td>
+                    <td class="tl-money">{{ row.metrics.capital_deployed }}</td>
+                    <td class="tl-money"><strong>{{ row.metrics.available_funding }}</strong></td>
+                    <td>
+                        <div class="tl-actions">
+                            <a class="tl-btn tl-btn-primary" href="{{ row.detail_url }}">Open Fund</a>
+                            <a class="tl-btn" href="{{ row.income_url }}">Receive</a>
+                            <a class="tl-btn" href="{{ row.expense_url }}">Spend</a>
+                        </div>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="8" class="tl-muted">No funds found.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </section>
+
+    <p style="margin-top:14px;">
+        {% if show_all %}<a href="?">Show active funds only</a>{% else %}<a href="?all=1">Show inactive / closed funds</a>{% endif %}
+    </p>
+</div>
+{% endblock %}
+{% block sidebar %}{% endblock %}

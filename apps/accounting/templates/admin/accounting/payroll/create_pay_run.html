@@ -1,40 +1,4 @@
-<!-- apps/accounting/templates/admin/accounting/payroll/create_pay_run.html -->
-
 {% extends "admin/base_site.html" %}
-
-{% block content %}
-<div id="content-main">
-  <h1>Create Payroll Run</h1>
-
-  <p>
-    Enter official CRA/PDOC deduction values when available.
-    The system will store both payroll results and calculation snapshots.
-  </p>
-
-  <form method="post" novalidate>
-    {% csrf_token %}
-
-    <fieldset class="module aligned">
-      {% for field in form %}
-        <div class="form-row">
-          {{ field.errors }}
-          <div>
-            {{ field.label_tag }}
-            {{ field }}
-            {% if field.help_text %}
-              <div class="help">{{ field.help_text }}</div>
-            {% endif %}
-          </div>
-        </div>
-      {% endfor %}
-    </fieldset>
-
-    <div class="submit-row">
-      <input type="submit" value="Create Pay Run" class="default">
-      <a href="../">Cancel</a>
-    </div>
-  </form>
-</div>
-
-<script src="/static/accounting/admin/create_pay_run.js"></script>
-{% endblock %}
+{% block extrastyle %}{{ block.super }}<style>.tl-form{max-width:900px}.tl-box{border:1px solid #dfe3e8;border-radius:12px;padding:18px;margin:14px 0}.tl-box h2{margin-top:0}.tl-field{margin:0 0 15px}.tl-field label{display:block;font-weight:700;margin-bottom:5px}.tl-field input,.tl-field select,.tl-field textarea{max-width:100%}.tl-help{color:#667085;font-size:12px;margin-top:4px}.tl-error{color:#b42318}.tl-form details{border:1px solid #dfe3e8;border-radius:10px;padding:12px 15px;margin:12px 0}.tl-form summary{font-weight:750;cursor:pointer}.tl-actions{margin-top:18px;display:flex;gap:12px;align-items:center}</style>{% endblock %}
+{% block breadcrumbs %}<div class="breadcrumbs"><a href="{% url 'accounting_admin:index' %}">Accounting</a> &rsaquo; <a href="{% url 'accounting_admin:accounting-payroll-workspace' %}">Payroll</a> &rsaquo; Create Payroll</div>{% endblock %}
+{% block content %}<div class="tl-form"><h1>Create Payroll Run</h1><p>Choose the employee and pay period. TownLIT resolves the active tax-year configuration automatically.</p><form method="post" novalidate>{% csrf_token %}{{ form.payroll_year_config }}{% if form.non_field_errors %}<div class="tl-error">{{ form.non_field_errors }}</div>{% endif %}<div class="tl-box"><h2>Payroll</h2>{% for field in form %}{% if field.name == 'pay_period' or field.name == 'employee' or field.name == 'payment_note' %}<div class="tl-field">{{ field.label_tag }}{{ field }}{% if field.help_text %}<div class="tl-help">{{ field.help_text }}</div>{% endif %}<div class="tl-error">{{ field.errors }}</div></div>{% endif %}{% endfor %}</div><details><summary>Hourly work input</summary><div style="margin-top:12px">{% for field in form %}{% if field.name == 'show_hourly_fields' or field.name == 'regular_hours' or field.name == 'daily_overtime_hours' or field.name == 'weekly_overtime_hours' or field.name == 'double_time_hours' %}<div class="tl-field">{{ field.label_tag }}{{ field }}<div class="tl-error">{{ field.errors }}</div></div>{% endif %}{% endfor %}</div></details><details><summary>Advanced CRA / PDOC override</summary><div style="margin-top:12px">{% for field in form %}{% if field.name == 'use_manual_overrides' or field.name == 'employee_cpp' or field.name == 'employer_cpp' or field.name == 'employee_cpp2' or field.name == 'employer_cpp2' or field.name == 'employee_ei' or field.name == 'employer_ei' or field.name == 'federal_income_tax' or field.name == 'provincial_income_tax' or field.name == 'override_source' or field.name == 'override_note' %}<div class="tl-field">{{ field.label_tag }}{{ field }}<div class="tl-error">{{ field.errors }}</div></div>{% endif %}{% endfor %}</div></details><div class="tl-actions"><button class="default" type="submit">Calculate Payroll</button><a href="{% url 'accounting_admin:accounting-payroll-workspace' %}">Cancel</a></div></form></div>{% endblock %}

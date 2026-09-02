@@ -1,0 +1,68 @@
+{% extends "admin/base_site.html" %}
+
+{% block extrahead %}
+{{ block.super }}
+<style>
+.tl-invoice{max-width:900px;margin:0 auto;padding:30px;background:#fff;color:#111}.tl-top{display:flex;justify-content:space-between;gap:30px;margin-bottom:34px}.tl-brand h1{margin:0;font-size:30px}.tl-meta{text-align:right}.tl-box{border:1px solid #ddd;border-radius:10px;padding:16px;margin:18px 0}.tl-table{width:100%;border-collapse:collapse}.tl-table th,.tl-table td{padding:10px 8px;border-bottom:1px solid #ddd;text-align:left}.tl-table .num{text-align:right}.tl-totals{width:360px;margin-left:auto;margin-top:18px}.tl-totals div{display:flex;justify-content:space-between;padding:6px 0}.tl-total{font-size:18px;font-weight:700;border-top:2px solid #111;margin-top:6px;padding-top:10px!important}.tl-draft{display:inline-block;padding:5px 10px;border:1px solid #b42318;color:#b42318;border-radius:999px;font-weight:700}.tl-print-actions{max-width:900px;margin:18px auto 0;display:flex;justify-content:flex-end;gap:8px}@media print{#header,#nav-sidebar,.breadcrumbs,.tl-print-actions{display:none!important}.tl-invoice{max-width:none;padding:0}.main>.content{padding:0!important}}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="tl-print-actions">
+    <button class="button default" onclick="window.print()">Print / Save PDF</button>
+</div>
+<div class="tl-invoice">
+    <div class="tl-top">
+        <div class="tl-brand">
+            <h1>TownLIT</h1>
+            <div>Invoice</div>
+            {% if invoice.status == "draft" %}<div style="margin-top:10px;"><span class="tl-draft">DRAFT</span></div>{% endif %}
+        </div>
+        <div class="tl-meta">
+            <div><strong>{{ invoice.invoice_number }}</strong></div>
+            <div>Invoice date: {{ invoice.invoice_date }}</div>
+            <div>Due date: {{ invoice.due_date }}</div>
+            {% if invoice.purchase_order_reference %}<div>PO / Reference: {{ invoice.purchase_order_reference }}</div>{% endif %}
+        </div>
+    </div>
+
+    <div class="tl-box">
+        <strong>Bill To</strong><br>
+        {{ invoice.customer }}<br>
+        {% if invoice.customer.address_line1 %}{{ invoice.customer.address_line1 }}<br>{% endif %}
+        {% if invoice.customer.address_line2 %}{{ invoice.customer.address_line2 }}<br>{% endif %}
+        {% if invoice.customer.city %}{{ invoice.customer.city }}{% if invoice.customer.province %}, {{ invoice.customer.province }}{% endif %} {{ invoice.customer.postal_code }}<br>{% endif %}
+        {% if invoice.customer.billing_email %}{{ invoice.customer.billing_email }}{% endif %}
+    </div>
+
+    {% if invoice.description %}<p>{{ invoice.description }}</p>{% endif %}
+
+    <table class="tl-table">
+        <thead>
+            <tr><th>Description</th><th class="num">Qty</th><th class="num">Unit Price</th><th class="num">Amount</th><th class="num">Tax</th><th class="num">Total</th></tr>
+        </thead>
+        <tbody>
+        {% for line in lines %}
+            <tr>
+                <td>{{ line.description }}</td>
+                <td class="num">{{ line.quantity }}</td>
+                <td class="num">{{ line.unit_price }}</td>
+                <td class="num">{{ line.amount }}</td>
+                <td class="num">{{ line.tax_amount }}</td>
+                <td class="num">{{ line.gross_amount }}</td>
+            </tr>
+        {% empty %}
+            <tr><td colspan="6">No invoice lines.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="tl-totals">
+        <div><span>Subtotal</span><strong>{{ invoice.subtotal }}</strong></div>
+        <div><span>Tax</span><strong>{{ invoice.tax_total }}</strong></div>
+        <div class="tl-total"><span>Total {{ invoice.currency }}</span><strong>{{ invoice.total_amount }}</strong></div>
+        {% if invoice.amount_received %}<div><span>Received</span><strong>{{ invoice.amount_received }}</strong></div>{% endif %}
+        {% if invoice.amount_received %}<div><span>Balance Due</span><strong>{{ invoice.outstanding_amount }}</strong></div>{% endif %}
+    </div>
+</div>
+{% endblock %}

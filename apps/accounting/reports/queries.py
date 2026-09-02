@@ -1,103 +1,140 @@
 # apps/accounting/reports/queries.py
+#
+# TownLIT
+#
+# Created by Hossein Sakkaki on 2026-04-01.
+# Last Update by Hossein Sakkaki on 2026-08-31.
+#
 
 from collections import defaultdict
 from decimal import Decimal
 
-from django.db.models import Sum, Q
+from django.db.models import Q, Sum
 from django.db.models.functions import TruncMonth
 
-from apps.accounting.models import Account, JournalEntry, Transaction
+from apps.accounting.models import (
+    Account,
+    JournalEntry,
+    Transaction,
+)
+
 from .filters import ReportFilter
 from .schemas import (
-    TrialBalanceRow,
-    TrialBalanceReport,
-    GeneralLedgerRow,
-    GeneralLedgerReport,
     FounderBalanceSummary,
-    MonthlySummaryRow,
+    GeneralLedgerReport,
+    GeneralLedgerRow,
     MonthlySummaryReport,
+    MonthlySummaryRow,
+    TrialBalanceReport,
+    TrialBalanceRow,
 )
 
 
 ZERO = Decimal("0.00")
 
 
-def _posted_status_filter(include_draft: bool) -> Q:
-    """
-    Return entry status filter.
-    """
+def _posted_status_filter(
+    include_draft: bool,
+) -> Q:
+    """Return transaction status filter."""
 
     if include_draft:
-        return ~Q(journal_entry__status=JournalEntry.STATUS_VOID)
+        return ~Q(
+            journal_entry__status=JournalEntry.STATUS_VOID
+        )
 
-    return Q(journal_entry__status=JournalEntry.STATUS_POSTED)
-
-
-def _entry_status_filter(include_draft: bool) -> Q:
-    """
-    Return journal entry status filter.
-    """
-
-    if include_draft:
-        return ~Q(status=JournalEntry.STATUS_VOID)
-
-    return Q(status=JournalEntry.STATUS_POSTED)
+    return Q(
+        journal_entry__status=JournalEntry.STATUS_POSTED
+    )
 
 
-def _apply_transaction_date_filters(queryset, report_filter: ReportFilter):
-    """
-    Apply date filters to transaction queryset.
-    """
+def _apply_transaction_date_filters(
+    queryset,
+    report_filter: ReportFilter,
+):
+    """Apply period filters."""
 
     if report_filter.date_from:
-        queryset = queryset.filter(journal_entry__entry_date__gte=report_filter.date_from)
+        queryset = queryset.filter(
+            journal_entry__entry_date__gte=report_filter.date_from
+        )
 
     if report_filter.date_to:
-        queryset = queryset.filter(journal_entry__entry_date__lte=report_filter.date_to)
+        queryset = queryset.filter(
+            journal_entry__entry_date__lte=report_filter.date_to
+        )
 
     return queryset
 
 
-def _apply_entry_date_filters(queryset, report_filter: ReportFilter):
-    """
-    Apply date filters to journal entry queryset.
-    """
+def _validate_filter(
+    report_filter: ReportFilter,
+):
+    """Validate report dates."""
 
-    if report_filter.date_from:
-        queryset = queryset.filter(entry_date__gte=report_filter.date_from)
+    if (
+        report_filter.date_from
+        and report_filter.date_to
+        and report_filter.date_from
+        > report_filter.date_to
+    ):
+        raise ValueError(
+            "date_from cannot be later than date_to."
+        )
 
-    if report_filter.date_to:
-        queryset = queryset.filter(entry_date__lte=report_filter.date_to)
 
-    return queryset
+def _compute_account_balance(
+    normal_balance: str,
+    total_debit: Decimal,
+    total_credit: Decimal,
+) -> Decimal:
+    """Compute account balance."""
 
+    total_debit = (
+        total_debit
+        or ZERO
+    )
 
-def _compute_account_balance(normal_balance: str, total_debit: Decimal, total_credit: Decimal) -> Decimal:
-    """
-    Compute account balance based on normal balance side.
-    """
+    total_credit = (
+        total_credit
+        or ZERO
+    )
 
-    total_debit = total_debit or ZERO
-    total_credit = total_credit or ZERO
-
-    if normal_balance == "debit":
+    if normal_balance == Account.NORMAL_DEBIT:
         return total_debit - total_credit
 
     return total_credit - total_debit
 
 
-def build_trial_balance(report_filter: ReportFilter) -> TrialBalanceReport:
-    """
-    Build trial balance report from posted transactions.
-    """
+def build_trial_balance(
+    report_filter: ReportFilter,
+) -> TrialBalanceReport:
+    """Build an as-of trial balance."""
 
-    qs = Transaction.objects.select_related("account", "journal_entry").filter(
-        _posted_status_filter(report_filter.include_draft)
+    _validate_filter(report_filter)
+
+    qs = (
+        Transaction.objects
+        .select_related(
+            "account",
+            "journal_entry",
+        )
+        .filter(
+            _posted_status_filter(
+                report_filter.include_draft
+            )
+        )
     )
-    qs = _apply_transaction_date_filters(qs, report_filter)
+
+    # Trial balance is cumulative through date_to.
+    if report_filter.date_to:
+        qs = qs.filter(
+            journal_entry__entry_date__lte=report_filter.date_to
+        )
 
     grouped = (
-        qs.values(
+        qs
+        .values(
             "account__code",
             "account__name",
             "account__account_type",
@@ -115,8 +152,16 @@ def build_trial_balance(report_filter: ReportFilter) -> TrialBalanceReport:
     total_credit = ZERO
 
     for item in grouped:
-        row_debit = item["total_debit"] or ZERO
-        row_credit = item["total_credit"] or ZERO
+        row_debit = (
+            item["total_debit"]
+            or ZERO
+        )
+
+        row_credit = (
+            item["total_credit"]
+            or ZERO
+        )
+
         balance = _compute_account_balance(
             item["account__normal_balance"],
             row_debit,
@@ -140,7 +185,7 @@ def build_trial_balance(report_filter: ReportFilter) -> TrialBalanceReport:
 
     return TrialBalanceReport(
         title="Trial Balance",
-        date_from=report_filter.date_from,
+        date_from=None,
         date_to=report_filter.date_to,
         rows=rows,
         total_debit=total_debit,
@@ -148,31 +193,96 @@ def build_trial_balance(report_filter: ReportFilter) -> TrialBalanceReport:
     )
 
 
-def build_general_ledger(account_code: str, report_filter: ReportFilter) -> GeneralLedgerReport:
-    """
-    Build general ledger report for one account.
-    """
+def build_general_ledger(
+    account_code: str,
+    report_filter: ReportFilter,
+) -> GeneralLedgerReport:
+    """Build ledger with correct opening balance."""
 
-    account = Account.objects.get(code=account_code)
+    _validate_filter(report_filter)
 
-    qs = Transaction.objects.select_related("journal_entry", "account").filter(
-        account=account
-    ).filter(
-        _posted_status_filter(report_filter.include_draft)
+    account = Account.objects.get(
+        code=account_code
     )
-    qs = _apply_transaction_date_filters(qs, report_filter)
-    qs = qs.order_by("journal_entry__entry_date", "journal_entry__id", "line_number", "id")
+
+    base_qs = (
+        Transaction.objects
+        .select_related(
+            "journal_entry",
+            "account",
+        )
+        .filter(account=account)
+        .filter(
+            _posted_status_filter(
+                report_filter.include_draft
+            )
+        )
+    )
+
+    opening_balance = ZERO
+
+    if report_filter.date_from:
+        opening_totals = (
+            base_qs
+            .filter(
+                journal_entry__entry_date__lt=report_filter.date_from
+            )
+            .aggregate(
+                total_debit=Sum("debit"),
+                total_credit=Sum("credit"),
+            )
+        )
+
+        opening_balance = _compute_account_balance(
+            account.normal_balance,
+            opening_totals["total_debit"] or ZERO,
+            opening_totals["total_credit"] or ZERO,
+        )
+
+    qs = _apply_transaction_date_filters(
+        base_qs,
+        report_filter,
+    ).order_by(
+        "journal_entry__entry_date",
+        "journal_entry__id",
+        "line_number",
+        "id",
+    )
 
     rows = []
     total_debit = ZERO
     total_credit = ZERO
-    running_balance = ZERO
+    running_balance = opening_balance
+
+    if report_filter.date_from:
+        rows.append(
+            GeneralLedgerRow(
+                entry_number="OPENING",
+                entry_date=report_filter.date_from,
+                reference="",
+                description="Opening balance before selected period",
+                source_app="accounting",
+                source_model="computed_opening_balance",
+                source_ref="",
+                line_memo="",
+                debit=ZERO,
+                credit=ZERO,
+                running_balance=opening_balance,
+            )
+        )
 
     for tx in qs:
-        debit = tx.debit or ZERO
-        credit = tx.credit or ZERO
+        debit = (
+            tx.debit
+            or ZERO
+        )
 
-        if account.normal_balance == "debit":
+        credit = (
+            tx.credit
+            or ZERO
+        )
+
+        if account.normal_balance == Account.NORMAL_DEBIT:
             running_balance += debit - credit
         else:
             running_balance += credit - debit
@@ -216,29 +326,70 @@ def build_founder_balance_summary(
     founder_withdrawal_account_code: str,
     report_filter: ReportFilter,
 ) -> FounderBalanceSummary:
-    """
-    Build founder balance summary from two designated accounts.
-    """
+    """Build founder financing summary."""
 
-    loan_account = Account.objects.get(code=founder_loan_account_code)
-    withdrawal_account = Account.objects.get(code=founder_withdrawal_account_code)
+    _validate_filter(report_filter)
 
-    qs = Transaction.objects.select_related("account", "journal_entry").filter(
-        account__code__in=[founder_loan_account_code, founder_withdrawal_account_code]
-    ).filter(
-        _posted_status_filter(report_filter.include_draft)
+    loan_account = Account.objects.get(
+        code=founder_loan_account_code
     )
-    qs = _apply_transaction_date_filters(qs, report_filter)
 
-    loan_total = qs.filter(account=loan_account).aggregate(
-        total=Sum("credit") - Sum("debit")
-    )["total"] or ZERO
+    withdrawal_account = Account.objects.get(
+        code=founder_withdrawal_account_code
+    )
 
-    withdrawal_total = qs.filter(account=withdrawal_account).aggregate(
-        total=Sum("debit") - Sum("credit")
-    )["total"] or ZERO
+    qs = (
+        Transaction.objects
+        .select_related(
+            "account",
+            "journal_entry",
+        )
+        .filter(
+            account__code__in=[
+                founder_loan_account_code,
+                founder_withdrawal_account_code,
+            ]
+        )
+        .filter(
+            _posted_status_filter(
+                report_filter.include_draft
+            )
+        )
+    )
 
-    net_founder_balance = loan_total - withdrawal_total
+    qs = _apply_transaction_date_filters(
+        qs,
+        report_filter,
+    )
+
+    loan_totals = qs.filter(
+        account=loan_account
+    ).aggregate(
+        debit=Sum("debit"),
+        credit=Sum("credit"),
+    )
+
+    withdrawal_totals = qs.filter(
+        account=withdrawal_account
+    ).aggregate(
+        debit=Sum("debit"),
+        credit=Sum("credit"),
+    )
+
+    loan_total = (
+        (loan_totals["credit"] or ZERO)
+        - (loan_totals["debit"] or ZERO)
+    )
+
+    withdrawal_total = (
+        (withdrawal_totals["debit"] or ZERO)
+        - (withdrawal_totals["credit"] or ZERO)
+    )
+
+    net_founder_balance = (
+        loan_total
+        - withdrawal_total
+    )
 
     return FounderBalanceSummary(
         title="Founder Balance Summary",
@@ -254,49 +405,118 @@ def build_founder_balance_summary(
     )
 
 
-def build_monthly_summary(report_filter: ReportFilter) -> MonthlySummaryReport:
-    """
-    Build monthly summary report for revenue, expense, and net result.
-    """
+def build_monthly_summary(
+    report_filter: ReportFilter,
+) -> MonthlySummaryReport:
+    """Build monthly revenue and expense summary."""
 
-    qs = Transaction.objects.select_related("account", "journal_entry").filter(
-        _posted_status_filter(report_filter.include_draft)
+    _validate_filter(report_filter)
+
+    qs = (
+        Transaction.objects
+        .select_related(
+            "account",
+            "journal_entry",
+        )
+        .filter(
+            _posted_status_filter(
+                report_filter.include_draft
+            )
+        )
     )
-    qs = _apply_transaction_date_filters(qs, report_filter)
+
+    qs = _apply_transaction_date_filters(
+        qs,
+        report_filter,
+    )
 
     monthly = (
-        qs.annotate(period=TruncMonth("journal_entry__entry_date"))
-        .values("period", "account__account_type")
+        qs
+        .annotate(
+            period=TruncMonth(
+                "journal_entry__entry_date"
+            )
+        )
+        .values(
+            "period",
+            "account__account_type",
+        )
         .annotate(
             debit_total=Sum("debit"),
             credit_total=Sum("credit"),
         )
-        .order_by("period", "account__account_type")
+        .order_by(
+            "period",
+            "account__account_type",
+        )
     )
 
-    buckets = defaultdict(lambda: {"revenue_total": ZERO, "expense_total": ZERO})
+    buckets = defaultdict(
+        lambda: {
+            "revenue_total": ZERO,
+            "expense_total": ZERO,
+        }
+    )
 
     for item in monthly:
-        period = item["period"].strftime("%Y-%m")
-        debit_total = item["debit_total"] or ZERO
-        credit_total = item["credit_total"] or ZERO
-        account_type = item["account__account_type"]
+        period = item[
+            "period"
+        ].strftime("%Y-%m")
 
-        if account_type == "revenue":
-            buckets[period]["revenue_total"] += credit_total - debit_total
+        debit_total = (
+            item["debit_total"]
+            or ZERO
+        )
 
-        if account_type == "expense":
-            buckets[period]["expense_total"] += debit_total - credit_total
+        credit_total = (
+            item["credit_total"]
+            or ZERO
+        )
+
+        account_type = (
+            item["account__account_type"]
+        )
+
+        if account_type == Account.TYPE_REVENUE:
+            buckets[
+                period
+            ]["revenue_total"] += (
+                credit_total
+                - debit_total
+            )
+
+        elif account_type == Account.TYPE_EXPENSE:
+            buckets[
+                period
+            ]["expense_total"] += (
+                debit_total
+                - credit_total
+            )
 
     rows = []
     total_revenue = ZERO
     total_expense = ZERO
     total_net_result = ZERO
 
-    for period in sorted(buckets.keys()):
-        revenue_total = buckets[period]["revenue_total"]
-        expense_total = buckets[period]["expense_total"]
-        net_result = revenue_total - expense_total
+    for period in sorted(
+        buckets.keys()
+    ):
+        revenue_total = (
+            buckets[
+                period
+            ]["revenue_total"]
+        )
+
+        expense_total = (
+            buckets[
+                period
+            ]["expense_total"]
+        )
+
+        net_result = (
+            revenue_total
+            - expense_total
+        )
 
         rows.append(
             MonthlySummaryRow(
@@ -320,5 +540,3 @@ def build_monthly_summary(report_filter: ReportFilter) -> MonthlySummaryReport:
         total_expense=total_expense,
         total_net_result=total_net_result,
     )
-    
-    

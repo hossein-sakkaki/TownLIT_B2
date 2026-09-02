@@ -1,10 +1,19 @@
 # apps/accounting/services/templates/restricted_support.py
+#
+# TownLIT
+#
+# Created by Hossein Sakkaki on 2026-04-01.
+# Last Update by Hossein Sakkaki on 2026-08-31.
+#
 
 from decimal import Decimal
 
-from apps.accounting.services.posting_engine import post_journal_entry
-from apps.accounting.services.schemas import JournalEntryInput, JournalLineInput
 from apps.accounting.services.account_lookup import AccountCodes
+from apps.accounting.services.posting_engine import post_journal_entry
+from apps.accounting.services.schemas import (
+    JournalEntryInput,
+    JournalLineInput,
+)
 
 
 def record_restricted_support_received(
@@ -22,9 +31,11 @@ def record_restricted_support_received(
     created_by=None,
     approved_by=None,
 ):
-    """
-    Record restricted support received into bank and tag it to a fund.
-    """
+    """Record restricted support received."""
+
+    amount = Decimal(
+        str(amount)
+    )
 
     return post_journal_entry(
         JournalEntryInput(
@@ -39,14 +50,14 @@ def record_restricted_support_received(
             lines=[
                 JournalLineInput(
                     account_code=bank_account_code,
-                    debit=Decimal(amount),
+                    debit=amount,
                     memo="Restricted support received in bank",
                     line_number=1,
                     fund_code=fund_code,
                 ),
                 JournalLineInput(
                     account_code=revenue_account_code,
-                    credit=Decimal(amount),
+                    credit=amount,
                     memo="Restricted support recognized",
                     line_number=2,
                     fund_code=fund_code,
@@ -62,8 +73,10 @@ def record_restricted_expense(
     amount: Decimal,
     expense_account_code: str,
     fund_code: str,
-    budget_code: str | None,
     description: str,
+    budget_code: str | None = None,
+    budget_plan_code: str | None = None,
+    budget_line_id: int | None = None,
     reference: str = "",
     source_app: str = "accounting",
     source_model: str = "restricted_expense",
@@ -72,9 +85,17 @@ def record_restricted_expense(
     created_by=None,
     approved_by=None,
 ):
-    """
-    Record an expense charged to a specific restricted fund/budget line.
-    """
+    """Record one restricted-fund expense."""
+
+    amount = Decimal(
+        str(amount)
+    )
+
+    budget_kwargs = {
+        "budget_line_code": budget_code,
+        "budget_plan_code": budget_plan_code,
+        "budget_line_id": budget_line_id,
+    }
 
     return post_journal_entry(
         JournalEntryInput(
@@ -89,19 +110,19 @@ def record_restricted_expense(
             lines=[
                 JournalLineInput(
                     account_code=expense_account_code,
-                    debit=Decimal(amount),
+                    debit=amount,
                     memo="Restricted expense",
                     line_number=1,
                     fund_code=fund_code,
-                    budget_code=budget_code,
+                    **budget_kwargs,
                 ),
                 JournalLineInput(
                     account_code=bank_account_code,
-                    credit=Decimal(amount),
+                    credit=amount,
                     memo="Paid from bank",
                     line_number=2,
                     fund_code=fund_code,
-                    budget_code=budget_code,
+                    **budget_kwargs,
                 ),
             ],
         )

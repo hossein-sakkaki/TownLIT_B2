@@ -1,59 +1,781 @@
-<!-- apps/accounting/admin/accounting/index.html -->
- 
- {% extends "admin/index.html" %}
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+    .tl-ops {
+        --tl-border: #dfe3e8;
+        --tl-muted: #667085;
+        --tl-soft: #f7f8fa;
+        --tl-success: #087443;
+        --tl-warning: #9a6700;
+        --tl-danger: #b42318;
+        --tl-primary: #2457d6;
+        max-width: 1540px;
+        margin: 0 auto;
+    }
+
+    .tl-hero {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 24px;
+        padding: 24px;
+        margin-bottom: 18px;
+        border: 1px solid var(--tl-border);
+        border-radius: 14px;
+        background: var(--body-bg);
+    }
+
+    .tl-hero h1 {
+        margin: 0 0 7px;
+        font-size: 28px;
+        line-height: 1.2;
+    }
+
+    .tl-hero p {
+        margin: 0;
+        max-width: 790px;
+        color: var(--tl-muted);
+        line-height: 1.5;
+    }
+
+    .tl-status-row,
+    .tl-actions-inline,
+    .tl-tools {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .tl-status-row { justify-content: flex-end; }
+
+    .tl-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 7px 11px;
+        border: 1px solid var(--tl-border);
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 750;
+        text-decoration: none !important;
+        white-space: nowrap;
+    }
+
+    .tl-success { color: var(--tl-success) !important; }
+    .tl-warning { color: var(--tl-warning) !important; }
+    .tl-danger { color: var(--tl-danger) !important; }
+    .tl-neutral { color: var(--body-fg) !important; }
+
+    .tl-section { margin: 24px 0; }
+
+    .tl-section-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: end;
+        gap: 18px;
+        margin-bottom: 12px;
+    }
+
+    .tl-section-head h2 {
+        margin: 0;
+        font-size: 18px;
+    }
+
+    .tl-section-head p {
+        margin: 3px 0 0;
+        color: var(--tl-muted);
+        line-height: 1.45;
+    }
+
+    .tl-kpis {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+    }
+
+    .tl-kpi {
+        padding: 18px;
+        border: 1px solid var(--tl-border);
+        border-radius: 12px;
+        background: var(--body-bg);
+    }
+
+    .tl-kpi-label {
+        color: var(--tl-muted);
+        font-size: 12px;
+        font-weight: 750;
+        text-transform: uppercase;
+        letter-spacing: .035em;
+    }
+
+    .tl-kpi-value {
+        margin: 8px 0 5px;
+        font-size: 26px;
+        font-weight: 800;
+        letter-spacing: -.02em;
+    }
+
+    .tl-kpi-meta {
+        color: var(--tl-muted);
+        font-size: 12px;
+        line-height: 1.45;
+    }
+
+    .tl-position {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 1px;
+        margin-top: 12px;
+        overflow: hidden;
+        border: 1px solid var(--tl-border);
+        border-radius: 11px;
+        background: var(--tl-border);
+    }
+
+    .tl-position-item {
+        padding: 13px 16px;
+        background: var(--tl-soft);
+    }
+
+    .tl-position-item strong {
+        display: block;
+        margin-top: 3px;
+        font-size: 17px;
+    }
+
+    .tl-position-item span {
+        color: var(--tl-muted);
+        font-size: 11px;
+    }
+
+    .tl-action-list {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+    }
+
+    .tl-action {
+        display: grid;
+        grid-template-columns: 5px 1fr auto;
+        gap: 13px;
+        align-items: center;
+        padding: 14px 15px;
+        border: 1px solid var(--tl-border);
+        border-radius: 11px;
+        background: var(--body-bg);
+    }
+
+    .tl-action-bar {
+        align-self: stretch;
+        border-radius: 999px;
+        background: #98a2b3;
+    }
+
+    .tl-action-danger .tl-action-bar { background: var(--tl-danger); }
+    .tl-action-warning .tl-action-bar { background: #d29b00; }
+    .tl-action-neutral .tl-action-bar { background: #98a2b3; }
+
+    .tl-action-title {
+        margin-bottom: 3px;
+        font-weight: 800;
+    }
+
+    .tl-action-detail {
+        color: var(--tl-muted);
+        font-size: 12px;
+        line-height: 1.4;
+    }
+
+    .tl-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 32px;
+        padding: 6px 11px;
+        border: 1px solid var(--tl-border);
+        border-radius: 7px;
+        background: var(--body-bg);
+        color: var(--body-fg) !important;
+        font-size: 12px;
+        font-weight: 750;
+        text-decoration: none !important;
+        white-space: nowrap;
+    }
+
+    .tl-btn-primary {
+        border-color: var(--tl-primary);
+        background: var(--tl-primary);
+        color: #fff !important;
+    }
+
+    .tl-btn-danger {
+        border-color: #e8aaa5;
+        color: var(--tl-danger) !important;
+    }
+
+    .tl-btn-warning {
+        border-color: #e7c66b;
+        color: var(--tl-warning) !important;
+    }
+
+    .tl-health-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+    }
+
+    .tl-panel {
+        overflow: hidden;
+        border: 1px solid var(--tl-border);
+        border-radius: 12px;
+        background: var(--body-bg);
+    }
+
+    .tl-panel-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--tl-border);
+        background: var(--tl-soft);
+    }
+
+    .tl-panel-head h3 {
+        margin: 0;
+        font-size: 15px;
+    }
+
+    .tl-panel-head a { font-size: 12px; }
+
+    .tl-health-list {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+    }
+
+    .tl-health-list li {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 15px;
+        padding: 12px 15px;
+        border-bottom: 1px solid var(--tl-border);
+    }
+
+    .tl-health-list li:last-child { border-bottom: 0; }
+
+    .tl-health-label strong {
+        display: block;
+        margin-bottom: 2px;
+    }
+
+    .tl-health-label span {
+        color: var(--tl-muted);
+        font-size: 11px;
+    }
+
+    .tl-health-value {
+        text-align: right;
+        font-weight: 800;
+        white-space: nowrap;
+    }
+
+    .tl-table-wrap { overflow-x: auto; }
+
+    .tl-panel table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .tl-panel th,
+    .tl-panel td {
+        padding: 10px 13px;
+        border-bottom: 1px solid var(--tl-border);
+        text-align: left;
+        vertical-align: middle;
+    }
+
+    .tl-panel tr:last-child td { border-bottom: 0; }
+
+    .tl-panel th {
+        color: var(--tl-muted);
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: .04em;
+    }
+
+    .tl-task-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+    }
+
+    .tl-task {
+        display: block;
+        min-height: 92px;
+        padding: 15px;
+        border: 1px solid var(--tl-border);
+        border-radius: 10px;
+        background: var(--body-bg);
+        color: var(--body-fg) !important;
+        text-decoration: none !important;
+    }
+
+    .tl-task:hover { border-color: #aab4c0; }
+
+    .tl-task strong {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 14px;
+    }
+
+    .tl-task span {
+        color: var(--tl-muted);
+        font-size: 11px;
+        line-height: 1.4;
+    }
+
+    .tl-empty {
+        padding: 20px 16px;
+        color: var(--tl-muted);
+    }
+
+    .tl-good {
+        padding: 16px;
+        border: 1px solid #b7dfca;
+        border-radius: 11px;
+        background: rgba(8, 116, 67, .04);
+        color: var(--tl-success);
+        font-weight: 750;
+    }
+
+    .tl-advanced {
+        margin-top: 30px;
+        padding-top: 18px;
+        border-top: 1px solid var(--tl-border);
+    }
+
+    .tl-advanced summary {
+        margin-bottom: 14px;
+        color: var(--tl-muted);
+        font-weight: 750;
+        cursor: pointer;
+    }
+
+    .tl-note {
+        margin-top: 8px;
+        color: var(--tl-muted);
+        font-size: 11px;
+        line-height: 1.45;
+    }
+
+    @media (max-width: 1120px) {
+        .tl-kpis, .tl-task-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 900px) {
+        .tl-health-grid, .tl-action-list { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 720px) {
+        .tl-hero { flex-direction: column; }
+        .tl-status-row { justify-content: flex-start; }
+        .tl-kpis, .tl-task-grid, .tl-position { grid-template-columns: 1fr; }
+        .tl-action { grid-template-columns: 5px 1fr; }
+        .tl-action .tl-btn { grid-column: 2; justify-self: start; }
+    }
+</style>
+{% endblock %}
 
 {% block content %}
-  {% include "admin/accounting/_nav.html" %}
+<div class="tl-ops">
+    <section class="tl-hero">
+        <div>
+            <h1>Accounting Control Center</h1>
+            <p>
+                Daily operational view of cash, receivables, payables, payroll, CRA obligations,
+                banking, restricted funds and fixed assets. Financial truth remains in the posted ledger
+                and each protected workflow.
+            </p>
+        </div>
 
-  <div style="margin-bottom:20px; padding:16px; border:1px solid #ddd; border-radius:8px; background:#fff;">
-    <h2 style="margin-top:0;">Accounting Shortcuts</h2>
+        <div class="tl-status-row">
+            {% if workspace_operations.period_ready %}
+                <span class="tl-pill tl-success">Period open: {{ workspace_operations.current_period.code }}</span>
+            {% else %}
+                <a class="tl-pill tl-danger" href="{{ workspace_urls.periods }}">Posting period needs attention</a>
+            {% endif %}
 
-    <div style="display:grid; grid-template-columns:repeat(3, minmax(220px, 1fr)); gap:16px; margin-top:16px;">
+            {% if workspace_operations.cash.active_bank_count %}
+                <span class="tl-pill tl-success">{{ workspace_operations.cash.active_bank_count }} active bank account{{ workspace_operations.cash.active_bank_count|pluralize }}</span>
+            {% else %}
+                <a class="tl-pill tl-danger" href="{{ workspace_urls.add_bank_account }}">Bank setup required</a>
+            {% endif %}
 
-      <div style="border:1px solid #eee; border-radius:8px; padding:14px;">
-        <h3>Dashboard</h3>
-        <p>View financial KPIs and alerts.</p>
-        <a href="{% url 'accounting_admin:accounting-dashboard-admin' %}" class="button">Open Dashboard</a>
-      </div>
+            {% if workspace_actions %}
+                <span class="tl-pill tl-warning">{{ workspace_actions|length }} action{{ workspace_actions|length|pluralize }} to review</span>
+            {% else %}
+                <span class="tl-pill tl-success">Operations clear</span>
+            {% endif %}
+        </div>
+    </section>
 
-      <div style="border:1px solid #eee; border-radius:8px; padding:14px;">
-        <h3>Reports</h3>
-        <p>Generate accounting and fund reports.</p>
-        <a href="{% url 'accounting_admin:accounting-report-hub' %}" class="button">Open Reports</a>
-      </div>
+    <section class="tl-section">
+        <div class="tl-section-head">
+            <div>
+                <h2>Financial position</h2>
+                <p>Operational balances from posted ledger and sub-ledger records.</p>
+            </div>
+            <div class="tl-actions-inline">
+                <a class="tl-btn" href="{{ workspace_urls.dashboard }}">Financial Dashboard</a>
+                <a class="tl-btn" href="{{ workspace_urls.reports }}">Reports</a>
+            </div>
+        </div>
 
-      <div style="border:1px solid #eee; border-radius:8px; padding:14px;">
-        <h3>Generate Periods</h3>
-        <p>Create monthly fiscal-year periods from inside admin.</p>
-        <a href="{% url 'accounting_admin:accounting-generate-periods' %}" class="button">Generate</a>
-      </div>
+        <div class="tl-kpis">
+            <div class="tl-kpi">
+                <div class="tl-kpi-label">Book Cash</div>
+                <div class="tl-kpi-value">${{ workspace_operations.cash.book_cash|floatformat:2 }}</div>
+                <div class="tl-kpi-meta">Posted GL balance across unique ledger accounts linked to active bank accounts.</div>
+            </div>
 
-      <div style="border:1px solid #eee; border-radius:8px; padding:14px;">
-        <h3>Journal Entries</h3>
-        <p>Create and review accounting entries.</p>
-        <a href="{% url 'accounting_admin:accounting_journalentry_changelist' %}" class="button">Open Entries</a>
-      </div>
+            <div class="tl-kpi">
+                <div class="tl-kpi-label">Accounts Receivable</div>
+                <div class="tl-kpi-value">${{ workspace_operations.ar.outstanding|floatformat:2 }}</div>
+                <div class="tl-kpi-meta">
+                    {{ workspace_operations.ar.open_count }} open invoice{{ workspace_operations.ar.open_count|pluralize }} ·
+                    ${{ workspace_operations.ar.overdue|floatformat:2 }} overdue
+                </div>
+            </div>
 
-      <div style="border:1px solid #eee; border-radius:8px; padding:14px;">
-        <h3>Funds</h3>
-        <p>Manage grants, restricted funds, and budgets.</p>
-        <a href="{% url 'accounting_admin:accounting_fund_changelist' %}" class="button">Open Funds</a>
-      </div>
+            <div class="tl-kpi">
+                <div class="tl-kpi-label">Accounts Payable</div>
+                <div class="tl-kpi-value">${{ workspace_operations.ap.outstanding|floatformat:2 }}</div>
+                <div class="tl-kpi-meta">
+                    {{ workspace_operations.ap.open_count }} open bill{{ workspace_operations.ap.open_count|pluralize }} ·
+                    ${{ workspace_operations.ap.overdue|floatformat:2 }} overdue
+                </div>
+            </div>
 
-      <div style="border:1px solid #eee; border-radius:8px; padding:14px;">
-        <h3>Banking</h3>
-        <p>Manage bank accounts and reconciliation.</p>
-        <a href="{% url 'accounting_admin:accounting_bankaccount_changelist' %}" class="button">Open Banking</a>
-      </div>
+            <div class="tl-kpi">
+                <div class="tl-kpi-label">Payroll + CRA Due</div>
+                <div class="tl-kpi-value">
+                    ${{ workspace_operations.payroll.total_due|floatformat:2 }}
+                </div>
+                <div class="tl-kpi-meta">
+                    Salary ${{ workspace_operations.payroll.salary_due|floatformat:2 }} ·
+                    CRA ${{ workspace_operations.payroll.cra_due|floatformat:2 }}
+                </div>
+            </div>
+        </div>
 
-      <div style="border:1px solid #eee; border-radius:8px; padding:14px;">
-        <h3>Documents</h3>
-        <p>Review invoices, receipts, and attachments.</p>
-        <a href="{% url 'accounting_admin:accounting_accountingdocument_changelist' %}" class="button">Open Documents</a>
-      </div>
+        <div class="tl-position">
+            <div class="tl-position-item">
+                <span>Near-term resources</span>
+                <strong>${{ workspace_operations.near_term_resources|floatformat:2 }}</strong>
+                <span>Book cash + open AR</span>
+            </div>
+            <div class="tl-position-item">
+                <span>Near-term obligations</span>
+                <strong>${{ workspace_operations.near_term_obligations|floatformat:2 }}</strong>
+                <span>AP + unpaid salary + pending CRA</span>
+            </div>
+            <div class="tl-position-item">
+                <span>Operational net position</span>
+                <strong>${{ workspace_operations.near_term_position|floatformat:2 }}</strong>
+                <span>Management view only; not a formal financial statement</span>
+            </div>
+        </div>
+    </section>
 
-    </div>
-  </div>
+    <section class="tl-section">
+        <div class="tl-section-head">
+            <div>
+                <h2>Action Center</h2>
+                <p>Only work that currently requires accounting attention.</p>
+            </div>
+        </div>
 
-  {{ block.super }}
+        {% if workspace_actions %}
+            <div class="tl-action-list">
+                {% for item in workspace_actions %}
+                    <div class="tl-action tl-action-{{ item.tone }}">
+                        <div class="tl-action-bar"></div>
+                        <div>
+                            <div class="tl-action-title">{{ item.title }}</div>
+                            <div class="tl-action-detail">{{ item.detail }}</div>
+                        </div>
+                        <a class="tl-btn tl-btn-{{ item.tone }}" href="{{ item.url }}">{{ item.label }}</a>
+                    </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="tl-good">No accounting workflow currently requires attention.</div>
+        {% endif %}
+    </section>
+
+    <section class="tl-section">
+        <div class="tl-section-head">
+            <div>
+                <h2>Operational health</h2>
+                <p>Sub-ledger and month-end readiness at a glance.</p>
+            </div>
+        </div>
+
+        <div class="tl-health-grid">
+            <div class="tl-panel">
+                <div class="tl-panel-head">
+                    <h3>Banking & Reconciliation</h3>
+                    <a href="{{ workspace_urls.banking_workspace }}">Open banking</a>
+                </div>
+                <ul class="tl-health-list">
+                    <li>
+                        <div class="tl-health-label"><strong>Pending statement imports</strong><span>Uploaded but not processed</span></div>
+                        <div class="tl-health-value">{{ workspace_operations.banking.pending_imports }}</div>
+                    </li>
+                    <li>
+                        <div class="tl-health-label"><strong>Unresolved bank lines</strong><span>Unmatched or suggested</span></div>
+                        <div class="tl-health-value">{{ workspace_operations.banking.unresolved_lines }}</div>
+                    </li>
+                    <li>
+                        <div class="tl-health-label"><strong>Open reconciliations</strong><span>Not completed/locked</span></div>
+                        <div class="tl-health-value">{{ workspace_operations.banking.open_reconciliations }}</div>
+                    </li>
+                    <li>
+                        <div class="tl-health-label"><strong>Bank accounts without statements</strong><span>No statement import recorded yet</span></div>
+                        <div class="tl-health-value">{{ workspace_operations.cash.banks_without_statement }}</div>
+                    </li>
+                </ul>
+            </div>
+
+            <div class="tl-panel">
+                <div class="tl-panel-head">
+                    <h3>Payroll & CRA</h3>
+                    <a href="{{ workspace_urls.payroll_workspace }}">Open payroll</a>
+                </div>
+                <ul class="tl-health-list">
+                    <li>
+                        <div class="tl-health-label"><strong>Salary payable</strong><span>Remaining employee payments</span></div>
+                        <div class="tl-health-value">${{ workspace_operations.payroll.salary_due|floatformat:2 }}</div>
+                    </li>
+                    <li>
+                        <div class="tl-health-label"><strong>CRA payable</strong><span>Ready/draft remittances not paid</span></div>
+                        <div class="tl-health-value">${{ workspace_operations.payroll.cra_due|floatformat:2 }}</div>
+                    </li>
+                    <li>
+                        <div class="tl-health-label"><strong>Overdue CRA</strong><span>Past due date</span></div>
+                        <div class="tl-health-value {% if workspace_operations.payroll.cra_overdue_count %}tl-danger{% endif %}">${{ workspace_operations.payroll.cra_overdue|floatformat:2 }}</div>
+                    </li>
+                    <li>
+                        <div class="tl-health-label"><strong>Runs waiting</strong><span>Calculated + approved</span></div>
+                        <div class="tl-health-value">{{ workspace_operations.payroll.calculated_runs|add:workspace_operations.payroll.approved_runs }}</div>
+                    </li>
+                </ul>
+            </div>
+
+            <div class="tl-panel">
+                <div class="tl-panel-head">
+                    <h3>Funds & Budgets</h3>
+                    <a href="{{ workspace_urls.funds }}">Open funds</a>
+                </div>
+                <ul class="tl-health-list">
+                    <li>
+                        <div class="tl-health-label"><strong>Restricted funds</strong><span>Currently active</span></div>
+                        <div class="tl-health-value">{{ workspace_operations.funds.restricted_count }}</div>
+                    </li>
+                    <li>
+                        <div class="tl-health-label"><strong>Policy/setup issues</strong><span>Restriction or active-budget configuration</span></div>
+                        <div class="tl-health-value {% if workspace_operations.funds.policy_issues or workspace_operations.funds.budget_setup_issues %}tl-warning{% endif %}">{{ workspace_operations.funds.policy_issues|add:workspace_operations.funds.budget_setup_issues }}</div>
+                    </li>
+                    <li>
+                        <div class="tl-health-label"><strong>Near budget limit</strong><span>80%–100% utilized</span></div>
+                        <div class="tl-health-value {% if workspace_operations.funds.near_limit_count %}tl-warning{% endif %}">{{ workspace_operations.funds.near_limit_count }}</div>
+                    </li>
+                    <li>
+                        <div class="tl-health-label"><strong>Over budget</strong><span>Actual exceeds approved line</span></div>
+                        <div class="tl-health-value {% if workspace_operations.funds.over_limit_count %}tl-danger{% endif %}">{{ workspace_operations.funds.over_limit_count }}</div>
+                    </li>
+                </ul>
+            </div>
+
+            <div class="tl-panel">
+                <div class="tl-panel-head">
+                    <h3>Fixed Assets & Month-End</h3>
+                    <a href="{{ workspace_urls.asset_workspace }}">Open assets</a>
+                </div>
+                <ul class="tl-health-list">
+                    <li>
+                        <div class="tl-health-label"><strong>Active fixed assets</strong><span>Assets still being tracked</span></div>
+                        <div class="tl-health-value">{{ workspace_operations.assets.active_count }}</div>
+                    </li>
+                    <li>
+                        <div class="tl-health-label"><strong>Depreciation due</strong><span>Missing current-period depreciation event</span></div>
+                        <div class="tl-health-value {% if workspace_operations.assets.depreciation_due_count %}tl-warning{% endif %}">{{ workspace_operations.assets.depreciation_due_count }}</div>
+                    </li>
+                    <li>
+                        <div class="tl-health-label"><strong>Current period</strong><span>Monthly posting control</span></div>
+                        <div class="tl-health-value {% if not workspace_operations.period_ready %}tl-danger{% endif %}">
+                            {% if workspace_operations.current_period %}
+                                {{ workspace_operations.current_period.code }} · {{ workspace_operations.current_period.get_status_display }}
+                            {% else %}
+                                Missing
+                            {% endif %}
+                        </div>
+                    </li>
+                    <li>
+                        <div class="tl-health-label"><strong>Draft journals</strong><span>Unposted manual entries</span></div>
+                        <div class="tl-health-value">{{ workspace_operations.draft_journals }}</div>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </section>
+
+    {% if workspace_operations.cash.bank_rows %}
+    <section class="tl-section">
+        <div class="tl-section-head">
+            <div>
+                <h2>Bank book positions</h2>
+                <p>Book balances are ledger balances; statement closing balances are shown only as reconciliation context.</p>
+            </div>
+        </div>
+
+        <div class="tl-panel tl-table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Bank account</th>
+                        <th>Ledger</th>
+                        <th>Book balance</th>
+                        <th>Latest statement</th>
+                        <th>Reconciliation</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in workspace_operations.cash.bank_rows %}
+                    <tr>
+                        <td><strong>{{ row.bank.name }}</strong><br><small>{{ row.bank.code }}</small></td>
+                        <td>{{ row.bank.ledger_account.code }} — {{ row.bank.ledger_account.name }}</td>
+                        <td><strong>${{ row.book_balance|floatformat:2 }}</strong></td>
+                        <td>
+                            {% if row.latest_import %}
+                                {{ row.latest_import.period_end|default:row.latest_import.statement_date }}
+                                {% if row.latest_import.closing_balance != None %}<br><small>Closing ${{ row.latest_import.closing_balance|floatformat:2 }}</small>{% endif %}
+                            {% else %}
+                                <span class="tl-warning">No statement yet</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if row.open_reconciliation %}
+                                <span class="tl-warning">Open through {{ row.open_reconciliation.period_end }}</span>
+                            {% else %}
+                                <span class="tl-success">No open session</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+    {% endif %}
+
+    {% if workspace_operations.funds.watch_rows %}
+    <section class="tl-section">
+        <div class="tl-section-head">
+            <div>
+                <h2>Budget watch</h2>
+                <p>Active budget lines at or above 80% utilization, including capital deployment.</p>
+            </div>
+            <a class="tl-btn" href="{{ workspace_urls.funds }}">Review all funds</a>
+        </div>
+
+        <div class="tl-panel tl-table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Fund</th>
+                        <th>Budget line</th>
+                        <th>Approved</th>
+                        <th>Actual</th>
+                        <th>Remaining</th>
+                        <th>Used</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in workspace_operations.funds.watch_rows %}
+                    <tr>
+                        <td><strong>{{ row.fund.code }}</strong><br><small>{{ row.fund.name }}</small></td>
+                        <td>{{ row.line.budget.code }} / {{ row.line.code }} — {{ row.line.name }}</td>
+                        <td>${{ row.approved|floatformat:2 }}</td>
+                        <td>${{ row.actual|floatformat:2 }}</td>
+                        <td class="{% if row.tone == 'danger' %}tl-danger{% elif row.tone == 'warning' %}tl-warning{% endif %}">${{ row.remaining|floatformat:2 }}</td>
+                        <td class="{% if row.tone == 'danger' %}tl-danger{% else %}tl-warning{% endif %}">
+                            {% if row.used_percent != None %}{{ row.used_percent }}%{% else %}Unbudgeted{% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+    {% endif %}
+
+    <section class="tl-section">
+        <div class="tl-section-head">
+            <div>
+                <h2>Start a task</h2>
+                <p>Routine accounting workflows remain one click away.</p>
+            </div>
+        </div>
+
+        <div class="tl-task-grid">
+            <a class="tl-task" href="{{ workspace_urls.money_workspace }}"><strong>Money In & Out</strong><span>Immediate bank income and ordinary paid expenses.</span></a>
+            <a class="tl-task" href="{{ workspace_urls.ap_workspace }}"><strong>Bills & Accounts Payable</strong><span>Vendor invoices, aging, partial/full payments.</span></a>
+            <a class="tl-task" href="{{ workspace_urls.ar_workspace }}"><strong>Invoices & Accounts Receivable</strong><span>Customer invoices, aging and receipts.</span></a>
+            <a class="tl-task" href="{{ workspace_urls.payroll_workspace }}"><strong>Payroll</strong><span>Run, approve, post, pay salary and CRA.</span></a>
+            <a class="tl-task" href="{{ workspace_urls.banking_workspace }}"><strong>Banking & Reconciliation</strong><span>Import, match, reconcile, complete and lock.</span></a>
+            <a class="tl-task" href="{{ workspace_urls.funds }}"><strong>Funds & Budgets</strong><span>Restricted money, budget usage and controls.</span></a>
+            <a class="tl-task" href="{{ workspace_urls.asset_workspace }}"><strong>Fixed Assets</strong><span>Capital purchases and monthly depreciation.</span></a>
+            <a class="tl-task" href="{{ workspace_urls.manual_journal }}"><strong>Manual Journal</strong><span>Exceptional balanced entries through protected posting.</span></a>
+        </div>
+    </section>
+
+    <section class="tl-section">
+        <div class="tl-section-head">
+            <div>
+                <h2>Setup & controls</h2>
+                <p>Configuration remains available without competing with daily accounting work.</p>
+            </div>
+        </div>
+
+        <div class="tl-tools">
+            <a class="tl-btn" href="{{ workspace_urls.employees }}">Employees</a>
+            <a class="tl-btn" href="{{ workspace_urls.vendors }}">Vendors</a>
+            <a class="tl-btn" href="{{ workspace_urls.customers }}">Customers</a>
+            <a class="tl-btn" href="{{ workspace_urls.bank_accounts }}">Bank Accounts</a>
+            <a class="tl-btn" href="{{ workspace_urls.periods }}">Accounting Periods</a>
+            <a class="tl-btn" href="{{ workspace_urls.generate_periods }}">Generate Fiscal Year</a>
+            <a class="tl-btn" href="{{ workspace_urls.raw_funds }}">Fund Setup Records</a>
+            <a class="tl-btn" href="{{ workspace_urls.accounts }}">Chart of Accounts</a>
+            <a class="tl-btn" href="{{ workspace_urls.recurring }}">Recurring Entries</a>
+        </div>
+    </section>
+
+    <details class="tl-advanced">
+        <summary>Advanced records and audit tables</summary>
+        {% include "admin/app_list.html" with app_list=app_list show_changelinks=True %}
+    </details>
+
+    <p class="tl-note">
+        Operational metrics are management views derived from posted accounting records. Trial Balance,
+        General Ledger and formal reports remain the authoritative financial-statement outputs.
+    </p>
+</div>
 {% endblock %}
+
+{% block sidebar %}{% endblock %}

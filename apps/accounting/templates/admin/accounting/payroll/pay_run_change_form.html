@@ -1,0 +1,56 @@
+{% extends "admin/change_form.html" %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+    .tl-flow{--b:#dfe3e8;--m:#667085;--s:#f7f8fa;--p:#2457d6;--ok:#087443;--w:#9a6700;margin:0 0 22px}
+    .tl-flow-top{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;border:1px solid var(--b);border-radius:12px;padding:16px;margin-bottom:12px}
+    .tl-flow-top h2{margin:0 0 5px}.tl-flow-top p{margin:0;color:var(--m)}
+    .tl-action{display:inline-flex;align-items:center;min-height:36px;padding:7px 14px;border-radius:7px;border:1px solid var(--b);font-weight:750;text-decoration:none!important;cursor:pointer}
+    .tl-primary{background:var(--p);border-color:var(--p);color:#fff!important}.tl-warning{color:var(--w)!important;border-color:#e7c66b;background:transparent}
+    .tl-steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:12px}.tl-step{border:1px solid var(--b);border-radius:9px;padding:10px 12px;color:var(--m)}.tl-step.done{color:var(--ok);border-color:#a9d8c1}.tl-step.current{font-weight:800;background:var(--s)}
+    .tl-totals{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-bottom:12px}.tl-total{border:1px solid var(--b);border-radius:9px;padding:11px}.tl-total span{display:block;color:var(--m);font-size:11px;text-transform:uppercase;margin-bottom:4px}.tl-total strong{font-size:16px}
+    .tl-flow-grid{display:grid;grid-template-columns:1.4fr 1fr;gap:12px}.tl-box{border:1px solid var(--b);border-radius:10px;overflow:hidden}.tl-box h3{margin:0;padding:11px 13px;background:var(--s);border-bottom:1px solid var(--b);font-size:14px}.tl-box table{width:100%;border-collapse:collapse}.tl-box th,.tl-box td{padding:9px 12px;border-bottom:1px solid var(--b);text-align:left}.tl-box tr:last-child td{border-bottom:0}.tl-tools{padding:12px;display:flex;flex-wrap:wrap;gap:7px}.tl-tools a{border:1px solid var(--b);border-radius:7px;padding:6px 9px;text-decoration:none!important}
+    @media(max-width:900px){.tl-totals{grid-template-columns:repeat(2,minmax(0,1fr))}.tl-flow-grid{grid-template-columns:1fr}}@media(max-width:650px){.tl-flow-top{flex-direction:column}.tl-steps{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style>
+{% endblock %}
+
+{% block content %}
+{% if original and payroll_workflow %}
+<div class="tl-flow">
+    <div class="tl-flow-top">
+        <div><h2>{{ original.run_number }}</h2><p>{{ original.pay_period }} · Current status: <strong>{{ original.get_status_display }}</strong></p></div>
+        {% if payroll_workflow.next_action %}
+            {% if payroll_workflow.next_action.method == "post" %}
+            <form method="post" action="{{ payroll_workflow.next_action.url }}">{% csrf_token %}<button class="tl-action tl-{{ payroll_workflow.next_action.tone }}" type="submit">{{ payroll_workflow.next_action.label }}</button></form>
+            {% else %}<a class="tl-action tl-{{ payroll_workflow.next_action.tone }}" href="{{ payroll_workflow.next_action.url }}">{{ payroll_workflow.next_action.label }}</a>{% endif %}
+        {% else %}<strong style="color:#087443">Payroll workflow complete</strong>{% endif %}
+    </div>
+
+    <div class="tl-steps">{% for step in payroll_workflow.steps %}<div class="tl-step{% if step.done %} done{% endif %}{% if step.current %} current{% endif %}">{{ forloop.counter }}. {{ step.label }}</div>{% endfor %}</div>
+
+    <div class="tl-totals">
+        <div class="tl-total"><span>Gross Pay</span><strong>{{ original.total_gross_pay }}</strong></div>
+        <div class="tl-total"><span>Net Pay</span><strong>{{ original.total_net_pay }}</strong></div>
+        <div class="tl-total"><span>Paid</span><strong>{{ original.total_actual_paid }}</strong></div>
+        <div class="tl-total"><span>Salary Due</span><strong>{{ original.total_salary_payable }}</strong></div>
+        <div class="tl-total"><span>CRA Due</span><strong>{{ original.total_remittance_due }}</strong></div>
+    </div>
+
+    <div class="tl-flow-grid">
+        <div class="tl-box"><h3>Employees / Pay Stubs</h3>
+            <table><thead><tr><th>Employee</th><th>Gross</th><th>Net</th><th>Paid</th><th>Due</th><th></th></tr></thead><tbody>
+            {% for stub in payroll_workflow.stubs %}<tr><td><a href="{{ stub.change_url }}">{{ stub.employee.display_name }}</a></td><td>{{ stub.gross }}</td><td>{{ stub.net }}</td><td>{{ stub.paid }}</td><td>{{ stub.due }}</td><td><a href="{{ stub.pdf_url }}">PDF</a></td></tr>{% endfor %}
+            </tbody></table>
+        </div>
+        <div class="tl-box"><h3>Ledger & CRA</h3><div class="tl-tools">
+            {% if payroll_workflow.journal_url %}<a href="{{ payroll_workflow.journal_url }}">Payroll Journal</a>{% endif %}
+            <a href="{{ payroll_workflow.register_xlsx_url }}">Register XLSX</a><a href="{{ payroll_workflow.register_pdf_url }}">Register PDF</a>
+            {% if payroll_workflow.remittance %}<a href="{% url 'accounting_admin:accounting_payrollremittance_change' payroll_workflow.remittance.id %}">CRA Remittance: {{ payroll_workflow.remittance.get_status_display }}</a>{% endif %}
+            {% if payroll_workflow.remittance_pay_url %}<a href="{{ payroll_workflow.remittance_pay_url }}">Record CRA Payment</a>{% endif %}
+        </div></div>
+    </div>
+</div>
+{% endif %}
+{{ block.super }}
+{% endblock %}

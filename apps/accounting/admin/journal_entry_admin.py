@@ -1,32 +1,56 @@
 # apps/accounting/admin/journal_entry_admin.py
+#
+# TownLIT
+#
+# Created by Hossein Sakkaki on 2026-04-01.
+# Last Update by Hossein Sakkaki on 2026-09-01.
+#
 
 from django.contrib import admin, messages
-from django.core.exceptions import ValidationError
 from django.db.models import Sum
 from django.utils import timezone
 
-from apps.accounting.models import JournalEntry, Transaction, Account
+from apps.accounting.models import Account, JournalEntry, Transaction
+from apps.accounting.services.period_service import (
+    AccountingPeriodError,
+    assert_can_post_to_date,
+)
+from apps.accounting.services.posting_engine import PostingEngine
 from apps.accounting.services.workflow_service import (
-    submit_for_approval,
     approve_entry,
     mark_posted,
-)
-from apps.accounting.services.period_service import (
-    assert_can_post_to_date,
-    AccountingPeriodError,
+    submit_for_approval,
 )
 
-from .site import accounting_admin_site
 from .forms import (
     JournalEntryAdminForm,
-    TransactionInlineFormSet,
     TransactionAdminForm,
+    TransactionInlineFormSet,
 )
+from .site import accounting_admin_site
+
+
+class SafeJournalEntryAdminForm(JournalEntryAdminForm):
+    """
+    Validate accounting-period availability before Admin saves the draft.
+    """
+
+    def clean(self):
+        cleaned_data = super().clean()
+        entry_date = cleaned_data.get("entry_date")
+
+        if entry_date:
+            try:
+                assert_can_post_to_date(entry_date)
+            except AccountingPeriodError as exc:
+                self.add_error("entry_date", str(exc))
+
+        return cleaned_data
 
 
 class TransactionInline(admin.TabularInline):
     """
-    Inline lines for journal entries.
+    Editable draft lines and read-only posted audit lines.
     """
 
     model = Transaction
@@ -47,18 +71,9 @@ class TransactionInline(admin.TabularInline):
     readonly_fields = ("created_at",)
 
     def get_queryset(self, request):
-        """
-        Load related account efficiently.
-        """
-
-        qs = super().get_queryset(request)
-        return qs.select_related("account")
+        return super().get_queryset(request).select_related("account")
 
     def formfield_for_foreignkey(self, db_field, request, **kwargs):
-        """
-        Limit inline account choices.
-        """
-
         if db_field.name == "account":
             kwargs["queryset"] = (
                 Account.objects.filter(
@@ -72,29 +87,17 @@ class TransactionInline(admin.TabularInline):
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
     def has_add_permission(self, request, obj=None):
-        """
-        Block inline add for posted or void entries.
-        """
-
-        if obj and obj.status in (JournalEntry.STATUS_POSTED, JournalEntry.STATUS_VOID):
+        if obj and obj.status != JournalEntry.STATUS_DRAFT:
             return False
         return super().has_add_permission(request, obj)
 
     def has_change_permission(self, request, obj=None):
-        """
-        Block inline edits for posted or void entries.
-        """
-
-        if obj and obj.status in (JournalEntry.STATUS_POSTED, JournalEntry.STATUS_VOID):
+        if obj and obj.status != JournalEntry.STATUS_DRAFT:
             return False
         return super().has_change_permission(request, obj)
 
     def has_delete_permission(self, request, obj=None):
-        """
-        Block inline deletion for posted or void entries.
-        """
-
-        if obj and obj.status in (JournalEntry.STATUS_POSTED, JournalEntry.STATUS_VOID):
+        if obj and obj.status != JournalEntry.STATUS_DRAFT:
             return False
         return super().has_delete_permission(request, obj)
 
@@ -102,23 +105,23 @@ class TransactionInline(admin.TabularInline):
 @admin.register(JournalEntry, site=accounting_admin_site)
 class JournalEntryAdmin(admin.ModelAdmin):
     """
-    Admin for journal entries.
+    Safe manual journal workspace.
+
+    Drafts remain editable. Posting always goes through PostingEngine.
+    Posted entries are immutable audit records.
     """
 
-    form = JournalEntryAdminForm
+    form = SafeJournalEntryAdminForm
 
     list_display = (
         "entry_number",
         "entry_date",
         "status",
-        "currency",
+        "description_short",
         "reference",
-        "source_app",
-        "source_model",
-        "source_ref",
-        "posted_at",
-        "created_by",
+        "source_display",
         "entry_totals",
+        "posted_at",
     )
     list_filter = (
         "status",
@@ -126,7 +129,6 @@ class JournalEntryAdmin(admin.ModelAdmin):
         "source_app",
         "source_model",
         "entry_date",
-        "created_at",
     )
     search_fields = (
         "entry_number",
@@ -139,6 +141,9 @@ class JournalEntryAdmin(admin.ModelAdmin):
     )
     date_hierarchy = "entry_date"
     ordering = ("-entry_date", "-id")
+    list_select_related = ("created_by", "approved_by")
+    list_per_page = 50
+
     readonly_fields = (
         "entry_number",
         "posted_at",
@@ -146,19 +151,19 @@ class JournalEntryAdmin(admin.ModelAdmin):
         "created_at",
         "updated_at",
         "entry_totals",
+        "created_by",
+        "approved_by",
     )
-    inlines = [TransactionInline]
-    actions = [
+    inlines = (TransactionInline,)
+    actions = (
         "post_draft_entries",
-        "mark_as_void",
         "submit_selected_for_approval",
         "approve_selected_entries",
-    ]
-    list_select_related = ("created_by", "approved_by")
+    )
 
     fieldsets = (
         (
-            "Entry Info",
+            "Journal Entry",
             {
                 "fields": (
                     "entry_number",
@@ -168,7 +173,7 @@ class JournalEntryAdmin(admin.ModelAdmin):
                     "status",
                     "currency",
                     "entry_totals",
-                )
+                ),
             },
         ),
         (
@@ -178,7 +183,11 @@ class JournalEntryAdmin(admin.ModelAdmin):
                     "source_app",
                     "source_model",
                     "source_ref",
-                )
+                ),
+                "classes": ("collapse",),
+                "description": (
+                    "Integration/source metadata. Leave blank for an ordinary manual journal."
+                ),
             },
         ),
         (
@@ -193,206 +202,68 @@ class JournalEntryAdmin(admin.ModelAdmin):
                     "void_reason",
                     "created_at",
                     "updated_at",
-                )
+                ),
+                "classes": ("collapse",),
             },
         ),
     )
 
     def get_queryset(self, request):
-        """
-        Prefetch totals efficiently.
-        """
-
-        qs = super().get_queryset(request)
-        return qs.annotate(
+        return super().get_queryset(request).annotate(
             total_debit=Sum("transactions__debit"),
             total_credit=Sum("transactions__credit"),
         )
 
-    @admin.display(description="Totals")
-    def entry_totals(self, obj):
-        """
-        Show debit and credit totals.
-        """
+    def formfield_for_choice_field(self, db_field, request, **kwargs):
+        if db_field.name == "status":
+            kwargs["choices"] = (
+                (JournalEntry.STATUS_DRAFT, "Draft"),
+                (JournalEntry.STATUS_VOID, "Void"),
+            )
 
+        return super().formfield_for_choice_field(db_field, request, **kwargs)
+
+    @admin.display(description="Description")
+    def description_short(self, obj):
+        value = (obj.description or "").strip()
+        if len(value) <= 70:
+            return value
+        return f"{value[:67]}..."
+
+    @admin.display(description="Source")
+    def source_display(self, obj):
+        if not obj.source_app and not obj.source_model:
+            return "Manual"
+
+        source = "/".join(
+            value
+            for value in (obj.source_app, obj.source_model)
+            if value
+        )
+        return source or "-"
+
+    @admin.display(description="Debit / Credit")
+    def entry_totals(self, obj):
         debit = getattr(obj, "total_debit", None)
         credit = getattr(obj, "total_credit", None)
 
         if debit is None or credit is None:
-            debit = obj.transactions.aggregate(v=Sum("debit"))["v"] or 0
-            credit = obj.transactions.aggregate(v=Sum("credit"))["v"] or 0
-
-        return f"D {debit} / C {credit}"
-
-    @admin.action(description="Submit selected draft entries for approval")
-    def submit_selected_for_approval(self, request, queryset):
-        """
-        Submit selected draft entries into approval workflow.
-        """
-
-        updated = 0
-
-        for entry in queryset:
-            try:
-                submit_for_approval(journal_entry=entry, user=request.user)
-                updated += 1
-            except Exception:
-                continue
-
-        self.message_user(
-            request,
-            f"{updated} entr{'y' if updated == 1 else 'ies'} submitted for approval.",
-            level=messages.SUCCESS,
-        )
-
-    @admin.action(description="Approve selected submitted entries")
-    def approve_selected_entries(self, request, queryset):
-        """
-        Approve selected submitted entries.
-        """
-
-        updated = 0
-
-        for entry in queryset:
-            try:
-                approve_entry(journal_entry=entry, user=request.user)
-                updated += 1
-            except Exception:
-                continue
-
-        self.message_user(
-            request,
-            f"{updated} entr{'y' if updated == 1 else 'ies'} approved.",
-            level=messages.SUCCESS,
-        )
-
-    def has_delete_permission(self, request, obj=None):
-        """
-        Never allow hard delete for journal entries.
-        """
-
-        return False
-
-    def save_model(self, request, obj, form, change):
-        """
-        Auto-fill audit fields, enforce accounting period rules,
-        and sync workflow state.
-        """
-
-        try:
-            assert_can_post_to_date(obj.entry_date)
-        except AccountingPeriodError as exc:
-            form.add_error("entry_date", ValidationError(str(exc)))
-            return
-
-        if not obj.pk and not obj.created_by_id:
-            obj.created_by = request.user
-
-        became_posted = obj.status == JournalEntry.STATUS_POSTED and not obj.posted_at
-        became_void = obj.status == JournalEntry.STATUS_VOID and not obj.voided_at
-
-        if became_posted:
-            obj.posted_at = timezone.now()
-
-        if became_void:
-            obj.voided_at = timezone.now()
-
-        super().save_model(request, obj, form, change)
-
-        if obj.status == JournalEntry.STATUS_POSTED:
-            mark_posted(journal_entry=obj)
-
-    @admin.action(description="Post selected draft entries")
-    def post_draft_entries(self, request, queryset):
-        """
-        Mark balanced draft entries as posted.
-        Respect accounting period lock.
-        """
-
-        updated = 0
-
-        for entry in queryset:
-            if entry.status != JournalEntry.STATUS_DRAFT:
-                continue
-
-            try:
-                assert_can_post_to_date(entry.entry_date)
-            except AccountingPeriodError:
-                continue
-
-            totals = entry.transactions.aggregate(
+            totals = obj.transactions.aggregate(
                 debit=Sum("debit"),
                 credit=Sum("credit"),
             )
-            total_debit = totals["debit"] or 0
-            total_credit = totals["credit"] or 0
+            debit = totals["debit"] or 0
+            credit = totals["credit"] or 0
 
-            if total_debit <= 0 or total_debit != total_credit:
-                continue
+        return f"{debit} / {credit}"
 
-            entry.status = JournalEntry.STATUS_POSTED
-            entry.posted_at = timezone.now()
-
-            if not entry.approved_by_id:
-                entry.approved_by = request.user
-
-            entry.save(
-                update_fields=[
-                    "status",
-                    "posted_at",
-                    "approved_by",
-                    "updated_at",
-                ]
-            )
-
-            mark_posted(journal_entry=entry)
-            updated += 1
-
-        self.message_user(
-            request,
-            f"{updated} entr{'y' if updated == 1 else 'ies'} posted successfully.",
-            level=messages.SUCCESS,
-        )
-
-    @admin.action(description="Mark selected draft entries as void")
-    def mark_as_void(self, request, queryset):
-        """
-        Void only draft entries.
-        """
-
-        updated = 0
-
-        for entry in queryset:
-            if entry.status != JournalEntry.STATUS_DRAFT:
-                continue
-
-            entry.status = JournalEntry.STATUS_VOID
-            entry.voided_at = timezone.now()
-            entry.void_reason = entry.void_reason or "Voided from admin action"
-            entry.save(
-                update_fields=[
-                    "status",
-                    "voided_at",
-                    "void_reason",
-                    "updated_at",
-                ]
-            )
-            updated += 1
-
-        self.message_user(
-            request,
-            f"{updated} draft entr{'y' if updated == 1 else 'ies'} marked as void.",
-            level=messages.SUCCESS,
-        )
+    def has_delete_permission(self, request, obj=None):
+        return False
 
     def get_readonly_fields(self, request, obj=None):
-        """
-        Lock posted and void entries.
-        """
-
         readonly = list(super().get_readonly_fields(request, obj))
 
-        if obj and obj.status in (JournalEntry.STATUS_POSTED, JournalEntry.STATUS_VOID):
+        if obj and obj.status != JournalEntry.STATUS_DRAFT:
             readonly.extend(
                 [
                     "entry_date",
@@ -404,10 +275,111 @@ class JournalEntryAdmin(admin.ModelAdmin):
                     "source_model",
                     "source_ref",
                     "internal_note",
-                    "created_by",
-                    "approved_by",
                     "void_reason",
                 ]
             )
 
-        return readonly
+        return tuple(dict.fromkeys(readonly))
+
+    def save_model(self, request, obj, form, change):
+        """
+        Save draft/void state only. Never post from ModelAdmin.save_model.
+        """
+
+        if not obj.pk and not obj.created_by_id:
+            obj.created_by = request.user
+
+        if obj.status == JournalEntry.STATUS_VOID and not obj.voided_at:
+            obj.voided_at = timezone.now()
+
+        super().save_model(request, obj, form, change)
+
+    @admin.action(description="Post selected drafts to ledger")
+    def post_draft_entries(self, request, queryset):
+        engine = PostingEngine()
+        posted = 0
+        skipped = 0
+
+        for entry in queryset.order_by("entry_date", "id"):
+            if entry.status != JournalEntry.STATUS_DRAFT:
+                skipped += 1
+                continue
+
+            try:
+                posted_entry = engine.post_draft(
+                    journal_entry=entry,
+                    approved_by=request.user,
+                )
+                mark_posted(journal_entry=posted_entry)
+                posted += 1
+            except Exception as exc:
+                skipped += 1
+                self.message_user(
+                    request,
+                    f"{entry.entry_number}: {exc}",
+                    level=messages.ERROR,
+                )
+
+        if posted:
+            self.message_user(
+                request,
+                f"{posted} journal entr{'y' if posted == 1 else 'ies'} posted.",
+                level=messages.SUCCESS,
+            )
+
+        if skipped and not posted:
+            self.message_user(
+                request,
+                "No selected journal entries were posted.",
+                level=messages.WARNING,
+            )
+
+    @admin.action(description="Submit selected drafts for approval")
+    def submit_selected_for_approval(self, request, queryset):
+        updated = 0
+
+        for entry in queryset:
+            try:
+                submit_for_approval(
+                    journal_entry=entry,
+                    user=request.user,
+                )
+                updated += 1
+            except Exception as exc:
+                self.message_user(
+                    request,
+                    f"{entry.entry_number}: {exc}",
+                    level=messages.ERROR,
+                )
+
+        if updated:
+            self.message_user(
+                request,
+                f"{updated} journal entr{'y' if updated == 1 else 'ies'} submitted.",
+                level=messages.SUCCESS,
+            )
+
+    @admin.action(description="Approve selected submitted entries")
+    def approve_selected_entries(self, request, queryset):
+        updated = 0
+
+        for entry in queryset:
+            try:
+                approve_entry(
+                    journal_entry=entry,
+                    user=request.user,
+                )
+                updated += 1
+            except Exception as exc:
+                self.message_user(
+                    request,
+                    f"{entry.entry_number}: {exc}",
+                    level=messages.ERROR,
+                )
+
+        if updated:
+            self.message_user(
+                request,
+                f"{updated} journal entr{'y' if updated == 1 else 'ies'} approved.",
+                level=messages.SUCCESS,
+            )

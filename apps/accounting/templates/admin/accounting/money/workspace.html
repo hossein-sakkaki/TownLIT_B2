@@ -1,0 +1,17 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+<style>
+.tl-wrap{max-width:1400px;margin:0 auto}.tl-hero,.tl-card,.tl-panel{border:1px solid var(--hairline-color);border-radius:14px;background:var(--body-bg)}.tl-hero{padding:24px;margin-bottom:18px}.tl-hero h1{margin:0 0 6px}.tl-hero p{margin:0;color:var(--body-quiet-color)}.tl-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:18px 0}.tl-card{display:block;padding:20px;text-decoration:none!important;color:var(--body-fg)!important}.tl-card h2{margin:0 0 7px;font-size:18px}.tl-card p{margin:0;color:var(--body-quiet-color);line-height:1.5}.tl-panel{overflow:hidden;margin-top:22px}.tl-panel h2{padding:15px 18px;margin:0;border-bottom:1px solid var(--hairline-color)}table{width:100%;border-collapse:collapse}th,td{padding:11px 14px;border-bottom:1px solid var(--hairline-color);text-align:left}.tl-back{display:inline-block;margin-bottom:12px}@media(max-width:850px){.tl-grid{grid-template-columns:1fr}}
+</style>
+<div class="tl-wrap">
+<a class="tl-back" href="{% url 'accounting_admin:index' %}">← Accounting Workspace</a>
+<section class="tl-hero"><h1>Money In & Out</h1><p>Record routine cash activity without building journal entries manually. Choose the real bank account and business category; TownLIT creates the protected double-entry posting.</p></section>
+<div class="tl-grid">
+<a class="tl-card" href="{{ income_url }}"><h2>Money In</h2><p>Donations, grants, subscriptions, advertising or other cash revenue received into a TownLIT bank account.</p></a>
+<a class="tl-card" href="{{ expense_url }}"><h2>Money Out</h2><p>Ordinary operating expenses paid from a TownLIT bank account, with optional fund and budget tracking.</p></a>
+<a class="tl-card" href="{{ asset_url }}"><h2>Buy Capital Asset</h2><p>Computers, office equipment and other long-lived purchases that should remain on the balance sheet and depreciate over time.</p></a>
+</div>
+<section class="tl-panel"><h2>Recent cash entries</h2>{% if recent_entries %}<table><thead><tr><th>Date</th><th>Entry</th><th>Description</th><th>Type</th><th>Reference</th></tr></thead><tbody>{% for entry in recent_entries %}<tr><td>{{ entry.entry_date }}</td><td><a href="{% url 'accounting_admin:accounting_journalentry_change' entry.id %}">{{ entry.entry_number }}</a></td><td>{{ entry.description }}</td><td>{{ entry.source_model }}</td><td>{{ entry.reference|default:"—" }}</td></tr>{% endfor %}</tbody></table>{% else %}<p style="padding:18px">No cash activity has been recorded from this workspace yet.</p>{% endif %}</section>
+</div>
+{% endblock %}
+{% block sidebar %}{% endblock %}

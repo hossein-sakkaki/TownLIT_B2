@@ -1,0 +1,37 @@
+{% extends "admin/base_site.html" %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+    .tl-config { max-width: 1100px; margin: 0 auto; }
+    .tl-card { border: 1px solid var(--hairline-color); border-radius: 14px; background: var(--body-bg); padding: 20px; }
+    .tl-card h1 { margin-top: 0; }
+    .tl-note { padding: 12px 14px; border-radius: 9px; background: var(--darkened-bg); margin-bottom: 16px; }
+    .tl-config form p { margin: 0 0 16px; }
+    .tl-config ul { columns: 2; list-style: none; padding: 0; }
+    .tl-actions { display: flex; gap: 8px; margin-top: 18px; }
+    .tl-btn { display: inline-flex; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--hairline-color); text-decoration: none !important; align-items: center; }
+    @media (max-width: 700px) { .tl-config ul { columns: 1; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="tl-config">
+    <div class="tl-card">
+        <div><a href="{{ back_url }}">← Back to {{ fund.code }}</a></div>
+        <h1>Fund Controls — {{ fund.name }}</h1>
+        <div class="tl-note">
+            Restricted mode uses the Accounting Core to enforce allowed accounts, allowed budget lines, date windows and budget limits during posting. Keep this screen for finance setup; routine receiving and spending belongs in the Fund Workspace.
+        </div>
+        <form method="post" novalidate>
+            {% csrf_token %}
+            {{ form.as_p }}
+            <div class="tl-actions">
+                <input type="submit" value="Save Fund Controls" class="default">
+                <a class="tl-btn" href="{{ back_url }}">Cancel</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+{% block sidebar %}{% endblock %}

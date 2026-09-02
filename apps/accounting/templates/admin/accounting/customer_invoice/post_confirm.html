@@ -1,0 +1,22 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<div style="max-width:820px;margin:0 auto;padding:24px;">
+    <h1>Post Invoice {{ invoice.invoice_number }}</h1>
+    <div class="module" style="padding:18px;margin:16px 0;">
+        <p><strong>Customer:</strong> {{ invoice.customer }}</p>
+        <p><strong>Invoice date:</strong> {{ invoice.invoice_date }}</p>
+        <p><strong>Due date:</strong> {{ invoice.due_date }}</p>
+        <p><strong>Total:</strong> {{ invoice.total_amount }} {{ invoice.currency }}</p>
+        <p><strong>Receivable account:</strong> {{ invoice.receivable_account }}</p>
+    </div>
+    <p>
+        Posting recognizes revenue and Accounts Receivable on the invoice date. Financial fields and invoice lines become immutable after posting.
+    </p>
+    <form method="post">
+        {% csrf_token %}
+        <input type="submit" value="Post Invoice to Accounts Receivable" class="default">
+        <a href="{{ cancel_url }}" class="button cancel-link">Cancel</a>
+    </form>
+</div>
+{% endblock %}

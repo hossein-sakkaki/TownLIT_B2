@@ -53,9 +53,10 @@ def build_fund_summary(fund_code: str, report_filter: ReportFilter) -> dict:
 
     revenue_total = ZERO
     expense_total = ZERO
+    capital_deployed = ZERO
 
     grouped = (
-        qs.values("account__account_type")
+        qs.values("account__account_type", "account__parent__code")
         .annotate(
             debit_total=Sum("debit"),
             credit_total=Sum("credit"),
@@ -66,6 +67,7 @@ def build_fund_summary(fund_code: str, report_filter: ReportFilter) -> dict:
         debit_total = item["debit_total"] or ZERO
         credit_total = item["credit_total"] or ZERO
         account_type = item["account__account_type"]
+        parent_code = item["account__parent__code"]
 
         if account_type == "revenue":
             revenue_total += credit_total - debit_total
@@ -73,7 +75,11 @@ def build_fund_summary(fund_code: str, report_filter: ReportFilter) -> dict:
         if account_type == "expense":
             expense_total += debit_total - credit_total
 
-    remaining_balance = revenue_total - expense_total
+        if account_type == "asset" and parent_code == "1500":
+            capital_deployed += debit_total - credit_total
+
+    operating_result = revenue_total - expense_total
+    available_funding = operating_result - capital_deployed
 
     return {
         "title": "Fund Summary",
@@ -86,7 +92,11 @@ def build_fund_summary(fund_code: str, report_filter: ReportFilter) -> dict:
         "total_awarded": str(fund.total_awarded or ZERO),
         "revenue_total": str(revenue_total),
         "expense_total": str(expense_total),
-        "remaining_balance": str(remaining_balance),
+        "capital_deployed": str(capital_deployed),
+        "operating_result": str(operating_result),
+        "available_funding": str(available_funding),
+        # Backward-compatible key: historically revenue less operating expense.
+        "remaining_balance": str(operating_result),
     }
 
 
@@ -97,7 +107,9 @@ def build_fund_ledger(fund_code: str, report_filter: ReportFilter) -> dict:
 
     fund = Fund.objects.get(code=fund_code)
 
-    qs = Transaction.objects.select_related("account", "journal_entry", "fund", "budget_line").filter(
+    qs = Transaction.objects.select_related(
+        "account", "account__parent", "journal_entry", "fund", "budget_line"
+    ).filter(
         fund=fund
     ).filter(
         _posted_status_filter(report_filter.include_draft)
@@ -108,6 +120,7 @@ def build_fund_ledger(fund_code: str, report_filter: ReportFilter) -> dict:
     rows = []
     revenue_total = ZERO
     expense_total = ZERO
+    capital_deployed = ZERO
 
     for tx in qs:
         debit = tx.debit or ZERO
@@ -120,10 +133,24 @@ def build_fund_ledger(fund_code: str, report_filter: ReportFilter) -> dict:
         elif tx.account.account_type == "expense":
             expense_effect = debit - credit
             revenue_effect = ZERO
+            capital_effect = ZERO
             expense_total += expense_effect
+        elif (
+            tx.account.account_type == "asset"
+            and tx.account.parent_id
+            and tx.account.parent.code == "1500"
+        ):
+            revenue_effect = ZERO
+            expense_effect = ZERO
+            capital_effect = debit - credit
+            capital_deployed += capital_effect
         else:
             revenue_effect = ZERO
             expense_effect = ZERO
+            capital_effect = ZERO
+
+        if tx.account.account_type == "revenue":
+            capital_effect = ZERO
 
         rows.append(
             {
@@ -139,6 +166,8 @@ def build_fund_ledger(fund_code: str, report_filter: ReportFilter) -> dict:
                 "credit": str(credit),
                 "revenue_effect": str(revenue_effect),
                 "expense_effect": str(expense_effect),
+                "capital_effect": str(capital_effect),
+                "funding_effect": str(revenue_effect - expense_effect - capital_effect),
             }
         )
 
@@ -150,6 +179,9 @@ def build_fund_ledger(fund_code: str, report_filter: ReportFilter) -> dict:
         "date_to": report_filter.date_to,
         "revenue_total": str(revenue_total),
         "expense_total": str(expense_total),
+        "capital_deployed": str(capital_deployed),
+        "operating_result": str(revenue_total - expense_total),
+        "available_funding": str(revenue_total - expense_total - capital_deployed),
         "remaining_balance": str(revenue_total - expense_total),
         "rows": rows,
     }
@@ -168,19 +200,22 @@ def build_budget_vs_actual(fund_code: str, report_filter: ReportFilter) -> dict:
         budget__is_active=True,
     ).order_by("budget__code", "sort_order", "code")
 
-    qs = Transaction.objects.select_related("budget_line", "account", "journal_entry").filter(
+    qs = Transaction.objects.select_related(
+        "budget_line", "account", "account__parent", "journal_entry"
+    ).filter(
         fund=fund,
         budget_line__isnull=False,
-        account__account_type="expense",
     ).filter(
         _posted_status_filter(report_filter.include_draft)
     )
     qs = _apply_transaction_date_filters(qs, report_filter)
 
     actuals = defaultdict(lambda: ZERO)
+    operating_actuals = defaultdict(lambda: ZERO)
+    capital_actuals = defaultdict(lambda: ZERO)
 
     grouped = (
-        qs.values("budget_line_id")
+        qs.values("budget_line_id", "account__account_type", "account__parent__code")
         .annotate(
             debit_total=Sum("debit"),
             credit_total=Sum("credit"),
@@ -188,7 +223,17 @@ def build_budget_vs_actual(fund_code: str, report_filter: ReportFilter) -> dict:
     )
 
     for item in grouped:
-        actuals[item["budget_line_id"]] = (item["debit_total"] or ZERO) - (item["credit_total"] or ZERO)
+        line_id = item["budget_line_id"]
+        amount = (item["debit_total"] or ZERO) - (item["credit_total"] or ZERO)
+        account_type = item["account__account_type"]
+        parent_code = item["account__parent__code"]
+
+        if account_type == "expense":
+            operating_actuals[line_id] += amount
+            actuals[line_id] += amount
+        elif account_type == "asset" and parent_code == "1500":
+            capital_actuals[line_id] += amount
+            actuals[line_id] += amount
 
     rows = []
     total_budget = ZERO
@@ -206,6 +251,8 @@ def build_budget_vs_actual(fund_code: str, report_filter: ReportFilter) -> dict:
                 "budget_line_code": line.code,
                 "budget_line_name": line.name,
                 "approved_amount": str(approved_amount),
+                "operating_actual": str(operating_actuals[line.id]),
+                "capital_actual": str(capital_actuals[line.id]),
                 "actual_amount": str(actual_amount),
                 "remaining_amount": str(remaining_amount),
             }

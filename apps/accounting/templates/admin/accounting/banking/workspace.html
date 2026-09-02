@@ -1,0 +1,271 @@
+{% extends "admin/base_site.html" %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+    .tl-bank {
+        --tl-border: #dfe3e8;
+        --tl-muted: #667085;
+        --tl-soft: #f7f8fa;
+        --tl-primary: #2457d6;
+        --tl-success: #087443;
+        --tl-warning: #9a6700;
+        --tl-danger: #b42318;
+        max-width: 1500px;
+        margin: 0 auto;
+    }
+    .tl-bank-hero,
+    .tl-bank-panel {
+        border: 1px solid var(--tl-border);
+        border-radius: 14px;
+        background: var(--body-bg);
+    }
+    .tl-bank-hero {
+        padding: 22px;
+        margin-bottom: 18px;
+        display: flex;
+        justify-content: space-between;
+        gap: 24px;
+        align-items: flex-start;
+    }
+    .tl-bank-hero h1 { margin: 0 0 7px; font-size: 27px; }
+    .tl-bank-hero p { margin: 0; color: var(--tl-muted); max-width: 760px; }
+    .tl-bank-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+    .tl-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 34px;
+        padding: 6px 11px;
+        border: 1px solid var(--tl-border);
+        border-radius: 8px;
+        text-decoration: none !important;
+        background: var(--body-bg);
+        color: var(--body-fg) !important;
+        font-weight: 700;
+        font-size: 12px;
+        white-space: nowrap;
+    }
+    .tl-btn-primary { background: var(--tl-primary); border-color: var(--tl-primary); color: #fff !important; }
+    .tl-btn-warning { color: var(--tl-warning) !important; border-color: #e7c66b; }
+    .tl-kpis {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+        margin-bottom: 18px;
+    }
+    .tl-kpi { border: 1px solid var(--tl-border); border-radius: 11px; padding: 14px 16px; background: var(--body-bg); }
+    .tl-kpi span { color: var(--tl-muted); font-size: 12px; display: block; margin-bottom: 5px; }
+    .tl-kpi strong { font-size: 22px; }
+    .tl-section { margin: 20px 0; }
+    .tl-section-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
+    .tl-section-head h2 { margin: 0; font-size: 18px; }
+    .tl-section-head p { color: var(--tl-muted); margin: 3px 0 0; }
+    .tl-account-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 11px; }
+    .tl-account-card { border: 1px solid var(--tl-border); border-radius: 12px; padding: 16px; background: var(--body-bg); }
+    .tl-account-card.selected { border-color: var(--tl-primary); box-shadow: 0 0 0 1px var(--tl-primary); }
+    .tl-account-top { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+    .tl-account-top strong { font-size: 15px; }
+    .tl-account-top small { display: block; color: var(--tl-muted); margin-top: 3px; }
+    .tl-pill { border-radius: 999px; padding: 5px 8px; background: var(--tl-soft); font-size: 11px; font-weight: 800; white-space: nowrap; }
+    .tl-pill-warning { color: var(--tl-warning); }
+    .tl-account-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+    .tl-account-meta div { background: var(--tl-soft); border-radius: 8px; padding: 9px; }
+    .tl-account-meta span { display: block; color: var(--tl-muted); font-size: 10px; text-transform: uppercase; margin-bottom: 3px; }
+    .tl-account-links { display: flex; gap: 7px; flex-wrap: wrap; }
+    .tl-panels { display: grid; grid-template-columns: 1.15fr .85fr; gap: 14px; }
+    .tl-bank-panel { overflow: hidden; }
+    .tl-panel-head { padding: 13px 15px; background: var(--tl-soft); border-bottom: 1px solid var(--tl-border); display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+    .tl-panel-head h3 { margin: 0; font-size: 15px; }
+    .tl-bank table { width: 100%; border-collapse: collapse; }
+    .tl-bank th, .tl-bank td { padding: 10px 12px; border-bottom: 1px solid var(--tl-border); text-align: left; vertical-align: middle; }
+    .tl-bank th { color: var(--tl-muted); text-transform: uppercase; font-size: 10px; letter-spacing: .04em; }
+    .tl-bank tr:last-child td { border-bottom: 0; }
+    .tl-muted { color: var(--tl-muted); }
+    .tl-status { font-weight: 800; font-size: 11px; text-transform: uppercase; }
+    .tl-status-open, .tl-status-imported, .tl-status-suggested { color: var(--tl-warning); }
+    .tl-status-processed, .tl-status-completed, .tl-status-matched { color: var(--tl-success); }
+    .tl-status-locked { color: var(--tl-primary); }
+    .tl-empty { padding: 20px 15px; color: var(--tl-muted); }
+    @media (max-width: 1050px) {
+        .tl-account-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .tl-panels { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 720px) {
+        .tl-bank-hero { flex-direction: column; }
+        .tl-bank-actions { justify-content: flex-start; }
+        .tl-kpis, .tl-account-grid { grid-template-columns: 1fr; }
+        .tl-bank-panel { overflow-x: auto; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="tl-bank">
+    <section class="tl-bank-hero">
+        <div>
+            <h1>Banking & Reconciliation</h1>
+            <p>
+                Work through each bank account in one flow: import the statement, review matches,
+                reconcile the period, complete it, and lock the approved month.
+            </p>
+        </div>
+        <div class="tl-bank-actions">
+            <a class="tl-btn" href="{{ banking_urls.home }}">Accounting Home</a>
+            <a class="tl-btn" href="{{ banking_urls.bank_accounts }}">Bank Accounts</a>
+            <a class="tl-btn tl-btn-primary" href="{{ banking_urls.import_statement }}">Import Statement</a>
+        </div>
+    </section>
+
+    <section class="tl-kpis">
+        <div class="tl-kpi"><span>Active bank accounts</span><strong>{{ banking_counts.active_accounts }}</strong></div>
+        <div class="tl-kpi"><span>Pending imports</span><strong>{{ banking_counts.pending_imports }}</strong></div>
+        <div class="tl-kpi"><span>Unresolved bank lines</span><strong>{{ banking_counts.unresolved_lines }}</strong></div>
+        <div class="tl-kpi"><span>Open reconciliations</span><strong>{{ banking_counts.open_sessions }}</strong></div>
+    </section>
+
+    <section class="tl-section">
+        <div class="tl-section-head">
+            <div>
+                <h2>Bank accounts</h2>
+                <p>Select one account to focus the statement and reconciliation queues below.</p>
+            </div>
+            {% if banking_selected_bank %}
+                <a class="tl-btn" href="{{ banking_urls.workspace }}">Show all accounts</a>
+            {% endif %}
+        </div>
+
+        <div class="tl-account-grid">
+            {% for row in banking_bank_rows %}
+                <div class="tl-account-card{% if row.selected %} selected{% endif %}">
+                    <div class="tl-account-top">
+                        <div>
+                            <strong>{{ row.account.name }}</strong>
+                            <small>{{ row.account.institution.name }} · GL {{ row.account.ledger_account.code }}</small>
+                        </div>
+                        {% if row.unresolved_count %}
+                            <span class="tl-pill tl-pill-warning">{{ row.unresolved_count }} unresolved</span>
+                        {% else %}
+                            <span class="tl-pill">Clear</span>
+                        {% endif %}
+                    </div>
+                    <div class="tl-account-meta">
+                        <div>
+                            <span>Latest statement</span>
+                            <strong>{% if row.latest_import %}{{ row.latest_import.period_end|default:"—" }}{% else %}—{% endif %}</strong>
+                        </div>
+                        <div>
+                            <span>Latest reconciliation</span>
+                            <strong>{% if row.latest_session %}{{ row.latest_session.get_status_display }}{% else %}—{% endif %}</strong>
+                        </div>
+                    </div>
+                    <div class="tl-account-links">
+                        <a class="tl-btn" href="{{ row.workspace_url }}">Focus account</a>
+                        <a class="tl-btn tl-btn-{{ row.action.tone }}" href="{{ row.action.url }}">{{ row.action.label }}</a>
+                    </div>
+                </div>
+            {% empty %}
+                <div class="tl-empty">No active bank accounts are configured yet.</div>
+            {% endfor %}
+        </div>
+    </section>
+
+    <section class="tl-section tl-panels">
+        <div class="tl-bank-panel">
+            <div class="tl-panel-head">
+                <h3>Statement queue{% if banking_selected_bank %} — {{ banking_selected_bank.name }}{% endif %}</h3>
+                <a href="{{ banking_urls.statement_imports }}">All statements</a>
+            </div>
+            {% if banking_import_rows %}
+                <table>
+                    <thead>
+                        <tr><th>Period</th><th>Status</th><th>Lines</th><th>Unresolved</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                        {% for row in banking_import_rows %}
+                            <tr>
+                                <td>
+                                    <a href="{{ row.change_url }}"><strong>{{ row.statement.period_end|default:row.statement.statement_date }}</strong></a><br>
+                                    <span class="tl-muted">{{ row.statement.bank_account.name }}</span>
+                                </td>
+                                <td><span class="tl-status tl-status-{{ row.statement.status }}">{{ row.statement.get_status_display }}</span></td>
+                                <td>{{ row.line_count }}</td>
+                                <td>{{ row.unresolved_count }}</td>
+                                <td>
+                                    {% if row.review_url %}
+                                        <a class="tl-btn tl-btn-primary" href="{{ row.review_url }}">Review reconciliation</a>
+                                    {% elif row.start_url %}
+                                        <a class="tl-btn tl-btn-warning" href="{{ row.start_url }}">Start reconciliation</a>
+                                    {% else %}
+                                        <a class="tl-btn" href="{{ row.change_url }}">Review import</a>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% else %}
+                <div class="tl-empty">No statement imports found for this view.</div>
+            {% endif %}
+        </div>
+
+        <div class="tl-bank-panel">
+            <div class="tl-panel-head">
+                <h3>Reconciliation queue</h3>
+                <a href="{{ banking_urls.reconciliations }}">All sessions</a>
+            </div>
+            {% if banking_session_rows %}
+                <table>
+                    <thead><tr><th>Period</th><th>Difference</th><th>Status</th><th></th></tr></thead>
+                    <tbody>
+                        {% for row in banking_session_rows %}
+                            <tr>
+                                <td><strong>{{ row.session.period_end }}</strong><br><span class="tl-muted">{{ row.session.bank_account.name }}</span></td>
+                                <td>{{ row.session.unreconciled_difference }}</td>
+                                <td><span class="tl-status tl-status-{{ row.session.status }}">{{ row.session.get_status_display }}</span></td>
+                                <td><a class="tl-btn tl-btn-primary" href="{{ row.review_url }}">Review</a></td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% else %}
+                <div class="tl-empty">No reconciliation sessions found for this view.</div>
+            {% endif %}
+        </div>
+    </section>
+
+    <section class="tl-section">
+        <div class="tl-section-head">
+            <div>
+                <h2>Transactions needing review</h2>
+                <p>Only unmatched and suggested bank lines appear here.</p>
+            </div>
+            <a class="tl-btn" href="{{ banking_urls.bank_lines }}">Open all bank lines</a>
+        </div>
+        <div class="tl-bank-panel">
+            {% if banking_line_rows %}
+                <table>
+                    <thead><tr><th>Date</th><th>Bank</th><th>Description</th><th>Amount</th><th>Status</th><th>Suggestion</th><th></th></tr></thead>
+                    <tbody>
+                        {% for row in banking_line_rows %}
+                            <tr>
+                                <td>{{ row.line.transaction_date }}</td>
+                                <td>{{ row.line.bank_account.name }}</td>
+                                <td>{{ row.line.description }}{% if row.line.reference %}<br><span class="tl-muted">{{ row.line.reference }}</span>{% endif %}</td>
+                                <td><strong>{{ row.line.amount }}</strong></td>
+                                <td><span class="tl-status tl-status-{{ row.line.match_status }}">{{ row.line.get_match_status_display }}</span></td>
+                                <td>{% if row.line.matched_journal_entry %}{{ row.line.matched_journal_entry.entry_number }}{% else %}—{% endif %}</td>
+                                <td><a class="tl-btn" href="{{ row.change_url }}">Review</a></td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% else %}
+                <div class="tl-empty">No unresolved bank transactions. This queue is clear.</div>
+            {% endif %}
+        </div>
+    </section>
+</div>
+{% endblock %}
+
+{% block sidebar %}{% endblock %}

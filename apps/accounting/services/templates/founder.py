@@ -1,11 +1,20 @@
 # apps/accounting/services/templates/founder.py
+#
+# TownLIT
+#
+# Created by Hossein Sakkaki on 2026-04-01.
+# Last Update by Hossein Sakkaki on 2026-08-31.
+#
 
 from datetime import date
 from decimal import Decimal
 
-from apps.accounting.services.posting_engine import post_journal_entry
-from apps.accounting.services.schemas import JournalEntryInput, JournalLineInput
 from apps.accounting.services.account_lookup import AccountCodes
+from apps.accounting.services.posting_engine import post_journal_entry
+from apps.accounting.services.schemas import (
+    JournalEntryInput,
+    JournalLineInput,
+)
 
 
 def record_founder_loan(
@@ -22,10 +31,11 @@ def record_founder_loan(
     created_by=None,
     approved_by=None,
 ):
-    """
-    Record an expense paid personally by the founder.
-    TownLIT becomes liable to the founder.
-    """
+    """Record an expense personally funded by the founder."""
+
+    amount = Decimal(
+        str(amount)
+    )
 
     return post_journal_entry(
         JournalEntryInput(
@@ -40,13 +50,13 @@ def record_founder_loan(
             lines=[
                 JournalLineInput(
                     account_code=expense_account_code,
-                    debit=Decimal(amount),
+                    debit=amount,
                     memo=memo_expense or "Expense paid by founder",
                     line_number=1,
                 ),
                 JournalLineInput(
                     account_code=founder_liability_code,
-                    credit=Decimal(amount),
+                    credit=amount,
                     memo=memo_liability or "Amount owed to founder",
                     line_number=2,
                 ),
@@ -64,29 +74,37 @@ def record_founder_repayment(
     source_ref: str = "",
     founder_liability_code: str = AccountCodes.LOAN_FROM_HOSSEIN,
     bank_account_code: str = AccountCodes.BANK,
+    created_by=None,
+    approved_by=None,
 ):
-    """
-    Repay part or all of the founder loan from TownLIT bank.
-    """
+    """Record founder-loan repayment."""
+
+    amount = Decimal(
+        str(amount)
+    )
 
     return post_journal_entry(
         JournalEntryInput(
-            date=entry_date,
+            entry_date=entry_date,
             description=description,
             reference=reference,
             source_app="accounting",
             source_model="founder_repayment",
             source_ref=source_ref,
+            created_by=created_by,
+            approved_by=approved_by,
             lines=[
                 JournalLineInput(
                     account_code=founder_liability_code,
-                    debit=Decimal(amount),
+                    debit=amount,
                     memo="Founder loan reduced",
+                    line_number=1,
                 ),
                 JournalLineInput(
                     account_code=bank_account_code,
-                    credit=Decimal(amount),
+                    credit=amount,
                     memo="Paid from TownLIT bank",
+                    line_number=2,
                 ),
             ],
         )
@@ -102,29 +120,37 @@ def record_founder_withdrawal(
     source_ref: str = "",
     withdrawal_account_code: str = AccountCodes.FOUNDER_WITHDRAWALS,
     bank_account_code: str = AccountCodes.BANK,
+    created_by=None,
+    approved_by=None,
 ):
-    """
-    Record a personal withdrawal made by the founder from TownLIT funds.
-    """
+    """Record founder personal withdrawal."""
+
+    amount = Decimal(
+        str(amount)
+    )
 
     return post_journal_entry(
         JournalEntryInput(
-            date=entry_date,
+            entry_date=entry_date,
             description=description,
             reference=reference,
             source_app="accounting",
             source_model="founder_withdrawal",
             source_ref=source_ref,
+            created_by=created_by,
+            approved_by=approved_by,
             lines=[
                 JournalLineInput(
                     account_code=withdrawal_account_code,
-                    debit=Decimal(amount),
+                    debit=amount,
                     memo="Founder personal withdrawal",
+                    line_number=1,
                 ),
                 JournalLineInput(
                     account_code=bank_account_code,
-                    credit=Decimal(amount),
+                    credit=amount,
                     memo="Paid from TownLIT bank",
+                    line_number=2,
                 ),
             ],
         )
@@ -143,46 +169,56 @@ def record_home_office_allocation(
     expense_account_code: str = AccountCodes.HOME_OFFICE_EXPENSE,
     withdrawal_account_code: str = AccountCodes.FOUNDER_WITHDRAWALS,
     bank_account_code: str = AccountCodes.BANK,
+    created_by=None,
+    approved_by=None,
 ):
-    """
-    Record a shared home-office payment made from TownLIT bank.
+    """Record mixed business/personal home-office payment."""
 
-    Example:
-    - Total rent paid from TownLIT bank: 1850
-    - Business share: 925
-    - Personal share: 925
-    """
+    total_paid = Decimal(
+        str(total_paid)
+    )
 
-    total_paid = Decimal(total_paid)
-    business_share = Decimal(business_share)
-    personal_share = Decimal(personal_share)
+    business_share = Decimal(
+        str(business_share)
+    )
+
+    personal_share = Decimal(
+        str(personal_share)
+    )
 
     if business_share + personal_share != total_paid:
-        raise ValueError("Business share + personal share must equal total paid.")
+        raise ValueError(
+            "Business share + personal share must equal total paid."
+        )
 
     return post_journal_entry(
         JournalEntryInput(
-            date=entry_date,
+            entry_date=entry_date,
             description=description,
             reference=reference,
             source_app="accounting",
             source_model="home_office_allocation",
             source_ref=source_ref,
+            created_by=created_by,
+            approved_by=approved_by,
             lines=[
                 JournalLineInput(
                     account_code=expense_account_code,
                     debit=business_share,
                     memo="TownLIT share of home office cost",
+                    line_number=1,
                 ),
                 JournalLineInput(
                     account_code=withdrawal_account_code,
                     debit=personal_share,
                     memo="Founder personal share paid by TownLIT",
+                    line_number=2,
                 ),
                 JournalLineInput(
                     account_code=bank_account_code,
                     credit=total_paid,
                     memo="Payment made from TownLIT bank",
+                    line_number=3,
                 ),
             ],
         )

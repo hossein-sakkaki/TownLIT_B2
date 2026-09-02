@@ -1,0 +1,92 @@
+{% extends "admin/base_site.html" %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+    .tl-payroll { --b:#dfe3e8; --m:#667085; --s:#f7f8fa; --p:#2457d6; --ok:#087443; --w:#9a6700; --d:#b42318; max-width:1450px; margin:0 auto; }
+    .tl-head { display:flex; justify-content:space-between; gap:20px; align-items:flex-start; margin-bottom:18px; }
+    .tl-head h1 { margin:0 0 6px; } .tl-head p { margin:0; color:var(--m); }
+    .tl-status { display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-end; }
+    .tl-pill { border:1px solid var(--b); border-radius:999px; padding:7px 10px; font-size:12px; font-weight:700; }
+    .tl-ok{color:var(--ok)} .tl-warn{color:var(--w)} .tl-danger{color:var(--d)}
+    .tl-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-bottom:20px; }
+    .tl-card { display:block; border:1px solid var(--b); border-radius:12px; padding:16px; text-decoration:none!important; color:var(--body-fg)!important; min-height:88px; }
+    .tl-card strong { display:block; margin-bottom:6px; font-size:15px; } .tl-card span { color:var(--m); font-size:12px; line-height:1.4; }
+    .tl-panel { border:1px solid var(--b); border-radius:12px; overflow:hidden; margin-bottom:18px; }
+    .tl-panel-head { display:flex; justify-content:space-between; gap:12px; align-items:center; padding:13px 15px; background:var(--s); border-bottom:1px solid var(--b); }
+    .tl-panel-head h2 { margin:0; font-size:16px; }
+    .tl-table { width:100%; border-collapse:collapse; }
+    .tl-table th,.tl-table td { padding:11px 14px; border-bottom:1px solid var(--b); text-align:left; vertical-align:middle; }
+    .tl-table tr:last-child td{border-bottom:0}.tl-table th{color:var(--m);font-size:11px;text-transform:uppercase;letter-spacing:.03em}
+    .tl-btn { display:inline-flex; align-items:center; justify-content:center; min-height:32px; padding:6px 11px; border-radius:7px; border:1px solid var(--b); text-decoration:none!important; color:var(--body-fg)!important; font-weight:750; font-size:12px; white-space:nowrap; }
+    .tl-primary{background:var(--p);border-color:var(--p);color:#fff!important}.tl-warning{color:var(--w)!important;border-color:#e7c66b}.tl-empty{padding:20px 15px;color:var(--m)}
+    .tl-two { display:grid; grid-template-columns:1.3fr 1fr; gap:16px; }
+    .tl-ready{color:var(--ok);font-weight:700}.tl-not-ready{color:var(--d);font-weight:700}
+    @media(max-width:1050px){.tl-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.tl-two{grid-template-columns:1fr}}
+    @media(max-width:650px){.tl-head{flex-direction:column}.tl-status{justify-content:flex-start}.tl-grid{grid-template-columns:1fr}.tl-panel{overflow-x:auto}}
+</style>
+{% endblock %}
+
+{% block breadcrumbs %}<div class="breadcrumbs"><a href="{% url 'accounting_admin:index' %}">Accounting</a> &rsaquo; Payroll</div>{% endblock %}
+
+{% block content %}
+<div class="tl-payroll">
+    <div class="tl-head">
+        <div>
+            <h1>Payroll Workspace</h1>
+            <p>Run payroll from setup to salary payment and CRA remittance without moving between technical record lists.</p>
+        </div>
+        <div class="tl-status">
+            {% if workspace_next_pay_period %}<span class="tl-pill tl-ok">Next pay date: {{ workspace_next_pay_period.pay_date }}</span>{% else %}<a class="tl-pill tl-danger" href="{{ workspace_urls.pay_periods }}">No open pay period</a>{% endif %}
+            {% if workspace_payroll_year_ready %}<span class="tl-pill tl-ok">Tax-year config ready</span>{% else %}<a class="tl-pill tl-danger" href="{{ workspace_urls.payroll_year_configs }}">Payroll config required</a>{% endif %}
+            {% if workspace_payroll_setup_issues %}<a class="tl-pill tl-warn" href="{{ workspace_urls.employees }}">{{ workspace_payroll_setup_issues }} employee setup issue{{ workspace_payroll_setup_issues|pluralize }}</a>{% else %}<span class="tl-pill tl-ok">Employees ready</span>{% endif %}
+        </div>
+    </div>
+
+    <div class="tl-grid">
+        <a class="tl-card" href="{{ workspace_urls.create_payroll }}"><strong>Create Payroll</strong><span>Select an employee and pay period. Tax-year configuration is resolved automatically.</span></a>
+        <a class="tl-card" href="{{ workspace_urls.create_vacation_pay }}"><strong>Vacation Pay</strong><span>Create a standalone full-balance vacation payment workflow.</span></a>
+        <a class="tl-card" href="{{ workspace_urls.employees }}"><strong>Employees & Compensation</strong><span>Employee tax setup and compensation plans are managed together.</span></a>
+        <a class="tl-card" href="{{ workspace_urls.remittances }}"><strong>CRA Remittances</strong><span>{{ workspace_counts.payroll_remittance_due }} payment{{ workspace_counts.payroll_remittance_due|pluralize }} currently need attention.</span></a>
+    </div>
+
+    <div class="tl-panel">
+        <div class="tl-panel-head"><h2>Payroll action queue</h2><a href="{{ workspace_urls.pay_runs }}">All pay runs</a></div>
+        {% if workspace_payroll_queue %}
+        <table class="tl-table"><thead><tr><th>Run</th><th>Status</th><th>Net pay</th><th>Salary due</th><th>Next step</th></tr></thead><tbody>
+        {% for row in workspace_payroll_queue %}<tr>
+            <td><a href="{{ row.change_url }}"><strong>{{ row.run_number }}</strong></a><br><small>{{ row.period }}</small></td>
+            <td>{{ row.status }}</td><td>{{ row.net_pay }}</td><td>{{ row.salary_payable }}</td>
+            <td><a class="tl-btn tl-{{ row.action.tone }}" href="{{ row.action.url }}">{{ row.action.label }}</a></td>
+        </tr>{% endfor %}
+        </tbody></table>
+        {% else %}<div class="tl-empty">No payroll workflow action is waiting.</div>{% endif %}
+    </div>
+
+    <div class="tl-two">
+        <div class="tl-panel">
+            <div class="tl-panel-head"><h2>Employee payroll readiness</h2><a href="{{ workspace_urls.add_employee }}">Add employee</a></div>
+            {% if workspace_employee_rows %}
+            <table class="tl-table"><thead><tr><th>Employee</th><th>Compensation</th><th>Ready</th><th></th></tr></thead><tbody>
+            {% for row in workspace_employee_rows %}<tr>
+                <td><a href="{{ row.change_url }}"><strong>{{ row.employee.display_name }}</strong></a></td>
+                <td>{{ row.pay_label }}</td>
+                <td>{% if row.ready %}<span class="tl-ready">Ready</span>{% else %}<span class="tl-not-ready">Setup required</span>{% endif %}</td>
+                <td>{% if row.ready %}<a class="tl-btn tl-primary" href="{{ row.create_url }}">Create Payroll</a>{% else %}<a class="tl-btn" href="{{ row.change_url }}">Complete Setup</a>{% endif %}</td>
+            </tr>{% endfor %}
+            </tbody></table>
+            {% else %}<div class="tl-empty">No active payroll employees.</div>{% endif %}
+        </div>
+
+        <div class="tl-panel">
+            <div class="tl-panel-head"><h2>CRA payment queue</h2><a href="{{ workspace_urls.remittances }}">All remittances</a></div>
+            {% if workspace_remittance_queue %}
+            <table class="tl-table"><thead><tr><th>Run</th><th>Due</th><th>Amount</th><th></th></tr></thead><tbody>
+            {% for row in workspace_remittance_queue %}<tr><td><a href="{{ row.change_url }}">{{ row.run_number }}</a></td><td>{{ row.due_date }}</td><td>{{ row.total_due }}</td><td><a class="tl-btn tl-primary" href="{{ row.pay_url }}">Record Payment</a></td></tr>{% endfor %}
+            </tbody></table>
+            {% else %}<div class="tl-empty">No CRA payment currently needs action.</div>{% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+{% block sidebar %}{% endblock %}

@@ -1,0 +1,41 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<div style="max-width:1100px;margin:0 auto;padding:18px;">
+    <h1>{{ title }}</h1>
+    <p>One bank payment can settle one or several open bills for this vendor.</p>
+
+    {% if form.non_field_errors %}<div class="errornote">{{ form.non_field_errors }}</div>{% endif %}
+    <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        <input type="hidden" name="preselected_bill_id" value="{{ preselected_bill_id }}">
+        <fieldset class="module aligned">
+            <div class="form-row"><div>{{ form.payment_date.errors }}{{ form.payment_date.label_tag }} {{ form.payment_date }}</div></div>
+            <div class="form-row"><div>{{ form.bank_account.errors }}{{ form.bank_account.label_tag }} {{ form.bank_account }}</div></div>
+            <div class="form-row"><div>{{ form.payment_method.errors }}{{ form.payment_method.label_tag }} {{ form.payment_method }}</div></div>
+            <div class="form-row"><div>{{ form.reference.errors }}{{ form.reference.label_tag }} {{ form.reference }}</div></div>
+            <div class="form-row"><div>{{ form.note.errors }}{{ form.note.label_tag }} {{ form.note }}</div></div>
+            <div class="form-row"><div>{{ form.payment_proof.errors }}{{ form.payment_proof.label_tag }} {{ form.payment_proof }}</div></div>
+        </fieldset>
+
+        <h2>Allocate payment</h2>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:18px;">
+            <thead><tr><th style="text-align:left;padding:8px;">Bill</th><th style="text-align:left;padding:8px;">Due</th><th style="text-align:right;padding:8px;">Total</th><th style="text-align:right;padding:8px;">Outstanding</th><th style="text-align:left;padding:8px;">Pay now</th></tr></thead>
+            <tbody>
+            {% for row in bill_rows %}
+                <tr>
+                    <td style="padding:8px;border-top:1px solid #ddd;">{{ row.bill.bill_number }}</td>
+                    <td style="padding:8px;border-top:1px solid #ddd;">{{ row.bill.due_date }}</td>
+                    <td style="padding:8px;border-top:1px solid #ddd;text-align:right;">{{ row.bill.total_amount }}</td>
+                    <td style="padding:8px;border-top:1px solid #ddd;text-align:right;">{{ row.bill.outstanding_amount }}</td>
+                    <td style="padding:8px;border-top:1px solid #ddd;">{{ row.field.errors }}{{ row.field }}</td>
+                </tr>
+            {% empty %}<tr><td colspan="5">No open bills for this vendor.</td></tr>{% endfor %}
+            </tbody>
+        </table>
+
+        {% if bill_rows %}<input type="submit" value="Post Vendor Payment" class="default">{% endif %}
+        <a href="{% url 'accounting_admin:accounting-ap-workspace' %}" class="button cancel-link">Cancel</a>
+    </form>
+</div>
+{% endblock %}

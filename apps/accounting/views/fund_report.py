@@ -149,8 +149,10 @@ class FundSummaryReportView(BaseFundReportView):
             "Restricted",
             "Total Awarded",
             "Revenue Total",
-            "Expense Total",
-            "Remaining Balance",
+            "Operating Expense",
+            "Capital Deployed",
+            "Operating Result",
+            "Available Funding",
         ]
         rows = [[
             payload["fund_code"],
@@ -160,20 +162,16 @@ class FundSummaryReportView(BaseFundReportView):
             payload["total_awarded"],
             payload["revenue_total"],
             payload["expense_total"],
-            payload["remaining_balance"],
+            payload["capital_deployed"],
+            payload["operating_result"],
+            payload["available_funding"],
         ]]
 
         pdf_col_widths = [
-            24 * mm,  # Fund Code
-            38 * mm,  # Fund Name
-            22 * mm,  # Fund Type
-            18 * mm,  # Restricted
-            24 * mm,  # Total Awarded
-            24 * mm,  # Revenue Total
-            24 * mm,  # Expense Total
-            28 * mm,  # Remaining Balance
+            20 * mm, 26 * mm, 18 * mm, 16 * mm, 22 * mm,
+            22 * mm, 24 * mm, 24 * mm, 24 * mm, 26 * mm,
         ]
-        pdf_amount_columns = {4, 5, 6, 7}
+        pdf_amount_columns = {4, 5, 6, 7, 8, 9}
 
         return self.export_or_json(
             request=request,
@@ -218,6 +216,8 @@ class FundLedgerReportView(BaseFundReportView):
             "Credit",
             "Revenue Effect",
             "Expense Effect",
+            "Capital Effect",
+            "Funding Effect",
         ]
         rows = [
             [
@@ -233,6 +233,8 @@ class FundLedgerReportView(BaseFundReportView):
                 row["credit"],
                 row["revenue_effect"],
                 row["expense_effect"],
+                row["capital_effect"],
+                row["funding_effect"],
             ]
             for row in payload["rows"]
         ]
@@ -248,10 +250,12 @@ class FundLedgerReportView(BaseFundReportView):
             18 * mm,  # Budget Code
             14 * mm,  # Debit
             14 * mm,  # Credit
-            18 * mm,  # Revenue Effect
-            18 * mm,  # Expense Effect
+            17 * mm,  # Revenue Effect
+            17 * mm,  # Expense Effect
+            17 * mm,  # Capital Effect
+            17 * mm,  # Funding Effect
         ]
-        pdf_amount_columns = {8, 9, 10, 11}
+        pdf_amount_columns = {8, 9, 10, 11, 12, 13}
 
         return self.export_or_json(
             request=request,
@@ -288,6 +292,8 @@ class BudgetVsActualReportView(BaseFundReportView):
             "Budget Line Code",
             "Budget Line Name",
             "Approved Amount",
+            "Operating Actual",
+            "Capital Actual",
             "Actual Amount",
             "Remaining Amount",
         ]
@@ -297,6 +303,8 @@ class BudgetVsActualReportView(BaseFundReportView):
                 row["budget_line_code"],
                 row["budget_line_name"],
                 row["approved_amount"],
+                row["operating_actual"],
+                row["capital_actual"],
                 row["actual_amount"],
                 row["remaining_amount"],
             ]
@@ -307,11 +315,13 @@ class BudgetVsActualReportView(BaseFundReportView):
             28 * mm,  # Budget Code
             30 * mm,  # Budget Line Code
             46 * mm,  # Budget Line Name
-            26 * mm,  # Approved Amount
-            26 * mm,  # Actual Amount
-            26 * mm,  # Remaining Amount
+            24 * mm,  # Approved Amount
+            24 * mm,  # Operating Actual
+            24 * mm,  # Capital Actual
+            24 * mm,  # Actual Amount
+            24 * mm,  # Remaining Amount
         ]
-        pdf_amount_columns = {3, 4, 5}
+        pdf_amount_columns = {3, 4, 5, 6, 7}
 
         return self.export_or_json(
             request=request,

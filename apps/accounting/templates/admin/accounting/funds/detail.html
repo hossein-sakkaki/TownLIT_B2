@@ -1,0 +1,137 @@
+{% extends "admin/base_site.html" %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+    .tl-fund { max-width: 1500px; margin: 0 auto; }
+    .tl-hero, .tl-panel, .tl-metric { border: 1px solid var(--hairline-color); background: var(--body-bg); border-radius: 14px; }
+    .tl-hero { padding: 22px; display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; }
+    .tl-hero h1 { margin: 0 0 6px; font-size: 27px; }
+    .tl-muted { color: var(--body-quiet-color); }
+    .tl-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .tl-btn { display: inline-flex; min-height: 34px; padding: 6px 11px; align-items: center; border: 1px solid var(--hairline-color); border-radius: 8px; text-decoration: none !important; color: var(--body-fg) !important; background: var(--body-bg); font-weight: 700; }
+    .tl-btn-primary { background: var(--primary); border-color: var(--primary); color: #fff !important; }
+    .tl-metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin: 16px 0; }
+    .tl-metric { padding: 15px; }
+    .tl-metric span { display: block; color: var(--body-quiet-color); font-size: 11px; text-transform: uppercase; margin-bottom: 6px; }
+    .tl-metric strong { font-size: 20px; font-variant-numeric: tabular-nums; }
+    .tl-panel { margin-top: 16px; overflow: hidden; }
+    .tl-panel-head { padding: 14px 16px; display: flex; justify-content: space-between; gap: 12px; align-items: center; background: var(--darkened-bg); border-bottom: 1px solid var(--hairline-color); }
+    .tl-panel-head h2, .tl-panel-head h3 { margin: 0; }
+    .tl-panel table { width: 100%; border-collapse: collapse; }
+    .tl-panel th, .tl-panel td { padding: 11px 13px; border-bottom: 1px solid var(--hairline-color); text-align: left; vertical-align: middle; }
+    .tl-panel th { color: var(--body-quiet-color); text-transform: uppercase; font-size: 11px; }
+    .tl-panel tr:last-child td { border-bottom: 0; }
+    .tl-pill { display: inline-flex; padding: 4px 8px; border-radius: 999px; border: 1px solid var(--hairline-color); font-size: 11px; font-weight: 700; margin-right: 4px; }
+    .tl-warning { color: #9a6700; }
+    .tl-danger { color: #b42318; }
+    .tl-success { color: #087443; }
+    .tl-money { white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .tl-progress { width: 120px; height: 7px; border-radius: 999px; background: var(--hairline-color); overflow: hidden; }
+    .tl-progress > span { display: block; height: 100%; background: var(--primary); max-width: 100%; }
+    .tl-issues { margin: 14px 0 0; padding: 12px 14px; border: 1px solid #e7c66b; border-radius: 10px; }
+    @media (max-width: 1100px) { .tl-metrics { grid-template-columns: repeat(2, 1fr); } .tl-panel { overflow-x:auto; } }
+    @media (max-width: 700px) { .tl-hero { flex-direction: column; } .tl-metrics { grid-template-columns: 1fr; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="tl-fund">
+    <section class="tl-hero">
+        <div>
+            <div class="tl-muted"><a href="{{ urls.workspace }}">Funds & Budgets</a> / {{ fund.code }}</div>
+            <h1>{{ fund.name }}</h1>
+            <div>
+                <span class="tl-pill">{{ fund.get_status_display }}</span>
+                {% if fund.is_restricted %}<span class="tl-pill tl-warning">Restricted</span>{% else %}<span class="tl-pill tl-success">Unrestricted</span>{% endif %}
+                {% if fund.policy %}<span class="tl-pill">Policy: {{ fund.policy.get_mode_display }}</span>{% endif %}
+            </div>
+        </div>
+        <div class="tl-actions">
+            <a class="tl-btn tl-btn-primary" href="{{ urls.income }}">Receive Money</a>
+            <a class="tl-btn tl-btn-primary" href="{{ urls.expense }}">Spend Money</a>
+            <a class="tl-btn" href="{{ urls.asset }}">Buy Capital Asset</a>
+            <a class="tl-btn" href="{{ urls.add_budget }}">Add Budget</a>
+        </div>
+    </section>
+
+    {% if issues %}
+    <div class="tl-issues">
+        <strong>Setup review:</strong>
+        {% for issue in issues %}<span class="tl-pill tl-danger">{{ issue }}</span>{% endfor %}
+        <a href="{{ urls.configure }}">Review controls</a>
+    </div>
+    {% endif %}
+
+    <section class="tl-metrics">
+        <div class="tl-metric"><span>Awarded / Approved Funding</span><strong>{{ fund.total_awarded|default:"—" }}</strong></div>
+        <div class="tl-metric"><span>Received</span><strong>{{ metrics.revenue }}</strong></div>
+        <div class="tl-metric"><span>Operating Spend</span><strong>{{ metrics.operating_expense }}</strong></div>
+        <div class="tl-metric"><span>Capital Deployed</span><strong>{{ metrics.capital_deployed }}</strong></div>
+        <div class="tl-metric"><span>Available Funding</span><strong>{{ metrics.available_funding }}</strong></div>
+    </section>
+
+    <section class="tl-panel">
+        <div class="tl-panel-head">
+            <div><h2>Budgets</h2><div class="tl-muted">Actual usage includes operating expenses and fund-tagged equipment purchases. Depreciation is not counted again.</div></div>
+            <div class="tl-actions"><a class="tl-btn" href="{{ urls.budget_xlsx }}">Budget vs Actual XLSX</a></div>
+        </div>
+
+        {% for row in budget_rows %}
+            <div class="tl-panel-head">
+                <div><h3><a href="{{ row.change_url }}">{{ row.budget.code }} — {{ row.budget.name }}</a></h3><div class="tl-muted">{{ row.budget.get_status_display }} · {{ row.budget.start_date|default:"" }} — {{ row.budget.end_date|default:"" }}</div></div>
+                <div class="tl-money"><strong>{{ row.total_actual }}</strong> used of {{ row.total_approved }} · Remaining {{ row.remaining }}</div>
+            </div>
+            <table>
+                <thead><tr><th>Budget Line</th><th>Approved</th><th>Operating</th><th>Capital</th><th>Actual</th><th>Remaining</th><th>Used</th></tr></thead>
+                <tbody>
+                {% for item in row.lines %}
+                    <tr>
+                        <td><a href="{{ item.change_url }}"><strong>{{ item.line.code }}</strong> — {{ item.line.name }}</a></td>
+                        <td class="tl-money">{{ item.approved }}</td>
+                        <td class="tl-money">{{ item.operating_spend }}</td>
+                        <td class="tl-money">{{ item.capital_spend }}</td>
+                        <td class="tl-money"><strong>{{ item.actual }}</strong></td>
+                        <td class="tl-money">{% if item.over %}<span class="tl-danger"><strong>{{ item.remaining }}</strong></span>{% else %}{{ item.remaining }}{% endif %}</td>
+                        <td>
+                            <div class="tl-progress"><span style="width: {{ item.used_percent }}%;"></span></div>
+                            <small class="{% if item.warning %}tl-warning{% endif %}">{{ item.used_percent }}%</small>
+                        </td>
+                    </tr>
+                {% empty %}<tr><td colspan="7" class="tl-muted">No budget lines.</td></tr>{% endfor %}
+                </tbody>
+            </table>
+        {% empty %}
+            <div style="padding:18px;" class="tl-muted">No budget has been created for this fund yet. <a href="{{ urls.add_budget }}">Create the first budget.</a></div>
+        {% endfor %}
+    </section>
+
+    <section class="tl-panel">
+        <div class="tl-panel-head"><h2>Recent Fund Activity</h2><div class="tl-actions"><a class="tl-btn" href="{{ urls.summary_xlsx }}">Fund Summary XLSX</a><a class="tl-btn" href="{{ urls.ledger_xlsx }}">Fund Ledger XLSX</a></div></div>
+        <table>
+            <thead><tr><th>Date</th><th>Type</th><th>Journal</th><th>Account</th><th>Budget</th><th>Funding Effect</th></tr></thead>
+            <tbody>
+            {% for row in recent_activity %}
+                <tr>
+                    <td>{{ row.tx.journal_entry.entry_date }}</td>
+                    <td>{{ row.kind }}</td>
+                    <td><a href="{{ row.journal_url }}">{{ row.tx.journal_entry.entry_number }}</a><br><small>{{ row.tx.journal_entry.description }}</small></td>
+                    <td>{{ row.tx.account.code }} — {{ row.tx.account.name }}</td>
+                    <td>{% if row.tx.budget_line %}{{ row.tx.budget_line.code }}{% else %}—{% endif %}</td>
+                    <td class="tl-money">{{ row.effect }}</td>
+                </tr>
+            {% empty %}<tr><td colspan="6" class="tl-muted">No posted fund activity yet.</td></tr>{% endfor %}
+            </tbody>
+        </table>
+    </section>
+
+    <section class="tl-panel">
+        <div class="tl-panel-head"><h2>Controls & Setup</h2></div>
+        <div style="padding:16px;" class="tl-actions">
+            <a class="tl-btn" href="{{ urls.configure }}">Restriction & Posting Controls</a>
+            <a class="tl-btn" href="{{ urls.edit_fund }}">Edit Fund Master Data</a>
+        </div>
+    </section>
+</div>
+{% endblock %}
+{% block sidebar %}{% endblock %}

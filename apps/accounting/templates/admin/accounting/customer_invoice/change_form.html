@@ -1,0 +1,16 @@
+{% extends "admin/change_form.html" %}
+
+{% block object-tools-items %}
+    {{ block.super }}
+    {% if original %}
+        {% if original.status == "draft" %}
+            <li><a href="{% url 'accounting_admin:accounting_customerinvoice_post' original.pk %}">Post Invoice to AR</a></li>
+        {% elif original.status == "open" or original.status == "partial" %}
+            <li><a href="{% url 'accounting_admin:accounting-ar-receive-customer' original.customer_id %}?invoice_id={{ original.pk }}">Receive Payment</a></li>
+        {% endif %}
+        <li><a href="{% url 'accounting_admin:accounting-ar-invoice-print' original.pk %}" target="_blank">Print Invoice</a></li>
+        {% if original.posting_journal_entry_id %}
+            <li><a href="{% url 'accounting_admin:accounting_journalentry_change' original.posting_journal_entry_id %}">View Journal</a></li>
+        {% endif %}
+    {% endif %}
+{% endblock %}

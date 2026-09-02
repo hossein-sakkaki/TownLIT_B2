@@ -1,0 +1,2 @@
+{% extends "admin/base_site.html" %}
+{% block content %}<div style="max-width:720px"><h1>{{ title }}</h1><div style="border:1px solid #dfe3e8;border-radius:12px;padding:18px;margin:18px 0"><strong>{{ pay_run.run_number }}</strong><p style="color:#667085">{{ pay_run.pay_period }} · {{ pay_run.get_status_display }}</p><p>{{ message }}</p></div><form method="post">{% csrf_token %}<button class="default" type="submit">{{ button_label }}</button> <a href="{% url 'accounting_admin:accounting_payrun_change' pay_run.id %}">Cancel</a></form></div>{% endblock %}

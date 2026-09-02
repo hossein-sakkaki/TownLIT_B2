@@ -1,0 +1,90 @@
+{% extends "admin/base_site.html" %}
+
+{% block extrahead %}
+{{ block.super }}
+<style>
+.tl-ar{max-width:1500px;margin:0 auto;padding:18px}.tl-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:18px}.tl-actions{display:flex;gap:8px;flex-wrap:wrap}.tl-btn{display:inline-block;padding:9px 13px;border-radius:8px;background:#fff;border:1px solid #d0d7de;color:#1f2328;text-decoration:none;font-weight:600}.tl-btn-primary{background:#1f6feb;color:#fff;border-color:#1f6feb}.tl-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:16px 0}.tl-card{background:var(--body-bg,#fff);border:1px solid var(--hairline-color,#ddd);border-radius:12px;padding:16px}.tl-label{font-size:12px;color:#667085;text-transform:uppercase;letter-spacing:.04em}.tl-value{font-size:25px;font-weight:700;margin-top:6px}.tl-grid{display:grid;grid-template-columns:2fr 1fr;gap:14px}.tl-table{width:100%;border-collapse:collapse}.tl-table th,.tl-table td{padding:9px 8px;border-bottom:1px solid var(--hairline-color,#eee);text-align:left;vertical-align:top}.tl-table th{font-size:12px;color:#667085}.tl-overdue{color:#b42318;font-weight:700}.tl-muted{color:#667085}.tl-aging{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-top:10px}.tl-aging>div{padding:10px;border:1px solid var(--hairline-color,#ddd);border-radius:8px}.tl-section-title{margin:0 0 12px;font-size:18px}@media(max-width:900px){.tl-kpis,.tl-aging{grid-template-columns:1fr 1fr}.tl-grid{grid-template-columns:1fr}.tl-head{display:block}.tl-actions{margin-top:12px}}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="tl-ar">
+    <div class="tl-head">
+        <div>
+            <h1>Invoices & Accounts Receivable</h1>
+            <p class="tl-muted">Issue invoice → recognize revenue and receivable → collect later → reconcile bank.</p>
+        </div>
+        <div class="tl-actions">
+            <a class="tl-btn tl-btn-primary" href="{{ add_invoice_url }}">New Customer Invoice</a>
+            <a class="tl-btn" href="{{ add_customer_url }}">Add Customer</a>
+            <a class="tl-btn" href="{{ customers_url }}">Customers</a>
+            <a class="tl-btn" href="{{ receipts_url }}">Receipt History</a>
+            <a class="tl-btn" href="{{ aging_export_url }}">Export Aging CSV</a>
+        </div>
+    </div>
+
+    <div class="tl-kpis">
+        <div class="tl-card"><div class="tl-label">Total AR Outstanding</div><div class="tl-value">{{ ar_open_total }}</div></div>
+        <div class="tl-card"><div class="tl-label">Overdue</div><div class="tl-value tl-overdue">{{ ar_overdue_total }}</div></div>
+        <div class="tl-card"><div class="tl-label">Due Next 7 Days</div><div class="tl-value">{{ ar_due_next_7 }}</div></div>
+        <div class="tl-card"><div class="tl-label">Draft Invoices</div><div class="tl-value">{{ ar_draft_count }}</div></div>
+    </div>
+
+    <div class="tl-card" style="margin-bottom:14px;">
+        <h2 class="tl-section-title">AR Aging</h2>
+        <div class="tl-aging">
+            <div><div class="tl-label">Current</div><strong>{{ ar_aging.current }}</strong></div>
+            <div><div class="tl-label">1–30 Days</div><strong>{{ ar_aging.days_1_30 }}</strong></div>
+            <div><div class="tl-label">31–60 Days</div><strong>{{ ar_aging.days_31_60 }}</strong></div>
+            <div><div class="tl-label">61–90 Days</div><strong>{{ ar_aging.days_61_90 }}</strong></div>
+            <div><div class="tl-label">90+ Days</div><strong>{{ ar_aging.days_90_plus }}</strong></div>
+        </div>
+    </div>
+
+    <div class="tl-grid">
+        <div class="tl-card">
+            <h2 class="tl-section-title">Invoices to Collect</h2>
+            <table class="tl-table">
+                <thead><tr><th>Customer</th><th>Invoice</th><th>Due</th><th>Total</th><th>Outstanding</th><th></th></tr></thead>
+                <tbody>
+                {% for row in ar_rows %}
+                    <tr>
+                        <td>{{ row.invoice.customer }}</td>
+                        <td><a href="{{ row.change_url }}">{{ row.invoice.invoice_number }}</a><br><span class="tl-muted">{{ row.invoice.invoice_date }}</span></td>
+                        <td class="{% if row.days_overdue %}tl-overdue{% endif %}">{{ row.invoice.due_date }}{% if row.days_overdue %}<br>{{ row.days_overdue }} days overdue{% endif %}</td>
+                        <td>{{ row.invoice.total_amount }}</td>
+                        <td><strong>{{ row.outstanding }}</strong></td>
+                        <td>
+                            <a class="tl-btn" href="{{ row.receive_url }}">Receive</a>
+                            <a class="tl-btn" href="{{ row.print_url }}" target="_blank">Invoice</a>
+                        </td>
+                    </tr>
+                {% empty %}
+                    <tr><td colspan="6" class="tl-muted">No open customer invoices.</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="tl-card">
+            <h2 class="tl-section-title">By Customer</h2>
+            <table class="tl-table">
+                <thead><tr><th>Customer</th><th>Outstanding</th><th>Overdue</th><th></th></tr></thead>
+                <tbody>
+                {% for row in ar_customer_rows %}
+                    <tr>
+                        <td>{{ row.customer }}</td>
+                        <td>{{ row.outstanding }}</td>
+                        <td class="{% if row.overdue %}tl-overdue{% endif %}">{{ row.overdue }}</td>
+                        <td>
+                            <a href="{{ row.receive_url }}">Receive</a><br>
+                            <a href="{{ row.statement_url }}">Statement CSV</a>
+                        </td>
+                    </tr>
+                {% empty %}<tr><td colspan="4" class="tl-muted">No balances.</td></tr>{% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,151 @@
+{% extends "admin/base_site.html" %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+    .tl-founder-form {
+        max-width: 920px;
+        margin: 0 auto;
+    }
+
+    .tl-summary {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        margin-bottom: 18px;
+    }
+
+    .tl-summary-card {
+        border: 1px solid #dfe3e8;
+        border-radius: 10px;
+        padding: 14px;
+    }
+
+    .tl-summary-card span {
+        display: block;
+        color: #667085;
+        font-size: 11px;
+        text-transform: uppercase;
+        margin-bottom: 5px;
+    }
+
+    .tl-summary-card strong { font-size: 17px; }
+
+    .tl-form-panel {
+        border: 1px solid #dfe3e8;
+        border-radius: 12px;
+        overflow: hidden;
+    }
+
+    .tl-form-panel h2 {
+        margin: 0;
+        padding: 14px 16px;
+        background: #f7f8fa;
+        border-bottom: 1px solid #dfe3e8;
+        font-size: 16px;
+    }
+
+    .tl-fields { padding: 6px 16px 16px; }
+
+    .tl-field {
+        display: grid;
+        grid-template-columns: 210px 1fr;
+        gap: 18px;
+        padding: 12px 0;
+        border-bottom: 1px solid #eef0f3;
+    }
+
+    .tl-field:last-child { border-bottom: 0; }
+    .tl-field label { font-weight: 700; padding-top: 6px; }
+    .tl-field input,
+    .tl-field select,
+    .tl-field textarea { width: 100%; max-width: 620px; }
+    .tl-help { margin-top: 5px; color: #667085; font-size: 12px; }
+    .tl-errors { color: #b42318; margin: 5px 0; }
+
+    .tl-submit-row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        margin-top: 16px;
+    }
+
+    .tl-primary {
+        border: 0;
+        border-radius: 7px;
+        background: #2457d6;
+        color: #fff;
+        padding: 10px 16px;
+        font-weight: 700;
+        cursor: pointer;
+    }
+
+    @media (max-width: 700px) {
+        .tl-summary { grid-template-columns: 1fr; }
+        .tl-field { grid-template-columns: 1fr; gap: 4px; }
+    }
+</style>
+{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'accounting_admin:index' %}">Accounting</a>
+    &rsaquo;
+    <a href="{% url 'accounting_admin:accounting_founderloan_changelist' %}">Founder Advances</a>
+    &rsaquo; {{ title }}
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="tl-founder-form">
+    {% if founder_loan %}
+    <div class="tl-summary">
+        <div class="tl-summary-card">
+            <span>Lender</span>
+            <strong>{{ founder_loan.lender_display_name }}</strong>
+        </div>
+        <div class="tl-summary-card">
+            <span>Original Advance</span>
+            <strong>{{ founder_loan.principal_amount }}</strong>
+        </div>
+        <div class="tl-summary-card">
+            <span>Outstanding</span>
+            <strong>{{ founder_loan.outstanding_amount }}</strong>
+        </div>
+    </div>
+    {% endif %}
+
+    <form method="post" novalidate>
+        {% csrf_token %}
+
+        <div class="tl-form-panel">
+            <h2>{{ title }}</h2>
+            <div class="tl-fields">
+                {{ form.non_field_errors }}
+
+                {% for field in form %}
+                    {% if not field.is_hidden %}
+                    <div class="tl-field">
+                        <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+                        <div>
+                            {{ field }}
+                            {% if field.errors %}<div class="tl-errors">{{ field.errors }}</div>{% endif %}
+                            {% if field.help_text %}<div class="tl-help">{{ field.help_text }}</div>{% endif %}
+                        </div>
+                    </div>
+                    {% else %}
+                        {{ field }}
+                    {% endif %}
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="tl-submit-row">
+            <button class="tl-primary" type="submit">
+                {% if workflow_kind == 'repayment' %}Post Repayment{% else %}Record Founder Advance{% endif %}
+            </button>
+            <a href="{% url 'accounting_admin:accounting_founderloan_changelist' %}">Cancel</a>
+        </div>
+    </form>
+</div>
+{% endblock %}
