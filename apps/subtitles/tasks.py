@@ -1,4 +1,10 @@
 # apps/subtitles/tasks.py
+#
+# TownLIT
+#
+# Created by Hossein Sakkaki on 2026-08-31.
+# Last Update by Hossein Sakkaki on 2026-08-31.
+#
 
 from __future__ import annotations
 
@@ -473,3 +479,312 @@ def generate_voice_task(self, voice_track_id: int) -> int:
                     shutil.rmtree(tmpdir, ignore_errors=True)
         except Exception:
             pass
+
+# ---------------------------------------------------------------------
+# Organization Church Teaching Subtitles
+# ---------------------------------------------------------------------
+@shared_task(
+    queue="subtitles",
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=30,
+    retry_kwargs={"max_retries": 3},
+)
+def prepare_organization_subtitles_for_video(
+    self,
+    *,
+    content_type_id: int,
+    object_id: int,
+) -> int:
+    """Extract STT audio from converted Church teaching video."""
+
+    import hashlib
+
+    from django.contrib.contenttypes.models import ContentType
+    from django.core.files.storage import default_storage
+
+    from apps.media_conversion.services.storage_cleanup import (
+        delete_storage_key,
+    )
+    from apps.subtitles.models import (
+        TranscriptContentReviewStatus,
+        TranscriptDetectedContentType,
+        TranscriptJobStatus,
+        VideoTranscript,
+    )
+    from apps.subtitles.services.audio_asset import build_stt_audio_from_source_video
+    from apps.subtitles.services.organization_orchestrator import (
+        is_organization_subtitle_target,
+    )
+
+    content_type = ContentType.objects.get(pk=content_type_id)
+    model_class = content_type.model_class()
+
+    if model_class is None:
+        raise RuntimeError("Organization subtitle target model is unavailable.")
+
+    target = model_class._base_manager.get(pk=object_id)
+
+    if not is_organization_subtitle_target(target):
+        raise RuntimeError("Target is not eligible for Organization subtitles.")
+
+    if not getattr(target, "is_converted", False):
+        raise RuntimeError("Organization teaching video is not converted yet.")
+
+    source_path = str(
+        getattr(getattr(target, "video", None), "name", "") or ""
+    ).strip().lstrip("/")
+
+    if not source_path.lower().endswith(".m3u8"):
+        raise RuntimeError("Organization teaching video HLS source is unavailable.")
+
+    generation = hashlib.sha256(source_path.encode("utf-8")).hexdigest()[:20]
+    stt_path = (
+        f"subtitles/stt/organization_teaching/"
+        f"{content_type_id}/{object_id}/{generation}.wav"
+    )
+
+    transcript, _ = VideoTranscript.objects.get_or_create(
+        content_type=content_type,
+        object_id=object_id,
+        defaults={"status": TranscriptJobStatus.PENDING},
+    )
+
+    existing_audio = str(
+        getattr(getattr(transcript, "stt_audio", None), "name", "") or ""
+    ).strip().lstrip("/")
+
+    if existing_audio == stt_path and default_storage.exists(stt_path):
+        if transcript.status == TranscriptJobStatus.DONE:
+            from apps.subtitles.services.organization_orchestrator import (
+                enqueue_organization_default_subtitles,
+            )
+            enqueue_organization_default_subtitles(transcript)
+            return transcript.pk
+
+        if transcript.status == TranscriptJobStatus.RUNNING:
+            return transcript.pk
+
+        transcript.status = TranscriptJobStatus.PENDING
+        transcript.error = ""
+        transcript.save(update_fields=["status", "error", "updated_at"])
+
+        build_organization_transcript_for_video.delay(transcript_id=transcript.pk)
+        return transcript.pk
+
+    if transcript.voice_tracks.exists():
+        raise RuntimeError(
+            "Organization subtitle transcript unexpectedly contains voice tracks."
+        )
+
+    if existing_audio:
+        try:
+            if default_storage.exists(existing_audio):
+                delete_storage_key(
+                    existing_audio,
+                    label="organization-subtitles.old-stt-audio",
+                )
+        except Exception:
+            logger.exception(
+                "organization_subtitles.old_stt_audio_cleanup_failed transcript=%s",
+                transcript.pk,
+            )
+
+    transcript.segments.all().delete()
+    transcript.subtitle_tracks.all().delete()
+
+    try:
+        if default_storage.exists(stt_path):
+            delete_storage_key(
+                stt_path,
+                label="organization-subtitles.stale-stt-generation",
+            )
+    except Exception:
+        logger.exception(
+            "organization_subtitles.stt_generation_cleanup_failed path=%s",
+            stt_path,
+        )
+
+    build_stt_audio_from_source_video(
+        source_path=source_path,
+        out_rel_path=stt_path,
+    )
+
+    transcript.stt_audio.name = stt_path
+    transcript.stt_audio_format = "wav"
+    transcript.status = TranscriptJobStatus.PENDING
+    transcript.error = ""
+    transcript.source_language = ""
+    transcript.full_text = ""
+    transcript.tone_profile = {}
+    transcript.content_review_status = TranscriptContentReviewStatus.APPROVED
+    transcript.detected_content_type = TranscriptDetectedContentType.TEACHING
+    transcript.content_review_confidence = 1.0
+    transcript.content_review_reason = (
+        "Organization Church teaching subtitle-only pipeline; "
+        "Testimony content classification is not applicable."
+    )
+    transcript.ai_processing_allowed = True
+    transcript.content_reviewed_at = timezone.now()
+    transcript.save(
+        update_fields=[
+            "stt_audio",
+            "stt_audio_format",
+            "status",
+            "error",
+            "source_language",
+            "full_text",
+            "tone_profile",
+            "content_review_status",
+            "detected_content_type",
+            "content_review_confidence",
+            "content_review_reason",
+            "ai_processing_allowed",
+            "content_reviewed_at",
+            "updated_at",
+        ]
+    )
+
+    build_organization_transcript_for_video.delay(transcript_id=transcript.pk)
+    return transcript.pk
+
+
+@shared_task(
+    queue="subtitles",
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=30,
+    retry_kwargs={"max_retries": 3},
+)
+def build_organization_transcript_for_video(
+    self,
+    *,
+    transcript_id: int,
+) -> int:
+    """Build Organization transcript and subtitles without Testimony review or TTS."""
+
+    from apps.subtitles.models import TranscriptJobStatus, TranscriptSegment, VideoTranscript
+    from apps.subtitles.services.audio_source import fetch_audio_from_storage
+    from apps.subtitles.services.organization_orchestrator import (
+        assert_organization_subtitle_transcript,
+        enqueue_organization_default_subtitles,
+    )
+    from apps.subtitles.services.stt_openai import transcribe_audio
+    from apps.translations.services.language_codes import normalize_language_code
+
+    transcript = VideoTranscript.objects.select_related("content_type").get(pk=transcript_id)
+    assert_organization_subtitle_transcript(transcript)
+
+    if transcript.status == TranscriptJobStatus.DONE:
+        enqueue_organization_default_subtitles(transcript)
+        return transcript.pk
+
+    if not transcript.stt_audio or not transcript.stt_audio.name:
+        raise RuntimeError("Organization STT audio is unavailable.")
+
+    transcript.status = TranscriptJobStatus.RUNNING
+    transcript.error = ""
+    transcript.save(update_fields=["status", "error", "updated_at"])
+
+    local_audio_path = None
+
+    try:
+        local_audio_path = fetch_audio_from_storage(transcript.stt_audio)
+        stt = transcribe_audio(wav_path=local_audio_path)
+
+        source_language = normalize_language_code(stt.get("language", "") or "")
+        full_text = str(stt.get("text", "") or "").strip()
+
+        rows = []
+        for raw_segment in stt.get("segments", []) or []:
+            text = str(raw_segment.get("text", "") or "").strip()
+            if not text:
+                continue
+
+            rows.append(
+                TranscriptSegment(
+                    transcript=transcript,
+                    idx=len(rows),
+                    start_ms=int(float(raw_segment["start"]) * 1000),
+                    end_ms=int(float(raw_segment["end"]) * 1000),
+                    text=text,
+                )
+            )
+
+        TranscriptSegment.objects.filter(transcript=transcript).delete()
+        if rows:
+            TranscriptSegment.objects.bulk_create(rows, batch_size=500)
+
+        transcript.source_language = source_language
+        transcript.full_text = full_text
+        transcript.stt_model = str(stt.get("model", "") or "")
+        transcript.status = TranscriptJobStatus.DONE
+        transcript.error = ""
+        transcript.save(
+            update_fields=[
+                "source_language",
+                "full_text",
+                "stt_model",
+                "status",
+                "error",
+                "updated_at",
+            ]
+        )
+
+        if rows:
+            enqueue_organization_default_subtitles(transcript)
+
+        return transcript.pk
+
+    except Exception as exc:
+        transcript.status = TranscriptJobStatus.FAILED
+        transcript.error = str(exc)
+        transcript.save(update_fields=["status", "error", "updated_at"])
+        raise
+
+    finally:
+        try:
+            if local_audio_path and os.path.exists(local_audio_path):
+                os.remove(local_audio_path)
+        except Exception:
+            logger.exception(
+                "organization_subtitles.local_audio_cleanup_failed transcript=%s",
+                transcript_id,
+            )
+
+
+@shared_task(
+    queue="subtitles",
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=30,
+    retry_kwargs={"max_retries": 3},
+)
+def generate_organization_subtitles_task(
+    self,
+    *,
+    transcript_id: int,
+    target_language: str,
+    fmt: str = "vtt",
+) -> int:
+    """Render Organization subtitles only. VoiceTrack generation is never scheduled."""
+
+    from apps.subtitles.models import TranscriptJobStatus, VideoTranscript
+    from apps.subtitles.services.organization_orchestrator import (
+        assert_organization_subtitle_transcript,
+    )
+    from apps.subtitles.services.subtitle_builder import build_subtitle_track
+
+    transcript = VideoTranscript.objects.select_related("content_type").get(pk=transcript_id)
+    assert_organization_subtitle_transcript(transcript)
+
+    if transcript.status != TranscriptJobStatus.DONE:
+        raise RuntimeError("Organization transcript is not ready.")
+
+    track = build_subtitle_track(
+        transcript=transcript,
+        target_language=target_language,
+        fmt=fmt,
+    )
+
+    return track.pk

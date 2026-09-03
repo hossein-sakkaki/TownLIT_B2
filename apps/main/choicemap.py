@@ -51,13 +51,18 @@ from apps.profilesOrg.constants import (
     VOTING_RESULT_CHOICES,
     COUNSELING_SERVICE_CHOICES,
     WORSHIP_STYLE_CHOICES,
-    LANGUAGE_CHOICES,
     PROGRAM_NAME_CHOICES,
-    COUNTRY_CHOICES,
     TIMEZONE_CHOICES,
     CHURCH_DENOMINATIONS_CHOICES,
     ORGANIZATION_SERVICE_CATEGORY_CHOICES,
     
+)
+
+from common.reference_data.countries import (
+    COUNTRY_CHOICES
+)
+from common.reference_data.languages import (
+    LANGUAGE_CHOICES
 )
 
 # Import Gift

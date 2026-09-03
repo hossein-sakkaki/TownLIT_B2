@@ -224,6 +224,12 @@ INSTALLED_APPS = [
     "apps.audio_catalog.apps.AudioCatalogConfig",
     "apps.creative_editor.apps.CreativeEditorConfig",
     "apps.content_safety.apps.ContentSafetyConfig",
+    
+    # Generic subscription and entitlement infrastructure.
+    "apps.subscriptions.apps.SubscriptionsConfig",
+    
+    # Organization management
+    "apps.organizations.apps.OrganizationsConfig",
 ]
 
 MIDDLEWARE = [
@@ -1266,3 +1272,50 @@ CONTENT_SAFETY_VIDEO_RESULT_CACHE_MODEL = os.getenv(
     "townlit-video-safety-v1",
 )
 
+# ------------------------------------------------------------------------
+# Townlit Organizations 
+# ------------------------------------------------------------------------
+TOWNLIT_ORGANIZATIONS_ENABLED = env_bool(
+    "TOWNLIT_ORGANIZATIONS_ENABLED",
+    False,
+)
+
+TOWNLIT_ORGANIZATIONS_CREATION_ENABLED = env_bool(
+    "TOWNLIT_ORGANIZATIONS_CREATION_ENABLED",
+    False,
+)
+
+TOWNLIT_ORGANIZATIONS_VERIFICATION_ENABLED = env_bool(
+    "TOWNLIT_ORGANIZATIONS_VERIFICATION_ENABLED",
+    False,
+)
+
+TOWNLIT_ORGANIZATIONS_HIERARCHY_ENABLED = env_bool(
+    "TOWNLIT_ORGANIZATIONS_HIERARCHY_ENABLED",
+    False,
+)
+
+TOWNLIT_ORGANIZATIONS_GOVERNANCE_ENABLED = env_bool(
+    "TOWNLIT_ORGANIZATIONS_GOVERNANCE_ENABLED",
+    False,
+)
+
+TOWNLIT_ORGANIZATIONS_MODULES_ENABLED = env_bool(
+    "TOWNLIT_ORGANIZATIONS_MODULES_ENABLED",
+    False,
+)
+
+TOWNLIT_ORGANIZATIONS_IOS_ENABLED = env_bool(
+    "TOWNLIT_ORGANIZATIONS_IOS_ENABLED",
+    False,
+)
+
+TOWNLIT_ORGANIZATIONS_ANDROID_ENABLED = env_bool(
+    "TOWNLIT_ORGANIZATIONS_ANDROID_ENABLED",
+    False,
+)
+
+TOWNLIT_ORGANIZATIONS_WEB_ADMIN_ENABLED = env_bool(
+    "TOWNLIT_ORGANIZATIONS_WEB_ADMIN_ENABLED",
+    False,
+)

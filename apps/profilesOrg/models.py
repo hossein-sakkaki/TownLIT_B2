@@ -10,7 +10,7 @@ from apps.posts.models.testimony import Testimony
 
 from apps.profiles.constants import EDUCATION_DEGREE_CHOICES
 from apps.profilesOrg.constants import (
-                            LANGUAGE_CHOICES, ENGLISH, PROGRAM_NAME_CHOICES, ACCESS_LEVEL_CHOICES,
+                            PROGRAM_NAME_CHOICES, ACCESS_LEVEL_CHOICES,
                             ORGANIZATION_TYPE_CHOICES, COUNSELING_SERVICE_CHOICES, PRICE_TYPE_CHOICES,
                             WORSHIP_STYLE_CHOICES, INSTITUTION_TYPE_CHOICES, VOTING_TYPE_CHOICES, VOTING_RESULT_CHOICES,
                             TIMEZONE_CHOICES, 
@@ -18,6 +18,7 @@ from apps.profilesOrg.constants import (
                             ORGANIZATION_SERVICE_CATEGORY_CHOICES,
                             DELIVERY_METHOD_CHOICES
                         )
+from common.reference_data.languages import LANGUAGE_CHOICES
 
 from validators.user_validators import validate_phone_number
 from validators.mediaValidators.pdf_validators import validate_pdf_file

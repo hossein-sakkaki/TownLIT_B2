@@ -75,4 +75,20 @@ urlpatterns = [
     
     # Journey Reflection and Monthly Insights
     path("journey-insights/", include("apps.journey_insights.urls")),
+    
+    # Subscriptions and entitlements
+    path(
+        "subscriptions/",
+        include(
+            "apps.subscriptions.urls"
+        ),
+    ),
+
+    path(
+        "organizations/",
+        include(
+            "apps.organizations.urls"
+        ),
+    ),
+
 ]
