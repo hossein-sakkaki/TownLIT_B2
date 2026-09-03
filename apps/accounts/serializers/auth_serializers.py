@@ -12,7 +12,7 @@ from django.contrib.auth import get_user_model
 
 from rest_framework import serializers
 
-from apps.profilesOrg.constants import LANGUAGE_CHOICES
+from common.reference_data.languages import LANGUAGE_CHOICES
 from validators.user_validators import validate_password_field
 
 from ..models import InviteCode

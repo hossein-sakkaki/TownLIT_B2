@@ -5,8 +5,9 @@ import logging
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
-from apps.profiles.models import Fellowship
+from apps.notifications.services.presentation import build_fellowship_message
 from apps.notifications.services.services import create_and_dispatch_notification
+from apps.profiles.models import Fellowship
 
 logger = logging.getLogger(__name__)
 
@@ -17,20 +18,15 @@ def fellowship_notifications(sender, instance, created, **kwargs):
     Centralized LITCovenant notification signal.
 
     Handles:
-    - Request Sent
+    - Request sent
     - Accepted
     - Confirmed
     - Declined
     - Cancelled
 
-    Important:
-    - Boundary / Stillness policy is enforced centrally in
-      create_and_dispatch_notification().
-    - Symmetric accepted Fellowship rows are often created after accepting
-      the original pending request. We skip created+Accepted rows to avoid
-      duplicate notifications.
+    Boundary and Stillness policy remains centralized in the
+    notification delivery service.
     """
-
     try:
         from_user = instance.from_user
         to_user = instance.to_user
@@ -43,56 +39,45 @@ def fellowship_notifications(sender, instance, created, **kwargs):
 
         status_value = (instance.status or "").strip()
         status_normalized = status_value.lower()
-        fellowship_id = instance.id
 
-        # ----------------------------------------------------
-        # Prevent duplicate notifications from symmetric rows.
-        # The original pending row becomes Accepted and sends
-        # the canonical notification pair.
-        # ----------------------------------------------------
+        # Symmetric accepted rows must not create duplicate notifications.
         if created and status_normalized == "accepted":
-
             return
 
         payload = {
-            "fellowship_id": fellowship_id,
+            "fellowship_id": instance.id,
             "status": status_value,
             "relation": relation,
             "is_covenant": True,
         }
 
-        # ----------------------------------------------------
-        # 1) Fellowship Request Sent
-        # ----------------------------------------------------
+        # LITCovenant request received.
         if created and status_normalized == "pending":
             create_and_dispatch_notification(
                 recipient=to_user,
                 actor=from_user,
                 notif_type="fellowship_request_received",
-                message=(
-                    f"{from_user.username} has invited you into a LITCovenant "
-                    f"as your {relation_clean} — a step toward trust, care, "
-                    "and shared journey 🤍"
+                message=build_fellowship_message(
+                    "fellowship_request_received",
+                    from_user,
+                    relation_clean,
                 ),
                 target_obj=instance,
                 action_obj=instance,
                 extra_payload=payload,
             )
-
             return
 
-        # ----------------------------------------------------
-        # 2) Fellowship Accepted
-        # ----------------------------------------------------
+        # LITCovenant accepted.
         if status_normalized == "accepted":
             create_and_dispatch_notification(
                 recipient=from_user,
                 actor=to_user,
                 notif_type="fellowship_request_accepted",
-                message=(
-                    f"{to_user.username} has accepted your LITCovenant as "
-                    f"{relation_clean} — may this relationship be filled with "
-                    "grace and purpose 🤍"
+                message=build_fellowship_message(
+                    "fellowship_request_accepted",
+                    to_user,
+                    relation_clean,
                 ),
                 target_obj=instance,
                 action_obj=instance,
@@ -103,30 +88,27 @@ def fellowship_notifications(sender, instance, created, **kwargs):
                 recipient=to_user,
                 actor=from_user,
                 notif_type="fellowship_request_confirmed",
-                message=(
-                    f"You are now connected with {from_user.username} as "
-                    f"{relation_clean} in a LITCovenant — may this bond grow "
-                    "in wisdom, love, and faith 🤍"
+                message=build_fellowship_message(
+                    "fellowship_request_confirmed",
+                    from_user,
+                    relation_clean,
                 ),
                 target_obj=instance,
                 action_obj=instance,
                 extra_payload=payload,
             )
-
             return
 
-        # ----------------------------------------------------
-        # 3) Fellowship Declined
-        # ----------------------------------------------------
+        # LITCovenant declined.
         if status_normalized == "declined":
             create_and_dispatch_notification(
                 recipient=from_user,
                 actor=to_user,
                 notif_type="fellowship_request_declined",
-                message=(
-                    f"{to_user.username} has chosen not to continue the "
-                    f"LITCovenant as {relation_clean}. Every season has its "
-                    "own timing — keep walking forward in peace 🤍"
+                message=build_fellowship_message(
+                    "fellowship_request_declined",
+                    to_user,
+                    relation_clean,
                 ),
                 target_obj=instance,
                 action_obj=instance,
@@ -137,21 +119,18 @@ def fellowship_notifications(sender, instance, created, **kwargs):
                 recipient=to_user,
                 actor=from_user,
                 notif_type="fellowship_decline_notice",
-                message=(
-                    f"You chose not to enter the LITCovenant with "
-                    f"{from_user.username} as {relation_clean}. Thank you for "
-                    "responding thoughtfully and with clarity 🤍"
+                message=build_fellowship_message(
+                    "fellowship_decline_notice",
+                    from_user,
+                    relation_clean,
                 ),
                 target_obj=instance,
                 action_obj=instance,
                 extra_payload=payload,
             )
-
             return
 
-        # ----------------------------------------------------
-        # 4) Fellowship Cancelled / Removed
-        # ----------------------------------------------------
+        # LITCovenant cancelled.
         if status_normalized == "cancelled":
             for recipient, actor in (
                 (from_user, to_user),
@@ -161,17 +140,15 @@ def fellowship_notifications(sender, instance, created, **kwargs):
                     recipient=recipient,
                     actor=actor,
                     notif_type="fellowship_cancelled",
-                    message=(
-                        f"The LITCovenant between you and {actor.username} "
-                        f"as {relation_clean} has come to a close. Paths may "
-                        "change, but every step still carries meaning 🤍"
+                    message=build_fellowship_message(
+                        "fellowship_cancelled",
+                        actor,
+                        relation_clean,
                     ),
                     target_obj=instance,
                     action_obj=instance,
                     extra_payload=payload,
                 )
-
-            return
 
     except Exception:
         logger.error(

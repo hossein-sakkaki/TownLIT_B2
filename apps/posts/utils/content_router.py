@@ -13,11 +13,6 @@ CONTENT_ENDPOINTS = {
     "pray": "/posts/me/prayers",
     "journey": "/posts/me/journeys",
     "journeyentry": "/posts/me/journeys",
-    "lesson": "/posts/me/lessons",
-    "preach": "/posts/me/lessons",
-    "announcement": "/posts/me/lessons",
-    "worship": "/posts/me/worships",
-    "library": "/posts/me/library",
 }
 
 

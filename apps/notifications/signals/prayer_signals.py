@@ -6,24 +6,23 @@ from urllib.parse import quote
 from django.contrib.auth import get_user_model
 from django.db.models import Q
 
-from apps.posts.models.pray import Prayer, PrayerResponse, PrayerStatus
-from apps.profiles.models import Friendship, Member
-from apps.profiles.constants import ACCEPTED
-from apps.notifications.services.services import create_and_dispatch_notification
 from apps.core.visibility.constants import (
-    VISIBILITY_PRIVATE,
-    VISIBILITY_FRIENDS,
     VISIBILITY_COVENANT,
+    VISIBILITY_FRIENDS,
+    VISIBILITY_PRIVATE,
 )
+from apps.notifications.services.presentation import build_prayer_message
+from apps.notifications.services.services import create_and_dispatch_notification
+from apps.posts.models.pray import Prayer, PrayerResponse, PrayerStatus
+from apps.profiles.constants import ACCEPTED
+from apps.profiles.models import Friendship, Member
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
 
-# ---------------------------------------------------------
-# Owner resolver
-# ---------------------------------------------------------
 def _get_owner_user(prayer: Prayer):
+    """Resolve the CustomUser that owns a Prayer."""
     obj = getattr(prayer, "content_object", None)
     if not obj:
         return None
@@ -31,53 +30,61 @@ def _get_owner_user(prayer: Prayer):
     try:
         if isinstance(obj, Member):
             return obj.user
+
         if hasattr(obj, "user"):
             return obj.user
+
         if isinstance(obj, User):
             return obj
+
     except Exception:
-        logger.exception("[Notif][Prayer] owner resolve failed")
+        logger.exception(
+            "[Notif][Prayer] owner resolve failed"
+        )
 
     return None
 
 
-# ---------------------------------------------------------
-# Friends resolver (accepted only)
-# ---------------------------------------------------------
 def _get_accepted_friends(user):
-    qs = (
+    """Return active accepted friends."""
+    friendships = (
         Friendship.objects
         .filter(status=ACCEPTED, is_active=True)
         .filter(Q(from_user=user) | Q(to_user=user))
     )
 
     friend_ids = []
-    for f in qs:
-        friend_ids.append(f.to_user_id if f.from_user_id == user.id else f.from_user_id)
 
-    return User.objects.filter(id__in=friend_ids, is_active=True)
+    for friendship in friendships:
+        friend_ids.append(
+            friendship.to_user_id
+            if friendship.from_user_id == user.id
+            else friendship.from_user_id
+        )
+
+    return User.objects.filter(
+        id__in=friend_ids,
+        is_active=True,
+    )
 
 
-# ---------------------------------------------------------
-# Link builder (profile scope, Moment-compatible)
-# ---------------------------------------------------------
 def _build_prayer_link(prayer: Prayer) -> str:
-    """
-    Build PROFILE-scope deep-link like Moment.
-    """
+    """Build a profile-scoped Prayer deep link."""
     owner_user = _get_owner_user(prayer)
     username = getattr(owner_user, "username", None) or "user"
 
-    # KeyPath for profile smart viewer
-    k_param = "prayers.video" if getattr(prayer, "video", None) else "prayers.image"
+    k_param = (
+        "prayers.video"
+        if getattr(prayer, "video", None)
+        else "prayers.image"
+    )
 
     entry_path = "/profiles/members/profile"
     e_param = quote(entry_path, safe="")
-
     u = quote(username, safe="")
-    base_path = f"/lit/{u}/content/{u}"
-
     focus_param = quote(f"prayer:{prayer.slug}", safe="")
+
+    base_path = f"/lit/{u}/content/{u}"
 
     query_parts = [
         "type=media",
@@ -93,9 +100,6 @@ def _build_prayer_link(prayer: Prayer) -> str:
     return f"{base_path}?{'&'.join(query_parts)}"
 
 
-# ---------------------------------------------------------
-# Type + message
-# ---------------------------------------------------------
 def _classify_kind(prayer: Prayer) -> str:
     return "video" if getattr(prayer, "video", None) else "image"
 
@@ -105,37 +109,42 @@ def _pick_new_prayer_type(kind: str) -> str:
 
 
 def _build_new_prayer_message(author, kind: str) -> str:
-    username = getattr(author, "username", "Someone")
-    # Keep same text for both kinds (simple + consistent)
-    return f"{username} shared a prayer request — join in prayer 🤍"
+    event = "new_video" if kind == "video" else "new_image"
+    return build_prayer_message(author, event)
 
 
-def _build_prayer_result_message(author, result_status: str) -> tuple[str, str]:
-    username = getattr(author, "username", "Someone")
-
+def _build_prayer_result_message(
+    author,
+    result_status: str,
+) -> tuple[str, str]:
     if result_status == PrayerStatus.ANSWERED:
-        return ("prayer_result_answered", f"{username} posted an update — praise report 🙏✨")
+        return (
+            "prayer_result_answered",
+            build_prayer_message(author, "answered"),
+        )
 
-    return ("prayer_result_not_answered", f"{username} posted an update — please continue in support 🤍")
+    return (
+        "prayer_result_not_answered",
+        build_prayer_message(author, "follow_up"),
+    )
 
 
-# ---------------------------------------------------------
-# Public entry: Prayer available
-# ---------------------------------------------------------
 def notify_prayer_ready(prayer: Prayer) -> None:
     """
     Send notifications when a Prayer is fully available.
+
     Called by Prayer.on_available().
     """
-    # Domain guard
     if not prayer or not prayer.is_available():
         return
 
-    # Moderation guards
-    if not getattr(prayer, "is_active", True) or getattr(prayer, "is_hidden", False) or getattr(prayer, "is_suspended", False):
+    if (
+        not getattr(prayer, "is_active", True)
+        or getattr(prayer, "is_hidden", False)
+        or getattr(prayer, "is_suspended", False)
+    ):
         return
 
-    # Private never notify
     if getattr(prayer, "visibility", None) == VISIBILITY_PRIVATE:
         return
 
@@ -143,8 +152,12 @@ def notify_prayer_ready(prayer: Prayer) -> None:
     if not owner_user:
         return
 
-    # Recipients (friends only for now)
-    if getattr(prayer, "visibility", None) in (VISIBILITY_FRIENDS, VISIBILITY_COVENANT):
+    # Friends are currently the notification audience for all supported
+    # non-private Prayer visibility modes.
+    if getattr(prayer, "visibility", None) in (
+        VISIBILITY_FRIENDS,
+        VISIBILITY_COVENANT,
+    ):
         recipients = _get_accepted_friends(owner_user)
     else:
         recipients = _get_accepted_friends(owner_user)
@@ -176,23 +189,26 @@ def notify_prayer_ready(prayer: Prayer) -> None:
         )
 
 
-# ---------------------------------------------------------
-# Public entry: PrayerResponse available
-# ---------------------------------------------------------
-def notify_prayer_result_ready(prayer: Prayer, response: PrayerResponse) -> None:
+def notify_prayer_result_ready(
+    prayer: Prayer,
+    response: PrayerResponse,
+) -> None:
     """
     Send notifications when a PrayerResponse is fully available.
+
     Called by PrayerResponse.on_available().
     """
     if not prayer or not response:
         return
 
-    # Domain guard
     if not response.is_available():
         return
 
-    # Parent guards
-    if not getattr(prayer, "is_active", True) or getattr(prayer, "is_hidden", False) or getattr(prayer, "is_suspended", False):
+    if (
+        not getattr(prayer, "is_active", True)
+        or getattr(prayer, "is_hidden", False)
+        or getattr(prayer, "is_suspended", False)
+    ):
         return
 
     if getattr(prayer, "visibility", None) == VISIBILITY_PRIVATE:
@@ -206,7 +222,11 @@ def notify_prayer_result_ready(prayer: Prayer, response: PrayerResponse) -> None
     if not recipients.exists():
         return
 
-    notif_type, message = _build_prayer_result_message(owner_user, getattr(response, "result_status", ""))
+    notif_type, message = _build_prayer_result_message(
+        owner_user,
+        getattr(response, "result_status", ""),
+    )
+
     link = _build_prayer_link(prayer)
 
     for recipient in recipients:

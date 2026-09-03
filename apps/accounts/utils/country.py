@@ -1,6 +1,6 @@
 # apps/accounts/utils/country.py
 
-from apps.profilesOrg.constants import COUNTRY_CHOICES
+from common.reference_data.countries import COUNTRY_CHOICES
 
 
 COUNTRY_CODE_SET = {code.upper() for code, _ in COUNTRY_CHOICES}

@@ -15,7 +15,7 @@ from apps.accounts.services.age_policy import validate_standard_account_birthday
 from ..mixins import AvatarURLMixin
 from ..models import CustomLabel, LITShieldGrant
 from django.core.exceptions import ValidationError as DjangoValidationError
-from apps.profilesOrg.constants import LANGUAGE_CHOICES
+from common.reference_data.languages import LANGUAGE_CHOICES
 
 from apps.accounts.models.username_reservation import UsernameReservation
 from validators.usernameValidators.username_validator import validate_username_format

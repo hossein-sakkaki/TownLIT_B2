@@ -3,7 +3,7 @@
 from django.db.models import Q
 from django.contrib.contenttypes.models import ContentType
 
-from apps.core.visibility.constants import (
+from apps.core.visibility.constants import ( 
     VISIBILITY_GLOBAL,
     VISIBILITY_FRIENDS,
     VISIBILITY_COVENANT,

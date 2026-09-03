@@ -9,6 +9,7 @@ from apps.notifications.services.services import (
     create_and_dispatch_notification,
 )
 from apps.profiles.models import Friendship
+from apps.notifications.services.presentation import build_friendship_message
 
 logger = logging.getLogger(__name__)
 
@@ -76,9 +77,9 @@ def friendship_notifications(
                 recipient=to_user,
                 actor=from_user,
                 notif_type="friend_request_received",
-                message=(
-                    f"{from_user.username} has reached out to walk "
-                    "this journey together with you on TownLIT ✨"
+                message=build_friendship_message(
+                    "friend_request_received",
+                    from_user,
                 ),
                 target_obj=instance,
                 action_obj=instance,
@@ -101,9 +102,9 @@ def friendship_notifications(
                 recipient=from_user,
                 actor=to_user,
                 notif_type="friend_request_accepted",
-                message=(
-                    f"{to_user.username} accepted your connection "
-                    "request — welcome to a new shared journey 🤍"
+                message=build_friendship_message(
+                    "friend_request_accepted",
+                    to_user,
                 ),
                 target_obj=instance,
                 action_obj=instance,
@@ -126,9 +127,9 @@ def friendship_notifications(
                 recipient=from_user,
                 actor=to_user,
                 notif_type="friend_request_declined",
-                message=(
-                    f"{to_user.username} wasn’t able to accept your "
-                    "connection request right now."
+                message=build_friendship_message(
+                    "friend_request_declined",
+                    to_user,
                 ),
                 target_obj=instance,
                 action_obj=instance,
@@ -151,9 +152,9 @@ def friendship_notifications(
                 recipient=to_user,
                 actor=from_user,
                 notif_type="friend_request_cancelled",
-                message=(
-                    f"{from_user.username} decided not to continue "
-                    "the connection request."
+                message=build_friendship_message(
+                    "friend_request_cancelled",
+                    from_user,
                 ),
                 target_obj=instance,
                 action_obj=instance,
@@ -175,10 +176,9 @@ def friendship_notifications(
                 recipient=to_user,
                 actor=from_user,
                 notif_type="friendship_deleted",
-                message=(
-                    f"Paths sometimes change between you and "
-                    f"{from_user.username}, but your journey continues — "
-                    "may new connections bring light and encouragement 🤍"
+                message=build_friendship_message(
+                    "friendship_deleted",
+                    from_user,
                 ),
                 target_obj=instance,
                 action_obj=instance,

@@ -12,7 +12,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
-from apps.profilesOrg.constants import LANGUAGE_CHOICES
+from common.reference_data.languages import LANGUAGE_CHOICES
 from apps.translations.services.supported_languages import (
     get_supported_languages,
 )

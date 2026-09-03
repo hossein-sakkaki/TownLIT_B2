@@ -1,4 +1,5 @@
 # apps/accounts/models/user.py
+
 from datetime import timedelta
 
 import bcrypt
@@ -13,7 +14,8 @@ from apps.accounts.utils.username import generate_unique_username_from_email
 from apps.accounts.utils.name_normalizer import normalize_person_name
 
 from apps.accounts.constants.gender import GENDER_CHOICES
-from apps.profilesOrg.constants import LANGUAGE_CHOICES, ENGLISH, COUNTRY_CHOICES
+from common.reference_data.countries import COUNTRY_CHOICES
+from common.reference_data.languages import LANGUAGE_CHOICES, ENGLISH
 
 from validators.user_validators import validate_phone_number
 from validators.mediaValidators.image_validators import validate_image_file, validate_image_size
@@ -238,12 +240,17 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     )
 
     image_name = models.ImageField(
-        upload_to=IMAGE.dir_upload,
+        upload_to=IMAGE,
         null=True,
         blank=True,
-        validators=[validate_image_file, validate_image_size, validate_no_executable_file],
+        validators=[
+            validate_image_file,
+            validate_image_size,
+            validate_no_executable_file,
+        ],
         verbose_name='Image',
     )
+
     avatar_version = models.PositiveIntegerField(default=1)
     user_active_code = models.CharField(max_length=200, null=True, blank=True)
     user_active_code_expiry = models.DateTimeField(null=True, blank=True)
@@ -320,7 +327,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
 
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = []
-    objects = CustomUserManager()
+    objects = CustomUserManager() 
 
     class Meta:
         verbose_name = "1. Custom User"

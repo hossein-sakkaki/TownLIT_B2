@@ -1,29 +1,26 @@
 # apps/notifications/signals/moment_signals.py
 
 import logging
-from django.db.models import Q
-from django.contrib.auth import get_user_model
 from urllib.parse import quote
+
+from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
-from apps.posts.models.moment import Moment
-from apps.profiles.models import Friendship, Member
-from apps.profiles.constants import ACCEPTED
+from apps.core.visibility.constants import VISIBILITY_PRIVATE
+from apps.notifications.services.presentation import build_moment_message
 from apps.notifications.services.services import create_and_dispatch_notification
-from apps.core.visibility.constants import (
-    VISIBILITY_PRIVATE,
-    VISIBILITY_FRIENDS,
-    VISIBILITY_COVENANT,
-)
+from apps.posts.models.moment import Moment
+from apps.profiles.constants import ACCEPTED
+from apps.profiles.models import Friendship, Member
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
-# ---------------------------------------------------------
-# Helper: get owner CustomUser from Moment.content_object
-# ---------------------------------------------------------
+
 def _get_owner_user(moment: Moment):
+    """Resolve the CustomUser that owns a Moment."""
     obj = moment.content_object
     if not obj:
         return None
@@ -38,21 +35,19 @@ def _get_owner_user(moment: Moment):
         if isinstance(obj, User):
             return obj
 
-    except Exception as e:
+    except Exception as error:
         logger.warning(
             "[Notif][Moment] Failed to resolve owner user for moment %s: %s",
             moment.id,
-            e,
+            error,
             exc_info=True,
         )
 
     return None
 
 
-# ---------------------------------------------------------
-# Helper: get accepted friends
-# ---------------------------------------------------------
 def _get_accepted_friends(user):
+    """Return active accepted friends."""
     friendships = (
         Friendship.objects
         .filter(status=ACCEPTED, is_active=True)
@@ -60,51 +55,31 @@ def _get_accepted_friends(user):
     )
 
     friend_ids = []
-    for f in friendships:
+
+    for friendship in friendships:
         friend_ids.append(
-            f.to_user_id if f.from_user_id == user.id else f.from_user_id
+            friendship.to_user_id
+            if friendship.from_user_id == user.id
+            else friendship.from_user_id
         )
 
-    return User.objects.filter(id__in=friend_ids, is_active=True)
+    return User.objects.filter(
+        id__in=friend_ids,
+        is_active=True,
+    )
 
 
-# ---------------------------------------------------------
-# Helper: determine moment kind
-# ---------------------------------------------------------
 def _classify_moment_kind(moment: Moment) -> str:
-    if moment.video:
-        return "video"
-    return "image"
+    return "video" if moment.video else "image"
+
 
 def _pick_notif_type(kind: str) -> str:
-    return (
-        "new_moment_video"
-        if kind == "video"
-        else "new_moment_image"
-    )
-
-def _build_message(author, kind: str) -> str:
-    username = getattr(author, "username", "Someone")
-
-    if kind == "video":
-        return (
-            f"{username} shared a moment — "
-            f"a glimpse of life, meaning, and presence in motion ✨"
-        )
-
-    return (
-        f"{username} shared a moment — "
-        f"a quiet glimpse of life worth pausing for ✨"
-    )
+    return "new_moment_video" if kind == "video" else "new_moment_image"
 
 
-# ---------------------------------------------------------
-# Helper: build frontend deep-link for Moment (visitor-safe)
-# ---------------------------------------------------------
 def _build_moment_link(moment: Moment) -> str:
     """
-    ✅ Always generate PROFILE-scope link (visitor-safe).
-    This works for both authenticated + anonymous, thanks to profileMediaSmart.ts.
+    Build a visitor-safe profile-scoped Moment deep link.
 
     Example:
       /lit/{username}/content/{username}?type=media
@@ -112,30 +87,21 @@ def _build_moment_link(moment: Moment) -> str:
         &s=profile
         &k=moments.video|moments.image
         &o=user
-        &focus=moment:moment-202601...
+        &focus=moment:...
         &a=auto
         &p=1
     """
-
     owner_user = _get_owner_user(moment)
     username = getattr(owner_user, "username", None) or "user"
 
-    # Kind-specific keyPath (used by profile viewer + smart resolver)
-    if moment.video:
-        k_param = "moments.video"
-    else:
-        k_param = "moments.image"
+    k_param = "moments.video" if moment.video else "moments.image"
 
-    # Entry path must match VisitorProfileViewSet.profile action
     entry_path = "/profiles/members/profile"
     e_param = quote(entry_path, safe="")
-
-    # Base path (profile scope uses username as the page slug)
     u = quote(username, safe="")
-    base_path = f"/lit/{u}/content/{u}"
-
-    # Focus token must match your profileMediaSmart parser
     focus_param = quote(f"moment:{moment.slug}", safe="")
+
+    base_path = f"/lit/{u}/content/{u}"
 
     query_parts = [
         "type=media",
@@ -144,17 +110,13 @@ def _build_moment_link(moment: Moment) -> str:
         f"k={k_param}",
         "o=user",
         f"focus={focus_param}",
-        "a=auto",  # aspect hint
-        "p=1",     # usePoster=true
+        "a=auto",
+        "p=1",
     ]
 
     return f"{base_path}?{'&'.join(query_parts)}"
 
 
-
-# ---------------------------------------------------------
-# Signal: on new moment
-# ---------------------------------------------------------
 def notify_moment_ready(moment: Moment):
     """
     Notify accepted friends exactly once when a Moment first becomes available.
@@ -179,10 +141,7 @@ def notify_moment_ready(moment: Moment):
         if not locked_moment:
             return
 
-        if (
-            locked_moment.notification_dispatched_at
-            is not None
-        ):
+        if locked_moment.notification_dispatched_at is not None:
             logger.info(
                 "[Notif][Moment] Publication already dispatched "
                 "moment=%s dispatched_at=%s",
@@ -193,8 +152,7 @@ def notify_moment_ready(moment: Moment):
 
         if not locked_moment.is_available():
             logger.info(
-                "[Notif][Moment] Moment is not available; skipped "
-                "moment=%s",
+                "[Notif][Moment] Moment is not available; skipped moment=%s",
                 locked_moment.pk,
             )
             return
@@ -211,24 +169,18 @@ def notify_moment_ready(moment: Moment):
             )
             return
 
-        if (
-            locked_moment.visibility
-            == VISIBILITY_PRIVATE
-        ):
+        if locked_moment.visibility == VISIBILITY_PRIVATE:
             logger.info(
                 "[Notif][Moment] Private Moment; skipped moment=%s",
                 locked_moment.pk,
             )
             return
 
-        owner_user = _get_owner_user(
-            locked_moment
-        )
+        owner_user = _get_owner_user(locked_moment)
 
         if not owner_user:
             logger.warning(
-                "[Notif][Moment] Owner could not be resolved "
-                "moment=%s",
+                "[Notif][Moment] Owner could not be resolved moment=%s",
                 locked_moment.pk,
             )
             return
@@ -241,22 +193,17 @@ def notify_moment_ready(moment: Moment):
                 pk=locked_moment.pk,
                 notification_dispatched_at__isnull=True,
             )
-            .update(
-                notification_dispatched_at=claimed_at,
-            )
+            .update(notification_dispatched_at=claimed_at)
         )
 
         if claimed != 1:
             logger.info(
-                "[Notif][Moment] Publication claim lost "
-                "moment=%s",
+                "[Notif][Moment] Publication claim lost moment=%s",
                 locked_moment.pk,
             )
             return
 
-        locked_moment.notification_dispatched_at = (
-            claimed_at
-        )
+        locked_moment.notification_dispatched_at = claimed_at
         claimed_moment = locked_moment
 
     recipients_qs = (
@@ -264,44 +211,29 @@ def notify_moment_ready(moment: Moment):
         .exclude(pk=owner_user.pk)
     )
 
-    kind = _classify_moment_kind(
-        claimed_moment
-    )
-    notif_type = _pick_notif_type(
-        kind
-    )
-    link = _build_moment_link(
-        claimed_moment
-    )
-    message = _build_message(
-        owner_user,
-        kind,
-    )
+    kind = _classify_moment_kind(claimed_moment)
+    notif_type = _pick_notif_type(kind)
+    link = _build_moment_link(claimed_moment)
+    message = build_moment_message(owner_user, kind)
 
     dispatched_count = 0
     failed_count = 0
 
-    for recipient in recipients_qs.iterator(
-        chunk_size=200
-    ):
+    for recipient in recipients_qs.iterator(chunk_size=200):
         try:
-            notification = (
-                create_and_dispatch_notification(
-                    recipient=recipient,
-                    actor=owner_user,
-                    notif_type=notif_type,
-                    message=message,
-                    target_obj=claimed_moment,
-                    action_obj=None,
-                    link=link,
-                    extra_payload={
-                        "moment_id": claimed_moment.id,
-                        "kind": kind,
-                        "publication_event": (
-                            "moment_available"
-                        ),
-                    },
-                )
+            notification = create_and_dispatch_notification(
+                recipient=recipient,
+                actor=owner_user,
+                notif_type=notif_type,
+                message=message,
+                target_obj=claimed_moment,
+                action_obj=None,
+                link=link,
+                extra_payload={
+                    "moment_id": claimed_moment.id,
+                    "kind": kind,
+                    "publication_event": "moment_available",
+                },
             )
 
             if notification is not None:
@@ -325,4 +257,3 @@ def notify_moment_ready(moment: Moment):
         dispatched_count,
         failed_count,
     )
-

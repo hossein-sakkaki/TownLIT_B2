@@ -38,6 +38,11 @@ from apps.notifications.tasks import send_email_notification  # Celery async tas
 from apps.posts.services.journeys.links import (
     build_journey_entry_link,
 )
+from apps.notifications.services.presentation import (
+    email_subject_for_notification,
+    push_body_for_notification,
+    push_title_for_notification,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -585,92 +590,6 @@ def _smart_ui_link(
         extra_params=extra_link_params,
     )
 
-def _email_subject_for_notification(
-    notification_type: str,
-) -> str:
-    """
-    Pick a clear email subject for important notification types.
-    """
-    if notification_type == "testimony_video_rejected":
-        return "Your TownLIT video testimony was not accepted"
-
-    if notification_type == "testimony_video_needs_review":
-        return "Your TownLIT video testimony is being reviewed"
-
-    if notification_type == "testimony_video_approved":
-        return "Your TownLIT video testimony was approved"
-
-    return "New Notification from TownLIT"
-
-def _push_title_for_notification(
-    notification_type: str,
-) -> str:
-    """
-    Pick a clear push title.
-    """
-    if notification_type == "testimony_video_rejected":
-        return "Video testimony not accepted"
-
-    if notification_type == "testimony_video_needs_review":
-        return "Video testimony under review"
-
-    if notification_type == "testimony_video_approved":
-        return "Video testimony approved"
-
-    if notification_type == "new_message_direct":
-        return "New message"
-
-    if notification_type == "new_message_group":
-        return "New group message"
-
-    if notification_type == "messenger_group_created":
-        return "New group"
-
-    if notification_type == "messenger_message_pinned":
-        return "Pinned message"
-
-    if notification_type == "new_journey":
-        return "New Journey"
-
-    if notification_type in {
-        "messenger_reaction_direct",
-        "messenger_reaction_group",
-    }:
-        return "New reaction"
-
-    return "TownLIT Notification"
-
-def _push_body_for_notification(
-    notification_type: str,
-    message: str,
-) -> str:
-    """
-    Push body should be shorter than the full in-app/email message.
-    """
-    if notification_type == "testimony_video_rejected":
-        return (
-            "Your video did not appear to be a personal testimony. "
-            "You can upload a new testimony from your profile."
-        )
-
-    if notification_type == "testimony_video_needs_review":
-        return (
-            "Your video testimony was uploaded and is waiting for review "
-            "before it appears in Square or Stream."
-        )
-
-    if notification_type == "testimony_video_approved":
-        return (
-            "Your video testimony was approved and may now appear in "
-            "Square or Stream."
-        )
-
-    clean = (message or "").strip()
-    if len(clean) > 180:
-        return clean[:177] + "..."
-
-    return clean
-
 
 def _push_sound_for_notification(
     notification_type: str,
@@ -1006,8 +925,11 @@ def dispatch_push_only_notification(
 
     safe_data = _safe_push_data(base_data)
 
-    push_title = _push_title_for_notification(notif_type)
-    push_body = _push_body_for_notification(notif_type, message)
+    push_title = push_title_for_notification(
+        notif_type,
+        extra_payload=extra_payload,
+    )
+    push_body = push_body_for_notification(notif_type, message)
     push_sound = _push_sound_for_notification(notif_type)
     badge_count = _badge_count_for_user(recipient)
 
@@ -1335,23 +1257,81 @@ def _deliver_notification(
             layer = get_channel_layer()
 
             if not layer:
-                logger.warning("[Notif] No channel_layer; skipping WS")
+                logger.warning(
+                    "[Notif] No channel_layer; skipping WS"
+                )
+
             else:
+                unread_count = (
+                    _general_unread_notification_count_for_user(
+                        notif.user
+                    )
+                )
+
                 payload = {
                     "id": notif.id,
                     "type": notif.notification_type,
+                    "notification_type": notif.notification_type,
                     "message": notif.message,
                     "link": notif.link,
                     "created_at": notif.created_at.isoformat(),
                     "is_read": notif.is_read,
+                    "read_at": (
+                        notif.read_at.isoformat()
+                        if notif.read_at
+                        else None
+                    ),
+                    "unread": unread_count,
+                    "target_content_type": (
+                        notif.target_content_type_id
+                    ),
+                    "target_object_id": (
+                        notif.target_object_id
+                    ),
+                    "action_content_type": (
+                        notif.action_content_type_id
+                    ),
+                    "action_object_id": (
+                        notif.action_object_id
+                    ),
                 }
+
+                actor = getattr(
+                    notif,
+                    "actor",
+                    None,
+                )
+
+                if actor:
+                    payload["actor"] = {
+                        "id": actor.id,
+                        "username": getattr(
+                            actor,
+                            "username",
+                            None,
+                        ),
+                        "name": getattr(
+                            actor,
+                            "name",
+                            None,
+                        ),
+                        "family": getattr(
+                            actor,
+                            "family",
+                            None,
+                        ),
+                    }
 
                 if extra_payload:
                     payload["extra"] = extra_payload
 
-                group_name = f"notif_user_{notif.user_id}"
+                group_name = (
+                    f"notif_user_{notif.user_id}"
+                )
 
-                async_to_sync(layer.group_send)(
+                async_to_sync(
+                    layer.group_send
+                )(
                     group_name,
                     {
                         "type": "dispatch_event",
@@ -1361,11 +1341,21 @@ def _deliver_notification(
                     },
                 )
 
-    except Exception as e:
+                logger.debug(
+                    "[Notif][WS] delivered "
+                    "notif=%s user=%s unread=%s",
+                    notif.id,
+                    notif.user_id,
+                    unread_count,
+                )
+
+    except Exception as error:
         logger.warning(
-            "[Notif] WS delivery failed for user %s: %s",
+            "[Notif] WS delivery failed "
+            "user=%s notif=%s error=%s",
             notif.user_id,
-            e,
+            notif.id,
+            error,
             exc_info=True,
         )
 
@@ -1397,8 +1387,11 @@ def _deliver_notification(
 
             safe_data = _safe_push_data(base_data)
 
-            push_title = _push_title_for_notification(notif.notification_type)
-            push_body = _push_body_for_notification(
+            push_title = push_title_for_notification(
+                notif.notification_type,
+                extra_payload=extra_payload,
+            )
+            push_body = push_body_for_notification(
                 notif.notification_type,
                 notif.message,
             )
@@ -1443,7 +1436,7 @@ def _deliver_notification(
             if not email:
                 return
 
-            subject = _email_subject_for_notification(notif.notification_type)
+            subject = email_subject_for_notification(notif.notification_type)
             body_text = f"{notif.message}"
 
             email_link = None

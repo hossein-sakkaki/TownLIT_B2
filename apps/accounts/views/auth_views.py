@@ -24,7 +24,7 @@ from apps.accounts.constants.user_labels import (
 from apps.accounts.models import user
 from apps.core.crypto import rsa as crsa
 
-from rest_framework import viewsets
+from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
 from rest_framework import status
 from rest_framework.response import Response
@@ -78,6 +78,7 @@ from apps.accounts.account_deletion.service import (
 
 # Device serializers
 from apps.accounts.serializers.device_serializers import (
+    DevicePushTokenSerializer,
     UserDeviceKeySerializer,
 )
 from apps.accounts.services.device_push_ownership import (
@@ -104,6 +105,11 @@ from apps.accounts.utils.country import normalize_profile_country
 from apps.accounts.services.conversation_encryption_reset import (
     ConversationEncryptionResetError,
     reset_conversation_encryption_identity,
+)
+from apps.accounts.constants.devices import (
+    DEVICE_PLATFORM_ANDROID,
+    MOBILE_DEVICE_PLATFORMS,
+    SUPPORTED_DEVICE_PLATFORMS,
 )
 
 CustomUser = get_user_model()
@@ -1384,6 +1390,24 @@ class AuthViewSet(viewsets.ViewSet):
                     status=status.HTTP_202_ACCEPTED,
                 )
 
+            user_data = CustomUserSerializer(
+                user,
+                context={"request": request},
+            ).data
+
+            return Response(
+                {
+                    "refresh": str(refresh),
+                    "access": str(access),
+                    "is_member": user.is_member,
+                    "two_factor_enabled": user.two_factor_enabled,
+                    "user": user_data,
+                    "user_id": user.id,
+                    "email": user.email,
+                },
+                status=status.HTTP_200_OK,
+            )
+
         if token_status == "expired":
             return Response({
                 "message": "Your OTP code has expired. Please request a new one."
@@ -2595,13 +2619,34 @@ class AuthViewSet(viewsets.ViewSet):
             request.headers.get("X-Device-ID")
         )
 
+        raw_platform = str(
+            request.data.get("platform")
+            or ""
+        ).strip()
+
+        platform = normalize_platform(
+            raw_platform
+        )
+
+        if (
+            raw_platform
+            and platform not in SUPPORTED_DEVICE_PLATFORMS
+        ):
+            return Response(
+                {
+                    "error": "Platform must be web, ios, or android.",
+                    "code": "INVALID_DEVICE_PLATFORM",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         push_token = normalize_push_token(
             request.data.get("push_token")
         )
 
-        platform = normalize_platform(
-            request.data.get("platform")
-        )
+        # Android Push ownership is synced only after PoP verification.
+        if platform == DEVICE_PLATFORM_ANDROID:
+            push_token = None
 
         public_key = request.data.get("public_key")
         device_name = request.data.get("device_name")
@@ -2981,23 +3026,33 @@ class AuthViewSet(viewsets.ViewSet):
                         ]
                     )
 
-            # Transfer push ownership.
-            claim_result = claim_device_push_ownership(
-                device_pk=device_obj.pk,
-            )
-
-            device_obj = claim_result.device
-            ownership_released_count = (
-                claim_result.released_count
-            )
-
-            # Issue PoP when required.
+            # New or rotated devices must prove key possession.
             issue_pop = (
                 created
                 or rotated
                 or not device_obj.is_verified
             )
 
+            is_android_device = (
+                normalize_platform(device_obj.platform)
+                == DEVICE_PLATFORM_ANDROID
+            )
+
+            # Android installation ownership moves only after PoP succeeds.
+            if is_android_device and issue_pop:
+                ownership_released_count = 0
+
+            else:
+                claim_result = claim_device_push_ownership(
+                    device_pk=device_obj.pk,
+                )
+
+                device_obj = claim_result.device
+                ownership_released_count = (
+                    claim_result.released_count
+                )
+
+            # Issue PoP when required.
             if issue_pop:
                 nonce = crsa.randbytes(32)
 
@@ -3168,51 +3223,388 @@ class AuthViewSet(viewsets.ViewSet):
         }, status=status.HTTP_200_OK)
 
     # Device Pop Verify --------------------------------------------------------------------------------
-    @action(detail=False, methods=["post"], url_path="device-pop-verify", permission_classes=[IsAuthenticated])
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="device-pop-verify",
+        permission_classes=[IsAuthenticated],
+    )
     def device_pop_verify(self, request):
         user = request.user
-        device_id = (request.data.get("device_id") or "").strip().lower()
-        nonce_b64 = request.data.get("nonce_b64")
-        header_device = (request.headers.get("X-Device-ID") or "").strip().lower()
 
-        if header_device and header_device != device_id:
-            return Response({"error": "X-Device-ID mismatch."}, status=status.HTTP_400_BAD_REQUEST)
+        device_id = normalize_device_id(
+            request.data.get("device_id")
+        )
+
+        header_device_id = normalize_device_id(
+            request.headers.get("X-Device-ID")
+        )
+
+        nonce_b64 = request.data.get(
+            "nonce_b64"
+        )
+
+        if (
+            header_device_id
+            and header_device_id != device_id
+        ):
+            return Response(
+                {
+                    "error": "X-Device-ID mismatch.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not device_id:
+            return Response(
+                {
+                    "error": "device_id is required.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         if not nonce_b64:
-            return Response({"error": "nonce_b64 required."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {
+                    "error": "nonce_b64 required.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        dev = UserDeviceKey.objects.filter(user=user, device_id=device_id).first()
-        if not dev:
-            return Response({"error": "Unknown device_id for this user."}, status=status.HTTP_404_NOT_FOUND)
+        ownership_released_count = 0
 
-        if dev.pop_attempts >= 5:
-            return Response({"error": "Too many attempts. Request a new challenge."}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+        with transaction.atomic():
+            dev = (
+                UserDeviceKey.objects
+                .select_for_update()
+                .filter(
+                    user=user,
+                    device_id=device_id,
+                )
+                .first()
+            )
 
-        if not dev.pop_challenge_hash or not dev.pop_challenge_expiry or timezone.now() > dev.pop_challenge_expiry:
-            return Response({"error": "Challenge expired. Request a new challenge."}, status=status.HTTP_400_BAD_REQUEST)
+            if not dev:
+                return Response(
+                    {
+                        "error": "Unknown device_id for this user.",
+                    },
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            if dev.is_verified:
+                return Response(
+                    {
+                        "ok": True,
+                        "verified": True,
+                        "push_ownership_released": 0,
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+            if dev.pop_attempts >= 5:
+                return Response(
+                    {
+                        "error": (
+                            "Too many attempts. Request a new challenge."
+                        ),
+                    },
+                    status=status.HTTP_429_TOO_MANY_REQUESTS,
+                )
+
+            if (
+                not dev.pop_challenge_hash
+                or not dev.pop_challenge_expiry
+                or timezone.now() > dev.pop_challenge_expiry
+            ):
+                return Response(
+                    {
+                        "error": (
+                            "Challenge expired. Request a new challenge."
+                        ),
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            try:
+                nonce = crsa.b64d(
+                    nonce_b64
+                )
+
+            except Exception:
+                dev.pop_attempts += 1
+                dev.save(
+                    update_fields=[
+                        "pop_attempts",
+                    ]
+                )
+
+                return Response(
+                    {
+                        "error": "Invalid nonce format.",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            calculated_hash = crsa.sha256_bytes(
+                nonce
+            )
+
+            stored_hash = bytes(
+                dev.pop_challenge_hash
+            )
+
+            if not secrets.compare_digest(
+                calculated_hash,
+                stored_hash,
+            ):
+                dev.pop_attempts += 1
+                dev.save(
+                    update_fields=[
+                        "pop_attempts",
+                    ]
+                )
+
+                return Response(
+                    {
+                        "error": "Invalid nonce.",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            dev.is_verified = True
+            dev.verified_at = timezone.now()
+            dev.pop_challenge_hash = None
+            dev.pop_challenge_expiry = None
+            dev.pop_attempts = 0
+
+            dev.save(
+                update_fields=[
+                    "is_verified",
+                    "verified_at",
+                    "pop_challenge_hash",
+                    "pop_challenge_expiry",
+                    "pop_attempts",
+                    "last_used",
+                ]
+            )
+
+            # Android installation ownership moves only after successful PoP.
+            if (
+                normalize_platform(dev.platform)
+                == DEVICE_PLATFORM_ANDROID
+            ):
+                claim_result = (
+                    claim_device_push_ownership(
+                        device_pk=dev.pk,
+                    )
+                )
+
+                dev = claim_result.device
+                ownership_released_count = (
+                    claim_result.released_count
+                )
+
+        return Response(
+            {
+                "ok": True,
+                "verified": True,
+                "push_ownership_released": (
+                    ownership_released_count
+                ),
+            },
+            status=status.HTTP_200_OK,
+        )
+        
+    # Sync Push Token --------------------------------------------------------------------------------
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="sync-push-token",
+        permission_classes=[IsAuthenticated],
+    )
+    def sync_push_token(self, request):
+        """
+        Register or rotate the Push token for an existing canonical device.
+
+        Mobile devices must complete PoP verification before Push ownership
+        can be claimed.
+        """
+        user = request.user
+
+        body_device_id = normalize_device_id(
+            request.data.get("device_id")
+        )
+
+        header_device_id = normalize_device_id(
+            request.headers.get("X-Device-ID")
+        )
+
+        if (
+            body_device_id
+            and header_device_id
+            and body_device_id != header_device_id
+        ):
+            return Response(
+                {
+                    "error": "X-Device-ID mismatch.",
+                    "code": "DEVICE_ID_MISMATCH",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        device_id = (
+            body_device_id
+            or header_device_id
+        )
+
+        if not device_id:
+            return Response(
+                {
+                    "error": "Device ID is required.",
+                    "code": "DEVICE_ID_REQUIRED",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        body_install_id = normalize_install_id(
+            request.data.get("install_id")
+        )
+
+        header_install_id = normalize_install_id(
+            request.headers.get("X-Install-ID")
+        )
+
+        if (
+            body_install_id
+            and header_install_id
+            and body_install_id != header_install_id
+        ):
+            return Response(
+                {
+                    "error": "X-Install-ID mismatch.",
+                    "code": "INSTALL_ID_MISMATCH",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        install_id = (
+            body_install_id
+            or header_install_id
+        )
+
+        existing_device = (
+            UserDeviceKey.objects
+            .filter(
+                user=user,
+                device_id=device_id,
+            )
+            .only(
+                "id",
+                "device_id",
+                "platform",
+                "is_verified",
+            )
+            .first()
+        )
+
+        if existing_device is None:
+            return Response(
+                {
+                    "error": (
+                        "Register the device key before syncing "
+                        "its push token."
+                    ),
+                    "code": "DEVICE_NOT_REGISTERED",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        raw_platform = str(
+            request.data.get("platform")
+            or ""
+        ).strip()
+
+        requested_platform = normalize_platform(
+            raw_platform
+        )
+
+        if (
+            raw_platform
+            and requested_platform not in SUPPORTED_DEVICE_PLATFORMS
+        ):
+            return Response(
+                {
+                    "error": "Platform must be web, ios, or android.",
+                    "code": "INVALID_DEVICE_PLATFORM",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        existing_platform = normalize_platform(
+            existing_device.platform
+        )
+
+        effective_platform = (
+            requested_platform
+            or existing_platform
+            or "web"
+        )
+
+        if (
+            effective_platform in MOBILE_DEVICE_PLATFORMS
+            and not existing_device.is_verified
+        ):
+            return Response(
+                {
+                    "error": (
+                        "Complete device verification before "
+                        "registering a mobile Push token."
+                    ),
+                    "code": "DEVICE_VERIFICATION_REQUIRED",
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        payload = request.data.copy()
+        payload["device_id"] = device_id
+        payload["platform"] = effective_platform
+
+        if install_id:
+            payload["install_id"] = install_id
+
+        serializer = DevicePushTokenSerializer(
+            data=payload
+        )
+
+        if not serializer.is_valid():
+            return Response(
+                serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
-            nonce = crsa.b64d(nonce_b64)
-        except Exception:
-            dev.pop_attempts += 1
-            dev.save(update_fields=["pop_attempts"])
-            return Response({"error": "Invalid nonce format."}, status=status.HTTP_400_BAD_REQUEST)
+            device = serializer.save(
+                user=user
+            )
 
-        calc = crsa.sha256_bytes(nonce)
-        if not secrets.compare_digest(calc, dev.pop_challenge_hash):
-            dev.pop_attempts += 1
-            dev.save(update_fields=["pop_attempts"])
-            return Response({"error": "Invalid nonce."}, status=status.HTTP_400_BAD_REQUEST)
+        except serializers.ValidationError as error:
+            return Response(
+                error.detail,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        # موفق
-        dev.is_verified = True
-        dev.verified_at = timezone.now()
-        dev.pop_challenge_hash = None
-        dev.pop_challenge_expiry = None
-        dev.pop_attempts = 0
-        dev.save(update_fields=["is_verified", "verified_at", "pop_challenge_hash", "pop_challenge_expiry", "pop_attempts"])
-
-        return Response({"ok": True, "verified": True}, status=status.HTTP_200_OK)
-
+        return Response(
+            {
+                "message": "Push token synchronized.",
+                "device_id": device.device_id,
+                "platform": device.platform,
+                "verified": bool(device.is_verified),
+                "push_registered": bool(device.push_token),
+            },
+            status=status.HTTP_200_OK,
+        )
+    
     # -------------------------------------------------------------------------------------------
     @action(detail=False, methods=["post"], url_path="key-backup-save", permission_classes=[IsAuthenticated])
     def key_backup_save(self, request):

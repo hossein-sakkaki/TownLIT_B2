@@ -1,6 +1,6 @@
 # apps/core/visibility/policy.py
 
-from .constants import (
+from .constants import ( 
     VISIBILITY_GLOBAL,
     VISIBILITY_FRIENDS,
     VISIBILITY_COVENANT,
