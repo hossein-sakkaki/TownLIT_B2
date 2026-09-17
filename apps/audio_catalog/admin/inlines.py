@@ -122,7 +122,7 @@ class MusicTrackVariantInline(admin.StackedInline):
             {
                 "classes": ("collapse",),
                 "fields": (
-                    ("is_downloadable", "sort_order"),
+                    ("is_downloadable", "is_offline_eligible", "sort_order"),
                     ("duration_ms", "source_start_ms", "source_end_ms"),
                     ("mime_type", "codec", "container"),
                     ("bitrate_kbps", "sample_rate_hz", "channels"),

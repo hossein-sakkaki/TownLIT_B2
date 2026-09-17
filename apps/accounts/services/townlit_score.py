@@ -10,6 +10,12 @@ from apps.posts.models.testimony import Testimony
 from apps.profiles.constants.friendship import ACCEPTED
 from apps.profiles.models import Friendship, Member, MemberSpiritualGifts
 from apps.sanctuary.models import SanctuaryRequest
+from apps.organizations.constants import (
+    CURRENT_MEMBERSHIP_STATUSES,
+)
+from apps.organizations.models import (
+    OrganizationMembership,
+)
 
 User = get_user_model()
 
@@ -59,8 +65,17 @@ def _count_member_friendships(member: Member) -> int:
     ).count()
 
 
-def _count_member_organization_memberships(member: Member) -> int:
-    return member.organization_memberships.count()
+def _count_member_organization_memberships(
+    member: Member,
+) -> int:
+    return (
+        OrganizationMembership.objects
+        .filter(
+            member=member,
+            status__in=CURRENT_MEMBERSHIP_STATUSES,
+        )
+        .count()
+    )
 
 
 def _count_member_service_types(member: Member) -> int:

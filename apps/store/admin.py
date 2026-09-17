@@ -23,7 +23,7 @@ class ServiceCategoryAdmin(admin.ModelAdmin):
 class StoreAdmin(admin.ModelAdmin, MarkActiveMixin):
     list_display = ['custom_service_name', 'organization', 'is_verified', 'is_active', 'register_date', 'revenue']
     list_filter = ['is_active', 'is_verified', 'is_restricted', 'currency_preference', 'register_date']
-    search_fields = ['custom_service_name', 'organization__org_name', 'store_phone_number', 'license_number']
+    search_fields = ['custom_service_name', 'organization__name', 'store_phone_number', 'license_number']
     filter_horizontal = ['service_categories', 'products']
     readonly_fields = ['register_date']
     actions = ['make_inactive', 'make_active']

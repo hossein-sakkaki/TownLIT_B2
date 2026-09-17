@@ -1,7 +1,10 @@
 # apps/sanctuary/services/ownership.py
 
 from typing import Callable, Dict, Iterable, Set
-from django.contrib.contenttypes.models import ContentType
+from apps.organizations.selectors.ownership import (
+    effective_organization_manager_user_ids,
+)
+
 
 # Resolver signature: given obj -> set of user_ids who are considered "owners/admins"
 OwnerResolver = Callable[[object], Set[int]]
@@ -22,7 +25,7 @@ def _key_for_obj(obj) -> str:
 def register_owner_resolver(app_label: str, model: str, resolver: OwnerResolver):
     """
     Register a custom owner resolver for a model.
-    Example key: "posts.moment" or "profilesorg.organization"
+    Example key: "posts.moment" or "organizations.organization"
     """
     _OWNER_RESOLVERS[f"{app_label}.{model}"] = resolver
 
@@ -56,7 +59,11 @@ def get_owner_user_ids(target_obj) -> Set[int]:
             ids.add(uid)
 
     # Common many-owner relations (organizations, teams)
-    for attr in ("owners", "org_owners", "admins", "moderators"):
+    for attr in (
+        "owners",
+        "admins",
+        "moderators",
+    ):
         rel = getattr(target_obj, attr, None)
         if rel is None:
             continue
@@ -92,30 +99,12 @@ def get_owner_user_ids(target_obj) -> Set[int]:
 
 def register_default_resolvers():
     def org_resolver(org) -> Set[int]:
-        user_ids: Set[int] = set()
-
-        try:
-            user_ids.update(
-                org.org_owners.filter(is_active=True)
-                .values_list("user_id", flat=True)
-            )
-        except Exception:
-            pass
-
-        try:
-            user_ids.update(
-                org.admin_relationships.filter(
-                    is_approved=True,
-                    member__is_active=True,
-                ).values_list("member__user_id", flat=True)
-            )
-        except Exception:
-            pass
-
-        return {int(user_id) for user_id in user_ids if user_id}
+        return effective_organization_manager_user_ids(
+            organization=org,
+        )
 
     register_owner_resolver(
-        "profilesOrg",
+        "organizations",
         "organization",
         org_resolver,
     )

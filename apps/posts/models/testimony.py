@@ -1,4 +1,8 @@
 # apps/posts/models/testimony.py
+# TownLIT-Backend
+#
+# Created by Hossein Sakkaki on 2025-01-01.
+# Last Update by Hossein Sakkaki on 2026-09-14.
 
 from django.db import models
 from django.utils import timezone
@@ -107,7 +111,7 @@ class Testimony(
     )
 
     audio = models.FileField(
-        upload_to=AUDIO.dir_upload,
+        upload_to=AUDIO,
         null=True,
         blank=True,
         validators=[validate_audio_file, validate_no_executable_file],
@@ -115,7 +119,7 @@ class Testimony(
     )
 
     video = models.FileField(
-        upload_to=VIDEO.dir_upload,
+        upload_to=VIDEO,
         null=True,
         blank=True,
         validators=[validate_testimony_video_file, validate_no_executable_file],
@@ -123,7 +127,7 @@ class Testimony(
     )
 
     thumbnail = models.ImageField(
-        upload_to=THUMBNAIL.dir_upload,
+        upload_to=THUMBNAIL,
         null=True,
         blank=True,
         validators=[
@@ -135,7 +139,7 @@ class Testimony(
     )
 
     audio_artwork = models.ImageField(
-        upload_to=AUDIO_ARTWORK.dir_upload,
+        upload_to=AUDIO_ARTWORK,
         null=True,
         blank=True,
         validators=[
@@ -150,7 +154,7 @@ class Testimony(
     # Tags
     # -------------------------------------------------
     org_tags = models.ManyToManyField(
-        "profilesOrg.Organization",
+        "organizations.Organization",
         blank=True,
         related_name="tagged_in_testimonies",
         db_index=True,

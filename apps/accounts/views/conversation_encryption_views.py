@@ -1,6 +1,6 @@
 #
 #  apps/accounts/views/conversation_encryption_views.py
-#  TownLIT
+#  TownLIT-Backend
 #
 #  Created by Hossein Sakkaki on 2026-07-28.
 #  Last Update by Hossein Sakkaki on 2026-07-28.

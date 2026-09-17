@@ -1,9 +1,9 @@
 #
 #  apps/accounts/account_deletion/exceptions.py
-#  TownLIT
+#  TownLIT-Backend
 #
 #  Created by Hossein Sakkaki on 2026-08-04.
-#  Last Update by Hossein Sakkaki on 2026-08-04.
+#  Last Update by Hossein Sakkaki on 2026-09-14.
 #
 
 
@@ -32,6 +32,12 @@ class AccountDeletionDeadlinePassed(
 
 
 class AccountDeletionConfigurationError(
+    AccountDeletionError
+):
+    pass
+
+
+class AccountDeletionBlocked(
     AccountDeletionError
 ):
     pass

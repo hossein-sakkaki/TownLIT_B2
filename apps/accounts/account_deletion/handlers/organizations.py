@@ -1,9 +1,9 @@
 #
-#  apps/accounts/account_deletion/handlers/organizations.py
-#  TownLIT
+# apps/accounts/account_deletion/handlers/organizations.py
+# TownLIT-Backend
 #
-#  Created by Hossein Sakkaki on 2026-08-04.
-#  Last Update by Hossein Sakkaki on 2026-08-04.
+# Created by Hossein Sakkaki on 2026-08-04.
+# Last Update by Hossein Sakkaki on 2026-09-14.
 #
 
 from apps.accounts.account_deletion.context import (
@@ -12,10 +12,8 @@ from apps.accounts.account_deletion.context import (
 from apps.accounts.account_deletion.registry import (
     account_deletion_registry,
 )
-from apps.profiles.models import Member
-from apps.profilesOrg.models import (
-    ChristianPublishingHouse,
-    Organization,
+from apps.organizations.services.account_deletion import (
+    ensure_user_can_be_permanently_deleted,
 )
 
 
@@ -27,33 +25,13 @@ def detach_organization_relations(
     context: AccountDeletionContext,
 ) -> None:
     """
-    Detach inactive organization relations before profile removal.
+    Protect Organization ownership governance before
+    permanent profile removal.
+
+    Non-owner Organization relations follow their model
+    deletion behavior during account/profile cleanup.
     """
-    ChristianPublishingHouse.objects.filter(
-        authors=context.user,
-    )
 
-    for publishing_house in (
-        ChristianPublishingHouse.objects
-        .filter(
-            authors=context.user,
-        )
-        .iterator()
-    ):
-        publishing_house.authors.remove(
-            context.user
-        )
-
-    member = Member.objects.filter(
+    ensure_user_can_be_permanently_deleted(
         user=context.user,
-    ).first()
-
-    if member is None:
-        return
-
-    for organization in Organization.objects.filter(
-        org_owners=member,
-    ).iterator():
-        organization.org_owners.remove(
-            member
-        )
+    )

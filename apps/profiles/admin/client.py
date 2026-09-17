@@ -25,10 +25,9 @@ class ClientAdmin(admin.ModelAdmin):
     search_fields = ['user__username', 'request__request']
 
     fieldsets = (
-        ('Client Info', {'fields': ('user', 'organization_clients', 'request')}),
+        ('Client Info', {'fields': ('user', 'request')}),
         ('Status', {'fields': ('is_active',)}),
         ('Dates', {'fields': ('register_date',)}),
     )
 
-    filter_horizontal = ['organization_clients']
     autocomplete_fields = ['request']

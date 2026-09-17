@@ -43,7 +43,7 @@ ACCOUNT_TARGET_MODELS = frozenset(
 
 ORGANIZATION_TARGET_MODELS = frozenset(
     {
-        "profilesorg.organization",
+        "organizations.organization",
     }
 )
 

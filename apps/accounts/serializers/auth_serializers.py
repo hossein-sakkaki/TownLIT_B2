@@ -1,6 +1,6 @@
 #
 #  apps/accounts/serializers/auth_serializers.py
-#  TownLIT
+#  TownLIT-Backend
 #
 #  Created by Hossein Sakkaki on 2026-04-01.
 #  Last Update by Hossein Sakkaki on 2026-07-30.

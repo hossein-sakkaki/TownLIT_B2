@@ -2,7 +2,8 @@
 from django.db import transaction
 from django.utils import timezone
 from apps.audio_catalog.models import MusicTrack
-from .availability import can_use_track
+from .availability import can_publish_track
+
 
 @transaction.atomic
 def publish_track(track, actor=None):
@@ -10,7 +11,7 @@ def publish_track(track, actor=None):
     track.status = MusicTrack.Status.PUBLISHED
     track.published_at = track.published_at or timezone.now()
     track.updated_by = actor
-    result = can_use_track(track)
+    result = can_publish_track(track)
     if not result.allowed:
         raise ValueError(result.reason)
     track.save(update_fields=("status", "published_at", "updated_by", "updated_at"))

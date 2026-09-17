@@ -64,3 +64,8 @@ Thumbs.db
 static/ckeditor/ckeditor/
 
 townlit_b/service-account.json
+
+# =============================
+# ChatGPT generated source snapshots
+# =============================
+chatgpt_sources/

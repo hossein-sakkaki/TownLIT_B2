@@ -1,15 +1,22 @@
 # apps/posts/services/boundary_interactions.py
+# TownLIT-Backend
+#
+# Created by Hossein Sakkaki on 2026-01-01.
+# Last Update by Hossein Sakkaki on 2026-09-14.
+#
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 from django.contrib.contenttypes.models import ContentType
 
 from apps.core.boundaries.constants import BOUNDARY_GENERIC_UNAVAILABLE_MESSAGE
 from apps.core.boundaries.services.policy import BoundaryPolicy
-
+from apps.organizations.models import Organization
+from apps.organizations.selectors.ownership import (
+    effective_organization_owner_memberships_queryset,
+)
 
 CONTENT_INTERACTION_UNAVAILABLE_CODE = "content_interaction_unavailable"
 
@@ -73,6 +80,56 @@ def get_target_object(*, content_type: ContentType, object_id):
         return None
 
 
+def _resolve_organization_target(obj):
+    """
+    Resolve Organization ownership through direct or wrapped content.
+    """
+    if obj is None:
+        return None
+
+    if isinstance(obj, Organization):
+        return obj
+
+    try:
+        inner = getattr(
+            obj,
+            "content_object",
+            None,
+        )
+    except Exception:
+        return None
+
+    if inner is None or inner is obj:
+        return None
+
+    return _resolve_organization_target(
+        inner
+    )
+
+
+def _effective_organization_owner_users(
+    organization,
+):
+    memberships = (
+        effective_organization_owner_memberships_queryset()
+        .filter(
+            organization=organization,
+        )
+        .select_related(
+            "member__user",
+        )
+    )
+
+    for membership in memberships.iterator():
+        user = getattr(
+            membership.member,
+            "user",
+            None,
+        )
+
+        if user is not None:
+            yield user
+            
 def resolve_owner_user(obj):
     """
     Resolve the real owner user from post-like or wrapper objects.
@@ -81,9 +138,14 @@ def resolve_owner_user(obj):
     - direct user/name/owner/author fields
     - GenericForeignKey wrappers through content_object
     - Member/Guest profile objects with .user
-    - Organization-like objects with org_owners fallback
+    - Organization ownership is handled separately through Organization Core
     """
     if not obj:
+        return None
+
+    if _resolve_organization_target(
+        obj
+    ) is not None:
         return None
 
     # If object wraps another object, prefer inner content owner.
@@ -111,14 +173,6 @@ def resolve_owner_user(obj):
                 return value
         except Exception:
             continue
-
-    # Organization-like fallback: use first active owner if available.
-    try:
-        org_owners = getattr(obj, "org_owners", None)
-        if org_owners is not None:
-            return org_owners.filter(is_active=True).first()
-    except Exception:
-        pass
 
     return None
 
@@ -155,9 +209,36 @@ def check_target_owner_boundary(
         object_id=object_id,
     )
 
-    owner = resolve_owner_user(target_obj)
+    organization = (
+        _resolve_organization_target(
+            target_obj
+        )
+    )
 
-    return _boundary_between(actor, owner)
+    if organization is not None:
+        for owner_user in (
+            _effective_organization_owner_users(
+                organization
+            )
+        ):
+            owner_check = _boundary_between(
+                actor,
+                owner_user,
+            )
+
+            if not owner_check.allowed:
+                return owner_check
+
+        return _allowed()
+
+    owner = resolve_owner_user(
+        target_obj
+    )
+
+    return _boundary_between(
+        actor,
+        owner,
+    )
 
 
 def check_comment_create_boundary(

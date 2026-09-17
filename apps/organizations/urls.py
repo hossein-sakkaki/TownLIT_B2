@@ -3,10 +3,10 @@
 # TownLIT
 #
 # Created by Hossein Sakkaki on 2026-08-29.
-# Last Update by Hossein Sakkaki on 2026-08-30.
+# Last Update by Hossein Sakkaki on 2026-09-08.
 #
 
-from django.urls import path
+from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from apps.organizations.views import (
@@ -241,5 +241,17 @@ urlpatterns = [
         "workflow/governance/proposals/<uuid:public_id>/cancel/",
         OrganizationGovernanceProposalCancelView.as_view(),
         name="organization-governance-proposal-cancel",
+    ),
+
+    # Church.
+    path(
+        "<slug:slug>/modules/church/",
+        include("apps.organizations.modules.church.urls"),
+    ),
+
+    # Worship.
+    path(
+        "<slug:slug>/modules/worship/",
+        include("apps.organizations.modules.worship.urls"),
     ),
 ] + router.urls

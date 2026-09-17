@@ -3,10 +3,14 @@
 # TownLIT
 #
 # Created by Hossein Sakkaki on 2026-09-01.
-# Last Update by Hossein Sakkaki on 2026-09-01.
+# Last Update by Hossein Sakkaki on 2026-09-07.
 #
 
 from django.db import models
+
+
+WORSHIP_V1_TERRITORY_MODE = "worldwide"
+WORSHIP_V1_SUPPORTS_REQUIRED_ATTRIBUTION = False
 
 
 class WorshipRightsPartyRelationship(models.TextChoices):
@@ -39,11 +43,36 @@ class WorshipPermissionKey:
 
 
 WORSHIP_PERMISSION_DEFINITIONS = (
-    (WorshipPermissionKey.VIEW_MUSIC, "View Worship Music", "worship", "View Organization music licensing and contribution records."),
-    (WorshipPermissionKey.MANAGE_RIGHTS, "Manage Worship Rights Parties", "worship", "Manage legal parties used by Organization music licensing."),
-    (WorshipPermissionKey.MANAGE_LICENSES, "Manage Worship Music Licenses", "worship", "Create, activate, and revoke Organization music licenses."),
-    (WorshipPermissionKey.MANAGE_CONTRIBUTIONS, "Manage Worship Music Contributions", "worship", "Create and prepare Organization music contributions for the TownLIT Audio Catalog."),
-    (WorshipPermissionKey.PUBLISH_CONTRIBUTIONS, "Publish Worship Music Contributions", "worship", "Publish and revoke Organization-contributed music in the TownLIT Audio Catalog."),
+    (
+        WorshipPermissionKey.VIEW_MUSIC,
+        "View Worship Music",
+        "worship",
+        "View Organization music licensing and contribution records.",
+    ),
+    (
+        WorshipPermissionKey.MANAGE_RIGHTS,
+        "Manage Worship Rights Parties",
+        "worship",
+        "Manage legal parties used by Organization music licensing.",
+    ),
+    (
+        WorshipPermissionKey.MANAGE_LICENSES,
+        "Manage Worship Music Licenses",
+        "worship",
+        "Create, activate, and revoke Organization music licenses.",
+    ),
+    (
+        WorshipPermissionKey.MANAGE_CONTRIBUTIONS,
+        "Manage Worship Music Contributions",
+        "worship",
+        "Create and prepare Organization music contributions for the TownLIT Audio Catalog.",
+    ),
+    (
+        WorshipPermissionKey.PUBLISH_CONTRIBUTIONS,
+        "Publish Worship Music Contributions",
+        "worship",
+        "Publish and revoke Organization-contributed music in the TownLIT Audio Catalog.",
+    ),
 )
 
 

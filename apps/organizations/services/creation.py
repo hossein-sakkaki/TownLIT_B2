@@ -1,9 +1,9 @@
 # apps/organizations/services/creation.py
 #
-# TownLIT
+# TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-08-29.
-# Last Update by Hossein Sakkaki on 2026-08-29.
+# Last Update by Hossein Sakkaki on 2026-09-12.
 #
 
 from django.db import IntegrityError, transaction
@@ -13,6 +13,7 @@ from apps.organizations.constants import (
     OrganizationAuditSource,
     OrganizationConnectionType,
     OrganizationMembershipStatus,
+    OrganizationVisibility,
 )
 from apps.organizations.models import (
     Organization,
@@ -56,6 +57,7 @@ def create_organization(
     secondary_language=None,
     timezone="UTC",
     logo=None,
+    visibility=OrganizationVisibility.PUBLIC,
 ):
     member = ensure_user_can_create_organization(creator)
 
@@ -93,6 +95,7 @@ def create_organization(
         secondary_language=secondary_language,
         timezone=timezone or "UTC",
         logo=logo,
+        visibility=visibility,
         subscription_account=subscription_account,
         created_by=creator,
     )

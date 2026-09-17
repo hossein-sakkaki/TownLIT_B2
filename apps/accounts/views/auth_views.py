@@ -106,6 +106,9 @@ from apps.accounts.services.conversation_encryption_reset import (
     ConversationEncryptionResetError,
     reset_conversation_encryption_identity,
 )
+from apps.accounts.account_deletion.exceptions import (
+    AccountDeletionBlocked,
+)
 from apps.accounts.constants.devices import (
     DEVICE_PLATFORM_ANDROID,
     MOBILE_DEVICE_PLATFORMS,
@@ -2168,9 +2171,18 @@ class AuthViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        deleted_user = schedule_account_deletion(
-            user=user,
-        )
+        try:
+            deleted_user = schedule_account_deletion(
+                user=user,
+            )
+        except AccountDeletionBlocked as exc:
+            return Response(
+                {
+                    "error": exc.message,
+                    "code": exc.code,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
 
         external_contact = (
             ExternalContact.objects

@@ -14,7 +14,14 @@ from apps.sanctuary.constants.target_models import (
     content_type_key,
     is_allowed_target_model,
 )
-
+from apps.organizations.constants import (
+    CURRENT_MEMBERSHIP_STATUSES,
+    OrganizationStatus,
+    OrganizationVisibility,
+)
+from apps.organizations.selectors.ownership import (
+    effective_organization_manager_user_ids,
+)
 
 CustomUser = get_user_model()
 
@@ -359,57 +366,12 @@ def _comment_visibility_target(
     return None
 
 
-def _organization_owner_user_ids(
+def _organization_manager_user_ids(
     organization,
 ) -> set[int]:
-    """
-    Resolve organization owners and approved admins to user IDs.
-    """
-
-    user_ids: set[int] = set()
-
-    try:
-        owner_ids = (
-            organization.org_owners
-            .filter(
-                is_active=True,
-            )
-            .values_list(
-                "user_id",
-                flat=True,
-            )
-        )
-
-        user_ids.update(
-            int(user_id)
-            for user_id in owner_ids
-            if user_id
-        )
-    except Exception:
-        pass
-
-    try:
-        admin_ids = (
-            organization.admin_relationships
-            .filter(
-                is_approved=True,
-                member__is_active=True,
-            )
-            .values_list(
-                "member__user_id",
-                flat=True,
-            )
-        )
-
-        user_ids.update(
-            int(user_id)
-            for user_id in admin_ids
-            if user_id
-        )
-    except Exception:
-        pass
-
-    return user_ids
+    return effective_organization_manager_user_ids(
+        organization=organization,
+    )
 
 
 def resolve_target_owner_user_id(
@@ -833,12 +795,13 @@ def _validate_organization_target(
         user
     )
 
-    if not bool(
+    if (
         getattr(
             target,
-            "is_active",
-            True,
+            "status",
+            None,
         )
+        != OrganizationStatus.ACTIVE
     ):
         _raise_access_error(
             message=(
@@ -848,13 +811,63 @@ def _validate_organization_target(
             code=TARGET_NOT_AVAILABLE,
         )
 
-    if bool(
-        getattr(
-            target,
-            "is_hidden",
+    manager_user_ids = (
+        _organization_manager_user_ids(
+            target
+        )
+    )
+
+    is_manager = bool(
+        user_id
+        and user_id in manager_user_ids
+    )
+
+    is_staff = bool(
+        user
+        and getattr(
+            user,
+            "is_authenticated",
             False,
         )
-    ):
+        and getattr(
+            user,
+            "is_staff",
+            False,
+        )
+    )
+
+    is_current_member = False
+
+    if user_id:
+        try:
+            is_current_member = (
+                target.memberships
+                .filter(
+                    member__user_id=user_id,
+                    status__in=(
+                        CURRENT_MEMBERSHIP_STATUSES
+                    ),
+                )
+                .exists()
+            )
+        except Exception:
+            is_current_member = False
+
+    is_visible = (
+        getattr(
+            target,
+            "visibility",
+            None,
+        )
+        in {
+            OrganizationVisibility.PUBLIC,
+            OrganizationVisibility.UNLISTED,
+        }
+        or is_current_member
+        or is_staff
+    )
+
+    if not is_visible:
         _raise_access_error(
             message=(
                 "This organization is not "
@@ -863,22 +876,11 @@ def _validate_organization_target(
             code=TARGET_NOT_AVAILABLE,
         )
 
-    manager_user_ids = (
-        _organization_owner_user_ids(
-            target
-        )
-    )
-
-    is_owner = bool(
-        user_id
-        and user_id in manager_user_ids
-    )
-
-    # Organization owners/admins are intentionally allowed to submit
-    # a Sanctuary request. Internal misconduct may need escalation.
+    # Owners/admins may intentionally submit Sanctuary requests.
+    # Internal organization misconduct can require escalation.
     return (
         None,
-        is_owner,
+        is_manager,
     )
 
 

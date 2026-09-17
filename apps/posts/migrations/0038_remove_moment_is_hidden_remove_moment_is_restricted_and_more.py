@@ -14,7 +14,6 @@ import validators.security_validators
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('profilesOrg', '0040_alter_organization_license_document_and_more'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
         ('posts', '0037_remove_moment_content_remove_moment_moment_file_and_more'),
     ]
@@ -27,10 +26,6 @@ class Migration(migrations.Migration):
         migrations.RemoveField(
             model_name='moment',
             name='is_restricted',
-        ),
-        migrations.RemoveField(
-            model_name='moment',
-            name='org_tags',
         ),
         migrations.RemoveField(
             model_name='moment',
@@ -193,11 +188,6 @@ class Migration(migrations.Migration):
             model_name='testimony',
             name='is_suspended',
             field=models.BooleanField(default=False, help_text='System-level suspension due to moderation outcome.'),
-        ),
-        migrations.AlterField(
-            model_name='testimony',
-            name='org_tags',
-            field=models.ManyToManyField(blank=True, db_index=True, related_name='tagged_in_testimonies', to='profilesOrg.organization'),
         ),
         migrations.AlterField(
             model_name='testimony',

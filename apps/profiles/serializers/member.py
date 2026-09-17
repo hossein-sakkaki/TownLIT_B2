@@ -15,7 +15,7 @@ from apps.profiles.models.relationships import Fellowship
 from apps.profiles.models.member import Member
 from apps.profiles.models.academic import AcademicRecord
 from apps.profiles.models.gifts import MemberSpiritualGifts
-from apps.profilesOrg.constants_denominations import (
+from apps.profiles.constants.denominations import (
     CHURCH_BRANCH_CHOICES,
     CHURCH_FAMILY_CHOICES_ALL,
     FAMILIES_BY_BRANCH,
@@ -35,6 +35,13 @@ from apps.profiles.serializers.academic import AcademicRecordSerializer
 from apps.profiles.serializers.services import MemberServiceTypeSerializer
 from apps.profiles.serializers.fellowships import FellowshipSerializer
 from apps.profiles.serializers.gifts import MemberSpiritualGiftsSerializer
+from apps.organizations.selectors.organizations import (
+    current_organizations_for_member,
+    public_organizations_for_member,
+)
+from apps.profiles.serializers.organization import (
+    ProfileOrganizationSerializer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +164,10 @@ class MemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
     denomination_branch_label = serializers.SerializerMethodField()
     denomination_family_label = serializers.SerializerMethodField()
 
+    organization_memberships = (
+        serializers.SerializerMethodField()
+    )
+
     class Meta:
         model = Member
         fields = [
@@ -181,12 +192,18 @@ class MemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
             'denomination_branch_label', 'denomination_family_label',
         ]
 
-    def get_fields(self):
-        # lazy import to avoid circular imports
-        fields = super().get_fields()
-        from apps.profilesOrg.serializers import OrganizationSerializer
-        fields['organization_memberships'] = OrganizationSerializer(many=True, read_only=True)
-        return fields
+    def get_organization_memberships(
+        self,
+        obj: Member,
+    ):
+        organizations = current_organizations_for_member(
+            member=obj,
+        )
+
+        return ProfileOrganizationSerializer(
+            organizations,
+            many=True,
+        ).data
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -391,6 +408,10 @@ class PublicMemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
     # --- BACKWARD COMPAT ---
     denominations_type = serializers.SerializerMethodField()
 
+    organization_memberships = (
+        serializers.SerializerMethodField()
+    )
+
     class Meta:
         model = Member
         fields = [
@@ -408,13 +429,6 @@ class PublicMemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
             'is_privacy', 'is_hidden_by_confidants', 'is_migrated', 'is_active',
         ]
         read_only_fields = fields
-
-    def get_fields(self):
-        # Lazy import to avoid circular deps
-        fields = super().get_fields()
-        from apps.profilesOrg.serializers import OrganizationSerializer
-        fields['organization_memberships'] = OrganizationSerializer(many=True, read_only=True)
-        return fields
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -464,6 +478,19 @@ class PublicMemberSerializer(FriendsBlockMixin, serializers.ModelSerializer):
         from apps.profiles.serializers import MemberSpiritualGiftsSerializer
         return MemberSpiritualGiftsSerializer(msg, context=self.context).data
 
+    def get_organization_memberships(
+        self,
+        obj: Member,
+    ):
+        organizations = public_organizations_for_member(
+            member=obj,
+        )
+
+        return ProfileOrganizationSerializer(
+            organizations,
+            many=True,
+        ).data
+    
     # --- social links ---
     def get_social_links(self, obj: Member):
         """

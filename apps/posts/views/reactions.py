@@ -19,6 +19,10 @@ from apps.posts.services.boundary_interactions import (
     check_reaction_create_boundary,
     content_interaction_error_payload,
 )
+from apps.organizations.models import Organization
+from apps.organizations.selectors.ownership import (
+    effective_organization_owner_memberships_queryset,
+)
 
 logger = logging.getLogger(__name__)
 CustomUser = get_user_model()
@@ -81,9 +85,34 @@ def _resolve_owner_user_id(obj, request_user_id=None):
     base = obj
 
     # Drill into wrapped content when available.
-    if hasattr(base, "content_object") and getattr(base, "content_object") is not None:
+    if hasattr(base, "content_object") and getattr(
+        base,
+        "content_object",
+    ) is not None:
         base = base.content_object
 
+    if isinstance(
+        base,
+        Organization,
+    ):
+        if not request_user_id:
+            return None
+
+        is_owner = (
+            effective_organization_owner_memberships_queryset()
+            .filter(
+                organization=base,
+                member__user_id=request_user_id,
+            )
+            .exists()
+        )
+
+        return (
+            request_user_id
+            if is_owner
+            else None
+        )
+        
     # Check common direct owner fields.
     for fk in ("user_id", "name_id", "owner_id", "member_user_id", "org_owner_user_id"):
         if hasattr(base, fk):
@@ -101,14 +130,6 @@ def _resolve_owner_user_id(obj, request_user_id=None):
             related_obj = getattr(base, relation)
             if getattr(related_obj, "id", None):
                 return related_obj.id
-
-    # Support organization owner membership.
-    if hasattr(base, "org_owners") and request_user_id:
-        try:
-            if base.org_owners.filter(id=request_user_id).exists():
-                return request_user_id
-        except Exception:
-            pass
 
     return None
 

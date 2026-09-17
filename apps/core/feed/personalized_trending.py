@@ -37,7 +37,12 @@ class PersonalizedTrendingEngine:
     """
 
     @staticmethod
-    def apply(queryset, *, viewer):
+    def apply(
+        queryset,
+        *,
+        viewer,
+        friend_affinity_field: str | None = None,
+    ):
         # ------------------------------------------------------------
         # 0) Boundary visibility gate
         # ------------------------------------------------------------
@@ -59,14 +64,66 @@ class PersonalizedTrendingEngine:
         # ------------------------------------------------------------
         # 3) Affinity weight
         # ------------------------------------------------------------
-        affinity_weight = Case(
-            When(object_id=viewer.id, then=Value(PERSONAL_TREND_SELF_WEIGHT)),
-            When(visibility=VISIBILITY_COVENANT, then=Value(PERSONAL_TREND_COVENANT_WEIGHT)),
-            When(visibility=VISIBILITY_FRIENDS, then=Value(PERSONAL_TREND_FRIEND_WEIGHT)),
-            When(visibility=VISIBILITY_GLOBAL, then=Value(PERSONAL_TREND_GLOBAL_WEIGHT)),
-            default=Value(1.0),
-            output_field=FloatField(),
-        )
+        if friend_affinity_field:
+            affinity_weight = Case(
+                When(
+                    object_id=viewer.id,
+                    then=Value(
+                        PERSONAL_TREND_SELF_WEIGHT
+                    ),
+                ),
+                When(
+                    visibility=VISIBILITY_COVENANT,
+                    then=Value(
+                        PERSONAL_TREND_COVENANT_WEIGHT
+                    ),
+                ),
+                When(
+                    **{
+                        friend_affinity_field: True,
+                    },
+                    then=Value(
+                        PERSONAL_TREND_FRIEND_WEIGHT
+                    ),
+                ),
+                When(
+                    visibility=VISIBILITY_GLOBAL,
+                    then=Value(
+                        PERSONAL_TREND_GLOBAL_WEIGHT
+                    ),
+                ),
+                default=Value(1.0),
+                output_field=FloatField(),
+            )
+        else:
+            affinity_weight = Case(
+                When(
+                    object_id=viewer.id,
+                    then=Value(
+                        PERSONAL_TREND_SELF_WEIGHT
+                    ),
+                ),
+                When(
+                    visibility=VISIBILITY_COVENANT,
+                    then=Value(
+                        PERSONAL_TREND_COVENANT_WEIGHT
+                    ),
+                ),
+                When(
+                    visibility=VISIBILITY_FRIENDS,
+                    then=Value(
+                        PERSONAL_TREND_FRIEND_WEIGHT
+                    ),
+                ),
+                When(
+                    visibility=VISIBILITY_GLOBAL,
+                    then=Value(
+                        PERSONAL_TREND_GLOBAL_WEIGHT
+                    ),
+                ),
+                default=Value(1.0),
+                output_field=FloatField(),
+            )
 
         # ------------------------------------------------------------
         # 4) Engagement total

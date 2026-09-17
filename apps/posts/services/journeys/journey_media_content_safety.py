@@ -1,6 +1,6 @@
 #
 #  apps/posts/services/journeys/journey_media_content_safety.py
-#  TownLIT
+#  TownLIT-Backend
 #
 #  Created by Hossein Sakkaki on 2026-08-14.
 #  Last Update by Hossein Sakkaki on 2026-08-14.

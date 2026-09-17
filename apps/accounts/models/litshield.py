@@ -1,4 +1,9 @@
 # apps/accounts/models/litshield.py
+# TownLIT-Backend
+#
+# Created by Hossein Sakkaki on 2026-04-09.
+# Last Update by Hossein Sakkaki on 2026-09-14.
+#
 
 from django.conf import settings
 from django.db import models
@@ -34,7 +39,7 @@ class LITShieldGrant(models.Model):
     )
 
     organization = models.ForeignKey(
-        "profilesOrg.Organization",
+        "organizations.Organization",
         null=True,
         blank=True,
         on_delete=models.PROTECT,
@@ -59,12 +64,24 @@ class LITShieldGrant(models.Model):
         help_text="TownLIT admin who approved",
     )
 
-    is_active = models.BooleanField(default=True, db_index=True)
+    is_active = models.BooleanField(
+        default=True,
+        db_index=True,
+    )
 
-    admin_notes = models.TextField(null=True, blank=True)
+    admin_notes = models.TextField(
+        null=True,
+        blank=True,
+    )
 
-    granted_at = models.DateTimeField(auto_now_add=True)
-    revoked_at = models.DateTimeField(null=True, blank=True)
+    granted_at = models.DateTimeField(
+        auto_now_add=True,
+    )
+
+    revoked_at = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
 
     class Meta:
         verbose_name = "LITShield Grant"
@@ -78,12 +95,13 @@ class LITShieldGrant(models.Model):
         ]
 
     def __str__(self):
-        return f"LITShield → {self.user_id} ({self.source})"
+        return (
+            f"LITShield → {self.user_id} "
+            f"({self.source})"
+        )
 
 
 class OrganizationLITShieldEndorsement(models.Model):
-    from apps.profilesOrg.models import Organization
-
     id = models.BigAutoField(primary_key=True)
 
     user = models.ForeignKey(
@@ -93,7 +111,7 @@ class OrganizationLITShieldEndorsement(models.Model):
     )
 
     organization = models.ForeignKey(
-        Organization,
+        "organizations.Organization",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -116,10 +134,21 @@ class OrganizationLITShieldEndorsement(models.Model):
         related_name="litshield_reviews",
     )
 
-    approved = models.BooleanField(null=True)
-    reviewed_at = models.DateTimeField(null=True, blank=True)
+    approved = models.BooleanField(
+        null=True,
+    )
 
-    created_at = models.DateTimeField(auto_now_add=True)
+    reviewed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
+
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+    )
 
     class Meta:
-        unique_together = ("user", "organization")
+        unique_together = (
+            "user",
+            "organization",
+        )

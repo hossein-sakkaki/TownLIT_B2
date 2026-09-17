@@ -9,7 +9,7 @@ from apps.notifications.services.ui_link_resolver import build_content_link
 from apps.posts.models.comment import Comment
 from apps.posts.models.moment import Moment
 from apps.posts.models.testimony import Testimony
-from apps.profilesOrg.models import Organization
+from apps.organizations.models import Organization
 
 logger = logging.getLogger(__name__)
 

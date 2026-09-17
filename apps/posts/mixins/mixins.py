@@ -8,8 +8,14 @@ from rest_framework.permissions import IsAuthenticated
 
 from apps.posts.models.common import Resource
 from apps.posts.serializers.common import ResourceSerializer
-from apps.profilesOrg.models import Organization
-from common.permissions import IsFullAccessAdmin, IsLimitedAccessAdmin
+
+from apps.organizations.models import Organization
+from apps.organizations.permissions import (
+    OrganizationsEnabledPermission,
+)
+from apps.posts.services.organization_access import (
+    can_manage_organization_content,
+)
 
 
 
@@ -107,17 +113,30 @@ class GuestUserActionMixin:
             return Response({"error": f"{self.model_name} not found"}, status=status.HTTP_404_NOT_FOUND)
 
 
-
 # ORGANIZATION ACTION Mixin -------------------------------------------------------------------------
 class OrganizationActionMixin:
     # Mixin for managing actions like adding, updating, and deleting resources for organizations.
-    @action(detail=False, methods=['post'], url_path='add-organization-item', permission_classes=[IsFullAccessAdmin, IsLimitedAccessAdmin])
+    @action(detail=False, methods=['post'], url_path='add-organization-item', permission_classes=[IsAuthenticated, OrganizationsEnabledPermission])
     def add_organization_item(self, request):
         organization_slug = self.kwargs.get('slug')
         organization = Organization.objects.filter(slug=organization_slug).first()  # Get organization by slug
         if not organization:
             return Response({"error": "Organization not found"}, status=status.HTTP_404_NOT_FOUND)
         
+        if not can_manage_organization_content(
+            user=request.user,
+            organization=organization,
+        ):
+            return Response(
+                {
+                    "error": (
+                        "You are not authorized to "
+                        "manage this organization's content."
+                    )
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+    
         serializer = self.get_serializer(data=request.data)
         if serializer.is_valid():
             item = serializer.save()
@@ -129,7 +148,7 @@ class OrganizationActionMixin:
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    @action(detail=True, methods=['post'], url_path='update-organization-item', permission_classes=[IsFullAccessAdmin, IsLimitedAccessAdmin])
+    @action(detail=True, methods=['post'], url_path='update-organization-item', permission_classes=[IsAuthenticated, OrganizationsEnabledPermission])
     def update_organization_item(self, request, slug=None):
         try:
             item = self.get_object()
@@ -137,6 +156,20 @@ class OrganizationActionMixin:
             organization = Organization.objects.filter(slug=organization_slug).first()  # Get organization by slug
             if not organization:
                 return Response({"error": "Organization not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            if not can_manage_organization_content(
+                user=request.user,
+                organization=organization,
+            ):
+                return Response(
+                    {
+                        "error": (
+                            "You are not authorized to "
+                            "manage this organization's content."
+                        )
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
 
             # Check if the item belongs to the organization
             if item.content_type == ContentType.objects.get_for_model(organization) and item.object_id == organization.id:
@@ -148,7 +181,7 @@ class OrganizationActionMixin:
         except self.queryset.model.DoesNotExist:
             return Response({"error": f"{self.model_name} not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    @action(detail=True, methods=['delete'], url_path='delete-organization-item', permission_classes=[IsFullAccessAdmin, IsLimitedAccessAdmin])
+    @action(detail=True, methods=['delete'], url_path='delete-organization-item', permission_classes=[IsAuthenticated, OrganizationsEnabledPermission])
     def delete_organization_item(self, request, slug=None):
         try:
             item = self.get_object()
@@ -156,7 +189,21 @@ class OrganizationActionMixin:
             organization = Organization.objects.filter(slug=organization_slug).first()  # Get organization by slug
             if not organization:
                 return Response({"error": "Organization not found"}, status=status.HTTP_404_NOT_FOUND)
-            
+
+            if not can_manage_organization_content(
+                user=request.user,
+                organization=organization,
+            ):
+                return Response(
+                    {
+                        "error": (
+                            "You are not authorized to "
+                            "manage this organization's content."
+                        )
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+    
             # Check if the item belongs to the organization
             if item.content_type == ContentType.objects.get_for_model(organization) and item.object_id == organization.id:
                 item.delete()

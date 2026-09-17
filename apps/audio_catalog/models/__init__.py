@@ -4,6 +4,9 @@ from .track import MusicTrack
 from .artwork import MusicArtwork
 from .variant import MusicTrackVariant
 from .usage import AudioUsageGrant
+from .lyrics import MusicLyrics, MusicLyricsLine
+from .lyrics_word import MusicLyricsWord
+from .library import AudioUserTrackLibraryEntry
 from .analytics import (
     AudioPlaybackSession,
     AudioTrackDailyListener,
@@ -30,3 +33,10 @@ from .taxonomy import (
     AudioMood,
     AudioTag,
 )
+
+from .release import (
+    MusicRelease,
+    MusicReleaseContributor,
+    MusicReleaseTrack,
+)
+from .release_artwork import MusicReleaseArtwork

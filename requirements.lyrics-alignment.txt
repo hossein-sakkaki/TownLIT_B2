@@ -1,0 +1,10 @@
+# requirements.lyrics-alignment.txt
+# TownLIT-Backend
+#
+# Created by Hossein Sakkaki on 2026-09-16.
+# Last Update by Hossein Sakkaki on 2026-09-16.
+
+numpy==1.26.4
+Cython==3.0.12
+ctc-segmentation==1.7.4
+transformers==4.56.2

@@ -7,6 +7,7 @@ class PlaybackIntent:
     FEED = "feed"
     DETAIL = "detail"
     DOWNLOAD = "download"
+    OFFLINE = "offline"
 
     ALL = {
         PRELOAD,
@@ -15,9 +16,11 @@ class PlaybackIntent:
         FEED,
         DETAIL,
         DOWNLOAD,
+        OFFLINE,
     }
 
 
 class PlaybackAuthMode:
     COOKIE = "cookie"
     SIGNED_URL = "signed_url"
+    

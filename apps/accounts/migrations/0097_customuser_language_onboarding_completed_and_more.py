@@ -1,6 +1,6 @@
 #
 #  apps/accounts/migrations/0097_customuser_language_onboarding_completed_and_more.py
-#  TownLIT
+#  TownLIT-Backend
 #
 #  Created by Hossein Sakkaki on 2026-07-30.
 #  Last Update by Hossein Sakkaki on 2026-07-31.

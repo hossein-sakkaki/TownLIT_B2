@@ -14,15 +14,9 @@ class Migration(migrations.Migration):
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
         ('payment', '0001_initial'),
         ('orders', '0003_initial'),
-        ('profilesOrg', '0001_initial'),
     ]
 
     operations = [
-        migrations.AddField(
-            model_name='payment',
-            name='organization',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.CASCADE, related_name='payments', to='profilesOrg.organization', verbose_name='Organization'),
-        ),
         migrations.AddField(
             model_name='payment',
             name='user',

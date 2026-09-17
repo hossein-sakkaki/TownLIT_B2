@@ -13,16 +13,10 @@ class Migration(migrations.Migration):
         ('accounts', '0001_initial'),
         ('profiles', '0001_initial'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
-        ('profilesOrg', '0001_initial'),
         ('posts', '0002_initial'),
     ]
 
     operations = [
-        migrations.AddField(
-            model_name='member',
-            name='organization_memberships',
-            field=models.ManyToManyField(blank=True, db_index=True, related_name='memberships', to='profilesOrg.organization', verbose_name='Organization Memberships'),
-        ),
         migrations.AddField(
             model_name='member',
             name='service_types',
@@ -77,11 +71,6 @@ class Migration(migrations.Migration):
             model_name='customer',
             name='user',
             field=models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='customer_profile', to=settings.AUTH_USER_MODEL, verbose_name='User'),
-        ),
-        migrations.AddField(
-            model_name='client',
-            name='organization_clients',
-            field=models.ManyToManyField(blank=True, related_name='organization_clients', to='profilesOrg.organization', verbose_name='Organization Clients'),
         ),
         migrations.AddField(
             model_name='client',

@@ -2833,6 +2833,8 @@ class MessageViewSet(viewsets.ModelViewSet):
         source_message_id = request.data.get("source_message_id")
         target_dialogue_slug = (request.data.get("target_dialogue_slug") or "").strip()
 
+        boundary_payload = None
+
         if target_dialogue_slug:
             target_dialogue = (
                 Dialogue.objects

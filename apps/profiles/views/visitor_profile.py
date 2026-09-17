@@ -84,7 +84,6 @@ class VisitorProfileViewSet(viewsets.GenericViewSet):
                 )
                 .prefetch_related(
                     "service_types",
-                    "organization_memberships",
                 )
                 .filter(
                     user_id=user.id,

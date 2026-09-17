@@ -1,15 +1,16 @@
 #
 #  apps/accounts/account_deletion/service.py
-#  TownLIT
+#  TownLIT-Backend
 #
 #  Created by Hossein Sakkaki on 2026-08-04.
-#  Last Update by Hossein Sakkaki on 2026-08-04.
+# Last Update by Hossein Sakkaki on 2026-09-14.
 #
 
 import logging
 import secrets
 from datetime import timedelta
 
+from django.core.exceptions import ValidationError
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import transaction
@@ -22,15 +23,19 @@ from rest_framework_simplejwt.token_blacklist.models import (
 from apps.accounts.account_deletion.context import (
     AccountDeletionContext,
 )
+from apps.accounts.account_deletion.registry import (
+    account_deletion_registry,
+)
+from django.core.exceptions import ValidationError
 from apps.accounts.account_deletion.exceptions import (
+    AccountDeletionBlocked,
     AccountDeletionConfigurationError,
     AccountDeletionDeadlinePassed,
     AccountDeletionNotPending,
 )
-from apps.accounts.account_deletion.registry import (
-    account_deletion_registry,
+from apps.organizations.services.account_deletion import (
+    ensure_user_can_be_permanently_deleted,
 )
-
 
 CustomUser = get_user_model()
 logger = logging.getLogger(__name__)
@@ -100,6 +105,45 @@ def _validate_registered_handlers() -> None:
         )
 
 
+def _ensure_organization_ownership_allows_account_deletion(
+    *,
+    user,
+) -> None:
+    """
+    Translate Organization ownership protection into
+    the Account Deletion service contract.
+    """
+
+    try:
+        ensure_user_can_be_permanently_deleted(
+            user=user,
+        )
+    except ValidationError as exc:
+        messages = getattr(
+            exc,
+            "messages",
+            None,
+        )
+
+        message = (
+            messages[0]
+            if messages
+            else (
+                "Account deletion cannot be completed "
+                "while the account holds active "
+                "Organization ownership."
+            )
+        )
+
+        raise AccountDeletionBlocked(
+            message,
+            code=(
+                "organization_ownership_blocks_"
+                "account_deletion"
+            ),
+        ) from exc
+        
+
 def schedule_account_deletion(
     *,
     user,
@@ -128,6 +172,18 @@ def schedule_account_deletion(
             )
         )
 
+        if locked_user.deletion_completed_at:
+            raise AccountDeletionDeadlinePassed(
+                "This account has already been permanently deleted.",
+                code="account_deletion_completed",
+            )
+
+        _ensure_organization_ownership_allows_account_deletion(
+            user=locked_user,
+        )
+
+        now = timezone.now()
+        
         locked_user.is_deleted = True
         locked_user.deletion_requested_at = now
         locked_user.deletion_scheduled_for = scheduled_for

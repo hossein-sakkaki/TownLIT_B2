@@ -12,6 +12,26 @@ from apps.organizations.constants import OrganizationKind
 from apps.organizations.models import Organization
 
 
+def _organization_logo_url(
+    obj,
+    *,
+    request=None,
+) -> str | None:
+    if not obj.logo:
+        return None
+
+    try:
+        url = obj.logo.url
+    except Exception:
+        return None
+
+    return (
+        request.build_absolute_uri(url)
+        if request
+        else url
+    )
+    
+
 class OrganizationSerializer(serializers.ModelSerializer):
     follower_count = serializers.IntegerField(
         read_only=True,
@@ -79,20 +99,9 @@ class OrganizationSerializer(serializers.ModelSerializer):
         )
 
     def get_logo_url(self, obj):
-        if not obj.logo:
-            return None
-
-        request = self.context.get("request")
-
-        try:
-            url = obj.logo.url
-        except Exception:
-            return None
-
-        return (
-            request.build_absolute_uri(url)
-            if request
-            else url
+        return _organization_logo_url(
+            obj,
+            request=self.context.get("request"),
         )
 
 
@@ -135,3 +144,41 @@ class OrganizationWriteSerializer(serializers.ModelSerializer):
             )
 
         return normalized
+
+
+class OrganizationReferenceSerializer(
+    serializers.ModelSerializer
+):
+    """
+    Stable compact Organization reference payload.
+
+    Transport field names are retained for compatibility
+    with existing Store and Payment clients.
+    """
+
+    org_name = serializers.CharField(
+        source="name",
+        read_only=True,
+    )
+    organization_logo = (
+        serializers.SerializerMethodField()
+    )
+
+    class Meta:
+        model = Organization
+        fields = [
+            "id",
+            "org_name",
+            "organization_logo",
+            "slug",
+        ]
+        read_only_fields = fields
+
+    def get_organization_logo(
+        self,
+        obj,
+    ):
+        return _organization_logo_url(
+            obj,
+            request=self.context.get("request"),
+        )

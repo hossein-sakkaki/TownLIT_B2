@@ -1,6 +1,6 @@
 #
 #  apps/accounts/serializers/user_serializers.py
-#  TownLIT
+#  TownLIT-Backend
 #
 #  Created by Hossein Sakkaki on 2023-01-01.
 #  Last Update by Hossein Sakkaki on 2026-07-30.
@@ -70,6 +70,7 @@ class CustomUserAuthSerializer(AvatarURLMixin, serializers.ModelSerializer):
             "label",
             "label_color",
 
+            "is_active",
             "is_member",
             "is_verified_identity",
             "is_townlit_verified",
@@ -180,6 +181,10 @@ class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
         allow_null=True,
     )
 
+    is_active = serializers.BooleanField(
+        read_only=True,
+    )
+
     class Meta:
         model = CustomUser
 
@@ -187,7 +192,6 @@ class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
             "registration_id",
             "access_pin",
             "delete_pin",
-            "is_active",
             "is_admin",
             "is_deleted",
             "reports_count",

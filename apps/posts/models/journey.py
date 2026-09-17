@@ -1,4 +1,9 @@
 # apps/posts/models/journey.py
+# TownLIT-Backend
+#
+# Created by Hossein Sakkaki on 2026-07-01.
+# Last Update by Hossein Sakkaki on 2026-09-14.
+
 
 from __future__ import annotations
 
@@ -273,7 +278,7 @@ class JourneyEntry(
     # Immutable published assets
     # -------------------------------------------------
     rendered_image = models.ImageField(
-        upload_to=IMAGE.dir_upload,
+        upload_to=IMAGE,
         max_length=700,
         null=True,
         blank=True,
@@ -281,7 +286,7 @@ class JourneyEntry(
     )
 
     rendered_video = models.FileField(
-        upload_to=VIDEO.dir_upload,
+        upload_to=VIDEO,
         max_length=700,
         null=True,
         blank=True,
@@ -290,7 +295,7 @@ class JourneyEntry(
         ],
     )
     thumbnail = models.ImageField(
-        upload_to=THUMBNAIL.dir_upload,
+        upload_to=THUMBNAIL,
         max_length=700,
         validators=[],
     )

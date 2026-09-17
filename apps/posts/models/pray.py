@@ -1,4 +1,9 @@
 # apps/posts/models/pray.py
+# TownLIT-Backend
+#
+# Created by Hossein Sakkaki on 2025-01-01.
+# Last Update by Hossein Sakkaki on 2026-09-14.
+
 
 import logging
 from urllib.parse import quote
@@ -89,7 +94,7 @@ class Prayer(
     caption = models.TextField(null=True, blank=True, verbose_name="Prayer Text")
 
     image = models.ImageField(
-        upload_to=PRAY_IMAGE.dir_upload,
+        upload_to=PRAY_IMAGE,
         null=True,
         blank=True,
         validators=[validate_image_file, validate_image_size, validate_no_executable_file],
@@ -97,7 +102,7 @@ class Prayer(
     )
 
     video = models.FileField(
-        upload_to=PRAY_VIDEO.dir_upload,
+        upload_to=PRAY_VIDEO,
         null=True,
         blank=True,
         validators=[validate_prayer_video_file, validate_no_executable_file],
@@ -105,7 +110,7 @@ class Prayer(
     )
 
     thumbnail = models.ImageField(
-        upload_to=PRAY_IMAGE.dir_upload,
+        upload_to=PRAY_IMAGE,
         null=True,
         blank=True,
         validators=[validate_image_file, validate_image_size, validate_no_executable_file],
@@ -278,7 +283,7 @@ class PrayerResponse(
 
     # --- media ---
     image = models.ImageField(
-        upload_to=PRAY_IMAGE.dir_upload,
+        upload_to=PRAY_IMAGE,
         null=True,
         blank=True,
         validators=[validate_image_file, validate_image_size, validate_no_executable_file],
@@ -286,7 +291,7 @@ class PrayerResponse(
     )
 
     video = models.FileField(
-        upload_to=PRAY_VIDEO.dir_upload,
+        upload_to=PRAY_VIDEO,
         null=True,
         blank=True,
         validators=[validate_prayer_video_file, validate_no_executable_file],
@@ -294,7 +299,7 @@ class PrayerResponse(
     )
 
     thumbnail = models.ImageField(
-        upload_to=PRAY_IMAGE.dir_upload,
+        upload_to=PRAY_IMAGE,
         null=True,
         blank=True,
         validators=[validate_image_file, validate_image_size, validate_no_executable_file],

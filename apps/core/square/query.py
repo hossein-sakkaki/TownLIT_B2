@@ -2,30 +2,28 @@
 
 from __future__ import annotations
 
-import logging
 from typing import List
 
+from django.contrib.contenttypes.models import ContentType
 from django.db import models
 from django.db.models import Q, QuerySet
-from django.contrib.contenttypes.models import ContentType
 
-from apps.core.square.constants import (
-    SQUARE_KIND_ALL,
-    SQUARE_KIND_FRIENDS,
-    SQUARE_ALLOWED_MEDIA_KINDS,
-)
+from apps.core.boundaries.query import BoundaryVisibilityQuery
+from apps.core.owner_visibility.query import OwnerVisibilityQuery
 from apps.core.ownership.ownership_filters import exclude_owned_by_viewer
 from apps.core.ownership.ownership_predicates import owner_q_for_user_ids
+from apps.core.square.constants import (
+    SQUARE_ALLOWED_MEDIA_KINDS,
+    SQUARE_FRIEND_AFFINITY_FIELD,
+    SQUARE_KIND_ALL,
+    normalize_square_kind,
+)
 from apps.core.square.registry import get_square_sources
 from apps.core.visibility.query import VisibilityQuery
-from apps.core.owner_visibility.query import OwnerVisibilityQuery
-from apps.core.boundaries.query import BoundaryVisibilityQuery
 from apps.profiles.selectors.friends import get_friend_user_ids
 from apps.subtitles.services.testimony_enforcement import (
     filter_testimony_queryset_for_public_feeds,
 )
-
-logger = logging.getLogger(__name__)
 
 
 class SquareQuery:
@@ -33,39 +31,44 @@ class SquareQuery:
     Unified Square feed query builder.
 
     Responsibilities:
+    - normalize legacy Square request kinds
     - source selection
     - media/conversion availability
     - visibility policy
     - owner visibility policy
     - Boundary visibility policy
-    - Square UI policy: exclude viewer-owned content
-    - friends tab filtering
-    - square metadata annotations
+    - exclude viewer-owned content
+    - annotate relationship affinity for personalization
+    - annotate Square metadata
 
-    Stillness policy:
-    - Stillness does NOT remove content from Square.
-    - It only suppresses interruptions/notifications elsewhere.
+    Friendship is a personalization signal, not a feed scope.
 
-    Boundary policy:
-    - Boundary removes content owned by users where Boundary exists
-      in either direction between viewer and owner.
+    Stillness does not remove content from Square.
+    Boundary removes content between affected users.
     """
 
     @staticmethod
-    def build(*, viewer, kind: str = SQUARE_KIND_ALL) -> List[QuerySet]:
-        # -------------------------------------------------
-        # 0) Friends scope precompute
-        # -------------------------------------------------
+    def build(
+        *,
+        viewer,
+        kind: str = SQUARE_KIND_ALL,
+    ) -> List[QuerySet]:
+        kind = normalize_square_kind(kind)
+
         friend_ids: list[int] = []
 
-        if kind == SQUARE_KIND_FRIENDS:
-            if not viewer:
-                return []
+        if viewer:
+            friend_ids = get_friend_user_ids(
+                viewer
+            )
 
-            friend_ids = get_friend_user_ids(viewer)
-
-            if not friend_ids:
-                return []
+        friend_owner_q = (
+            owner_q_for_user_ids(
+                user_ids=friend_ids
+            )
+            if friend_ids
+            else None
+        )
 
         querysets: List[QuerySet] = []
 
@@ -73,10 +76,10 @@ class SquareQuery:
             model = source.model
 
             # ---------------------------------------------
-            # 1) Kind filter
+            # 1) Source selection
             # ---------------------------------------------
             if (
-                kind not in (SQUARE_KIND_ALL, SQUARE_KIND_FRIENDS)
+                kind != SQUARE_KIND_ALL
                 and source.kind != kind
             ):
                 continue
@@ -84,33 +87,46 @@ class SquareQuery:
             qs = model.objects.all()
 
             # ---------------------------------------------
-            # 2) Availability / conversion
+            # 2) Conversion availability
             # ---------------------------------------------
             if source.requires_conversion:
-                qs = qs.filter(is_converted=True)
+                qs = qs.filter(
+                    is_converted=True
+                )
 
             # ---------------------------------------------
-            # 3) Media existence filter
+            # 3) Media availability
             # ---------------------------------------------
             media_q = Q()
             matched = False
 
             for field in source.media_fields:
-                if field in SQUARE_ALLOWED_MEDIA_KINDS:
-                    media_q |= Q(**{f"{field}__isnull": False})
-                    matched = True
+                if field not in SQUARE_ALLOWED_MEDIA_KINDS:
+                    continue
+
+                media_q |= Q(
+                    **{
+                        f"{field}__isnull": False,
+                    }
+                )
+
+                matched = True
 
             if matched:
-                qs = qs.filter(media_q)
+                qs = qs.filter(
+                    media_q
+                )
 
             # ---------------------------------------------
-            # 4) Testimony review public-feed policy
+            # 4) Testimony public-feed policy
             # ---------------------------------------------
             if source.kind == "testimony":
-                qs = filter_testimony_queryset_for_public_feeds(qs)
+                qs = filter_testimony_queryset_for_public_feeds(
+                    qs
+                )
 
             # ---------------------------------------------
-            # 5) Visibility filtering
+            # 5) Content visibility
             # ---------------------------------------------
             qs = VisibilityQuery.for_viewer(
                 viewer=viewer,
@@ -118,7 +134,7 @@ class SquareQuery:
             )
 
             # ---------------------------------------------
-            # 6) Owner visibility filtering
+            # 6) Owner visibility
             # ---------------------------------------------
             qs = OwnerVisibilityQuery.filter_queryset_for_square(
                 qs,
@@ -127,7 +143,7 @@ class SquareQuery:
             )
 
             # ---------------------------------------------
-            # 7) Boundary visibility filtering
+            # 7) Boundary visibility
             # ---------------------------------------------
             qs = BoundaryVisibilityQuery.exclude_boundary_conflicts(
                 qs,
@@ -136,8 +152,6 @@ class SquareQuery:
 
             # ---------------------------------------------
             # 8) Exclude viewer-owned content
-            # Square discovery policy:
-            # user should not see their own content in Square.
             # ---------------------------------------------
             qs = exclude_owned_by_viewer(
                 qs,
@@ -145,15 +159,25 @@ class SquareQuery:
             )
 
             # ---------------------------------------------
-            # 9) Friends scope
+            # 9) Relationship affinity
             # ---------------------------------------------
-            if kind == SQUARE_KIND_FRIENDS:
-                qs = qs.filter(
-                    owner_q_for_user_ids(user_ids=friend_ids)
+            if friend_owner_q is not None:
+                friend_affinity = models.Case(
+                    models.When(
+                        friend_owner_q,
+                        then=models.Value(True),
+                    ),
+                    default=models.Value(False),
+                    output_field=models.BooleanField(),
+                )
+            else:
+                friend_affinity = models.Value(
+                    False,
+                    output_field=models.BooleanField(),
                 )
 
             # ---------------------------------------------
-            # 10) Annotate square metadata
+            # 10) Square metadata
             # ---------------------------------------------
             qs = qs.annotate(
                 square_kind=models.Value(
@@ -161,14 +185,17 @@ class SquareQuery:
                     output_field=models.CharField(),
                 ),
                 square_ct=models.Value(
-                    ContentType.objects.get_for_model(model).id,
+                    ContentType.objects.get_for_model(
+                        model
+                    ).id,
                     output_field=models.IntegerField(),
                 ),
+                **{
+                    SQUARE_FRIEND_AFFINITY_FIELD:
+                        friend_affinity,
+                },
             )
 
             querysets.append(qs)
 
         return querysets
-    
-    
-    

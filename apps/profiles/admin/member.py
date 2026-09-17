@@ -9,6 +9,12 @@ from apps.accounts.services.townlit_verification_service import (
     admin_revoke_townlit_verified,
 )
 from apps.profiles.models.member import Member
+from apps.organizations.constants import (
+    CURRENT_MEMBERSHIP_STATUSES,
+)
+from apps.organizations.models import (
+    OrganizationMembership,
+)
 
 
 # Member Admin ----------------------------------------------------------------
@@ -62,13 +68,16 @@ class MemberAdmin(admin.ModelAdmin):
     ]
 
     autocomplete_fields = ['user']
-    filter_horizontal = ['service_types', 'organization_memberships']
+    filter_horizontal = [
+        'service_types',
+    ]
 
     readonly_fields = (
         'register_date',
         'is_townlit_verified',
         'townlit_verified_at',
         'townlit_verified_reason',
+        'current_organizations_display',
         'preview_townlit_score',
         'preview_townlit_missing_requirements',
         'preview_townlit_hard_requirements_ready',
@@ -97,7 +106,7 @@ class MemberAdmin(admin.ModelAdmin):
             )
         }),
         ('Services', {'fields': ('service_types', 'academic_record')}),
-        ('Organizations & Memberships', {'fields': ('organization_memberships',)}),
+        ('Organizations & Memberships', {'fields': ('current_organizations_display',)}),
         ('Status', {
             'fields': (
                 'is_migrated',
@@ -148,10 +157,42 @@ class MemberAdmin(admin.ModelAdmin):
 
         super().save_model(request, obj, form, change)
 
-    def managed_organizations_display(self, obj):
-        # Optional helper column if you want to add it to list_display
-        return ', '.join([org.org_name for org in obj.managed_organizations()])
-    managed_organizations_display.short_description = 'Managed Organizations'
+    @admin.display(
+        description="Current Organizations"
+    )
+    def current_organizations_display(
+        self,
+        obj,
+    ):
+        if not obj or not obj.pk:
+            return "None"
+
+        memberships = (
+            OrganizationMembership.objects
+            .filter(
+                member=obj,
+                status__in=(
+                    CURRENT_MEMBERSHIP_STATUSES
+                ),
+            )
+            .select_related(
+                "organization",
+            )
+            .order_by(
+                "organization__name",
+                "id",
+            )
+        )
+
+        organization_names = [
+            membership.organization.name
+            for membership in memberships
+        ]
+
+        return (
+            ", ".join(organization_names)
+            or "None"
+        )
 
     # -----------------------------
     # TownLIT preview helpers

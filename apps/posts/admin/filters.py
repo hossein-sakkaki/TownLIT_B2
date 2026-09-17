@@ -11,7 +11,7 @@ from apps.subtitles.models import VideoTranscript
 CONTENT_TARGET_APP_LABELS = (
     "posts",
     "profiles",
-    "profilesOrg",
+    "organizations",
 )
 
 

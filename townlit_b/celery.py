@@ -47,29 +47,6 @@ app.conf.beat_schedule = {
         ),
     },
 
-    # Delete inactive organizations daily.
-    "delete-inactive-organizations-every-day": {
-        "task": "apps.profilesOrg.tasks.delete_inactive_entities",
-        "schedule": crontab(
-            hour=0,
-            minute=0,
-        ),
-    },
-
-    # Notify single-owner organizations every 3 months.
-    "notify-single-owner-organizations": {
-        "task": (
-            "apps.profilesOrg.tasks."
-            "notify_single_owner_organizations"
-        ),
-        "schedule": crontab(
-            hour=0,
-            minute=0,
-            day_of_month="1",
-            month_of_year="*/3",
-        ),
-    },
-
     # Check appeal deadlines daily.
     "check-appeal-deadlines-daily": {
         "task": (
@@ -160,6 +137,17 @@ app.conf.beat_schedule = {
         ),
     },
 
+    # Dispatch due notification campaigns every minute.
+    "dispatch-due-notification-campaigns-every-minute": {
+        "task": (
+            "apps.notifications.tasks."
+            "dispatch_due_notification_campaigns"
+        ),
+        "schedule": crontab(
+            minute="*",
+        ),
+    },
+    
     # Delete abandoned users daily.
     "delete-abandoned-users-daily": {
         "task": (

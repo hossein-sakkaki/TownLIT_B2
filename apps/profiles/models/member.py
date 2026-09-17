@@ -8,7 +8,7 @@ from django.utils import timezone
 from apps.posts.models.testimony import Testimony
 from apps.profiles.models.academic import AcademicRecord
 from apps.profiles.models.services import MemberServiceType
-from apps.profilesOrg.constants_denominations import (
+from apps.profiles.constants.denominations import (
     CHURCH_BRANCH_CHOICES,
     CHURCH_FAMILY_CHOICES_ALL,
     FAMILIES_BY_BRANCH,
@@ -37,13 +37,6 @@ class Member(SlugMixin):
         db_index=True,
         related_name="member_service_types",
         verbose_name="Service Types",
-    )
-    organization_memberships = models.ManyToManyField(
-        "profilesOrg.Organization",
-        blank=True,
-        db_index=True,
-        related_name="memberships",
-        verbose_name="Organization Memberships",
     )
 
     biography = models.CharField(max_length=2000, null=True, blank=True, verbose_name="Biography")
@@ -132,12 +125,6 @@ class Member(SlugMixin):
 
     def get_slug_source(self):
         return self.user.username
-
-    def is_manager(self):
-        return self.organization_adminships.exists()
-
-    def managed_organizations(self):
-        return self.organization_adminships.all()
 
     def clean(self):
         # Ensure selected family belongs to selected branch.

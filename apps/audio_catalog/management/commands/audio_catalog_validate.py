@@ -1,7 +1,7 @@
 # apps/audio_catalog/management/commands/audio_catalog_validate.py
 from django.core.management.base import BaseCommand
 from apps.audio_catalog.models import MusicTrack
-from apps.audio_catalog.services.availability import can_use_track
+from apps.audio_catalog.services.availability import can_publish_track
 
 class Command(BaseCommand):
     help = "Validate published audio catalog tracks."
@@ -9,7 +9,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         failures = 0
         for track in MusicTrack.objects.filter(status=MusicTrack.Status.PUBLISHED).select_related("rights").iterator(chunk_size=500):
-            result = can_use_track(track)
+            result = can_publish_track(track)
             if not result.allowed:
                 failures += 1
                 self.stderr.write(f"{track.id}: {result.reason}")

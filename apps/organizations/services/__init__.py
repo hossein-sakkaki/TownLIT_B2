@@ -32,6 +32,9 @@ from .roles import (
     bootstrap_organization_access,
     revoke_organization_role,
 )
+from .account_deletion import (
+    ensure_user_can_be_permanently_deleted,
+)
 
 __all__ = [
     "get_current_membership_for_user",
@@ -53,6 +56,7 @@ __all__ = [
     "assign_organization_role",
     "bootstrap_organization_access",
     "revoke_organization_role",
+    "ensure_user_can_be_permanently_deleted",
 ]
 
 from .governance import (

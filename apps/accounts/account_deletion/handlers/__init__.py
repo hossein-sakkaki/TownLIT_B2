@@ -1,6 +1,6 @@
 #
 #  apps/accounts/account_deletion/handlers/__init__.py
-#  TownLIT
+#  TownLIT-Backend
 #
 #  Created by Hossein Sakkaki on 2026-08-04.
 #  Last Update by Hossein Sakkaki on 2026-08-04.

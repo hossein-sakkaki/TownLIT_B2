@@ -183,7 +183,6 @@ INSTALLED_APPS = [
     'apps.main.apps.MainConfig',
     'apps.accounts.apps.AccountsConfig',
     'apps.profiles.apps.ProfilesConfig',
-    'apps.profilesOrg.apps.ProfilesorgConfig',
     'apps.posts.apps.PostsConfig',
     'apps.sanctuary.apps.SanctuaryConfig',
     'apps.notifications.apps.NotificationsConfig',

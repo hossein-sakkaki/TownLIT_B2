@@ -4,7 +4,7 @@ from datetime import timedelta
 from uuid import uuid4
 from django.conf import settings
 
-from apps.profilesOrg.models import Organization
+from apps.organizations.models import Organization
 from apps.orders.models import ShoppingCart, Order
 from apps.accounts.models.address import Address
 from apps.payment.constants import (

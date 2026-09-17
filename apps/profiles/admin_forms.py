@@ -46,7 +46,7 @@ class MemberServiceTypeAdminForm(forms.ModelForm):
 
 
 
-from apps.profilesOrg.constants_denominations import CHURCH_BRANCH_CHOICES, CHURCH_FAMILY_CHOICES_ALL, FAMILIES_BY_BRANCH
+from apps.profiles.constants.denominations import CHURCH_FAMILY_CHOICES_ALL, FAMILIES_BY_BRANCH
 
 class MemberAdminForm(forms.ModelForm):
     """

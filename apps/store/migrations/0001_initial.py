@@ -17,7 +17,6 @@ class Migration(migrations.Migration):
     dependencies = [
         ('products', '0001_initial'),
         ('accounts', '0001_initial'),
-        ('profilesOrg', '0001_initial'),
     ]
 
     operations = [
@@ -51,7 +50,6 @@ class Migration(migrations.Migration):
                 ('is_verified', models.BooleanField(default=False, verbose_name='Is Verified')),
                 ('is_hidden', models.BooleanField(default=False, verbose_name='Is Hidden')),
                 ('is_active', models.BooleanField(default=False, verbose_name='Is Active')),
-                ('organization', models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='store_details', to='profilesOrg.organization', verbose_name='Store Detail')),
                 ('products', models.ManyToManyField(blank=True, related_name='stores', to='products.product', verbose_name='Products')),
                 ('service_categories', models.ManyToManyField(blank=True, related_name='stores', to='store.servicecategory', verbose_name='Service Categories')),
                 ('store_address', models.ForeignKey(null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='store_address', to='accounts.address', verbose_name='Store Address')),

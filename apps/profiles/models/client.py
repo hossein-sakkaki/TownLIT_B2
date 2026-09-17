@@ -53,12 +53,6 @@ class Client(SlugMixin):
         related_name="client_profile",
         verbose_name="User",
     )
-    organization_clients = models.ManyToManyField(
-        "profilesOrg.Organization",
-        blank=True,
-        related_name="organization_clients",
-        verbose_name="Organization Clients",
-    )
     request = models.ForeignKey(
         ClientRequest,
         on_delete=models.CASCADE,

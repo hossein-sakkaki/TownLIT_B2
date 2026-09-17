@@ -306,6 +306,10 @@ class MusicRightsRecord(PublicIDTimestampedModel):
         default=False,
     )
 
+    offline_playback_allowed = models.BooleanField(
+        default=False
+    )
+
     external_export_allowed = models.BooleanField(
         default=False,
     )
@@ -432,7 +436,7 @@ class RightsEvidence(PublicIDTimestampedModel):
     )
 
     evidence_file = models.FileField(
-        upload_to=RIGHTS_EVIDENCE.dir_upload,
+        upload_to=RIGHTS_EVIDENCE,
         max_length=700,
         validators=[
             validate_no_executable_file,

@@ -6,18 +6,24 @@ from rest_framework import status, viewsets
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, AllowAny
-
+from rest_framework.exceptions import PermissionDenied
 from apps.posts.models.witness import Witness
 from apps.posts.serializers.witnesses import WitnessSerializer
 from apps.posts.mixins.mixins import  OrganizationActionMixin
-from apps.profilesOrg.models import Organization
+from apps.organizations.models import Organization
+from apps.organizations.permissions import (
+    OrganizationsEnabledPermission,
+)
+from apps.posts.services.organization_access import (
+    can_manage_organization_content,
+)
 
 
 # Witness ViewSet ---------------------------------------------------------------------------------------------------
 class WitnessViewSet(viewsets.ModelViewSet,  OrganizationActionMixin):
     queryset = Witness.objects.all()
     serializer_class = WitnessSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [OrganizationsEnabledPermission, IsAuthenticated]
     lookup_field = 'slug'
 
     def get_queryset(self):
@@ -39,6 +45,16 @@ class WitnessViewSet(viewsets.ModelViewSet,  OrganizationActionMixin):
         organization = Organization.objects.filter(slug=organization_slug).first()
         if not organization:
             return Response({"error": "Organization not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        if not can_manage_organization_content(
+            user=self.request.user,
+            organization=organization,
+        ):
+            raise PermissionDenied(
+                "You do not have permission to manage "
+                "this organization's content."
+            )
+    
         serializer.save(
             content_type=ContentType.objects.get_for_model(organization),
             object_id=organization.id,

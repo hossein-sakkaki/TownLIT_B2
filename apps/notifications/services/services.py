@@ -1,12 +1,11 @@
 # apps/notifications/services/services.py
 
 import logging
-from typing import Optional
+from typing import Optional, Dict, Any
 from django.db import transaction
 from django.contrib.contenttypes.models import ContentType
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
-from typing import Optional, Dict, Any
 
 from utils.firebase.push_engine import push_engine  # NEW: Firebase REST engine
 from utils.apple.apns_engine import apns_engine  # NEW: Apple APNs engine
@@ -15,12 +14,10 @@ from apps.notifications.constants import (
     CHANNEL_PUSH,
     CHANNEL_WS,
     CHANNEL_EMAIL,
-    CHANNEL_DEFAULT,
     NOTIFICATION_TYPES_PUSH_EMAIL_ONLY,
     NOTIFICATION_TYPES_NO_EMAIL,
     NOTIFICATION_TYPES_FORCE_ENABLED,
     NOTIFICATION_TYPES_EXCLUDED_FROM_GENERAL_UNREAD,
-    NOTIFICATION_TYPES_PUSH_ONLY,
     sanitize_notification_channels,
     notification_default_channels,
 )
@@ -33,7 +30,10 @@ from apps.notifications.services.ui_link_resolver import (
 from apps.notifications.services.delivery_policy import (
     apply_relationship_delivery_policy,
 )
-
+from apps.accounts.constants.devices import (
+    DEVICE_PLATFORM_IOS,
+    FCM_DEVICE_PLATFORMS,
+)
 from apps.notifications.tasks import send_email_notification  # Celery async task
 from apps.posts.services.journeys.links import (
     build_journey_entry_link,
@@ -648,18 +648,16 @@ def _send_firebase_push_safely(
     data: Dict[str, str],
     context: str,
     notif_type: str,
+    platforms: Optional[set[str]] = None,
 ) -> bool:
-    """
-    Send FCM push to eligible Android/Web devices.
-
-    Returns True only when at least one FCM delivery succeeds.
-    """
+    """Send FCM Push to eligible Android/Web devices."""
     try:
         sent_count = push_engine.send_to_user(
             recipient,
             title=title,
             body=body,
             data=data,
+            platforms=platforms,
         )
 
         if sent_count > 0:
@@ -667,15 +665,10 @@ def _send_firebase_push_safely(
                 "[Notif][Push][Firebase] success "
                 "context=%s user=%s type=%s sent_count=%s",
                 context,
-                getattr(
-                    recipient,
-                    "id",
-                    None,
-                ),
+                getattr(recipient, "id", None),
                 notif_type,
                 sent_count,
             )
-
             return True
 
         return False
@@ -685,18 +678,12 @@ def _send_firebase_push_safely(
             "[Notif][Push][Firebase] exception "
             "context=%s user=%s type=%s error=%s",
             context,
-            getattr(
-                recipient,
-                "id",
-                None,
-            ),
+            getattr(recipient, "id", None),
             notif_type,
             error,
             exc_info=True,
         )
-
         return False
-
 
 def _send_apns_push_safely(
     *,
@@ -1245,13 +1232,30 @@ def _deliver_notification(
     notif: Notification,
     channels_mask: int,
     extra_payload: Optional[Dict[str, Any]] = None,
+    *,
+    push_platforms: Optional[set[str]] = None,
+    push_title: Optional[str] = None,
+    push_body: Optional[str] = None,
+    email_subject: Optional[str] = None,
 ):
-    """
-    Fan-out to WebSocket, Push (Firebase REST), and Email via Celery.
-    """
-    # ------------------------------------------------------------------
-    # 1) WebSocket Delivery
-    # ------------------------------------------------------------------
+    """Deliver one stored notification."""
+    result = {
+        "ws_sent": False,
+        "firebase_sent": False,
+        "apns_sent": False,
+        "email_queued": False,
+    }
+
+    requested_platforms = None
+
+    if push_platforms is not None:
+        requested_platforms = {
+            str(platform).strip().lower()
+            for platform in push_platforms
+            if str(platform).strip()
+        }
+
+    # WebSocket
     try:
         if channels_mask & CHANNEL_WS:
             layer = get_channel_layer()
@@ -1260,7 +1264,6 @@ def _deliver_notification(
                 logger.warning(
                     "[Notif] No channel_layer; skipping WS"
                 )
-
             else:
                 unread_count = (
                     _general_unread_notification_count_for_user(
@@ -1270,10 +1273,14 @@ def _deliver_notification(
 
                 payload = {
                     "id": notif.id,
+                    "title": getattr(notif, "title", "") or "",
                     "type": notif.notification_type,
                     "notification_type": notif.notification_type,
                     "message": notif.message,
                     "link": notif.link,
+                    "action_label": getattr(notif, "action_label", "") or "",
+                    "campaign_id": getattr(notif, "campaign_id", None),
+                    "metadata": getattr(notif, "metadata", {}) or {},
                     "created_at": notif.created_at.isoformat(),
                     "is_read": notif.is_read,
                     "read_at": (
@@ -1282,18 +1289,10 @@ def _deliver_notification(
                         else None
                     ),
                     "unread": unread_count,
-                    "target_content_type": (
-                        notif.target_content_type_id
-                    ),
-                    "target_object_id": (
-                        notif.target_object_id
-                    ),
-                    "action_content_type": (
-                        notif.action_content_type_id
-                    ),
-                    "action_object_id": (
-                        notif.action_object_id
-                    ),
+                    "target_content_type": notif.target_content_type_id,
+                    "target_object_id": notif.target_object_id,
+                    "action_content_type": notif.action_content_type_id,
+                    "action_object_id": notif.action_object_id,
                 }
 
                 actor = getattr(
@@ -1305,34 +1304,18 @@ def _deliver_notification(
                 if actor:
                     payload["actor"] = {
                         "id": actor.id,
-                        "username": getattr(
-                            actor,
-                            "username",
-                            None,
-                        ),
-                        "name": getattr(
-                            actor,
-                            "name",
-                            None,
-                        ),
-                        "family": getattr(
-                            actor,
-                            "family",
-                            None,
-                        ),
+                        "username": getattr(actor, "username", None),
+                        "name": getattr(actor, "name", None),
+                        "family": getattr(actor, "family", None),
                     }
 
                 if extra_payload:
                     payload["extra"] = extra_payload
 
-                group_name = (
-                    f"notif_user_{notif.user_id}"
-                )
-
                 async_to_sync(
                     layer.group_send
                 )(
-                    group_name,
+                    f"notif_user_{notif.user_id}",
                     {
                         "type": "dispatch_event",
                         "app": "notifications",
@@ -1341,27 +1324,18 @@ def _deliver_notification(
                     },
                 )
 
-                logger.debug(
-                    "[Notif][WS] delivered "
-                    "notif=%s user=%s unread=%s",
-                    notif.id,
-                    notif.user_id,
-                    unread_count,
-                )
+                result["ws_sent"] = True
 
     except Exception as error:
         logger.warning(
-            "[Notif] WS delivery failed "
-            "user=%s notif=%s error=%s",
+            "[Notif] WS delivery failed user=%s notif=%s error=%s",
             notif.user_id,
             notif.id,
             error,
             exc_info=True,
         )
 
-    # ------------------------------------------------------------------
-    # 2) Push Delivery (Firebase REST + APNs)
-    # ------------------------------------------------------------------
+    # Push
     try:
         if channels_mask & CHANNEL_PUSH:
             resolved_link = notif.link or ""
@@ -1376,88 +1350,163 @@ def _deliver_notification(
 
             if extra_payload:
                 try:
-                    base_data.update(extra_payload)
-                except Exception as e:
+                    base_data.update(
+                        extra_payload
+                    )
+                except Exception as error:
                     logger.warning(
-                        "[Notif][Push] extra_payload merge failed notif=%s error=%s",
+                        "[Notif][Push] extra_payload merge failed "
+                        "notif=%s error=%s",
                         notif.id,
-                        e,
+                        error,
                         exc_info=True,
                     )
 
-            safe_data = _safe_push_data(base_data)
-
-            push_title = push_title_for_notification(
-                notif.notification_type,
-                extra_payload=extra_payload,
-            )
-            push_body = push_body_for_notification(
-                notif.notification_type,
-                notif.message,
-            )
-            push_sound = _push_sound_for_notification(notif.notification_type)
-            badge_count = _badge_count_for_user(notif.user)
-
-            firebase_sent = _send_firebase_push_safely(
-                recipient=notif.user,
-                title=push_title,
-                body=push_body,
-                data=safe_data,
-                context="stored_notification",
-                notif_type=notif.notification_type,
+            safe_data = _safe_push_data(
+                base_data
             )
 
-            apns_sent = _send_apns_push_safely(
-                recipient=notif.user,
-                title=push_title,
-                body=push_body,
-                data=safe_data,
-                badge=badge_count,
-                sound=push_sound,
-                context="stored_notification",
-                notif_type=notif.notification_type,
+            resolved_title = (
+                push_title
+                or getattr(notif, "title", "")
+                or push_title_for_notification(
+                    notif.notification_type,
+                    extra_payload=extra_payload,
+                )
             )
 
-    except Exception as e:
+            resolved_body = (
+                push_body
+                or push_body_for_notification(
+                    notif.notification_type,
+                    notif.message,
+                )
+            )
+
+            push_sound = _push_sound_for_notification(
+                notif.notification_type
+            )
+
+            badge_count = _badge_count_for_user(
+                notif.user
+            )
+
+            allow_firebase = (
+                requested_platforms is None
+                or bool(
+                    requested_platforms
+                    & set(FCM_DEVICE_PLATFORMS)
+                )
+            )
+
+            allow_apns = (
+                requested_platforms is None
+                or DEVICE_PLATFORM_IOS in requested_platforms
+            )
+
+            if allow_firebase:
+                result["firebase_sent"] = _send_firebase_push_safely(
+                    recipient=notif.user,
+                    title=resolved_title,
+                    body=resolved_body,
+                    data=safe_data,
+                    context="stored_notification",
+                    notif_type=notif.notification_type,
+                    platforms=requested_platforms,
+                )
+
+            if allow_apns:
+                result["apns_sent"] = _send_apns_push_safely(
+                    recipient=notif.user,
+                    title=resolved_title,
+                    body=resolved_body,
+                    data=safe_data,
+                    badge=badge_count,
+                    sound=push_sound,
+                    context="stored_notification",
+                    notif_type=notif.notification_type,
+                )
+
+    except Exception as error:
         logger.warning(
-            "[Notif][Push] delivery wrapper failed user=%s notif=%s error=%s",
+            "[Notif][Push] delivery wrapper failed "
+            "user=%s notif=%s error=%s",
             getattr(notif, "user_id", None),
             getattr(notif, "id", None),
-            e,
+            error,
             exc_info=True,
         )
 
-    # ------------------------------------------------------------------
-    # 3) Email Delivery
-    # ------------------------------------------------------------------
+    # Email
     try:
         if channels_mask & CHANNEL_EMAIL:
-            email = getattr(notif.user, "email", None)
-            if not email:
-                return
-
-            subject = email_subject_for_notification(notif.notification_type)
-            body_text = f"{notif.message}"
-
-            email_link = None
-            if isinstance(extra_payload, dict):
-                email_link = extra_payload.get("email_link") or extra_payload.get("web_link")
-
-            email_link = email_link or notif.link
-
-            res = send_email_notification.delay(
-                email,
-                subject,
-                body_text,
-                email_link,
+            email = getattr(
+                notif.user,
+                "email",
+                None,
             )
 
-    except Exception as e:
+            if email:
+                subject = (
+                    email_subject
+                    or email_subject_for_notification(
+                        notif.notification_type
+                    )
+                )
+
+                email_link = None
+
+                if isinstance(extra_payload, dict):
+                    email_link = (
+                        extra_payload.get("email_link")
+                        or extra_payload.get("web_link")
+                        or extra_payload.get("action_url")
+                    )
+
+                email_link = (
+                    email_link
+                    or notif.link
+                )
+
+                send_email_notification.delay(
+                    email,
+                    subject,
+                    notif.message,
+                    email_link,
+                )
+
+                result["email_queued"] = True
+
+    except Exception as error:
         logger.warning(
-            "[Notif] Email delivery failed for user %s notif %s: %s",
+            "[Notif] Email delivery failed "
+            "user=%s notif=%s error=%s",
             notif.user_id,
             notif.id,
-            e,
+            error,
             exc_info=True,
         )
 
+    return result
+
+
+def deliver_existing_notification(
+    notif: Notification,
+    *,
+    channels_mask: int,
+    extra_payload: Optional[Dict[str, Any]] = None,
+    push_platforms: Optional[set[str]] = None,
+    push_title: Optional[str] = None,
+    push_body: Optional[str] = None,
+    email_subject: Optional[str] = None,
+):
+    """Deliver an already persisted notification."""
+    return _deliver_notification(
+        notif,
+        channels_mask,
+        extra_payload,
+        push_platforms=push_platforms,
+        push_title=push_title,
+        push_body=push_body,
+        email_subject=email_subject,
+    )

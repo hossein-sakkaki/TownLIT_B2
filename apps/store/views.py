@@ -1,53 +1,155 @@
+from rest_framework import status, viewsets
+from rest_framework.permissions import (
+    IsAuthenticated,
+)
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, AllowAny
-from rest_framework import viewsets, status
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+
+from apps.organizations.permissions import (
+    OrganizationsEnabledPermission,
+)
+from apps.store.services.organization_access import (
+    effective_owned_organizations_queryset,
+    resolve_store_create_organization,
+    user_owns_organization,
+)
 
 from .models import Store
 from .serializers import StoreSerializer
 
 
-
-# STORE(ORG) ViewSet -----------------------------------------------------------------------------------
-class StoreViewSet(viewsets.ModelViewSet):
+class StoreViewSet(
+    viewsets.ModelViewSet
+):
     queryset = Store.objects.all()
     serializer_class = StoreSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [
+        IsAuthenticated,
+        OrganizationsEnabledPermission,
+    ]
 
     def get_queryset(self):
         user = self.request.user
-        if user.is_staff:
+
+        if getattr(
+            user,
+            "is_staff",
+            False,
+        ):
             return super().get_queryset()
-        return Store.objects.filter(organization__org_owners=user.member)
 
-    def retrieve(self, request, *args, **kwargs):
+        organization_ids = (
+            effective_owned_organizations_queryset(
+                user=user,
+            )
+            .values_list(
+                "id",
+                flat=True,
+            )
+        )
+
+        return Store.objects.filter(
+            organization_id__in=organization_ids,
+        )
+
+    def retrieve(
+        self,
+        request,
+        *args,
+        **kwargs,
+    ):
         store = self.get_object()
-        serializer = self.get_serializer(store)
-        return Response(serializer.data)
+        serializer = self.get_serializer(
+            store
+        )
+        return Response(
+            serializer.data
+        )
 
-    def create(self, request, *args, **kwargs):
-        member = request.user.member
-        data = request.data.copy()
-        data['organization'] = member.organization.id
-        serializer = self.get_serializer(data=data)
-        serializer.is_valid(raise_exception=True)
-        self.perform_create(serializer)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    def create(
+        self,
+        request,
+        *args,
+        **kwargs,
+    ):
+        organization = (
+            resolve_store_create_organization(
+                user=request.user,
+                organization_id=(
+                    request.data.get(
+                        "organization"
+                    )
+                ),
+            )
+        )
 
-    def perform_create(self, serializer):
-        serializer.save()
+        serializer = self.get_serializer(
+            data=request.data
+        )
+        serializer.is_valid(
+            raise_exception=True
+        )
 
-    def update(self, request, *args, **kwargs):
+        serializer.save(
+            organization=organization
+        )
+
+        return Response(
+            serializer.data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    def update(
+        self,
+        request,
+        *args,
+        **kwargs,
+    ):
         store = self.get_object()
-        member = request.user.member
-        if member not in store.organization.org_owners.all():
-            return Response({"error": "Only organization owners can update the store."}, status=status.HTTP_403_FORBIDDEN)
-        return super().update(request, *args, **kwargs)
 
-    def destroy(self, request, *args, **kwargs):
+        if not user_owns_organization(
+            user=request.user,
+            organization=store.organization,
+        ):
+            return Response(
+                {
+                    "error": (
+                        "Only organization owners "
+                        "can update the store."
+                    ),
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        return super().update(
+            request,
+            *args,
+            **kwargs,
+        )
+
+    def destroy(
+        self,
+        request,
+        *args,
+        **kwargs,
+    ):
         store = self.get_object()
-        member = request.user.member
-        if member not in store.organization.org_owners.all():
-            return Response({"error": "Only organization owners can delete the store."}, status=status.HTTP_403_FORBIDDEN)
-        return super().destroy(request, *args, **kwargs)
+
+        if not user_owns_organization(
+            user=request.user,
+            organization=store.organization,
+        ):
+            return Response(
+                {
+                    "error": (
+                        "Only organization owners "
+                        "can delete the store."
+                    ),
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        return super().destroy(
+            request,
+            *args,
+            **kwargs,
+        )

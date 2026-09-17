@@ -23,7 +23,9 @@ from apps.core.streams.query import StreamQuery
 from apps.core.streams.registry import get_stream_source
 from apps.core.streams.resolvers import resolve_stream_subtype
 from apps.core.streams.serializers import StreamItemSerializer
-
+from apps.core.streams.suggested_users import (
+    StreamSuggestedUsersComposer,
+)
 
 def _stream_perf_enabled() -> bool:
     return bool(
@@ -123,7 +125,12 @@ class StreamViewSet(viewsets.ViewSet):
                     "extension": context.extension,
                     "can_continue": False,
                     "limit_reached": True,
-                    "policy": self._policy_payload(context),
+                    "policy": self._policy_payload(
+                        context
+                    ),
+                    "composition": {
+                        "modules": [],
+                    },
                 },
                 status=status.HTTP_200_OK,
             )
@@ -276,6 +283,11 @@ class StreamViewSet(viewsets.ViewSet):
             ),
             "limit_reached": False,
             "policy": self._policy_payload(context),
+            "composition": self._composition_payload(
+                context=context,
+                request=request,
+                results_count=len(results),
+            ),
         }
 
         _stream_time(
@@ -428,4 +440,28 @@ class StreamViewSet(viewsets.ViewSet):
             "batch_size": None,
             "batch_count": None,
             "max_items": None,
+        }
+
+    def _composition_payload(
+        self,
+        *,
+        context,
+        request,
+        results_count: int,
+    ) -> dict:
+        module = (
+            StreamSuggestedUsersComposer
+            .build_module(
+                context=context,
+                request=request,
+                results_count=results_count,
+            )
+        )
+
+        return {
+            "modules": (
+                [module]
+                if module is not None
+                else []
+            ),
         }

@@ -1,15 +1,24 @@
 # apps/asset_delivery/views.py
+#
+# TownLIT
+#
+# Created by Hossein Sakkaki on 2026-08-31.
+# Last Update by Hossein Sakkaki on 2026-09-07.
+#
 
+import uuid
 import logging
 import os
 from datetime import timedelta
 
 from django.conf import settings
 from django.utils import timezone
+from django.contrib.contenttypes.models import ContentType
 
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
+
 from rest_framework.response import Response
 
 from apps.asset_delivery.constants import PlaybackAuthMode, PlaybackIntent
@@ -40,6 +49,10 @@ from apps.sanctuary.services.held_content_access import (
     can_inspect_held_content,
     held_asset_field_is_allowed,
     is_under_active_safety_hold,
+)
+from apps.audio_catalog.models import AudioUsageGrant
+from apps.audio_catalog.services.historical_usage import (
+    can_render_existing_audio_usage,
 )
 
 logger = logging.getLogger(__name__)
@@ -404,6 +417,7 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
             PlaybackIntent.RENDER,
             PlaybackIntent.FEED,
             PlaybackIntent.DETAIL,
+            PlaybackIntent.OFFLINE,
         }
 
     def _public_payload(self, payload: dict) -> dict:
@@ -855,3 +869,168 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
                 )
 
         return resp
+    
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="historical-audio",
+        permission_classes=[IsAuthenticated],
+    )
+    def historical_audio(self, request):
+        """
+        Deliver audio only through an exact active historical grant.
+        """
+
+        raw_variant_id = str(
+            request.data.get("variant_public_id") or ""
+        ).strip()
+
+        if not raw_variant_id:
+            return Response(
+                {"detail": "variant_public_id is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            variant_public_id = uuid.UUID(raw_variant_id)
+        except ValueError:
+            return Response(
+                {"detail": "Invalid variant_public_id."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            intent = self._validate_intent(
+                request.data.get("intent")
+                or PlaybackIntent.PRELOAD
+            )
+
+            if intent == "download":
+                return Response(
+                    {"detail": "Historical standalone download is not allowed."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            content_target = self._resolve_target(
+                request.data
+            )
+
+            if is_under_active_safety_hold(
+                content_target
+            ):
+                if not can_inspect_held_content(
+                    viewer=request.user,
+                    target=content_target,
+                ):
+                    return Response(
+                        {"detail": "Access restricted."},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+
+            elif not safe_can_view_target(
+                request,
+                content_target,
+            ):
+                return Response(
+                    {"detail": "Access restricted."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            content_type = ContentType.objects.get_for_model(
+                content_target,
+                for_concrete_model=False,
+            )
+
+            grant = (
+                AudioUsageGrant.objects
+                .select_related(
+                    "track",
+                    "variant",
+                    "content_type",
+                )
+                .filter(
+                    content_type=content_type,
+                    object_id=content_target.pk,
+                    status=AudioUsageGrant.Status.ACTIVE,
+                    variant__public_id=variant_public_id,
+                )
+                .first()
+            )
+
+            if grant is None:
+                return Response(
+                    {"detail": "Historical audio grant is unavailable."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            availability = can_render_existing_audio_usage(
+                grant
+            )
+
+            if not availability.allowed:
+                return Response(
+                    {"detail": availability.reason},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            payload = self._build_playback(
+                target=grant.variant,
+                kind="audio",
+                field_name="audio_file",
+                intent=intent,
+            )
+
+            public_payload = {
+                key: value
+                for key, value in payload.items()
+                if not key.startswith("_")
+            }
+
+            response = Response(
+                public_payload,
+                status=status.HTTP_200_OK,
+            )
+
+            key = payload.get("_source_key") or ""
+            raw_signed_url = (
+                payload.get("_signed_url_raw") or ""
+            )
+
+            if (
+                key
+                and raw_signed_url
+                and self._should_set_cookies(
+                    key=key,
+                    intent=intent,
+                )
+            ):
+                cookie_path = (
+                    _hls_cookie_scope_from_key(key)
+                    if _is_hls_path(key)
+                    else _cookie_scope_from_key(key)
+                )
+
+                self._set_cloudfront_signed_cookies(
+                    response,
+                    signed_url=raw_signed_url,
+                    ttl=int(payload["expires_in"]),
+                    cookie_path=cookie_path,
+                )
+
+            return response
+
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except Exception:
+            logger.exception(
+                "asset_delivery.historical_audio failed"
+            )
+
+            return Response(
+                {"detail": "Internal error."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )

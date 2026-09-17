@@ -101,8 +101,33 @@ NOTIFICATION_TYPES = [
     # --- Journey ---
     ("new_journey", "New Journey"),
 
+    # --- TownLIT Campaigns ---
+    ("townlit_announcement", "TownLIT Announcement"),
+    ("townlit_app_update", "TownLIT App Update"),
+    ("townlit_feature_update", "TownLIT Feature Update"),
+    ("townlit_maintenance", "TownLIT Maintenance"),
+    ("townlit_security_notice", "TownLIT Security Notice"),
+    ("townlit_policy_update", "TownLIT Policy Update"),
+    ("townlit_community", "TownLIT Community Announcement"),
+    ("townlit_event", "TownLIT Event"),
 ]
 
+
+CAMPAIGN_NOTIFICATION_TYPES = {
+    "townlit_announcement",
+    "townlit_app_update",
+    "townlit_feature_update",
+    "townlit_maintenance",
+    "townlit_security_notice",
+    "townlit_policy_update",
+    "townlit_community",
+    "townlit_event",
+}
+
+
+NOTIFICATION_TYPES_EXCLUDED_FROM_PREFERENCES = set(
+    CAMPAIGN_NOTIFICATION_TYPES
+)
 
 # -------------------------------------------------------------------
 # Guest-only allowed notification types
@@ -208,6 +233,11 @@ NOTIFICATION_TYPES_NO_EMAIL = {
     "new_journey",
 }
 
+# Campaign email is controlled explicitly by NotificationCampaign policy.
+# Generic notification delivery must never enable it accidentally.
+NOTIFICATION_TYPES_NO_EMAIL.update(
+    CAMPAIGN_NOTIFICATION_TYPES
+)
 
 NOTIFICATION_TYPES_FORCE_ENABLED = {
     "new_message_direct",

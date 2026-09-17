@@ -105,12 +105,7 @@ def evaluate_track_readiness(track: MusicTrack) -> TrackReadiness:
     )
 
     required_rights = (
-        ("UGC", "ugc_use_allowed"),
         ("Streaming", "streaming_allowed"),
-        ("Synchronization", "synchronization_allowed"),
-        ("Clipping", "clipping_allowed"),
-        ("Hosting", "hosting_allowed"),
-        ("End-user sublicensing", "sublicensing_to_end_users_allowed"),
     )
 
     missing_rights = []
@@ -499,6 +494,7 @@ class MusicTrackAdmin(
         "is_test_asset",
         "allow_ugc",
         "allow_streaming",
+        "allow_offline_playback",
         "allow_external_export",
         "categories",
         "genres",
@@ -628,6 +624,7 @@ class MusicTrackAdmin(
                     ("bpm", "musical_key", "time_signature"),
                     ("is_ai_assisted", "is_test_asset"),
                     (
+                        "allow_offline_playback",
                         "allow_standalone_download",
                         "allow_external_export",
                         "allow_commercial_accounts",

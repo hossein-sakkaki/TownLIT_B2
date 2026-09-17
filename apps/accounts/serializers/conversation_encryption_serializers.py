@@ -1,6 +1,6 @@
 #
 #  apps/accounts/serializers/conversation_encryption_serializers.py
-#  TownLIT
+#  TownLIT-Backend
 #
 #  Created by Hossein Sakkaki on 2026-07-28.
 #  Last Update by Hossein Sakkaki on 2026-07-28.

@@ -11,7 +11,7 @@ class ProfileMeGateSerializer(serializers.Serializer):
 
 
 class ProfileMeSerializer(serializers.Serializer):
-    profile_type = serializers.CharField()
+    profile_type = serializers.CharField(allow_null=True)
     profile_id = serializers.IntegerField(allow_null=True)
     username = serializers.CharField()
     is_member = serializers.BooleanField()

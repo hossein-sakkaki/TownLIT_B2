@@ -7,7 +7,9 @@ from apps.core.feed.trending import TrendingEngine
 from apps.core.feed.personalized_trending import PersonalizedTrendingEngine
 from apps.core.feed.hybrid import HybridFeedEngine
 from apps.core.boundaries.query import BoundaryVisibilityQuery
-
+from apps.core.square.constants import (
+    SQUARE_FRIEND_AFFINITY_FIELD,
+)
 
 class SquareEngine:
     """
@@ -73,6 +75,7 @@ class SquareEngine:
             return PersonalizedTrendingEngine.apply(
                 qs,
                 viewer=viewer,
+                friend_affinity_field=SQUARE_FRIEND_AFFINITY_FIELD,
             )
 
         # -------------------------------------------------
@@ -81,4 +84,5 @@ class SquareEngine:
         return HybridFeedEngine.apply(
             qs,
             viewer=viewer,
+            friend_affinity_field=SQUARE_FRIEND_AFFINITY_FIELD,
         )

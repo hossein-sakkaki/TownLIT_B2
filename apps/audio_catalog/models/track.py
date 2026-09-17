@@ -183,6 +183,10 @@ class MusicTrack(
     allow_streaming = models.BooleanField(
         default=True,
     )
+    
+    allow_offline_playback = models.BooleanField(
+        default=False
+    )
 
     allow_standalone_download = models.BooleanField(
         default=False,

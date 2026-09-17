@@ -137,6 +137,7 @@ class MusicRightsRecordAdmin(
         "hosting_allowed",
         "sublicensing_to_end_users_allowed",
         "standalone_download_allowed",
+        "offline_playback_allowed",
         "external_export_allowed",
         "attribution_required",
         "effective_from",
@@ -245,6 +246,7 @@ class MusicRightsRecordAdmin(
                     ),
                     (
                         "standalone_download_allowed",
+                        "offline_playback_allowed",
                         "external_export_allowed",
                     ),
                     "perpetual_existing_content_allowed",

@@ -37,7 +37,12 @@ class HybridFeedEngine:
     """
 
     @staticmethod
-    def apply(queryset, *, viewer=None):
+    def apply(
+        queryset,
+        *,
+        viewer=None,
+        friend_affinity_field: str | None = None,
+    ):
         # ------------------------------------------------------------
         # 0) Boundary visibility gate
         # ------------------------------------------------------------
@@ -59,21 +64,56 @@ class HybridFeedEngine:
         # ------------------------------------------------------------
         # 3) Relationship boost
         # ------------------------------------------------------------
-        relationship_boost = ExpressionWrapper(
-            Value(1.0)
-            + Case(
-                When(
-                    visibility=VISIBILITY_COVENANT,
-                    then=Value(float(HYBRID_COVENANT_BOOST - 1)),
+        if friend_affinity_field:
+            relationship_boost = ExpressionWrapper(
+                Value(1.0)
+                + Case(
+                    When(
+                        visibility=VISIBILITY_COVENANT,
+                        then=Value(
+                            float(
+                                HYBRID_COVENANT_BOOST - 1
+                            )
+                        ),
+                    ),
+                    When(
+                        **{
+                            friend_affinity_field: True,
+                        },
+                        then=Value(
+                            float(
+                                HYBRID_FRIEND_BOOST - 1
+                            )
+                        ),
+                    ),
+                    default=Value(0.0),
                 ),
-                When(
-                    visibility=VISIBILITY_FRIENDS,
-                    then=Value(float(HYBRID_FRIEND_BOOST - 1)),
+                output_field=FloatField(),
+            )
+        else:
+            relationship_boost = ExpressionWrapper(
+                Value(1.0)
+                + Case(
+                    When(
+                        visibility=VISIBILITY_COVENANT,
+                        then=Value(
+                            float(
+                                HYBRID_COVENANT_BOOST - 1
+                            )
+                        ),
+                    ),
+                    When(
+                        visibility=VISIBILITY_FRIENDS,
+                        then=Value(
+                            float(
+                                HYBRID_FRIEND_BOOST - 1
+                            )
+                        ),
+                    ),
+                    default=Value(0.0),
                 ),
-                default=Value(0.0),
-            ),
-            output_field=FloatField(),
-        )
+                output_field=FloatField(),
+            )
 
         # ------------------------------------------------------------
         # 4) Engagement total

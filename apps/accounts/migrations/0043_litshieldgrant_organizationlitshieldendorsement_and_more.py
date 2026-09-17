@@ -11,7 +11,6 @@ import validators.security_validators
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('profilesOrg', '0032_alter_organization_license_document_and_more'),
         ('profiles', '0037_alter_academicrecord_document_and_more'),
         ('accounts', '0042_alter_customuser_image_name'),
     ]
@@ -40,7 +39,6 @@ class Migration(migrations.Migration):
                 ('approved', models.BooleanField(null=True)),
                 ('reviewed_at', models.DateTimeField(blank=True, null=True)),
                 ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('organization', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='litshield_grants', to='profilesOrg.organization')),
                 ('referrer_member', models.ForeignKey(help_text='Member submitting endorsement', on_delete=django.db.models.deletion.PROTECT, to='profiles.member')),
             ],
         ),
@@ -74,11 +72,6 @@ class Migration(migrations.Migration):
         ),
         migrations.AddField(
             model_name='litshieldgrant',
-            name='organization',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name='litshield_endorsements', to='profilesOrg.organization'),
-        ),
-        migrations.AddField(
-            model_name='litshieldgrant',
             name='requested_by',
             field=models.ForeignKey(blank=True, help_text='Admin or organization owner who initiated this', null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='litshield_requests', to=settings.AUTH_USER_MODEL),
         ),
@@ -86,9 +79,5 @@ class Migration(migrations.Migration):
             model_name='litshieldgrant',
             name='user',
             field=models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='litshield_grant', to=settings.AUTH_USER_MODEL),
-        ),
-        migrations.AlterUniqueTogether(
-            name='organizationlitshieldendorsement',
-            unique_together={('user', 'organization')},
         ),
     ]

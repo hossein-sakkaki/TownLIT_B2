@@ -7,7 +7,6 @@ urlpatterns = [
 
     path('accounts/', include('apps.accounts.urls')),
     path('profiles/', include('apps.profiles.urls')),
-    path('profiles_org/', include('apps.profilesOrg.urls')),
     path('posts/', include('apps.posts.urls')),
     path('sanctuary/', include('apps.sanctuary.urls')),
     path("help-support/", include("apps.help_support.urls")),

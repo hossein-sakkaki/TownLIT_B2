@@ -120,6 +120,10 @@ class MusicTrackAdminForm(forms.ModelForm):
         self.fields["allow_standalone_download"].help_text = (
             "Normally keep this disabled."
         )
+        self.fields["allow_offline_playback"].help_text = (
+            "Allow private in-app offline playback when the rights record "
+            "and selected audio variant also permit it."
+        )
         self.fields["allow_external_export"].help_text = (
             "Enable only when the applicable music rights explicitly "
             "permit external export."

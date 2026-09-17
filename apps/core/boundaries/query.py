@@ -7,8 +7,11 @@ from django.db.models import Exists, OuterRef, Q, QuerySet
 
 from apps.core.boundaries.constants import BOUNDARY_BOUNDARY
 from apps.core.boundaries.models import UserBoundary
-from apps.profiles.models import Member, GuestUser
-from apps.profilesOrg.models import Organization
+from apps.organizations.models import Organization
+from apps.organizations.selectors.ownership import (
+    effective_organization_owner_memberships_queryset,
+)
+from apps.profiles.models import GuestUser, Member
 
 
 class BoundaryVisibilityQuery:
@@ -37,7 +40,7 @@ class BoundaryVisibilityQuery:
         1) Generic owner fields: content_type + object_id
            - Member owner
            - GuestUser owner
-           - Organization owner through org_owners.user
+           - Organization owner through organization owners.user
 
         2) Direct user FK fields, if present:
            - user
@@ -179,17 +182,23 @@ class BoundaryVisibilityQuery:
         # ------------------------------------------------------------
         # Organization-owned content
         # ------------------------------------------------------------
-        # If any active organization owner has Boundary with viewer,
-        # hide that organization content from this viewer.
-        org_owner_with_boundary = Organization.objects.filter(
-            id=OuterRef("object_id"),
-            org_owners__is_active=True,
-            org_owners__user__isnull=False,
-        ).filter(
-            Exists(
-                BoundaryVisibilityQuery._boundary_exists_for_user_id(
-                    viewer=viewer,
-                    user_id_outer_ref=OuterRef("org_owners__user_id"),
+        # If any effective Organization owner has Boundary with viewer,
+        # hide that Organization content from this viewer.
+        org_owner_with_boundary = (
+            effective_organization_owner_memberships_queryset()
+            .filter(
+                organization_id=OuterRef("object_id"),
+                member__is_active=True,
+            )
+            .filter(
+                Exists(
+                    BoundaryVisibilityQuery
+                    ._boundary_exists_for_user_id(
+                        viewer=viewer,
+                        user_id_outer_ref=OuterRef(
+                            "member__user_id"
+                        ),
+                    )
                 )
             )
         )

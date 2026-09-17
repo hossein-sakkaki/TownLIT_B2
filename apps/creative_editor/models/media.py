@@ -1,6 +1,6 @@
 #
 #  apps/creative_editor/models/media.py
-#  TownLIT
+#  TownLIT-Backend
 #
 #  Created by Hossein Sakkaki on 2026-08-10.
 #  Last Update by Hossein Sakkaki on 2026-08-11.

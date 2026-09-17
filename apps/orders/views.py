@@ -1,14 +1,19 @@
 from django.shortcuts import get_object_or_404
 from rest_framework import viewsets, status
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+
+
 from rest_framework.decorators import action
 from .models import Order, OrderItem, OrderStatusHistory, DeliveryInformation, ReturnRequest, ShoppingCart, ShoppingCartItem
 from .serializers import (
                     OrderSerializer, OrderItemSerializer, OrderStatusHistorySerializer, 
                     DeliveryInformationSerializer, ReturnRequestSerializer, ShoppingCartSerializer, ShoppingCartItemSerializer
                 )
-from common.permissions import IsFullAccessAdmin, IsLimitedAccessAdmin
+from rest_framework.permissions import (
+    IsAdminUser,
+    IsAuthenticated,
+)
+
 from apps.payment.views import PaymentShoppingCartViewSet
 from apps.payment.models import PaymentShoppingCart
 from apps.orders.constants import DELIVERY_IN_PAYMENT, DELIVERY_PAID, DELIVERY_CANCELLED, DELIVERY_AWAITING_HELP
@@ -24,7 +29,7 @@ class OrderViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action in ['update', 'partial_update', 'destroy', 'process_payment', 'confirm_payment', 'cancel_order']:
-            return [IsFullAccessAdmin()]
+            return [IsAdminUser()]
         return super().get_permissions()
 
     def create(self, request, *args, **kwargs):
@@ -327,7 +332,7 @@ class ShoppingCartItemViewSet(viewsets.ModelViewSet):
 class DeliveryInformationViewSet(viewsets.ModelViewSet):
     queryset = DeliveryInformation.objects.all()
     serializer_class = DeliveryInformationSerializer
-    permission_classes = [IsAuthenticated, IsFullAccessAdmin]
+    permission_classes = [IsAuthenticated, IsAdminUser]
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -346,7 +351,7 @@ class DeliveryInformationViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save()
 
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsFullAccessAdmin])
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsAdminUser])
     def update_tracking_info(self, request, pk=None):
         delivery_info = self.get_object()
         tracking_number = request.data.get('tracking_number')
@@ -363,7 +368,7 @@ class DeliveryInformationViewSet(viewsets.ModelViewSet):
 class ReturnRequestViewSet(viewsets.ModelViewSet):
     queryset = ReturnRequest.objects.all()
     serializer_class = ReturnRequestSerializer
-    permission_classes = [IsAuthenticated, IsLimitedAccessAdmin]
+    permission_classes = [IsAuthenticated, IsAdminUser]
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -371,14 +376,14 @@ class ReturnRequestViewSet(viewsets.ModelViewSet):
         self.perform_create(serializer)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsLimitedAccessAdmin])
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsAdminUser])
     def approve_return(self, request, pk=None):
         return_request = self.get_object()
         return_request.status = 'approved'
         return_request.save()
         return Response({'status': 'Return request approved'}, status=status.HTTP_200_OK)
 
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsLimitedAccessAdmin])
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsAdminUser])
     def reject_return(self, request, pk=None):
         return_request = self.get_object()
         return_request.status = 'rejected'

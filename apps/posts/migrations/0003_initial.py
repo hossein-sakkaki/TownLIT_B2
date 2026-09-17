@@ -14,16 +14,10 @@ class Migration(migrations.Migration):
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
         ('contenttypes', '0002_remove_content_type_name'),
         ('profiles', '0002_initial'),
-        ('profilesOrg', '0001_initial'),
         ('posts', '0002_initial'),
     ]
 
     operations = [
-        migrations.AddField(
-            model_name='testimony',
-            name='org_tags',
-            field=models.ManyToManyField(blank=True, db_index=True, related_name='tagged_in_testimonies', to='profilesOrg.organization', verbose_name='Organization Tags'),
-        ),
         migrations.AddField(
             model_name='testimony',
             name='user_tags',
@@ -74,11 +68,7 @@ class Migration(migrations.Migration):
             name='content_type',
             field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='contenttypes.contenttype'),
         ),
-        migrations.AddField(
-            model_name='moment',
-            name='org_tags',
-            field=models.ManyToManyField(blank=True, db_index=True, related_name='tagged_in_moments', to='profilesOrg.organization', verbose_name='Organization Tags'),
-        ),
+
         migrations.AddField(
             model_name='moment',
             name='user_tags',
@@ -138,11 +128,6 @@ class Migration(migrations.Migration):
             model_name='futureconference',
             name='in_town_speakers',
             field=models.ManyToManyField(blank=True, related_name='conference_speakers', to='profiles.member', verbose_name='Speaker In TownLIT'),
-        ),
-        migrations.AddField(
-            model_name='futureconference',
-            name='sponsors',
-            field=models.ManyToManyField(blank=True, related_name='future_conference_sponsors', to='profilesOrg.organization', verbose_name='Sponsors'),
         ),
         migrations.AddField(
             model_name='conference',

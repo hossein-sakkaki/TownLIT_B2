@@ -3,7 +3,7 @@
 # TownLIT
 #
 # Created by Hossein Sakkaki on 2026-08-29.
-# Last Update by Hossein Sakkaki on 2026-08-30.
+# Last Update by Hossein Sakkaki on 2026-09-14.
 #
 
 from .verification import (
@@ -24,6 +24,9 @@ from .bootstrap import (
     viewer_membership_context,
     viewer_organization_permissions,
 )
+from .ownership import (
+    effective_organization_owner_memberships_queryset,
+)
 
 __all__ = [
     "active_verification_grants_queryset",
@@ -38,4 +41,5 @@ __all__ = [
     "organization_relationships_for_viewer",
     "viewer_membership_context",
     "viewer_organization_permissions",
+    "effective_organization_owner_memberships_queryset",
 ]

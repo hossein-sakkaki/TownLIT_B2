@@ -1,8 +1,9 @@
+# apps/profiles/serializers/client.py
+
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 
 from apps.profiles.models.client import ClientRequest, Client
-from apps.profilesOrg.serializers_min import SimpleOrganizationSerializer
 
 CustomUser = get_user_model()
 
@@ -49,13 +50,8 @@ class ClientSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Client
-        fields = ["user", "organization_clients", "request", "register_date", "is_active", "slug"]
+        fields = ["user", "request", "register_date", "is_active", "slug"]
         read_only_fields = ["register_date", "slug"]
-
-    def get_fields(self):
-        fields = super().get_fields()
-        fields["organization_clients"] = SimpleOrganizationSerializer(many=True, read_only=True)
-        return fields
 
     def validate(self, data):
         if data.get("is_active") and not data.get("request"):

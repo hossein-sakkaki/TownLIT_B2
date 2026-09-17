@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Type, Dict, List, Optional
 
 from django.db import models
@@ -21,7 +21,12 @@ class SquareContentSource:
     media_fields: List[str]       # ["video"] or ["image", "video"]
     requires_conversion: bool     # True if availability depends on conversion
 
-    # Optional: how to reach CustomUser id from this model (for friends tab)
+    # Text fields eligible for Content Search.
+    search_fields: List[str] = field(
+        default_factory=list
+    )
+    
+    # Optional ownership lookup metadata.
     # Example: "owner__user_id" or "owner__custom_user_id"
     owner_user_lookup: Optional[str] = None
 

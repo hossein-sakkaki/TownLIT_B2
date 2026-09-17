@@ -1,4 +1,9 @@
 # apps/posts/models/moment.py
+# TownLIT-Backend
+#
+# Created by Hossein Sakkaki on 2025-01-01.
+# Last Update by Hossein Sakkaki on 2026-09-14.
+
 
 import os
 from django.db import models, transaction
@@ -91,7 +96,7 @@ class Moment(
     )
 
     image = models.ImageField(
-        upload_to=IMAGE.dir_upload,
+        upload_to=IMAGE,
         null=True,
         blank=True,
         validators=[
@@ -103,7 +108,7 @@ class Moment(
     )
 
     video = models.FileField(
-        upload_to=VIDEO.dir_upload,
+        upload_to=VIDEO,
         null=True,
         blank=True,
         validators=[
@@ -114,7 +119,7 @@ class Moment(
     )   
 
     thumbnail = models.ImageField(
-        upload_to=IMAGE.dir_upload,
+        upload_to=IMAGE,
         null=True,
         blank=True,
         validators=[

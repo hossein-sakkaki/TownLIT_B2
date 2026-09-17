@@ -7,6 +7,7 @@
 #
 
 from .organization import (
+    OrganizationReferenceSerializer,
     OrganizationSerializer,
     OrganizationWriteSerializer,
 )
@@ -88,4 +89,5 @@ __all__ = [
     "OrganizationGovernanceProposalSerializer",
     "OrganizationGovernanceRuleSerializer",
     "OrganizationGovernanceVoteSerializer",
+    "OrganizationReferenceSerializer",
 ]

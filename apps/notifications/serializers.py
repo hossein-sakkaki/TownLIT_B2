@@ -1,23 +1,26 @@
 # apps/notifications/serializers.py
+#
+# TownLIT
+#
+# Created by Hossein Sakkaki on 2026-09-04.
+# Last Update by Hossein Sakkaki on 2026-09-04.
+#
 
-from rest_framework import serializers
 from django.utils import timezone
+from rest_framework import serializers
 
-from .models import UserNotificationPreference, Notification
 from apps.accounts.serializers.user_serializers import UserMiniSerializer
 from .constants import (
-    NOTIFICATION_PREF_METADATA,
     CHANNEL_EMAIL,
     CHANNEL_PUSH,
+    NOTIFICATION_PREF_METADATA,
     notification_supports_email,
     notification_supports_push,
     sanitize_notification_channels,
 )
+from .models import Notification, UserNotificationPreference
 
 
-# -------------------------------------------------------------------
-# User Notification Preference Serializer
-# -------------------------------------------------------------------
 class UserNotificationPreferenceSerializer(serializers.ModelSerializer):
     notification_type_display = serializers.CharField(
         source="get_notification_type_display",
@@ -31,8 +34,6 @@ class UserNotificationPreferenceSerializer(serializers.ModelSerializer):
     email_enabled = serializers.SerializerMethodField()
     push_enabled = serializers.SerializerMethodField()
 
-    # New capability fields for frontend.
-    # The frontend should hide the email toggle when email_supported is false.
     email_supported = serializers.SerializerMethodField()
     push_supported = serializers.SerializerMethodField()
     supported_channels = serializers.SerializerMethodField()
@@ -44,14 +45,11 @@ class UserNotificationPreferenceSerializer(serializers.ModelSerializer):
             "notification_type",
             "notification_type_display",
             "enabled",
-
             "category",
             "label",
             "description",
-
             "email_enabled",
             "push_enabled",
-
             "email_supported",
             "push_supported",
             "supported_channels",
@@ -64,24 +62,33 @@ class UserNotificationPreferenceSerializer(serializers.ModelSerializer):
             "supported_channels",
         ]
 
-    # -------------------------- Metadata -------------------------
-
     def get_category(self, obj):
-        return NOTIFICATION_PREF_METADATA.get(obj.notification_type, {}).get("category")
+        return NOTIFICATION_PREF_METADATA.get(
+            obj.notification_type,
+            {},
+        ).get("category")
 
     def get_label(self, obj):
-        return NOTIFICATION_PREF_METADATA.get(obj.notification_type, {}).get("label")
+        return NOTIFICATION_PREF_METADATA.get(
+            obj.notification_type,
+            {},
+        ).get("label")
 
     def get_description(self, obj):
-        return NOTIFICATION_PREF_METADATA.get(obj.notification_type, {}).get("description")
-
-    # -------------------------- Channel support --------------------------
+        return NOTIFICATION_PREF_METADATA.get(
+            obj.notification_type,
+            {},
+        ).get("description")
 
     def get_email_supported(self, obj):
-        return notification_supports_email(obj.notification_type)
+        return notification_supports_email(
+            obj.notification_type
+        )
 
     def get_push_supported(self, obj):
-        return notification_supports_push(obj.notification_type)
+        return notification_supports_push(
+            obj.notification_type
+        )
 
     def get_supported_channels(self, obj):
         channels = []
@@ -93,8 +100,6 @@ class UserNotificationPreferenceSerializer(serializers.ModelSerializer):
             channels.append("email")
 
         return channels
-
-    # -------------------------- Channel values --------------------------
 
     def get_email_enabled(self, obj):
         if not notification_supports_email(obj.notification_type):
@@ -108,26 +113,17 @@ class UserNotificationPreferenceSerializer(serializers.ModelSerializer):
 
         return bool(obj.channels_mask & CHANNEL_PUSH)
 
-    # -------------------------- Update override -------------------
-
     def update(self, instance, validated_data):
-        """
-        Supports:
-        - enabled
-        - email_enabled
-        - push_enabled
-
-        Unsupported channels are ignored and stripped.
-        Example:
-        - comment/reaction/friendship/feed types cannot enable email anymore.
-        """
         request = self.context.get("request")
 
         if request and request.data:
             push_val = request.data.get("push_enabled")
             email_val = request.data.get("email_enabled")
 
-            if push_val is not None and notification_supports_push(instance.notification_type):
+            if (
+                push_val is not None
+                and notification_supports_push(instance.notification_type)
+            ):
                 if bool(push_val):
                     instance.channels_mask |= CHANNEL_PUSH
                 else:
@@ -142,7 +138,10 @@ class UserNotificationPreferenceSerializer(serializers.ModelSerializer):
                 else:
                     instance.channels_mask &= ~CHANNEL_EMAIL
 
-        instance.enabled = validated_data.get("enabled", instance.enabled)
+        instance.enabled = validated_data.get(
+            "enabled",
+            instance.enabled,
+        )
 
         instance.channels_mask = sanitize_notification_channels(
             instance.notification_type,
@@ -150,6 +149,7 @@ class UserNotificationPreferenceSerializer(serializers.ModelSerializer):
         )
 
         instance.save()
+
         return instance
 
     def validate(self, attrs):
@@ -159,9 +159,6 @@ class UserNotificationPreferenceSerializer(serializers.ModelSerializer):
         return attrs
 
 
-# -------------------------------------------------------------------
-# Notification Serializer
-# -------------------------------------------------------------------
 class NotificationSerializer(serializers.ModelSerializer):
     notification_type_display = serializers.CharField(
         source="get_notification_type_display",
@@ -174,6 +171,7 @@ class NotificationSerializer(serializers.ModelSerializer):
         model = Notification
         fields = [
             "id",
+            "title",
             "message",
             "notification_type",
             "notification_type_display",
@@ -181,18 +179,23 @@ class NotificationSerializer(serializers.ModelSerializer):
             "is_read",
             "read_at",
             "link",
-
+            "action_label",
+            "metadata",
+            "campaign_id",
             "target_content_type",
             "target_object_id",
             "action_content_type",
             "action_object_id",
-
             "actor",
         ]
 
         read_only_fields = [
             "id",
+            "title",
             "created_at",
+            "action_label",
+            "metadata",
+            "campaign_id",
             "target_content_type",
             "target_object_id",
             "action_content_type",
@@ -201,9 +204,6 @@ class NotificationSerializer(serializers.ModelSerializer):
         ]
 
 
-# -------------------------------------------------------------------
-# Mark Read Serializer
-# -------------------------------------------------------------------
 class NotificationMarkReadSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notification
@@ -212,5 +212,11 @@ class NotificationMarkReadSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         instance.is_read = True
         instance.read_at = timezone.now()
-        instance.save(update_fields=["is_read", "read_at"])
+        instance.save(
+            update_fields=[
+                "is_read",
+                "read_at",
+            ]
+        )
+
         return instance

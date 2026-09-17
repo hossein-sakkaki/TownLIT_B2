@@ -3,8 +3,17 @@
 from django.db.models import Q, Exists, OuterRef
 from django.contrib.contenttypes.models import ContentType
 
-from apps.profiles.models import Member, Friendship
-from apps.profilesOrg.models import Organization
+from apps.organizations.constants import (
+    OrganizationStatus,
+)
+from apps.organizations.models import Organization
+from apps.organizations.selectors.ownership import (
+    effective_organization_owner_memberships_queryset,
+)
+from apps.profiles.models import (
+    Friendship,
+    Member,
+)
 
 
 class OwnerVisibilityQuery:
@@ -73,19 +82,22 @@ class OwnerVisibilityQuery:
         # -------------------------------------------------
         # 3) ORGANIZATION
         # -------------------------------------------------
-        active_org_owner = Organization.objects.filter(
-            id=OuterRef("object_id"),
-            is_active=True,
-            org_owners__is_active=True,
-            org_owners__is_hidden_by_confidants=False,
-            org_owners__user__is_deleted=False,
-            org_owners__user__is_suspended=False,
-            org_owners__user__is_account_paused=False,
+        active_org_owner = (
+            effective_organization_owner_memberships_queryset()
+            .filter(
+                organization_id=OuterRef("object_id"),
+                organization__status=OrganizationStatus.ACTIVE,
+                member__is_active=True,
+                member__is_hidden_by_confidants=False,
+                member__user__is_deleted=False,
+                member__user__is_suspended=False,
+                member__user__is_account_paused=False,
+            )
         )
 
         qs = qs.exclude(
-            Q(content_type_id=org_ct.id) &
-            ~Exists(active_org_owner)
+            Q(content_type_id=org_ct.id)
+            & ~Exists(active_org_owner)
         )
 
         return qs

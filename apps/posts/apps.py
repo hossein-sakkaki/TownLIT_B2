@@ -1,10 +1,8 @@
 # apps/posts/apps.py
+# TownLIT-Backend
 #
-# TownLIT
-#
-# Created by Hossein Sakkaki on 2026-08-31.
-# Last Update by Hossein Sakkaki on 2026-08-31.
-#
+# Created by Hossein Sakkaki on 2025-08-31.
+# Last Update by Hossein Sakkaki on 2026-09-16.
 
 from django.apps import AppConfig
 
@@ -81,6 +79,9 @@ class PostsConfig(AppConfig):
                         "video",
                     ],
                     requires_conversion=True,
+                    search_fields=[
+                        "caption",
+                    ],
                 )
             )
 
@@ -95,6 +96,10 @@ class PostsConfig(AppConfig):
                         "video",
                     ],
                     requires_conversion=True,
+                    search_fields=[
+                        "title",
+                        "content",
+                    ],
                 )
             )
 
@@ -108,6 +113,9 @@ class PostsConfig(AppConfig):
                         "video",
                     ],
                     requires_conversion=True,
+                    search_fields=[
+                        "caption",
+                    ],
                 )
             )
 

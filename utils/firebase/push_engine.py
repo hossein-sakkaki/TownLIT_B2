@@ -15,6 +15,7 @@ from .google_oauth import (
 from apps.accounts.constants.devices import (
     DEVICE_PLATFORM_ANDROID,
     DEVICE_PLATFORM_WEB,
+    FCM_DEVICE_PLATFORMS,
 )
 
 logger = logging.getLogger(__name__)
@@ -92,14 +93,30 @@ class FirebasePushEngine:
     # ------------------------------------------------------------
     # Device resolution
     # ------------------------------------------------------------
-    def get_devices_for_user(self, user) -> List[UserDeviceKey]:
-        """
-        Return active FCM-owned devices.
-
-        Android requires successful PoP verification before Push delivery.
-        Existing Web behavior remains backward-compatible.
-        """
+    def get_devices_for_user(
+        self,
+        user,
+        *,
+        platforms: Optional[set[str]] = None,
+    ) -> List[UserDeviceKey]:
+        """Return active eligible FCM devices."""
         if not user:
+            return []
+
+        allowed_platforms = set(
+            FCM_DEVICE_PLATFORMS
+        )
+
+        if platforms is not None:
+            requested = {
+                str(platform).strip().lower()
+                for platform in platforms
+                if str(platform).strip()
+            }
+
+            allowed_platforms &= requested
+
+        if not allowed_platforms:
             return []
 
         queryset = (
@@ -107,6 +124,7 @@ class FirebasePushEngine:
             .filter(
                 user=user,
                 is_active=True,
+                platform__in=allowed_platforms,
             )
             .filter(
                 Q(platform=DEVICE_PLATFORM_WEB)
@@ -127,16 +145,19 @@ class FirebasePushEngine:
 
         return list(queryset)
 
-    def get_tokens_for_user(self, user) -> List[str]:
-        """
-        Backward-compatible token resolver.
-
-        Prefer get_devices_for_user() internally because delivery needs
-        platform and device identity for lifecycle management.
-        """
+    def get_tokens_for_user(
+        self,
+        user,
+        *,
+        platforms: Optional[set[str]] = None,
+    ) -> List[str]:
+        """Return FCM tokens for eligible devices."""
         return [
             device.push_token
-            for device in self.get_devices_for_user(user)
+            for device in self.get_devices_for_user(
+                user,
+                platforms=platforms,
+            )
             if device.push_token
         ]
 
@@ -496,15 +517,13 @@ class FirebasePushEngine:
         title: str,
         body: str,
         data: Optional[Dict[str, Any]] = None,
+        *,
+        platforms: Optional[set[str]] = None,
     ) -> int:
-        """
-        Send to all active FCM-owned devices for a user.
-
-        Android and Web are handled independently so platform-specific
-        payload behavior cannot regress Web delivery.
-        """
+        """Send to eligible FCM devices for a user."""
         devices = self.get_devices_for_user(
-            user
+            user,
+            platforms=platforms,
         )
 
         if not devices:
@@ -532,6 +551,5 @@ class FirebasePushEngine:
                 sent_count += 1
 
         return sent_count
-
 
 push_engine = FirebasePushEngine()

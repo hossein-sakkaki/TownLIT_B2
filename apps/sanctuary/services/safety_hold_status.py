@@ -9,7 +9,9 @@ from apps.sanctuary.services.target_access import (
     get_target_object,
     resolve_target_owner_user_id,
 )
-
+from apps.organizations.selectors.ownership import (
+    effective_organization_manager_user_ids,
+)
 
 OWNER_MESSAGE = (
     "This content is temporarily unavailable while a Sanctuary review "
@@ -31,33 +33,12 @@ def _authenticated_user_id(user) -> int | None:
     return user_id if user_id > 0 else None
 
 
-def _organization_manager_ids(organization) -> set[int]:
-    user_ids: set[int] = set()
-
-    try:
-        user_ids.update(
-            int(user_id)
-            for user_id in organization.org_owners.filter(is_active=True)
-            .values_list("user_id", flat=True)
-            if user_id
-        )
-    except Exception:
-        pass
-
-    try:
-        user_ids.update(
-            int(user_id)
-            for user_id in organization.admin_relationships.filter(
-                is_approved=True,
-                member__is_active=True,
-            ).values_list("member__user_id", flat=True)
-            if user_id
-        )
-    except Exception:
-        pass
-
-    return user_ids
-
+def _organization_manager_ids(
+    organization,
+) -> set[int]:
+    return effective_organization_manager_user_ids(
+        organization=organization,
+    )
 
 def _is_sanctuary_staff(user) -> bool:
     if not user or not getattr(user, "is_authenticated", False):

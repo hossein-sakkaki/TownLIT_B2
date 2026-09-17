@@ -42,7 +42,7 @@ from .serializers import (
         OfficialVideoCreateUpdateSerializer, VideoViewLogSerializer, UserAgreementSerializer
     )
 from utils.common.ip import get_client_ip
-from apps.profilesOrg.constants_denominations import FAMILIES_BY_BRANCH
+from apps.profiles.constants.denominations import FAMILIES_BY_BRANCH
 
 from .choicemap import CHOICES_MAP
 from utils.email.email_tools import send_custom_email

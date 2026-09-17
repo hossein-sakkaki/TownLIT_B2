@@ -4,7 +4,7 @@ from uuid import uuid4
 from apps.accounts.models.address import Address
 from utils.common.utils import FileUpload
 from utils.mixins.slug_mixin import SlugMixin
-from apps.profilesOrg.models import Organization
+from apps.organizations.models import Organization
 from apps.products.models import Product
 from validators.user_validators import validate_phone_number
 from validators.mediaValidators.pdf_validators import validate_pdf_file
@@ -36,7 +36,7 @@ class Store(SlugMixin):
     organization = models.OneToOneField(Organization, on_delete=models.CASCADE, db_index=True, related_name='store_details', verbose_name='Store Detail')
     custom_service_name = models.CharField(max_length=100, null=True, blank=True, verbose_name='Custom Service Name')
     description = models.TextField(null=True, blank=True, verbose_name='Store Description')
-    store_logo = models.ImageField(upload_to=LOGO_UPLOAD.dir_upload, null=True, blank=True, validators=[validate_image_file, validate_image_size, validate_no_executable_file], verbose_name='Store Logo')
+    store_logo = models.ImageField(upload_to=LOGO_UPLOAD, null=True, blank=True, validators=[validate_image_file, validate_image_size, validate_no_executable_file], verbose_name='Store Logo')
     store_phone_number = models.CharField(max_length=20, null=True, blank=True, validators=[validate_phone_number], verbose_name='Store Contact Number')
     store_address = models.ForeignKey(Address, on_delete=models.SET_NULL, null=True, related_name='store_address', verbose_name='Store Address')
 
@@ -46,7 +46,7 @@ class Store(SlugMixin):
     license_number = models.CharField(max_length=50, null=True, blank=True, verbose_name='License Number')
     license_expiry_date = models.DateField(null=True, blank=True, verbose_name="License Expiry Date")
     tax_id = models.CharField(max_length=40, null=True, blank=True, verbose_name='Tax Id')
-    store_license = models.FileField(upload_to=LICENSE_UPLOAD.dir_upload, validators=[validate_pdf_file, validate_no_executable_file], verbose_name='Store License')
+    store_license = models.FileField(upload_to=LICENSE_UPLOAD, validators=[validate_pdf_file, validate_no_executable_file], verbose_name='Store License')
     
     # Financial and sales information
     products = models.ManyToManyField(Product, blank=True, related_name="stores", verbose_name="Products")
@@ -66,7 +66,13 @@ class Store(SlugMixin):
         verbose_name_plural = "Stores"
     
     def get_slug_source(self):
-        return f"{self.organization.org_name}-{str(uuid4())}"
-    
+        return (
+            f"{self.organization.name}-"
+            f"{str(uuid4())}"
+        )
+
     def __str__(self):
-        return f"{self.custom_service_name or 'Store'}: {self.organization.org_name}"
+        return (
+            f"{self.custom_service_name or 'Store'}: "
+            f"{self.organization.name}"
+        )

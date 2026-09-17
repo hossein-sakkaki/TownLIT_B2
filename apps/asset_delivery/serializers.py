@@ -1,23 +1,30 @@
 # apps/asset_delivery/serializers.py
 
 from rest_framework import serializers
-
+from apps.asset_delivery.constants import PlaybackIntent
 
 class PlaybackIntentChoices:
-    PRELOAD = "preload"
-    VIEW = "view"
-    RENDER = "render"
-    FEED = "feed"
-    DETAIL = "detail"
-    DOWNLOAD = "download"
+    """
+    Compatibility aliases backed by the canonical Asset Delivery intent set.
+
+    Choice membership comes from PlaybackIntent.ALL so request validation
+    cannot drift from AssetPlaybackViewSet intent validation.
+    """
+
+    PRELOAD = PlaybackIntent.PRELOAD
+    VIEW = PlaybackIntent.VIEW
+    RENDER = PlaybackIntent.RENDER
+    FEED = PlaybackIntent.FEED
+    DETAIL = PlaybackIntent.DETAIL
+    DOWNLOAD = PlaybackIntent.DOWNLOAD
+    OFFLINE = PlaybackIntent.OFFLINE
 
     CHOICES = [
-        (PRELOAD, "Preload"),
-        (VIEW, "View"),
-        (RENDER, "Render"),
-        (FEED, "Feed"),
-        (DETAIL, "Detail"),
-        (DOWNLOAD, "Download"),
+        (
+            intent,
+            intent.replace("_", " ").title(),
+        )
+        for intent in sorted(PlaybackIntent.ALL)
     ]
 
 

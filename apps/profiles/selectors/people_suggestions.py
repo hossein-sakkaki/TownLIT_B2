@@ -257,4 +257,5 @@ def get_people_suggestions_queryset(viewer):
     return qs.order_by(
         "-score",
         "-register_date",
+        "id",
     )

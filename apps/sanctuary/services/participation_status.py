@@ -18,7 +18,21 @@ def get_participation_status(user) -> Dict:
     # Identity verification gates
     # --------------------------------------------------
     is_verified_identity = bool(getattr(user, "is_verified_identity", False))
-    is_townlit_verified = bool(getattr(user, "is_townlit_verified", False))
+    # is_townlit_verified = bool(getattr(user, "is_townlit_verified", False))
+    member_profile = getattr(
+        user,
+        "member_profile",
+        None,
+    )
+
+    is_townlit_verified = bool(
+        member_profile
+        and getattr(
+            member_profile,
+            "is_townlit_verified",
+            False,
+        )
+    )
 
     # --------------------------------------------------
     # Sanctuary profile (system-level eligibility)

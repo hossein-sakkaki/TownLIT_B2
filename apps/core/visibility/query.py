@@ -2,7 +2,10 @@
 
 from django.db.models import Q
 from django.contrib.contenttypes.models import ContentType
-
+from apps.organizations.models import Organization
+from apps.organizations.selectors.ownership import (
+    effective_organization_owner_memberships_queryset,
+)
 from apps.core.visibility.constants import ( 
     VISIBILITY_GLOBAL,
     VISIBILITY_FRIENDS,
@@ -51,7 +54,6 @@ class VisibilityQuery:
         from apps.profiles.models.member import Member
         from apps.profiles.models.guest import GuestUser
         from apps.profiles.models.relationships import Friendship, Fellowship
-        from apps.profilesOrg.models import Organization
 
         user = viewer
         active = get_active_profile(user)
@@ -76,13 +78,19 @@ class VisibilityQuery:
                 object_id=active_profile.id,
             )
 
-        # Member-owned organizations stay owner-visible
+        # Member-owned organizations stay owner-visible.
         if member:
             org_ids = list(
-                Organization.objects.filter(
-                    org_owners=member
-                ).values_list("id", flat=True)
+                effective_organization_owner_memberships_queryset()
+                .filter(
+                    member=member,
+                )
+                .values_list(
+                    "organization_id",
+                    flat=True,
+                )
             )
+
             if org_ids:
                 owner_q |= Q(
                     content_type_id=org_ct.id,

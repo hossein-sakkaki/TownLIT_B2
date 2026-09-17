@@ -1,4 +1,8 @@
 # apps/core/square/views.py
+# TownLIT-Backend
+#
+# Created by Hossein Sakkaki on 2026-01-27.
+# Last Update by Hossein Sakkaki on 2026-09-16.
 
 import logging
 from urllib.parse import unquote, urlencode, urlparse, parse_qs
@@ -6,14 +10,26 @@ from urllib.parse import unquote, urlencode, urlparse, parse_qs
 from django.db.models import F, Q
 from django.utils.dateparse import parse_datetime
 
-from rest_framework import viewsets, permissions
+from rest_framework import (
+    permissions,
+    status,
+    viewsets,
+)
 from rest_framework.response import Response
 
 from apps.core.square.query import SquareQuery
 from apps.core.square.engines import SquareEngine
 from apps.core.square.serializers import SquareItemSerializer
-from apps.core.square.constants import SQUARE_KIND_ALL, SQUARE_KIND_FRIENDS
+from apps.core.square.constants import (
+    SQUARE_KIND_ALL,
+    normalize_square_kind,
+)
 from apps.core.pagination import FeedCursorPagination
+from apps.core.square.stable_cursor import (
+    SquareStableCursorCodec,
+    SquareStableCursorError,
+    SquareStableFeedCursor,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +96,23 @@ class SquareViewSet(viewsets.ViewSet):
 
         return cursor
 
+    @staticmethod
+    def _build_stable_next_link(
+        request,
+        *,
+        cursor: str | None,
+    ) -> str | None:
+        if not cursor:
+            return None
+
+        query = request.query_params.copy()
+        query["cursor"] = cursor
+
+        return request.build_absolute_uri(
+            f"{request.path}?"
+            f"{query.urlencode()}"
+        )
+        
     def _parse_cursor_parts(self, cursor: str | None) -> dict:
         """
         Parse cursor token into parts:
@@ -214,15 +247,118 @@ class SquareViewSet(viewsets.ViewSet):
             ),
             "hybrid_score",
         )
+        
+    # ------------------------------------------------------------------
+    # List endpoint
+    # ------------------------------------------------------------------
+    def list(
+        self,
+        request,
+    ):
+        """
+        Return Square through the stable stateless cursor contract.
+
+        Legacy score cursors remain temporarily supported for clients that
+        started pagination before this backend version was deployed.
+        """
+
+        raw_cursor = request.query_params.get(
+            "cursor"
+        )
+
+        if (
+            raw_cursor
+            and not (
+                SquareStableCursorCodec
+                .is_stable_cursor(
+                    raw_cursor
+                )
+            )
+        ):
+            return self._legacy_list(
+                request
+            )
+
+        viewer = (
+            request.user
+            if request.user.is_authenticated
+            else None
+        )
+
+        requested_kind = (
+            request.query_params.get(
+                "kind",
+                SQUARE_KIND_ALL,
+            )
+        )
+
+        kind = normalize_square_kind(
+            requested_kind
+        )
+
+        mode = request.query_params.get(
+            "mode"
+        )
+
+        paginator = SquareStableFeedCursor(
+            page_size=int(
+                getattr(
+                    self,
+                    "pagination_page_size",
+                    SQUARE_PAGE_SIZE,
+                )
+            )
+        )
+
+        try:
+            page = paginator.build_page(
+                request=request,
+                viewer=viewer,
+                kind=kind,
+                mode=mode,
+                cursor=raw_cursor,
+            )
+        except SquareStableCursorError as exc:
+            return Response(
+                {
+                    "detail": str(
+                        exc
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        next_link = (
+            self._build_stable_next_link(
+                request,
+                cursor=page.next_cursor,
+            )
+        )
+
+        return Response(
+            {
+                "next": next_link,
+                "results": page.results,
+            },
+            status=status.HTTP_200_OK,
+        )
 
     # ------------------------------------------------------------------
     # Main endpoint
     # ------------------------------------------------------------------
-    def list(self, request):
+    def _legacy_list(self, request):
         viewer = request.user if request.user.is_authenticated else None
 
-        kind = request.query_params.get("kind", SQUARE_KIND_ALL)
-        mode = request.query_params.get("mode")  # recent | trending | for_you | None
+        requested_kind = request.query_params.get(
+            "kind",
+            SQUARE_KIND_ALL,
+        )
+
+        kind = normalize_square_kind(
+            requested_kind
+        )
+
+        mode = request.query_params.get("mode")
         cursor = request.query_params.get("cursor")
 
         # -------------------------------------------------
@@ -234,9 +370,9 @@ class SquareViewSet(viewsets.ViewSet):
             return Response({"next": None, "results": []})
 
         # -------------------------------------------------
-        # 2) ALL + FRIENDS => merge multiple sources
+        # 2) Unified Square => merge all registered sources
         # -------------------------------------------------
-        if kind in (SQUARE_KIND_ALL, SQUARE_KIND_FRIENDS):
+        if kind == SQUARE_KIND_ALL:
             page_size = int(
                 getattr(
                     self,
@@ -327,7 +463,7 @@ class SquareViewSet(viewsets.ViewSet):
             return Response({"next": next_link, "results": results})
 
         # -------------------------------------------------
-        # 3) Non-ALL tabs => single source
+        # 3) Explicit content kind => single source
         # -------------------------------------------------
         base_qs = querysets[0]
 

@@ -37,26 +37,11 @@ from apps.profiles.constants import (
     GIFT_DESCRIPTIONS
 )
 
-from apps.profilesOrg.constants_denominations import (
-    CHURCH_BRANCH_CHOICES, CHURCH_FAMILY_CHOICES_ALL, FAMILIES_BY_BRANCH
+from apps.profiles.constants.denominations import (
+    CHURCH_BRANCH_CHOICES, CHURCH_FAMILY_CHOICES_ALL
 )
 
-# Import organizations
-from apps.profilesOrg.constants import (
-    ORGANIZATION_TYPE_CHOICES,
-    ACCESS_LEVEL_CHOICES,
-    PRICE_TYPE_CHOICES,
-    INSTITUTION_TYPE_CHOICES,
-    VOTING_TYPE_CHOICES,
-    VOTING_RESULT_CHOICES,
-    COUNSELING_SERVICE_CHOICES,
-    WORSHIP_STYLE_CHOICES,
-    PROGRAM_NAME_CHOICES,
-    TIMEZONE_CHOICES,
-    CHURCH_DENOMINATIONS_CHOICES,
-    ORGANIZATION_SERVICE_CATEGORY_CHOICES,
-    
-)
+
 
 from common.reference_data.countries import (
     COUNTRY_CHOICES
@@ -96,21 +81,6 @@ from apps.posts.constants.constants import (
     DELIVERY_METHOD_CHOICES,
 )
 
-# Import sanctuary_constants
-# from apps.sanctuary.constants import (
-#     POST_REPORT_CHOICES,
-#     ACCOUNT_REPORT_CHOICES,
-#     ORGANIZATION_REPORT_CHOICES,
-#     POST_ADMIN_REVIEW_CATEGORIES,
-#     ACCOUNT_ADMIN_REVIEW_CATEGORIES,
-#     ORGANIZATION_ADMIN_REVIEW_CATEGORIES,
-#     SENSITIVE_CATEGORIES,
-#     REQUEST_TYPE_CHOICES,
-#     REQUEST_STATUS_CHOICES,
-#     REVIEW_STATUS_CHOICES,
-#     OUTCOME_CHOICES,
-# )
-
 # Import store_constants
 from apps.store.store_constants import (
     STORE_PRODUCT_CATEGORY_CHOICES,
@@ -135,14 +105,12 @@ CHOICES_MAP = {
     'selling_type': SELLING_TYPE_CHOICES,
     'address_type': ADDRESS_TYPE_CHOICES,
     'copyright': COPYRIGHT_CHOICES,
-    'timezones': TIMEZONE_CHOICES,
+    # 'timezones': TIMEZONE_CHOICES,
     'days_of_week': DAYS_OF_WEEK_CHOICES,
     'frequency': FREQUENCY_CHOICES,
     'message_policy': MESSAGE_POLICY_CHOICES,
     'reaction_type': REACTION_TYPE_CHOICES,
-    'church_denominations': CHURCH_DENOMINATIONS_CHOICES,
     'user_label': USER_LABEL_CHOICES,
-    'organization_service_category': ORGANIZATION_SERVICE_CATEGORY_CHOICES,
     'spiritual_ministry': SPIRITUAL_MINISTRY_CHOICES,
     'terms_and_policies': TERMS_AND_POLICIES_CHOICES,
     'log_action': LOG_ACTION_CHOICES,
@@ -171,16 +139,7 @@ CHOICES_MAP = {
     # Organizations constants
     "church_denominations_branch": CHURCH_BRANCH_CHOICES,
     "church_denominations_family": CHURCH_FAMILY_CHOICES_ALL,
-    # 'organization_type': ORGANIZATION_TYPE_CHOICES,
-    'access_level': ACCESS_LEVEL_CHOICES,
-    'price_type': PRICE_TYPE_CHOICES,
-    'institution_type': INSTITUTION_TYPE_CHOICES,
-    'voting_type': VOTING_TYPE_CHOICES,
-    'voting_result': VOTING_RESULT_CHOICES,
-    'counseling_service': COUNSELING_SERVICE_CHOICES,
-    'worship_style': WORSHIP_STYLE_CHOICES,
     'language': LANGUAGE_CHOICES,
-    'program_name': PROGRAM_NAME_CHOICES,
     'country': COUNTRY_CHOICES,
     
     # Gift Constants
@@ -205,19 +164,6 @@ CHOICES_MAP = {
     'media_content': MEDIA_CONTENT_CHOICES,
     'literary_category': LITERARY_CATEGORY_CHOICES,
     'resource_type': RESOURCE_TYPE_CHOICES,
-
-    # Sanctuary constants
-    # 'post_report': POST_REPORT_CHOICES,
-    # 'account_report': ACCOUNT_REPORT_CHOICES,
-    # 'organization_report': ORGANIZATION_REPORT_CHOICES,
-    # 'request_type': REQUEST_TYPE_CHOICES,
-    # 'request_status': REQUEST_STATUS_CHOICES,
-    # 'review_status': REVIEW_STATUS_CHOICES,
-    # 'outcome': OUTCOME_CHOICES,
-    # 'sensitive_categories': SENSITIVE_CATEGORIES,
-    # 'post_admin_review_categories': POST_ADMIN_REVIEW_CATEGORIES,
-    # 'account_admin_review_categories': ACCOUNT_ADMIN_REVIEW_CATEGORIES,
-    # 'organization_admin_review_categories': ORGANIZATION_ADMIN_REVIEW_CATEGORIES,
 
     # Store constants
     'store_product_category': STORE_PRODUCT_CATEGORY_CHOICES,

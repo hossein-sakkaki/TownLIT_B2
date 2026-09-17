@@ -116,10 +116,6 @@ class Migration(migrations.Migration):
             name='in_town_speakers',
         ),
         migrations.RemoveField(
-            model_name='futureconference',
-            name='sponsors',
-        ),
-        migrations.RemoveField(
             model_name='lesson',
             name='content_type',
         ),

@@ -15,7 +15,6 @@ class Migration(migrations.Migration):
 
     dependencies = [
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
-        ('profilesOrg', '0039_alter_organization_license_document_and_more'),
         ('posts', '0036_alter_announcement_image_alter_lesson_audio_and_more'),
     ]
 
@@ -117,11 +116,6 @@ class Migration(migrations.Migration):
             model_name='moment',
             name='is_suspended',
             field=models.BooleanField(default=False),
-        ),
-        migrations.AlterField(
-            model_name='moment',
-            name='org_tags',
-            field=models.ManyToManyField(blank=True, db_index=True, related_name='tagged_in_moments', to='profilesOrg.organization'),
         ),
         migrations.AlterField(
             model_name='moment',

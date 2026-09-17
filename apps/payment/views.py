@@ -1,5 +1,9 @@
 from rest_framework import viewsets, status
-from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.permissions import (
+    AllowAny,
+    IsAdminUser,
+    IsAuthenticated,
+)
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from django.shortcuts import get_object_or_404
@@ -16,7 +20,6 @@ from .serializers import (
                 PaymentDonationSerializer, PaymentShoppingCartSerializer,
                 PaymentSerializer, PaymentInvoiceSerializer
             )
-from common.permissions import IsFullAccessAdmin
 from apps.payment.mixins.payment_mixins import PaymentMixin
 
 
@@ -29,7 +32,7 @@ class PaymentSubscriptionViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action in ['update', 'partial_update', 'destroy']:
-            return [IsFullAccessAdmin()]
+            return [IsAdminUser()]
         return super().get_permissions()
     
 
@@ -41,7 +44,7 @@ class PaymentAdvertisementViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action in ['update', 'partial_update', 'destroy']:
-            return [IsFullAccessAdmin()]
+            return [IsAdminUser()]
         return super().get_permissions()
 
 
@@ -232,7 +235,7 @@ class PaymentInvoiceViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action in ['update', 'partial_update', 'destroy']:
-            return [IsFullAccessAdmin()]
+            return [IsAdminUser()]
         return super().get_permissions()
     
     

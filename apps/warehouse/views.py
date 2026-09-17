@@ -5,23 +5,70 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
 from .models import Warehouse, WarehouseInventory, StockMovement
 from .serializers import WarehouseSerializer, WarehouseInventorySerializer, StockMovementSerializer
-from common.permissions import IsFullAccessAdmin, IsLimitedAccessAdmin
+from rest_framework.exceptions import (
+    PermissionDenied,
+)
 
+from apps.organizations.permissions import (
+    OrganizationsEnabledPermission,
+)
+from apps.store.services.organization_access import (
+    effective_owned_organizations_queryset,
+    ensure_user_owns_organization,
+)
+
+
+
+def _owned_organization_ids(
+    user,
+):
+    return (
+        effective_owned_organizations_queryset(
+            user=user,
+        )
+        .values_list(
+            "id",
+            flat=True,
+        )
+    )
 
 # WAREHOUSE ViewSet ---------------------------------------------------------------------
-class WarehouseViewSet(viewsets.ModelViewSet):
+class WarehouseViewSet(
+    viewsets.ModelViewSet
+):
     queryset = Warehouse.objects.all()
     serializer_class = WarehouseSerializer
-    permission_classes = [IsAuthenticated, IsFullAccessAdmin | IsLimitedAccessAdmin]
+    permission_classes = [
+        IsAuthenticated,
+        OrganizationsEnabledPermission,
+    ]
 
     def get_queryset(self):
-        return Warehouse.objects.filter(store__organization__org_owners=self.request.user, is_active=True)
+        return Warehouse.objects.filter(
+            store__organization_id__in=(
+                _owned_organization_ids(
+                    self.request.user
+                )
+            ),
+            is_active=True,
+        )
 
-    def perform_create(self, serializer):
-        store = self.request.user.organization.store_details
-        serializer.save(store=store)
+    def perform_create(
+        self,
+        serializer,
+    ):
+        store = serializer.validated_data[
+            "store"
+        ]
 
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsFullAccessAdmin | IsLimitedAccessAdmin])
+        ensure_user_owns_organization(
+            user=self.request.user,
+            organization=store.organization,
+        )
+
+        serializer.save()
+
+    @action(detail=True, methods=['post'])
     def toggle_active_status(self, request, pk=None):
         warehouse = self.get_object()
         warehouse.is_active = not warehouse.is_active
@@ -29,7 +76,7 @@ class WarehouseViewSet(viewsets.ModelViewSet):
         status_text = 'activated' if warehouse.is_active else 'deactivated'
         return Response({'status': f'Warehouse successfully {status_text}.'}, status=status.HTTP_200_OK)
 
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsFullAccessAdmin | IsLimitedAccessAdmin])
+    @action(detail=True, methods=['post'])
     def toggle_temporary_closure(self, request, pk=None):
         warehouse = self.get_object()
         warehouse.is_temporarily_closed = not warehouse.is_temporarily_closed
@@ -39,15 +86,44 @@ class WarehouseViewSet(viewsets.ModelViewSet):
 
 
 # WAREHOUSE INVENTORY ViewSet --------------------------------------------------------------------------
-class WarehouseInventoryViewSet(viewsets.ModelViewSet):
+class WarehouseInventoryViewSet(
+    viewsets.ModelViewSet
+):
     queryset = WarehouseInventory.objects.all()
     serializer_class = WarehouseInventorySerializer
-    permission_classes = [IsAuthenticated, IsFullAccessAdmin | IsLimitedAccessAdmin]
+    permission_classes = [
+        IsAuthenticated,
+        OrganizationsEnabledPermission,
+    ]
 
     def get_queryset(self):
-        return WarehouseInventory.objects.filter(warehouse__store__organization__org_owners=self.request.user, is_active=True)
+        return WarehouseInventory.objects.filter(
+            warehouse__store__organization_id__in=(
+                _owned_organization_ids(
+                    self.request.user
+                )
+            ),
+            is_active=True,
+        )
 
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsFullAccessAdmin | IsLimitedAccessAdmin])
+    def perform_create(
+        self,
+        serializer,
+    ):
+        warehouse = serializer.validated_data[
+            "warehouse"
+        ]
+
+        ensure_user_owns_organization(
+            user=self.request.user,
+            organization=(
+                warehouse.store.organization
+            ),
+        )
+
+        serializer.save()
+
+    @action(detail=True, methods=['post'])
     def add_stock(self, request, pk=None):
         inventory = self.get_object()
         additional_quantity = request.data.get('quantity', 0)
@@ -57,7 +133,7 @@ class WarehouseInventoryViewSet(viewsets.ModelViewSet):
         inventory.save()
         return Response({'status': 'Stock added successfully', 'new_quantity': inventory.quantity}, status=status.HTTP_200_OK)
 
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsFullAccessAdmin | IsLimitedAccessAdmin])
+    @action(detail=True, methods=['post'])
     def remove_stock(self, request, pk=None):
         inventory = self.get_object()
         removal_quantity = request.data.get('quantity', 0)
@@ -69,7 +145,7 @@ class WarehouseInventoryViewSet(viewsets.ModelViewSet):
         inventory.save()
         return Response({'status': 'Stock removed successfully', 'new_quantity': inventory.quantity}, status=status.HTTP_200_OK)
 
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsFullAccessAdmin | IsLimitedAccessAdmin])
+    @action(detail=True, methods=['post'])
     def update_stock(self, request, pk=None):
         inventory = self.get_object()
         new_quantity = request.data.get('quantity', None)
@@ -81,18 +157,45 @@ class WarehouseInventoryViewSet(viewsets.ModelViewSet):
 
 
 # STOCK MOVEMENT ViewSet -----------------------------------------------------------------
-class StockMovementViewSet(viewsets.ModelViewSet):
+class StockMovementViewSet(
+    viewsets.ModelViewSet
+):
     queryset = StockMovement.objects.all()
     serializer_class = StockMovementSerializer
-    permission_classes = [IsAuthenticated, IsFullAccessAdmin | IsLimitedAccessAdmin]
+    permission_classes = [
+        IsAuthenticated,
+        OrganizationsEnabledPermission,
+    ]
 
     def get_queryset(self):
-        return StockMovement.objects.filter(warehouse__store__organization__org_owners=self.request.user)
+        return StockMovement.objects.filter(
+            warehouse__store__organization_id__in=(
+                _owned_organization_ids(
+                    self.request.user
+                )
+            )
+        )
 
-    def perform_create(self, serializer):
-        serializer.save(date=timezone.now())
+    def perform_create(
+        self,
+        serializer,
+    ):
+        warehouse = serializer.validated_data[
+            "warehouse"
+        ]
 
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsFullAccessAdmin | IsLimitedAccessAdmin])
+        ensure_user_owns_organization(
+            user=self.request.user,
+            organization=(
+                warehouse.store.organization
+            ),
+        )
+
+        serializer.save(
+            date=timezone.now()
+        )
+
+    @action(detail=True, methods=['post'])
     def move_stock(self, request, pk=None):
         stock_movement = self.get_object()
         # Logic to handle stock movement

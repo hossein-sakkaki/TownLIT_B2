@@ -12,7 +12,7 @@ from apps.core.ownership.utils import resolve_owner_from_request
 from apps.accounts.models.user import CustomUser
 from apps.accounts.serializers.user_serializers import CustomLabelSerializer
 from apps.profiles.models import Member, GuestUser
-from apps.profilesOrg.models import Organization
+from apps.organizations.models import Organization
 from common.file_handlers.org_logo import OrganizationLogoMixin
 from django.core.exceptions import DisallowedHost
 logger = logging.getLogger(__name__)
@@ -115,14 +115,24 @@ class OwnerUserDTO(serializers.ModelSerializer):
 # Owner → Organization
 # ======================================================================
 
-class OwnerOrganizationDTO(OrganizationLogoMixin, serializers.ModelSerializer):
+class OwnerOrganizationDTO(
+    OrganizationLogoMixin,
+    serializers.ModelSerializer,
+):
     """
-    Produces OwnerDTO-compatible payload for Organization
+    Produces the stable OwnerDTO payload for Organization Core.
     """
 
     type = serializers.SerializerMethodField()
-    name = serializers.CharField(source="org_name", read_only=True)
-    profile_url = serializers.SerializerMethodField()
+    name = serializers.CharField(
+        read_only=True
+    )
+    logo_url = serializers.CharField(
+        read_only=True
+    )
+    profile_url = (
+        serializers.SerializerMethodField()
+    )
 
     class Meta:
         model = Organization
@@ -131,7 +141,7 @@ class OwnerOrganizationDTO(OrganizationLogoMixin, serializers.ModelSerializer):
             "id",
             "name",
             "slug",
-            "logo_url",      # injected by OrganizationLogoMixin
+            "logo_url",
             "profile_url",
         ]
         read_only_fields = fields
@@ -139,18 +149,14 @@ class OwnerOrganizationDTO(OrganizationLogoMixin, serializers.ModelSerializer):
     def get_type(self, obj) -> str:
         return "organization"
 
-    def get_profile_url(self, obj) -> str | None:
-        request = self.context.get("request")
-        try:
-            url = reverse(
-                getattr(obj, "url_name", "organization_detail"),
-                kwargs={"slug": obj.slug},
-            )
-        except Exception:
-            url = f"/organizations/{obj.slug}/"
-
-        return _absolute(request, url)
-
+    def get_profile_url(
+        self,
+        obj,
+    ) -> str | None:
+        return _absolute(
+            self.context.get("request"),
+            f"/organizations/{obj.slug}/",
+        )
 
 # ======================================================================
 # Public builder (used by Moments / Posts / Comments / Reactions)
@@ -193,7 +199,7 @@ def build_owner_dto_from_content_object(obj, *, context=None):
             return None
 
         # --------------------------------------------------
-        # Resolve request owner (Member / Guest / Org)
+        # Resolve the active request profile (Member / Guest)
         # --------------------------------------------------
         request_owner = None
         if request and request.user.is_authenticated:
