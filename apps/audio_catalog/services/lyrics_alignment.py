@@ -196,7 +196,7 @@ class LyricsForcedAlignmentResult:
         )
 
     @property
-    def quality_gate_failures(
+    def hard_gate_failures(
         self,
     ) -> tuple[str, ...]:
         failures: list[str] = []
@@ -225,11 +225,19 @@ class LyricsForcedAlignmentResult:
                 "overlong_word_count > 0"
             )
 
+        return tuple(failures)
+
+    @property
+    def acoustic_quality_warnings(
+        self,
+    ) -> tuple[str, ...]:
+        warnings: list[str] = []
+
         if (
             self.mean_alignment_confidence
             < MIN_MEAN_ALIGNMENT_CONFIDENCE
         ):
-            failures.append(
+            warnings.append(
                 "mean_alignment_confidence < "
                 f"{MIN_MEAN_ALIGNMENT_CONFIDENCE:.2f}"
             )
@@ -238,18 +246,55 @@ class LyricsForcedAlignmentResult:
             self.low_confidence_ratio
             > MAX_LOW_CONFIDENCE_RATIO
         ):
-            failures.append(
+            warnings.append(
                 "low_confidence_ratio > "
                 f"{MAX_LOW_CONFIDENCE_RATIO:.0%}"
             )
 
-        return tuple(failures)
+        return tuple(warnings)
+
+    @property
+    def quality_gate_failures(
+        self,
+    ) -> tuple[str, ...]:
+        """Backward-compatible combined diagnostics."""
+
+        return (
+            self.hard_gate_failures
+            + self.acoustic_quality_warnings
+        )
+
+    @property
+    def is_integrity_acceptable(
+        self,
+    ) -> bool:
+        return not self.hard_gate_failures
+
+    @property
+    def is_acoustic_quality_strong(
+        self,
+    ) -> bool:
+        return not self.acoustic_quality_warnings
+
+    @property
+    def review_recommended(
+        self,
+    ) -> bool:
+        return (
+            self.is_integrity_acceptable
+            and not self.is_acoustic_quality_strong
+        )
 
     @property
     def is_acceptable(
         self,
     ) -> bool:
-        return not self.quality_gate_failures
+        """Legacy strict-quality signal, not persistence eligibility."""
+
+        return (
+            self.is_integrity_acceptable
+            and self.is_acoustic_quality_strong
+        )
 
 
 @dataclass(
