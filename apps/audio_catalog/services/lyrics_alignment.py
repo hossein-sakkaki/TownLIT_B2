@@ -2,7 +2,7 @@
 # TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-09-16.
-# Last Update by Hossein Sakkaki on 2026-09-16.
+# Last Update by Hossein Sakkaki on 2026-09-18.
 
 from __future__ import annotations
 
@@ -23,6 +23,8 @@ WORD_PATTERN = re.compile(
 
 MIN_TEXT_MATCH_SIMILARITY = 0.72
 MIN_TEXT_MATCH_RATIO = 0.80
+MIN_MEAN_ALIGNMENT_CONFIDENCE = 0.20
+MAX_LOW_CONFIDENCE_RATIO = 0.25
 
 DEFAULT_MAX_BLOCK_MS = 30_000
 DEFAULT_BLOCK_PADDING_MS = 1_500
@@ -194,20 +196,60 @@ class LyricsForcedAlignmentResult:
         )
 
     @property
+    def quality_gate_failures(
+        self,
+    ) -> tuple[str, ...]:
+        failures: list[str] = []
+
+        if self.canonical_word_count <= 0:
+            failures.append(
+                "canonical_word_count <= 0"
+            )
+
+        if (
+            self.text_match_ratio
+            < MIN_TEXT_MATCH_RATIO
+        ):
+            failures.append(
+                "text_match_ratio < "
+                f"{MIN_TEXT_MATCH_RATIO:.0%}"
+            )
+
+        if self.temporal_violation_count:
+            failures.append(
+                "temporal_violation_count > 0"
+            )
+
+        if self.overlong_word_count:
+            failures.append(
+                "overlong_word_count > 0"
+            )
+
+        if (
+            self.mean_alignment_confidence
+            < MIN_MEAN_ALIGNMENT_CONFIDENCE
+        ):
+            failures.append(
+                "mean_alignment_confidence < "
+                f"{MIN_MEAN_ALIGNMENT_CONFIDENCE:.2f}"
+            )
+
+        if (
+            self.low_confidence_ratio
+            > MAX_LOW_CONFIDENCE_RATIO
+        ):
+            failures.append(
+                "low_confidence_ratio > "
+                f"{MAX_LOW_CONFIDENCE_RATIO:.0%}"
+            )
+
+        return tuple(failures)
+
+    @property
     def is_acceptable(
         self,
     ) -> bool:
-        return (
-            self.canonical_word_count > 0
-            and self.text_match_ratio
-            >= MIN_TEXT_MATCH_RATIO
-            and self.temporal_violation_count == 0
-            and self.overlong_word_count == 0
-            and self.mean_alignment_confidence
-            >= 0.20
-            and self.low_confidence_ratio
-            <= 0.25
-        )
+        return not self.quality_gate_failures
 
 
 @dataclass(
