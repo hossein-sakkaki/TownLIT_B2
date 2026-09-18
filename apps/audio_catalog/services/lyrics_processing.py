@@ -78,6 +78,23 @@ class MusicLyricsAlignmentOutcome:
 
 
 @dataclass(frozen=True, slots=True)
+class _AlignmentSource:
+    lyrics_id: int
+    track_id: int
+    status: str
+    language_code: str
+    kind: str
+    timing_mode: str
+    canonical_text: str
+    track_duration_ms: int
+    original_reference_variant_id: int | None
+    variant_id: int
+    variant_public_id: str
+    variant_audio_name: str
+    variant_duration_ms: int
+    
+    
+@dataclass(frozen=True, slots=True)
 class MusicLyricsAlignmentAttempt:
     max_block_ms: int
     block_count: int
