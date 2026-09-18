@@ -341,9 +341,9 @@ class AuthViewSet(viewsets.ViewSet):
                             "user_active_code_expiry",
                         ])
                         
-                        print('----------------------1----------------------')
-                        print(active_code)
-                        print('-----------------------1---------------------')
+                        # print('----------------------1----------------------')
+                        # print(active_code)
+                        # print('-----------------------1---------------------')
 
                         subject = "Welcome back to TownLIT - Verify Again"
                         context = {
@@ -422,9 +422,9 @@ class AuthViewSet(viewsets.ViewSet):
                     "user_active_code_expiry",
                 ])
                 
-                print('----------------------2----------------------')
-                print(active_code)
-                print('----------------------2----------------------')
+                # print('----------------------2----------------------')
+                # print(active_code)
+                # print('----------------------2----------------------')
                     
                 subject = "Welcome to TownLIT - Activate Your Account!"
                 context = {
@@ -2012,9 +2012,9 @@ class AuthViewSet(viewsets.ViewSet):
             ],
         )
         
-        print('-------------------------------')
-        print(active_code)
-        print('-------------------------------')
+        # print('-------------------------------')
+        # print(active_code)
+        # print('-------------------------------')
 
         context = {
             "activation_code": active_code,
@@ -2323,9 +2323,9 @@ class AuthViewSet(viewsets.ViewSet):
             ],
         )
 
-        print('-------------------------------')
-        print(active_code)
-        print('-------------------------------')
+        # print('-------------------------------')
+        # print(active_code)
+        # print('-------------------------------')
 
 
         success = send_custom_email(

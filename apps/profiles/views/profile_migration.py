@@ -316,6 +316,7 @@ class ProfileMigrationViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["get"], url_path="status")
     def status(self, request):
         user = request.user
+        label_value = getattr(user.label, "name", None)
 
         limits = self._can_migrate(user)
         payload = self._serialize_active_profile(user, request)
@@ -330,6 +331,8 @@ class ProfileMigrationViewSet(viewsets.ViewSet):
                 "lifetime_limit": limits["lifetime_limit"],
                 "remaining_lifetime_migrations": limits["remaining_lifetime"],
                 "next_monthly_migration_at": limits["next_monthly_migration_at"],
+                "label": label_value,
+                "is_member_flag": user.is_member,
             }
         )
 
@@ -355,7 +358,6 @@ class ProfileMigrationViewSet(viewsets.ViewSet):
         return Response({"results": data}, status=status.HTTP_200_OK)
 
     # ---------------------------------------------------------------------
-
     @action(detail=False, methods=["get"], url_path="current-profile")
     def current_profile(self, request):
         user = request.user
@@ -374,10 +376,13 @@ class ProfileMigrationViewSet(viewsets.ViewSet):
                 "lifetime_limit": limits["lifetime_limit"],
                 "remaining_lifetime_migrations": limits["remaining_lifetime"],
                 "next_monthly_migration_at": limits["next_monthly_migration_at"],
+                "label": label_value,
+                "is_member_flag": user.is_member,
             }
         )
 
         return Response(payload, status=status.HTTP_200_OK)
+
 
     # ---------------------------------------------------------------------
     # Migration

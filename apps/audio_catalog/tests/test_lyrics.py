@@ -2,7 +2,7 @@
 # TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-09-14.
-# Last Update by Hossein Sakkaki on 2026-09-14.
+# Last Update by Hossein Sakkaki on 2026-09-18.
 
 from __future__ import annotations
 
@@ -536,7 +536,7 @@ class MusicLyricsTests(SimpleTestCase):
         self.assertEqual(
             queryset.prefetched_related,
             (
-                "lines",
+                "lines__words",
             ),
         )
 

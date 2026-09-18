@@ -2,7 +2,7 @@
 # TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-09-16.
-# Last Update by Hossein Sakkaki on 2026-09-16.
+# Last Update by Hossein Sakkaki on 2026-09-18.
 
 from __future__ import annotations
 
@@ -28,6 +28,9 @@ from apps.subtitles.services.stt_openai import transcribe_audio
 
 ALIGNMENT_PROVIDER = "ctc_segmentation"
 ALIGNMENT_GATE_VERSION = "music-word-sync-v1"
+
+MUSIC_LYRICS_STT_PROMPT_MAX_WORDS = 120
+MUSIC_LYRICS_STT_TEMPERATURE = 0.0
 
 ALLOWED_STATUSES = {
     MusicLyrics.Status.DRAFT,
@@ -79,6 +82,23 @@ class _AlignmentSource:
     variant_duration_ms: int
 
 
+def build_music_lyrics_stt_prompt(
+    canonical_text: str,
+) -> str:
+    """
+    Build bounded canonical context for rough music STT anchors.
+
+    This prompt guides transcription only. The normal lyrics matching
+    and forced-alignment quality gates remain authoritative.
+    """
+
+    words = str(canonical_text or "").split()
+
+    return " ".join(
+        words[:MUSIC_LYRICS_STT_PROMPT_MAX_WORDS]
+    ).strip()
+
+
 def validate_music_lyrics_alignment_candidate(
     lyrics: MusicLyrics,
 ) -> None:
@@ -121,12 +141,17 @@ def process_music_lyrics_alignment(
     validate_music_lyrics_alignment_candidate(lyrics)
 
     variant = _select_alignment_variant(lyrics)
-    source = _snapshot_source(lyrics=lyrics, variant=variant)
+    source = _snapshot_source(
+        lyrics=lyrics,
+        variant=variant,
+    )
 
     local_audio_path: str | None = None
 
     try:
-        local_audio_path = fetch_audio_from_storage(variant.audio_file)
+        local_audio_path = fetch_audio_from_storage(
+            variant.audio_file
+        )
 
         stt = transcribe_audio(
             wav_path=local_audio_path,
@@ -135,6 +160,10 @@ def process_music_lyrics_alignment(
                 or lyrics.track.language_code
                 or None
             ),
+            prompt=build_music_lyrics_stt_prompt(
+                source.canonical_text
+            ),
+            temperature=MUSIC_LYRICS_STT_TEMPERATURE,
         )
 
         segments = stt.get("segments", []) or []
@@ -171,7 +200,10 @@ def process_music_lyrics_alignment(
         return _persist_alignment(
             source=source,
             result=result,
-            stt_model=str(stt.get("model", "") or ""),
+            stt_model=str(
+                stt.get("model", "")
+                or ""
+            ),
         )
 
     finally:
@@ -195,23 +227,44 @@ def mark_alignment_processing_state(
             .get(pk=lyrics_id)
         )
 
-        metadata = _metadata_dict(lyrics.metadata)
-        alignment = _metadata_dict(metadata.get("alignment"))
+        metadata = _metadata_dict(
+            lyrics.metadata
+        )
+        alignment = _metadata_dict(
+            metadata.get("alignment")
+        )
 
-        alignment.setdefault("state", "not_started")
-        alignment["processing_state"] = str(processing_state or "").strip()
-        alignment["last_attempt_at"] = timezone.now().isoformat()
+        alignment.setdefault(
+            "state",
+            "not_started",
+        )
+        alignment["processing_state"] = str(
+            processing_state or ""
+        ).strip()
+        alignment["last_attempt_at"] = (
+            timezone.now().isoformat()
+        )
 
-        clean_error = str(error or "").strip()
+        clean_error = str(
+            error or ""
+        ).strip()
 
         if clean_error:
             alignment["last_error"] = clean_error[:500]
         elif processing_state == "running":
-            alignment.pop("last_error", None)
+            alignment.pop(
+                "last_error",
+                None,
+            )
 
         metadata["alignment"] = alignment
         lyrics.metadata = metadata
-        lyrics.save(update_fields=("metadata", "updated_at"))
+        lyrics.save(
+            update_fields=(
+                "metadata",
+                "updated_at",
+            )
+        )
 
 
 def _select_alignment_variant(
@@ -239,7 +292,11 @@ def _select_alignment_variant(
             is_streamable=True,
         )
         .exclude(audio_file="")
-        .order_by("-is_default", "sort_order", "id")
+        .order_by(
+            "-is_default",
+            "sort_order",
+            "id",
+        )
         .first()
     )
 
@@ -261,7 +318,13 @@ def _variant_is_eligible(
         and bool(variant.is_active)
         and bool(variant.is_converted)
         and bool(variant.is_streamable)
-        and bool(getattr(variant.audio_file, "name", ""))
+        and bool(
+            getattr(
+                variant.audio_file,
+                "name",
+                "",
+            )
+        )
     )
 
 
@@ -270,8 +333,19 @@ def _snapshot_source(
     lyrics: MusicLyrics,
     variant: MusicTrackVariant,
 ) -> _AlignmentSource:
-    canonical_text = (lyrics.plain_text or "").strip()
-    audio_name = str(getattr(variant.audio_file, "name", "") or "").strip()
+    canonical_text = (
+        lyrics.plain_text
+        or ""
+    ).strip()
+
+    audio_name = str(
+        getattr(
+            variant.audio_file,
+            "name",
+            "",
+        )
+        or ""
+    ).strip()
 
     variant_duration_ms = int(
         variant.duration_ms
@@ -289,7 +363,10 @@ def _snapshot_source(
             "Alignment playback variant has no source audio."
         )
 
-    if variant_duration_ms <= 0 or track_duration_ms <= 0:
+    if (
+        variant_duration_ms <= 0
+        or track_duration_ms <= 0
+    ):
         raise LyricsAlignmentNotEligibleError(
             "Track duration is not available for lyrics alignment."
         )
@@ -305,7 +382,9 @@ def _snapshot_source(
         track_duration_ms=track_duration_ms,
         original_reference_variant_id=lyrics.reference_variant_id,
         variant_id=variant.pk,
-        variant_public_id=str(variant.public_id),
+        variant_public_id=str(
+            variant.public_id
+        ),
         variant_audio_name=audio_name,
         variant_duration_ms=variant_duration_ms,
     )
@@ -346,12 +425,18 @@ def _validate_result_for_persistence(
                 f"Lyrics line {line.line_index} has invalid timing."
             )
 
-        if line.start_ms < 0 or line.end_ms > track_duration_ms:
+        if (
+            line.start_ms < 0
+            or line.end_ms > track_duration_ms
+        ):
             raise LyricsAlignmentQualityError(
                 f"Lyrics line {line.line_index} exceeds the canonical track duration."
             )
 
-        if previous_line_end is not None and line.start_ms < previous_line_end:
+        if (
+            previous_line_end is not None
+            and line.start_ms < previous_line_end
+        ):
             raise LyricsAlignmentQualityError(
                 "Aligned lyrics lines overlap."
             )
@@ -379,12 +464,18 @@ def _validate_result_for_persistence(
                     f"Lyrics word {word.text!r} has invalid timing."
                 )
 
-            if word.start_ms < line.start_ms or word.end_ms > line.end_ms:
+            if (
+                word.start_ms < line.start_ms
+                or word.end_ms > line.end_ms
+            ):
                 raise LyricsAlignmentQualityError(
                     f"Lyrics word {word.text!r} exceeds its line timing."
                 )
 
-            if previous_word_end is not None and word.start_ms < previous_word_end:
+            if (
+                previous_word_end is not None
+                and word.start_ms < previous_word_end
+            ):
                 raise LyricsAlignmentQualityError(
                     f"Lyrics word {word.text!r} overlaps the previous word."
                 )
@@ -411,7 +502,10 @@ def _persist_alignment(
     lyrics = (
         MusicLyrics.objects
         .select_for_update()
-        .select_related("track", "reference_variant")
+        .select_related(
+            "track",
+            "reference_variant",
+        )
         .get(pk=source.lyrics_id)
     )
 
@@ -450,9 +544,14 @@ def _persist_alignment(
 
     persisted_lines = {
         line.sequence: line
-        for line in MusicLyricsLine.objects
-        .filter(lyrics=lyrics)
-        .order_by("sequence", "id")
+        for line in (
+            MusicLyricsLine.objects
+            .filter(lyrics=lyrics)
+            .order_by(
+                "sequence",
+                "id",
+            )
+        )
     }
 
     if len(persisted_lines) != len(result.lines):
@@ -460,17 +559,23 @@ def _persist_alignment(
             "Persisted lyrics line count does not match the alignment result."
         )
 
-    word_objects: list[MusicLyricsWord] = []
+    word_objects: list[
+        MusicLyricsWord
+    ] = []
 
     for line in result.lines:
-        persisted_line = persisted_lines.get(line.line_index)
+        persisted_line = persisted_lines.get(
+            line.line_index
+        )
 
         if persisted_line is None:
             raise LyricsAlignmentProcessingError(
                 f"Persisted lyrics line {line.line_index} could not be resolved."
             )
 
-        for sequence, word in enumerate(line.words):
+        for sequence, word in enumerate(
+            line.words
+        ):
             word_objects.append(
                 MusicLyricsWord(
                     line=persisted_line,
@@ -478,9 +583,13 @@ def _persist_alignment(
                     text=word.text,
                     start_ms=word.start_ms,
                     end_ms=word.end_ms,
-                    confidence=_confidence_decimal(word.confidence),
+                    confidence=_confidence_decimal(
+                        word.confidence
+                    ),
                     is_inferred=False,
-                    metadata=_word_metadata(word.provider_metadata),
+                    metadata=_word_metadata(
+                        word.provider_metadata
+                    ),
                 )
             )
 
@@ -489,13 +598,23 @@ def _persist_alignment(
         batch_size=500,
     )
 
-    metadata = _metadata_dict(lyrics.metadata)
-    alignment = _metadata_dict(metadata.get("alignment"))
+    metadata = _metadata_dict(
+        lyrics.metadata
+    )
+
+    alignment = _metadata_dict(
+        metadata.get("alignment")
+    )
 
     provider_metadata = (
         result.words[0].provider_metadata
-        if result.words
-        and isinstance(result.words[0].provider_metadata, dict)
+        if (
+            result.words
+            and isinstance(
+                result.words[0].provider_metadata,
+                dict,
+            )
+        )
         else {}
     )
 
@@ -508,8 +627,14 @@ def _persist_alignment(
                 "provider",
                 ALIGNMENT_PROVIDER,
             ),
-            "model": provider_metadata.get("model", ""),
-            "model_license": provider_metadata.get("model_license", ""),
+            "model": provider_metadata.get(
+                "model",
+                "",
+            ),
+            "model_license": provider_metadata.get(
+                "model_license",
+                "",
+            ),
             "stt_model": stt_model,
             "reference_variant_id": source.variant_public_id,
             "canonical_word_count": result.canonical_word_count,
@@ -528,12 +653,17 @@ def _persist_alignment(
         }
     )
 
-    alignment.pop("last_error", None)
+    alignment.pop(
+        "last_error",
+        None,
+    )
 
     metadata["alignment"] = alignment
 
     lyrics.reference_variant = variant
-    lyrics.timing_mode = MusicLyrics.TimingMode.LINE
+    lyrics.timing_mode = (
+        MusicLyrics.TimingMode.LINE
+    )
     lyrics.metadata = metadata
 
     lyrics.save(
@@ -570,7 +700,10 @@ def _assert_source_is_current(
             "Lyrics status changed while automatic alignment was running."
         )
 
-    if lyrics.language_code != source.language_code or lyrics.kind != source.kind:
+    if (
+        lyrics.language_code != source.language_code
+        or lyrics.kind != source.kind
+    ):
         raise LyricsAlignmentStaleSourceError(
             "Lyrics language or kind changed while automatic alignment was running."
         )
@@ -580,17 +713,29 @@ def _assert_source_is_current(
             "Lyrics timing mode changed while automatic alignment was running."
         )
 
-    if (lyrics.plain_text or "").strip() != source.canonical_text:
+    if (
+        lyrics.plain_text
+        or ""
+    ).strip() != source.canonical_text:
         raise LyricsAlignmentStaleSourceError(
             "Canonical lyrics text changed while automatic alignment was running."
         )
 
-    if lyrics.reference_variant_id != source.original_reference_variant_id:
+    if (
+        lyrics.reference_variant_id
+        != source.original_reference_variant_id
+    ):
         raise LyricsAlignmentStaleSourceError(
             "Lyrics reference variant changed while automatic alignment was running."
         )
 
-    if int(lyrics.track.duration_ms or 0) != source.track_duration_ms:
+    if (
+        int(
+            lyrics.track.duration_ms
+            or 0
+        )
+        != source.track_duration_ms
+    ):
         raise LyricsAlignmentStaleSourceError(
             "Track duration changed while automatic alignment was running."
         )
@@ -606,13 +751,20 @@ def _assert_variant_is_current(
     variant: MusicTrackVariant,
     source: _AlignmentSource,
 ) -> None:
-    if not _variant_is_eligible(variant, track_id=source.track_id):
+    if not _variant_is_eligible(
+        variant,
+        track_id=source.track_id,
+    ):
         raise LyricsAlignmentStaleSourceError(
             "Alignment playback variant is no longer eligible."
         )
 
     audio_name = str(
-        getattr(variant.audio_file, "name", "")
+        getattr(
+            variant.audio_file,
+            "name",
+            "",
+        )
         or ""
     ).strip()
 
@@ -646,7 +798,11 @@ def _alignment_max_block_ms() -> int:
             "LYRICS_ALIGNMENT_MAX_BLOCK_SECONDS must be positive."
         )
 
-    return int(round(seconds * 1000))
+    return int(
+        round(
+            seconds * 1000
+        )
+    )
 
 
 def _alignment_padding_ms() -> int:
@@ -662,20 +818,40 @@ def _alignment_padding_ms() -> int:
             "LYRICS_ALIGNMENT_BLOCK_PADDING_SECONDS cannot be negative."
         )
 
-    return int(round(seconds * 1000))
+    return int(
+        round(
+            seconds * 1000
+        )
+    )
 
 
-def _confidence_decimal(value: float) -> Decimal:
-    bounded = max(0.0, min(1.0, float(value)))
+def _confidence_decimal(
+    value: float,
+) -> Decimal:
+    bounded = max(
+        0.0,
+        min(
+            1.0,
+            float(value),
+        ),
+    )
 
-    return Decimal(str(bounded)).quantize(
+    return Decimal(
+        str(bounded)
+    ).quantize(
         Decimal("0.0001"),
         rounding=ROUND_HALF_UP,
     )
 
 
-def _word_metadata(value: object) -> dict:
-    metadata = value if isinstance(value, dict) else {}
+def _word_metadata(
+    value: object,
+) -> dict:
+    metadata = (
+        value
+        if isinstance(value, dict)
+        else {}
+    )
 
     allowed = (
         "timing_source",
@@ -693,5 +869,11 @@ def _word_metadata(value: object) -> dict:
     }
 
 
-def _metadata_dict(value: object) -> dict:
-    return dict(value) if isinstance(value, dict) else {}
+def _metadata_dict(
+    value: object,
+) -> dict:
+    return (
+        dict(value)
+        if isinstance(value, dict)
+        else {}
+    )
