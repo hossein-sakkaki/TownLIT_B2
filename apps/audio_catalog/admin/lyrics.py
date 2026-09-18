@@ -107,7 +107,7 @@ class MusicLyricsLineInline(admin.TabularInline):
         return obj.words.count()
 
 
-@admin.action(description="Queue adaptive word-level alignment")
+@admin.action(description="Queue automatic word-level alignment")
 def queue_automatic_alignment(modeladmin, request, queryset):
     queued = 0
     skipped = 0
@@ -130,7 +130,7 @@ def queue_automatic_alignment(modeladmin, request, queryset):
         modeladmin.message_user(
             request,
             (
-                f"{queued} lyrics document(s) queued for adaptive "
+                f"{queued} lyrics document(s) queued for automatic "
                 "word alignment."
             ),
             level=messages.SUCCESS,
@@ -317,6 +317,12 @@ class MusicLyricsAdmin(LargeResultAdminMixin, admin.ModelAdmin):
         if processing_state and processing_state != "idle":
             return f"{state} / {processing_state}"
 
+        if (
+            state == "synchronized"
+            and bool(alignment.get("quality_review_recommended"))
+        ):
+            return "synchronized / review recommended"
+
         return state
 
     @admin.display(description="Quality")
@@ -335,7 +341,14 @@ class MusicLyricsAdmin(LargeResultAdminMixin, admin.ModelAdmin):
         except (TypeError, ValueError):
             return "—"
 
-        parts = [f"{confidence:.1f}% confidence"]
+        parts = []
+
+        if bool(alignment.get("quality_review_recommended")):
+            parts.append("Review recommended")
+        elif alignment.get("quality_status") == "strong":
+            parts.append("Strong")
+
+        parts.append(f"{confidence:.1f}% confidence")
 
         text_ratio = alignment.get(
             "text_match_ratio",
@@ -367,6 +380,27 @@ class MusicLyricsAdmin(LargeResultAdminMixin, admin.ModelAdmin):
             ("Strategy", alignment.get("strategy")),
             ("Strategy version", alignment.get("strategy_version")),
             ("Attempts", alignment.get("attempt_count")),
+            ("Selection reason", alignment.get("selection_reason")),
+            ("Quality status", alignment.get("quality_status")),
+            ("Hard gate passed", alignment.get("hard_gate_passed")),
+            (
+                "Acoustic quality strong",
+                alignment.get("acoustic_quality_strong"),
+            ),
+            (
+                "Review recommended",
+                alignment.get("quality_review_recommended"),
+            ),
+            (
+                "Hard gate failures",
+                self._format_list(alignment.get("hard_gate_failures")),
+            ),
+            (
+                "Acoustic warnings",
+                self._format_list(
+                    alignment.get("acoustic_quality_warnings")
+                ),
+            ),
             (
                 "Selected max block",
                 self._format_block_ms(alignment.get("selected_max_block_ms")),
@@ -481,13 +515,26 @@ class MusicLyricsAdmin(LargeResultAdminMixin, admin.ModelAdmin):
 
         return f"{milliseconds / 1000:g}s"
 
+    @staticmethod
+    def _format_list(value) -> str | None:
+        if not isinstance(value, list) or not value:
+            return None
+
+        return ", ".join(
+            str(item)
+            for item in value
+            if str(item).strip()
+        ) or None
+
     @classmethod
     def _format_attempt(cls, attempt: dict) -> str:
         block = cls._format_block_ms(attempt.get("max_block_ms")) or "?"
         pieces = [
             f"block={block}",
             f"blocks={attempt.get('block_count', '—')}",
-            f"acceptable={attempt.get('acceptable', False)}",
+            f"persistable={attempt.get('persistable', False)}",
+            f"strong={attempt.get('strong_quality', False)}",
+            f"review={attempt.get('review_recommended', False)}",
         ]
 
         text_ratio = attempt.get("text_match_ratio")
@@ -509,9 +556,19 @@ class MusicLyricsAdmin(LargeResultAdminMixin, admin.ModelAdmin):
         except (TypeError, ValueError):
             pass
 
-        failures = attempt.get("quality_gate_failures")
+        failures = attempt.get("hard_gate_failures")
         if isinstance(failures, list) and failures:
-            pieces.append("gates=" + ", ".join(str(value) for value in failures))
+            pieces.append(
+                "hard="
+                + ", ".join(str(value) for value in failures)
+            )
+
+        warnings = attempt.get("acoustic_quality_warnings")
+        if isinstance(warnings, list) and warnings:
+            pieces.append(
+                "acoustic="
+                + ", ".join(str(value) for value in warnings)
+            )
 
         error = str(attempt.get("error", "") or "").strip()
         if error:

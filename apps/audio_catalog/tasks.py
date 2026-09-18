@@ -2,7 +2,7 @@
 # TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-09-16.
-# Last Update by Hossein Sakkaki on 2026-09-16.
+# Last Update by Hossein Sakkaki on 2026-09-18.
 
 from __future__ import annotations
 
@@ -13,9 +13,19 @@ from django.db import OperationalError
 
 from apps.audio_catalog.models import MusicLyrics
 from apps.audio_catalog.services.lyrics_processing import (
+    LyricsAlignmentNotEligibleError,
+    LyricsAlignmentQualityError,
+    LyricsAlignmentStaleSourceError,
     mark_alignment_processing_state,
     process_music_lyrics_alignment,
     validate_music_lyrics_alignment_candidate,
+)
+
+
+HANDLED_ALIGNMENT_EXCEPTIONS = (
+    LyricsAlignmentNotEligibleError,
+    LyricsAlignmentQualityError,
+    LyricsAlignmentStaleSourceError,
 )
 
 
@@ -33,8 +43,9 @@ def align_music_lyrics_task(
     """
     Generate and atomically persist automatic word-level music lyrics timing.
 
-    Deterministic alignment and quality failures are never retried.
-    Only known transient provider, network, or database failures may retry.
+    Deterministic content, quality, and stale-source outcomes are recorded in
+    lyrics metadata and end cleanly. Only known transient provider, network,
+    or database failures may retry.
     """
 
     try:
@@ -46,6 +57,15 @@ def align_music_lyrics_task(
         process_music_lyrics_alignment(
             lyrics_id=lyrics_id,
         )
+
+    except HANDLED_ALIGNMENT_EXCEPTIONS as exc:
+        _safe_mark_processing_state(
+            lyrics_id=lyrics_id,
+            processing_state="failed",
+            error=_safe_error_text(exc),
+        )
+
+        return
 
     except Exception as exc:
         error_text = _safe_error_text(exc)

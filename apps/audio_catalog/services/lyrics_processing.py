@@ -33,9 +33,9 @@ from apps.subtitles.services.stt_openai import transcribe_audio
 
 
 ALIGNMENT_PROVIDER = "ctc_segmentation"
-ALIGNMENT_GATE_VERSION = "music-word-sync-v1"
+ALIGNMENT_GATE_VERSION = "music-word-sync-v2"
 ALIGNMENT_STRATEGY = "adaptive_blocks"
-ALIGNMENT_STRATEGY_VERSION = "adaptive-block-v1"
+ALIGNMENT_STRATEGY_VERSION = "adaptive-block-v2"
 
 MUSIC_LYRICS_STT_PROMPT_MAX_WORDS = 120
 MUSIC_LYRICS_STT_TEMPERATURE = 0.0
@@ -92,8 +92,8 @@ class _AlignmentSource:
     variant_public_id: str
     variant_audio_name: str
     variant_duration_ms: int
-    
-    
+
+
 @dataclass(frozen=True, slots=True)
 class MusicLyricsAlignmentAttempt:
     max_block_ms: int
@@ -104,14 +104,32 @@ class MusicLyricsAlignmentAttempt:
     error: str = ""
 
     @property
-    def is_acceptable(self) -> bool:
-        return bool(self.result and self.result.is_acceptable)
+    def is_persistable(self) -> bool:
+        return bool(
+            self.result
+            and self.result.is_integrity_acceptable
+        )
+
+    @property
+    def is_strong_quality(self) -> bool:
+        return bool(
+            self.result
+            and self.result.is_acceptable
+        )
+
+    @property
+    def review_recommended(self) -> bool:
+        return bool(
+            self.result
+            and self.result.review_recommended
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class MusicLyricsAdaptiveAlignmentEvaluation:
     attempts: tuple[MusicLyricsAlignmentAttempt, ...]
     selected_attempt_index: int | None
+    selection_reason: str = ""
 
     @property
     def selected_attempt(self) -> MusicLyricsAlignmentAttempt | None:
@@ -131,11 +149,24 @@ class MusicLyricsAdaptiveAlignmentEvaluation:
 
     @property
     def is_acceptable(self) -> bool:
-        return self.selected_result is not None
+        """Whether one integrity-safe result can be persisted."""
+
+        attempt = self.selected_attempt
+        return bool(attempt and attempt.is_persistable)
+
+    @property
+    def review_recommended(self) -> bool:
+        attempt = self.selected_attempt
+        return bool(attempt and attempt.review_recommended)
 
     @property
     def best_attempt(self) -> MusicLyricsAlignmentAttempt | None:
-        completed = [attempt for attempt in self.attempts if attempt.result is not None]
+        completed = [
+            attempt
+            for attempt in self.attempts
+            if attempt.result is not None
+        ]
+
         if not completed:
             return None
 
@@ -149,8 +180,9 @@ def build_music_lyrics_stt_prompt(canonical_text: str) -> str:
     """
     Build bounded canonical context for rough music STT anchors.
 
-    This prompt guides transcription only. Canonical matching and the
-    forced-alignment quality gate remain authoritative.
+    This prompt guides transcription only. Canonical matching and hard
+    timing-integrity checks remain authoritative. Acoustic confidence is
+    retained as a review signal for sung music.
     """
 
     words = str(canonical_text or "").split()
@@ -328,11 +360,33 @@ def evaluate_adaptive_music_lyrics_alignment(
             return MusicLyricsAdaptiveAlignmentEvaluation(
                 attempts=tuple(attempts),
                 selected_attempt_index=len(attempts) - 1,
+                selection_reason="strong_quality",
             )
+
+    persistable_indices = [
+        index
+        for index, attempt in enumerate(attempts)
+        if attempt.is_persistable
+    ]
+
+    if persistable_indices:
+        selected_index = max(
+            persistable_indices,
+            key=lambda index: _attempt_rank(
+                attempts[index].result
+            ),
+        )
+
+        return MusicLyricsAdaptiveAlignmentEvaluation(
+            attempts=tuple(attempts),
+            selected_attempt_index=selected_index,
+            selection_reason="best_integrity_candidate",
+        )
 
     return MusicLyricsAdaptiveAlignmentEvaluation(
         attempts=tuple(attempts),
         selected_attempt_index=None,
+        selection_reason="no_integrity_candidate",
     )
 
 
@@ -349,7 +403,7 @@ def validate_music_lyrics_alignment_candidate(lyrics: MusicLyrics) -> None:
 
     if lyrics.timing_mode != MusicLyrics.TimingMode.PLAIN:
         raise LyricsAlignmentNotEligibleError(
-            "Automatic alignment V1 only accepts plain lyrics documents."
+            "Automatic alignment only accepts plain lyrics documents."
         )
 
     if not (lyrics.plain_text or "").strip():
@@ -359,7 +413,7 @@ def validate_music_lyrics_alignment_candidate(lyrics: MusicLyrics) -> None:
 
     if lyrics.lines.exists():
         raise LyricsAlignmentNotEligibleError(
-            "Automatic alignment V1 will not replace existing lyrics lines."
+            "Automatic alignment will not replace existing lyrics lines."
         )
 
 
@@ -415,6 +469,26 @@ def process_music_lyrics_alignment(*, lyrics_id: int) -> MusicLyricsAlignmentOut
             raise LyricsAlignmentProcessingError(
                 "Adaptive lyrics alignment selected no result."
             )
+
+        if (
+            source.status == MusicLyrics.Status.PUBLISHED
+            and result.review_recommended
+        ):
+            message = (
+                "Automatic lyrics alignment produced an integrity-safe "
+                "result, but acoustic confidence recommends review. "
+                "Published plain lyrics are never replaced with a "
+                "review-recommended synchronization automatically."
+            )
+
+            _record_alignment_failure_diagnostics(
+                source=source,
+                evaluation=evaluation,
+                stt_model=str(stt.get("model", "") or ""),
+                error=message,
+            )
+
+            raise LyricsAlignmentQualityError(message)
 
         _validate_result_for_persistence(
             result=result,
@@ -567,10 +641,10 @@ def _validate_result_for_persistence(
     result: LyricsForcedAlignmentResult,
     track_duration_ms: int,
 ) -> None:
-    if not result.is_acceptable:
-        failures = ", ".join(result.quality_gate_failures) or "unknown"
+    if not result.is_integrity_acceptable:
+        failures = ", ".join(result.hard_gate_failures) or "unknown"
         raise LyricsAlignmentQualityError(
-            "Automatic lyrics alignment did not pass the TownLIT quality gate: "
+            "Automatic lyrics alignment did not pass the TownLIT integrity gate: "
             f"{failures}."
         )
 
@@ -746,6 +820,19 @@ def _persist_alignment(
             "strategy_version": ALIGNMENT_STRATEGY_VERSION,
             "attempt_count": len(evaluation.attempts),
             "selected_max_block_ms": evaluation.selected_max_block_ms,
+            "selection_reason": evaluation.selection_reason,
+            "hard_gate_passed": result.is_integrity_acceptable,
+            "acoustic_quality_strong": result.is_acoustic_quality_strong,
+            "quality_review_recommended": result.review_recommended,
+            "quality_status": (
+                "review_recommended"
+                if result.review_recommended
+                else "strong"
+            ),
+            "hard_gate_failures": list(result.hard_gate_failures),
+            "acoustic_quality_warnings": list(
+                result.acoustic_quality_warnings
+            ),
             "attempts": [
                 _alignment_attempt_payload(attempt)
                 for attempt in evaluation.attempts
@@ -840,6 +927,7 @@ def _record_alignment_failure_diagnostics(
             "strategy": ALIGNMENT_STRATEGY,
             "strategy_version": ALIGNMENT_STRATEGY_VERSION,
             "attempt_count": len(evaluation.attempts),
+            "selection_reason": evaluation.selection_reason,
             "stt_model": stt_model,
             "reference_variant_id": source.variant_public_id,
             "attempts": [
@@ -853,6 +941,32 @@ def _record_alignment_failure_diagnostics(
 
     alignment.pop("selected_max_block_ms", None)
     alignment.pop("completed_at", None)
+
+    stale_result_keys = (
+        "quality_status",
+        "hard_gate_passed",
+        "acoustic_quality_strong",
+        "quality_review_recommended",
+        "hard_gate_failures",
+        "acoustic_quality_warnings",
+        "canonical_word_count",
+        "direct_match_count",
+        "text_match_ratio",
+        "mean_alignment_confidence",
+        "low_confidence_word_count",
+        "low_confidence_ratio",
+        "non_positive_duration_count",
+        "out_of_bounds_count",
+        "order_violation_count",
+        "overlap_violation_count",
+        "overlong_word_count",
+        "candidate_line_count",
+        "candidate_word_count",
+        "best_max_block_ms",
+    )
+
+    for key in stale_result_keys:
+        alignment.pop(key, None)
 
     if provider_metadata:
         alignment["provider"] = provider_metadata.get(
@@ -881,6 +995,20 @@ def _record_alignment_failure_diagnostics(
                 "mean_alignment_confidence": best_result.mean_alignment_confidence,
                 "low_confidence_word_count": best_result.low_confidence_word_count,
                 "low_confidence_ratio": round(best_result.low_confidence_ratio, 6),
+                "hard_gate_passed": best_result.is_integrity_acceptable,
+                "acoustic_quality_strong": best_result.is_acoustic_quality_strong,
+                "quality_review_recommended": best_result.review_recommended,
+                "quality_status": (
+                    "review_recommended"
+                    if best_result.review_recommended
+                    else "strong"
+                    if best_result.is_integrity_acceptable
+                    else "failed"
+                ),
+                "hard_gate_failures": list(best_result.hard_gate_failures),
+                "acoustic_quality_warnings": list(
+                    best_result.acoustic_quality_warnings
+                ),
                 "non_positive_duration_count": best_result.non_positive_duration_count,
                 "out_of_bounds_count": best_result.out_of_bounds_count,
                 "order_violation_count": best_result.order_violation_count,
@@ -991,7 +1119,9 @@ def _alignment_attempt_payload(
         "block_count": attempt.block_count,
         "direct_match_count": attempt.direct_match_count,
         "text_match_ratio": round(attempt.text_match_ratio, 6),
-        "acceptable": attempt.is_acceptable,
+        "persistable": attempt.is_persistable,
+        "strong_quality": attempt.is_strong_quality,
+        "review_recommended": attempt.review_recommended,
     }
 
     if attempt.error:
@@ -1010,7 +1140,10 @@ def _alignment_attempt_payload(
                 "order_violation_count": result.order_violation_count,
                 "overlap_violation_count": result.overlap_violation_count,
                 "overlong_word_count": result.overlong_word_count,
-                "quality_gate_failures": list(result.quality_gate_failures),
+                "hard_gate_failures": list(result.hard_gate_failures),
+                "acoustic_quality_warnings": list(
+                    result.acoustic_quality_warnings
+                ),
             }
         )
 
@@ -1036,23 +1169,24 @@ def _adaptive_failure_message(
         )
 
     result = best_attempt.result
-    failures = ", ".join(result.quality_gate_failures) or "unknown quality failure"
+    failures = ", ".join(result.hard_gate_failures) or "no integrity-safe result"
 
     return (
         "Automatic lyrics alignment exhausted adaptive block attempts "
-        f"({attempted}). Best attempt: "
+        f"({attempted}) without an integrity-safe result. Best attempt: "
         f"{_format_block_seconds(best_attempt.max_block_ms)}, "
         f"text={result.text_match_ratio:.2%}, "
         f"mean_confidence={result.mean_alignment_confidence:.4f}, "
         f"low_confidence={result.low_confidence_ratio:.2%}. "
-        f"Failed gates: {failures}."
+        f"Failed integrity gates: {failures}."
     )
 
 
 def _attempt_rank(result: LyricsForcedAlignmentResult) -> tuple:
     return (
-        result.temporal_violation_count == 0,
-        result.overlong_word_count == 0,
+        result.is_integrity_acceptable,
+        result.is_acoustic_quality_strong,
+        -len(result.acoustic_quality_warnings),
         result.text_match_ratio,
         -result.low_confidence_ratio,
         result.mean_alignment_confidence,

@@ -304,13 +304,28 @@ class Command(BaseCommand):
                 f"  overlong words             : {result.overlong_word_count}"
             )
             self.stdout.write(
-                f"  acceptable                 : {result.is_acceptable}"
+                "  integrity acceptable       : "
+                f"{result.is_integrity_acceptable}"
+            )
+            self.stdout.write(
+                "  acoustic quality strong    : "
+                f"{result.is_acoustic_quality_strong}"
+            )
+            self.stdout.write(
+                "  review recommended         : "
+                f"{result.review_recommended}"
             )
 
-            if result.quality_gate_failures:
+            if result.hard_gate_failures:
                 self.stdout.write(
-                    "  failed gates               : "
-                    + ", ".join(result.quality_gate_failures)
+                    "  failed integrity gates     : "
+                    + ", ".join(result.hard_gate_failures)
+                )
+
+            if result.acoustic_quality_warnings:
+                self.stdout.write(
+                    "  acoustic warnings          : "
+                    + ", ".join(result.acoustic_quality_warnings)
                 )
 
     def _print_result(
@@ -364,13 +379,28 @@ class Command(BaseCommand):
             f"overlong_word_count          : {result.overlong_word_count}"
         )
         self.stdout.write(
-            f"acceptable                   : {result.is_acceptable}"
+            "integrity_acceptable           : "
+            f"{result.is_integrity_acceptable}"
+        )
+        self.stdout.write(
+            "acoustic_quality_strong        : "
+            f"{result.is_acoustic_quality_strong}"
+        )
+        self.stdout.write(
+            "review_recommended             : "
+            f"{result.review_recommended}"
         )
 
-        if result.quality_gate_failures:
+        if result.hard_gate_failures:
             self.stdout.write(
-                "failed_gates                 : "
-                + ", ".join(result.quality_gate_failures)
+                "failed_integrity_gates       : "
+                + ", ".join(result.hard_gate_failures)
+            )
+
+        if result.acoustic_quality_warnings:
+            self.stdout.write(
+                "acoustic_quality_warnings    : "
+                + ", ".join(result.acoustic_quality_warnings)
             )
 
         self.stdout.write("\nALIGNED LINES")
