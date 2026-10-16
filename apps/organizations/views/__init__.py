@@ -1,11 +1,16 @@
 # apps/organizations/views/__init__.py
 #
-# TownLIT
+# TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-08-29.
-# Last Update by Hossein Sakkaki on 2026-08-30.
+# Last Update by Hossein Sakkaki on 2026-10-05.
 #
 
+from .administration import (
+    OrganizationAdministrationOverviewView,
+    OrganizationAuditActivityView,
+)
+from .community import OrganizationCommunityPeopleView
 from .organizations import OrganizationViewSet
 from .membership_requests import OrganizationMembershipRequestViewSet
 from .memberships import OrganizationMembershipViewSet
@@ -28,6 +33,7 @@ from .verification import (
     OrganizationVerificationCaseDetailView,
     OrganizationVerificationCasesView,
     OrganizationVerificationDocumentCreateView,
+    OrganizationVerificationDocumentDetailView,
     OrganizationVerificationDocumentReviewView,
     OrganizationVerificationGrantRevokeView,
     OrganizationVerificationNeedsInformationView,
@@ -35,9 +41,11 @@ from .verification import (
     OrganizationVerificationReviewQueueView,
     OrganizationVerificationStartReviewView,
     OrganizationVerificationSubmitView,
+    OrganizationVerificationSponsorRelationshipsView,
     OrganizationVerificationWithdrawView,
 )
 from .hierarchy import (
+    OrganizationRelationshipCandidatesView,
     OrganizationRelationshipConsentProposalView,
     OrganizationRelationshipDetailView,
     OrganizationRelationshipRequestView,
@@ -48,12 +56,37 @@ from .governance import (
     OrganizationGovernanceProposalDetailView,
     OrganizationGovernanceProposalFinalizeView,
     OrganizationGovernanceProposalOpenView,
+    OrganizationGovernanceOwnerCandidatesView,
     OrganizationGovernanceProposalsView,
     OrganizationGovernanceProposalVoteView,
     OrganizationGovernanceRulesView,
 )
 
+from .people import (
+    OrganizationMemberCandidatesView,
+    OrganizationMembersView,
+    OrganizationMembershipRequestsManagementView,
+    OrganizationRoleAssignmentsManagementView,
+    OrganizationRolesView,
+)
+
+from .profile import (
+    OrganizationBusinessHoursView,
+    OrganizationContactPointDetailView,
+    OrganizationContactPointsView,
+    OrganizationRepresentativeCandidatesView,
+    OrganizationRepresentativeDetailView,
+    OrganizationRepresentativeResponseView,
+    OrganizationRepresentativesView,
+    OrganizationSocialLinkDetailView,
+    OrganizationSocialLinksView,
+    OrganizationSocialMediaTypesView,
+)
+
 __all__ = [
+    "OrganizationAdministrationOverviewView",
+    "OrganizationAuditActivityView",
+    "OrganizationCommunityPeopleView",
     "OrganizationViewSet",
     "OrganizationMembershipRequestViewSet",
     "OrganizationMembershipViewSet",
@@ -71,6 +104,7 @@ __all__ = [
     "OrganizationVerificationCaseDetailView",
     "OrganizationVerificationCasesView",
     "OrganizationVerificationDocumentCreateView",
+    "OrganizationVerificationDocumentDetailView",
     "OrganizationVerificationDocumentReviewView",
     "OrganizationVerificationGrantRevokeView",
     "OrganizationVerificationNeedsInformationView",
@@ -78,7 +112,9 @@ __all__ = [
     "OrganizationVerificationReviewQueueView",
     "OrganizationVerificationStartReviewView",
     "OrganizationVerificationSubmitView",
+    "OrganizationVerificationSponsorRelationshipsView",
     "OrganizationVerificationWithdrawView",
+    "OrganizationRelationshipCandidatesView",
     "OrganizationRelationshipConsentProposalView",
     "OrganizationRelationshipDetailView",
     "OrganizationRelationshipRequestView",
@@ -87,7 +123,25 @@ __all__ = [
     "OrganizationGovernanceProposalDetailView",
     "OrganizationGovernanceProposalFinalizeView",
     "OrganizationGovernanceProposalOpenView",
+    "OrganizationGovernanceOwnerCandidatesView",
     "OrganizationGovernanceProposalsView",
     "OrganizationGovernanceProposalVoteView",
     "OrganizationGovernanceRulesView",
+    "OrganizationMemberCandidatesView",
+    "OrganizationMembersView",
+    "OrganizationMembershipRequestsManagementView",
+    "OrganizationRoleAssignmentsManagementView",
+    "OrganizationRolesView",
+    "OrganizationBusinessHoursView",
+    "OrganizationContactPointDetailView",
+    "OrganizationContactPointsView",
+    "OrganizationRepresentativeCandidatesView",
+    "OrganizationRepresentativeDetailView",
+    "OrganizationRepresentativeResponseView",
+    "OrganizationRepresentativesView",
+    "OrganizationSocialLinkDetailView",
+    "OrganizationSocialLinksView",
+    "OrganizationSocialMediaTypesView",
 ]
+
+from .discovery import OrganizationDiscoveryView

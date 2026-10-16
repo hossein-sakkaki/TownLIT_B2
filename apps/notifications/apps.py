@@ -1,3 +1,10 @@
+# apps/notifications/apps.py
+# TownLIT
+#
+# Created by Hossein Sakkaki on 2026-09-04.
+# Last Update by Hossein Sakkaki on 2026-10-02.
+#
+
 from django.apps import AppConfig
 
 
@@ -14,5 +21,4 @@ class NotificationsConfig(AppConfig):
         import apps.notifications.signals.messages_signals
         import apps.notifications.signals.testimony_signals
         import apps.notifications.signals.moment_signals
-
-
+        import apps.notifications.signals.organization_signals

@@ -1,10 +1,20 @@
 # apps/conversation/services/message_reactions.py
+# TownLIT-Backend
+#
+# Created by Hossein Sakkaki on 2026-10-06.
+# Last Update by Hossein Sakkaki on 2026-10-06.
+#
 
 from collections import defaultdict
 
 from django.db import transaction
 
 from apps.conversation.models import Message, MessageReaction
+from apps.conversation.policies import (
+    ConversationAccessPolicy,
+    ConversationContextKind,
+    ConversationContextPolicy,
+)
 from apps.conversation.constants import (
     MSG_LIKE,
     MSG_DISLIKE,
@@ -48,12 +58,27 @@ def _success(payload: dict):
 
 
 def _is_message_visible_to_user(message, user) -> bool:
-    """Check whether a message is visible to the acting user."""
-    if not message.dialogue.participants.filter(id=user.id).exists():
+    """Check access plus the context-specific history boundary."""
+    if not ConversationAccessPolicy.can_view(
+        dialogue=message.dialogue,
+        user=user,
+    ).allowed:
         return False
-    if message.deleted_by_users.filter(id=user.id).exists():
-        return False
-    return True
+
+    return (
+        message.dialogue
+        .visible_messages_for_user(user)
+        .filter(id=message.id)
+        .exists()
+    )
+
+
+def _organization_direct_feature_unavailable(dialogue) -> bool:
+    """Organization Direct reactions are not part of the V1 contract."""
+    return (
+        ConversationContextPolicy.resolve(dialogue).kind
+        == ConversationContextKind.ORGANIZATION_DIRECT
+    )
 
 
 def _validate_reaction_type(reaction_type: str):
@@ -173,6 +198,13 @@ def toggle_message_reaction(*, message_id, acting_user, reaction_type):
     if not _is_message_visible_to_user(message, acting_user):
         return _error("FORBIDDEN", "You cannot react to this message.", 403)
 
+    if _organization_direct_feature_unavailable(message.dialogue):
+        return _error(
+            "ORGANIZATION_DIRECT_FEATURE_NOT_AVAILABLE",
+            "Reactions are not available for Organization Direct conversations.",
+            400,
+        )
+
     if message.is_system:
         return _error("INVALID_TARGET", "System messages cannot receive reactions.", 400)
 
@@ -232,6 +264,13 @@ def get_message_reaction_summary_for_user(*, message_id, acting_user):
     if not _is_message_visible_to_user(message, acting_user):
         return _error("FORBIDDEN", "You cannot access this message.", 403)
 
+    if _organization_direct_feature_unavailable(message.dialogue):
+        return _error(
+            "ORGANIZATION_DIRECT_FEATURE_NOT_AVAILABLE",
+            "Reactions are not available for Organization Direct conversations.",
+            400,
+        )
+
     summary = build_message_reaction_summary(
         message=message,
         acting_user=acting_user,
@@ -259,6 +298,13 @@ def list_message_reactors(*, message_id, acting_user, request=None):
 
     if not _is_message_visible_to_user(message, acting_user):
         return _error("FORBIDDEN", "You cannot access this message.", 403)
+
+    if _organization_direct_feature_unavailable(message.dialogue):
+        return _error(
+            "ORGANIZATION_DIRECT_FEATURE_NOT_AVAILABLE",
+            "Reactions are not available for Organization Direct conversations.",
+            400,
+        )
 
     rows = list(
         message.message_reactions

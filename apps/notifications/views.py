@@ -1,8 +1,14 @@
 # apps/notifications/views.py
+# TownLIT
+#
+# Created by Hossein Sakkaki on 2025-10-03.
+# Last Update by Hossein Sakkaki on 2026-10-03.
+#
 
 import logging
 
 from django.utils import timezone
+from rest_framework.exceptions import PermissionDenied
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -31,6 +37,13 @@ from apps.notifications.serializers import (
     NotificationMarkReadSerializer,
 )
 from apps.notifications.utils import get_allowed_notification_types_for_user
+from apps.organizations.constants import (
+    ACCESS_ELIGIBLE_MEMBERSHIP_STATUSES,
+)
+from apps.organizations.models import (
+    Organization,
+    OrganizationMembership,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,13 +81,54 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     page_size = 20
     max_page_size = 20
 
+    def _requested_organization(self):
+        slug = str(
+            self.request.query_params.get("organization") or ""
+        ).strip()
+
+        if not slug:
+            return None
+
+        organization = (
+            Organization.objects
+            .filter(slug=slug)
+            .only("id", "public_id", "slug", "name", "short_name")
+            .first()
+        )
+
+        if organization is None:
+            raise PermissionDenied(
+                "Organization notification context is unavailable."
+            )
+
+        if not getattr(self.request.user, "is_staff", False):
+            has_active_membership = (
+                OrganizationMembership.objects
+                .filter(
+                    organization=organization,
+                    member__user=self.request.user,
+                    status__in=ACCESS_ELIGIBLE_MEMBERSHIP_STATUSES,
+                )
+                .exists()
+            )
+
+            if not has_active_membership:
+                raise PermissionDenied(
+                    "Organization notification context is unavailable."
+                )
+
+        return organization
+
     def get_queryset(self):
         """
-        Return visible general notifications for the current user.
+        Return notifications for exactly one inbox context.
 
-        Message notification records are excluded even if old records exist
-        in the database from previous versions.
+        Default: Personal/general Notification Center.
+        With ?organization=<slug>: that Organization workspace context.
+        Messenger notification records remain excluded.
         """
+        organization = self._requested_organization()
+
         qs = (
             Notification.objects
             .filter(user=self.request.user)
@@ -85,9 +139,15 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
                 "actor",
                 "actor__member_profile",
                 "actor__label",
+                "organization_context",
             )
             .order_by("-created_at")
         )
+
+        if organization is None:
+            qs = qs.filter(organization_context__isnull=True)
+        else:
+            qs = qs.filter(organization_context=organization)
 
         self._auto_prune_stale_notifications(qs)
 
@@ -171,11 +231,8 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
         unread source from Dialogue unread messages.
         """
         count = (
-            Notification.objects
-            .filter(
-                user=request.user,
-                is_read=False,
-            )
+            self.get_queryset()
+            .filter(is_read=False)
             .exclude(
                 notification_type__in=NOTIFICATION_TYPES_EXCLUDED_FROM_GENERAL_UNREAD
             )

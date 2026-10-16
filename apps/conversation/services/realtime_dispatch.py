@@ -1,4 +1,9 @@
 # apps/conversation/services/realtime_dispatch.py
+# TownLIT-Backend
+#
+# Created by Hossein Sakkaki on 2026-10-06.
+# Last Update by Hossein Sakkaki on 2026-10-06.
+#
 
 import logging
 
@@ -7,6 +12,10 @@ from asgiref.sync import async_to_sync
 
 from apps.conversation.services.boundary_access import (
     should_send_conversation_notification,
+)
+from apps.conversation.services.message_visibility import (
+    is_members_community,
+    visible_participant_ids_for_message,
 )
 
 logger = logging.getLogger(__name__)
@@ -210,6 +219,19 @@ def broadcast_group_text_message(
         dialogue_slug=dialogue_slug,
         plain_text=plain_text,
     )
+
+    if is_members_community(message.dialogue):
+        delivered = False
+        for user_id in visible_participant_ids_for_message(message=message):
+            delivered = (
+                conv_group_send(
+                    conversation_user_group_name(user_id),
+                    "chat_message",
+                    payload,
+                )
+                or delivered
+            )
+        return delivered
 
     return conv_group_send(
         conversation_dialogue_group_name(dialogue_slug),

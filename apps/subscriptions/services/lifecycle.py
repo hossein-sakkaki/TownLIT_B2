@@ -3,7 +3,7 @@
 # TownLIT
 #
 # Created by Hossein Sakkaki on 2026-08-28.
-# Last Update by Hossein Sakkaki on 2026-08-29.
+# Last Update by Hossein Sakkaki on 2026-10-02.
 #
 
 from datetime import timedelta
@@ -23,11 +23,22 @@ from apps.subscriptions.models import (
     SubscriptionEvent,
     SubscriptionTrialUsage,
 )
+from apps.subscriptions.services.eligibility import (
+    ensure_subscription_account_eligible,
+)
 
 
-def _ensure_account_can_subscribe(account: SubscriptionAccount):
-    if account.status != "active":
-        raise ValidationError("Subscription account is not active.")
+def _ensure_account_can_subscribe(
+    account: SubscriptionAccount,
+    *,
+    plan=None,
+    now=None,
+):
+    return ensure_subscription_account_eligible(
+        account=account,
+        plan=plan,
+        now=now,
+    )
 
 
 def _ensure_no_current_subscription(account: SubscriptionAccount):
@@ -40,7 +51,11 @@ def start_trial(*, account, plan, billing_interval, actor=None, now=None):
     now = now or timezone.now()
     account = SubscriptionAccount.objects.select_for_update().get(pk=account.pk)
 
-    _ensure_account_can_subscribe(account)
+    _ensure_account_can_subscribe(
+        account,
+        plan=plan,
+        now=now,
+    )
     _ensure_no_current_subscription(account)
 
     if not plan.is_active:
@@ -107,7 +122,10 @@ def activate_subscription(
 ):
     account = SubscriptionAccount.objects.select_for_update().get(pk=account.pk)
 
-    _ensure_account_can_subscribe(account)
+    _ensure_account_can_subscribe(
+        account,
+        plan=plan,
+    )
 
     current = (
         account.subscriptions

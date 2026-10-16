@@ -83,8 +83,28 @@ ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "").split(",")
 CSRF_TRUSTED_ORIGINS = os.getenv("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",")
 
 REDIS_URL = os.getenv('REDIS_URL', 'redis://127.0.0.1:6379/0')
-SITE_URL = os.getenv("SITE_URL", "https://www.townlit.com")
-EMAIL_LOGO_URL = os.getenv("EMAIL_LOGO_URL", "https://www.townlit.com")
+
+SITE_URL = os.getenv(
+    "SITE_URL",
+    "https://www.townlit.com",
+)
+
+APP_LINK_BASE_URL = (
+    os.getenv(
+        "APP_LINK_BASE_URL",
+        os.getenv(
+            "UNIVERSAL_LINK_BASE_URL",
+            SITE_URL,
+        ),
+    )
+    .strip()
+    .rstrip("/")
+)
+
+EMAIL_LOGO_URL = os.getenv(
+    "EMAIL_LOGO_URL",
+    "https://www.townlit.com",
+)
 
 
 # ---- Cookies (read directly from env) ----------------------------------------
@@ -229,6 +249,10 @@ INSTALLED_APPS = [
     
     # Organization management
     "apps.organizations.apps.OrganizationsConfig",
+
+    "apps.organization_media.apps.OrganizationMediaConfig",
+    "apps.organization_content.apps.OrganizationContentConfig",
+    
 ]
 
 MIDDLEWARE = [

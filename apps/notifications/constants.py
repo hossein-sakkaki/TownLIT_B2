@@ -101,6 +101,39 @@ NOTIFICATION_TYPES = [
     # --- Journey ---
     ("new_journey", "New Journey"),
 
+
+    # --- Organizations ---
+    ("organization_membership_requested", "Organization Membership Requested"),
+    ("organization_membership_invited", "Organization Membership Invitation"),
+    ("organization_membership_accepted", "Organization Membership Accepted"),
+    ("organization_membership_rejected", "Organization Membership Rejected"),
+    ("organization_membership_withdrawn", "Organization Membership Withdrawn"),
+    ("organization_membership_canceled", "Organization Membership Invitation Canceled"),
+    ("organization_member_left", "Organization Member Left"),
+    ("organization_member_removed", "Organization Member Removed"),
+    ("organization_role_assigned", "Organization Role Assigned"),
+    ("organization_role_revoked", "Organization Role Revoked"),
+    ("organization_module_enabled", "Organization Module Enabled"),
+    ("organization_module_disabled", "Organization Module Disabled"),
+    ("organization_module_suspended", "Organization Module Suspended"),
+    ("organization_module_restored", "Organization Module Restored"),
+    ("organization_module_updated", "Organization Module Updated"),
+    ("organization_verification_needs_information", "Organization Verification Needs Information"),
+    ("organization_verification_approved", "Organization Verification Approved"),
+    ("organization_verification_rejected", "Organization Verification Rejected"),
+    ("organization_verification_revoked", "Organization Verification Revoked"),
+    ("organization_relationship_requested", "Organization Relationship Requested"),
+    ("organization_relationship_consent_approved", "Organization Relationship Consent Approved"),
+    ("organization_relationship_consent_rejected", "Organization Relationship Consent Rejected"),
+    ("organization_relationship_activated", "Organization Relationship Activated"),
+    ("organization_relationship_ended", "Organization Relationship Ended"),
+    ("organization_governance_opened", "Organization Governance Proposal Opened"),
+    ("organization_governance_decided", "Organization Governance Decided"),
+    ("organization_governance_execution_failed", "Organization Governance Execution Failed"),
+    ("organization_subscription_trial_started", "Organization Subscription Trial Started"),
+    ("organization_subscription_activated", "Organization Subscription Activated"),
+    ("organization_billing_profile_updated", "Organization Billing Profile Updated"),
+
     # --- TownLIT Campaigns ---
     ("townlit_announcement", "TownLIT Announcement"),
     ("townlit_app_update", "TownLIT App Update"),
@@ -111,6 +144,40 @@ NOTIFICATION_TYPES = [
     ("townlit_community", "TownLIT Community Announcement"),
     ("townlit_event", "TownLIT Event"),
 ]
+
+
+ORGANIZATION_NOTIFICATION_TYPES = {
+    "organization_membership_requested",
+    "organization_membership_invited",
+    "organization_membership_accepted",
+    "organization_membership_rejected",
+    "organization_membership_withdrawn",
+    "organization_membership_canceled",
+    "organization_member_left",
+    "organization_member_removed",
+    "organization_role_assigned",
+    "organization_role_revoked",
+    "organization_module_enabled",
+    "organization_module_disabled",
+    "organization_module_suspended",
+    "organization_module_restored",
+    "organization_module_updated",
+    "organization_verification_needs_information",
+    "organization_verification_approved",
+    "organization_verification_rejected",
+    "organization_verification_revoked",
+    "organization_relationship_requested",
+    "organization_relationship_consent_approved",
+    "organization_relationship_consent_rejected",
+    "organization_relationship_activated",
+    "organization_relationship_ended",
+    "organization_governance_opened",
+    "organization_governance_decided",
+    "organization_governance_execution_failed",
+    "organization_subscription_trial_started",
+    "organization_subscription_activated",
+    "organization_billing_profile_updated",
+}
 
 
 CAMPAIGN_NOTIFICATION_TYPES = {
@@ -125,8 +192,9 @@ CAMPAIGN_NOTIFICATION_TYPES = {
 }
 
 
-NOTIFICATION_TYPES_EXCLUDED_FROM_PREFERENCES = set(
-    CAMPAIGN_NOTIFICATION_TYPES
+NOTIFICATION_TYPES_EXCLUDED_FROM_PREFERENCES = (
+    set(CAMPAIGN_NOTIFICATION_TYPES)
+    | set(ORGANIZATION_NOTIFICATION_TYPES)
 )
 
 # -------------------------------------------------------------------
@@ -237,6 +305,9 @@ NOTIFICATION_TYPES_NO_EMAIL = {
 # Generic notification delivery must never enable it accidentally.
 NOTIFICATION_TYPES_NO_EMAIL.update(
     CAMPAIGN_NOTIFICATION_TYPES
+)
+NOTIFICATION_TYPES_NO_EMAIL.update(
+    ORGANIZATION_NOTIFICATION_TYPES
 )
 
 NOTIFICATION_TYPES_FORCE_ENABLED = {
@@ -607,5 +678,6 @@ NOTIFICATION_PREF_METADATA = {
     },
 
 }
+
 
 

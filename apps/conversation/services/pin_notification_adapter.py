@@ -1,8 +1,14 @@
 # apps/conversation/services/pin_notification_adapter.py
+# TownLIT-Backend
+#
+# Created by Hossein Sakkaki on 2026-10-06.
+# Last Update by Hossein Sakkaki on 2026-10-06.
+#
 
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 
+from apps.conversation.policies import ConversationAccessPolicy
 from apps.conversation.services.messenger_notification_adapter import (
     notify_message_pinned,
 )
@@ -18,6 +24,20 @@ def send_message_pin_reminder_notification(pin):
     channel_layer = get_channel_layer()
 
     if not channel_layer:
+        return
+
+
+    if not ConversationAccessPolicy.can_view(
+        dialogue=pin.dialogue,
+        user=pin.pinned_by,
+    ).allowed:
+        return
+
+    if not (
+        pin.dialogue.visible_messages_for_user(pin.pinned_by)
+        .filter(id=pin.message_id)
+        .exists()
+    ):
         return
 
     payload = {

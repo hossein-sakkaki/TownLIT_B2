@@ -7,9 +7,14 @@ from channels.db import database_sync_to_async
 from django.contrib.auth import get_user_model
 
 from apps.conversation.models import Dialogue
+from apps.conversation.policies import ConversationContextKind, ConversationContextPolicy
 from apps.conversation.utils import get_message_content
 from apps.conversation.services.message_reply import build_reply_preview
 from apps.conversation.services.message_forward import build_forward_preview
+from apps.conversation.services.realtime_access import get_dialogue_for_user
+from apps.conversation.services.organization.direct_realtime import (
+    build_organization_direct_message_payload,
+)
 
 # ---- Mixins ----------------------------------------------------
 from apps.conversation.realtime.mixins.typing import (
@@ -122,6 +127,18 @@ class ConversationHandler(
         - forward metadata
         - safe DM/group content handling
         """
+        context = await database_sync_to_async(
+            ConversationContextPolicy.resolve
+        )(dialogue)
+        if context.kind == ConversationContextKind.ORGANIZATION_DIRECT:
+            return await database_sync_to_async(
+                build_organization_direct_message_payload
+            )(
+                message=msg,
+                viewer=self.user,
+                operator_view=False,
+            )
+
         has_encryptions = await database_sync_to_async(
             lambda: msg.encryptions.exists()
         )()
@@ -205,8 +222,22 @@ class ConversationHandler(
 
         dialogue_slugs = {d.slug for d in dialogues}
         if self.slug and self.slug not in dialogue_slugs:
-            await self.consumer.close()
-            return
+            requested_dialogue = await database_sync_to_async(
+                get_dialogue_for_user
+            )(self.slug, self.user)
+            if requested_dialogue is None:
+                await self.consumer.close()
+                return
+
+            requested_context = await database_sync_to_async(
+                ConversationContextPolicy.resolve
+            )(requested_dialogue)
+            if requested_context.kind != ConversationContextKind.ORGANIZATION_DIRECT:
+                await self.consumer.close()
+                return
+
+            # Organization operators remain user-group subscribers. They are
+            # intentionally not added to persistent dialogue groups.
 
         self.dialogue_map = {f"dialogue_{d.slug}": d.id for d in dialogues}
         self.group_names = set(self.dialogue_map.keys())
@@ -296,7 +327,20 @@ class ConversationHandler(
                     logger.exception("Failed to push undelivered message: %s", e)
                     continue
 
-                if dialogue.is_group:
+                context = await database_sync_to_async(
+                    ConversationContextPolicy.resolve
+                )(dialogue)
+                if context.kind == ConversationContextKind.ORGANIZATION_DIRECT:
+                    await self.channel_layer.group_send(
+                        f"user_{self.user.id}",
+                        {
+                            "type": "dispatch_event",
+                            "app": "conversation",
+                            "event": "chat_message",
+                            "data": payload,
+                        },
+                    )
+                elif dialogue.is_group:
                     await self.channel_layer.group_send(
                         f"dialogue_{dialogue.slug}",
                         {
@@ -485,6 +529,15 @@ class ConversationHandler(
 
         elif event_type == "group_updated":
             await self.group_updated(data)
+
+        elif event_type in {
+            "organization_messenger_unread_update",
+            "organization_direct_thread_updated",
+            "organization_direct_read",
+            "organization_direct_seen",
+            "organization_direct_delivery",
+        }:
+            await self._send_conv_event(event_type, data)
             
         elif event_type == "force_logout":
             await self.force_logout(data)

@@ -1,13 +1,13 @@
 # apps/organizations/serializers/governance.py
-#
-# TownLIT
+# TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-08-30.
-# Last Update by Hossein Sakkaki on 2026-08-30.
+# Last Update by Hossein Sakkaki on 2026-10-01.
 #
 
 from rest_framework import serializers
 
+from apps.accounts.serializers.user_serializers import UserMiniSerializer
 from apps.organizations.constants import (
     OrganizationGovernanceAction,
     OrganizationGovernanceVoteChoice,
@@ -17,11 +17,30 @@ from apps.organizations.models import (
     OrganizationGovernanceProposal,
     OrganizationGovernanceRule,
 )
+from apps.organizations.serializers.hierarchy import (
+    OrganizationRelationshipSerializer,
+)
+from apps.organizations.serializers.people import (
+    OrganizationMembershipManagementSerializer,
+)
 
 
 class OrganizationGovernanceRuleSerializer(serializers.ModelSerializer):
+    action_label = serializers.CharField(
+        source="get_action_key_display",
+        read_only=True,
+    )
+    electorate_label = serializers.CharField(
+        source="get_electorate_type_display",
+        read_only=True,
+    )
     electorate_role_key = serializers.CharField(
         source="electorate_role.key",
+        read_only=True,
+        allow_null=True,
+    )
+    electorate_role_name = serializers.CharField(
+        source="electorate_role.name",
         read_only=True,
         allow_null=True,
     )
@@ -30,8 +49,11 @@ class OrganizationGovernanceRuleSerializer(serializers.ModelSerializer):
         model = OrganizationGovernanceRule
         fields = [
             "action_key",
+            "action_label",
             "electorate_type",
+            "electorate_label",
             "electorate_role_key",
+            "electorate_role_name",
             "quorum_percent",
             "approval_percent",
             "minimum_electors",
@@ -45,10 +67,16 @@ class OrganizationGovernanceRuleSerializer(serializers.ModelSerializer):
 
 
 class OrganizationGovernanceDecisionSerializer(serializers.ModelSerializer):
+    result_label = serializers.CharField(
+        source="get_result_display",
+        read_only=True,
+    )
+
     class Meta:
         model = OrganizationGovernanceDecision
         fields = [
             "result",
+            "result_label",
             "eligible_count",
             "participating_count",
             "approve_count",
@@ -74,13 +102,34 @@ class OrganizationGovernanceDecisionSerializer(serializers.ModelSerializer):
 
 
 class OrganizationGovernanceProposalSerializer(serializers.ModelSerializer):
+    action_label = serializers.CharField(
+        source="get_action_key_display",
+        read_only=True,
+    )
+    status_label = serializers.CharField(
+        source="get_status_display",
+        read_only=True,
+    )
     target_membership_public_id = serializers.UUIDField(
         source="target_membership.public_id",
         read_only=True,
         allow_null=True,
     )
+    target_membership = OrganizationMembershipManagementSerializer(
+        read_only=True,
+        allow_null=True,
+    )
     relationship_public_id = serializers.UUIDField(
         source="relationship.public_id",
+        read_only=True,
+        allow_null=True,
+    )
+    relationship = OrganizationRelationshipSerializer(
+        read_only=True,
+        allow_null=True,
+    )
+    proposed_by_member_user = UserMiniSerializer(
+        source="proposed_by_membership.member.user",
         read_only=True,
         allow_null=True,
     )
@@ -95,11 +144,16 @@ class OrganizationGovernanceProposalSerializer(serializers.ModelSerializer):
         fields = [
             "public_id",
             "action_key",
+            "action_label",
             "status",
+            "status_label",
             "title",
             "rationale",
             "target_membership_public_id",
+            "target_membership",
             "relationship_public_id",
+            "relationship",
+            "proposed_by_member_user",
             "payload",
             "rule_snapshot",
             "viewer_is_elector",

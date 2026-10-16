@@ -1,10 +1,16 @@
 # apps/conversation/realtime/mixins/edits.py
+# TownLIT-Backend
+#
+# Last Update by Hossein Sakkaki on 2026-10-06.
+#
 
 from asgiref.sync import sync_to_async
 from channels.db import database_sync_to_async
 from django.db import transaction
 
 from apps.conversation.models import Message, MessageEncryption
+from apps.conversation.policies import ConversationContextKind, ConversationContextPolicy
+from apps.conversation.services.realtime_access import get_dialogue_for_user
 from apps.accounts.models.devices import UserDeviceKey
 from apps.accounts.services.sender_verification import is_sender_device_verified
 from apps.conversation.services.message_mutations import (
@@ -175,9 +181,33 @@ class EditDeleteMixin:
             )
             return
 
+        dialogue = await database_sync_to_async(get_dialogue_for_user)(
+            message.dialogue.slug,
+            user,
+        )
+        if dialogue is None:
+            await self._send_error(
+                code="MESSAGE_NOT_FOUND",
+                message="Message not found",
+            )
+            return
+
+        context = await database_sync_to_async(
+            ConversationContextPolicy.resolve
+        )(dialogue)
+        if (
+            context.kind == ConversationContextKind.ORGANIZATION_DIRECT
+            and user.id != context.organization_context.participant_user_id
+        ):
+            await self._send_error(
+                code="ORGANIZATION_DIRECT_MUTATION_UNAVAILABLE",
+                message="Organization operators cannot soft-delete shared thread history.",
+            )
+            return
+
         await sync_to_async(lambda: message.mark_as_deleted_by_user(user))()
 
-        dialogue_slug = message.dialogue.slug
+        dialogue_slug = dialogue.slug
         soft_delete_data = build_soft_delete_event_data(
             dialogue_slug=dialogue_slug,
             message_id=message.id,

@@ -1,9 +1,9 @@
 # apps/organizations/services/__init__.py
 #
-# TownLIT
+# TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-08-29.
-# Last Update by Hossein Sakkaki on 2026-08-30.
+# Last Update by Hossein Sakkaki on 2026-10-01.
 #
 
 from .access import (
@@ -65,6 +65,7 @@ from .governance import (
     cast_governance_vote,
     create_governance_proposal,
     finalize_governance_proposal,
+    governance_owner_target_memberships,
     open_governance_proposal,
 )
 from .hierarchy import (
@@ -75,6 +76,7 @@ from .hierarchy import (
 )
 from .verification import (
     add_verification_document,
+    deactivate_verification_document,
     approve_verification_case,
     create_verification_case,
     expire_due_verification_grants,
@@ -84,6 +86,7 @@ from .verification import (
     revoke_verification_grant,
     start_verification_review,
     submit_verification_case,
+    update_verification_case,
     withdraw_verification_case,
 )
 
@@ -93,12 +96,14 @@ __all__ += [
     "cast_governance_vote",
     "create_governance_proposal",
     "finalize_governance_proposal",
+    "governance_owner_target_memberships",
     "open_governance_proposal",
     "apply_relationship_consent_decision_from_governance",
     "create_relationship_consent_proposal",
     "end_organization_relationship_from_governance",
     "request_organization_relationship",
     "add_verification_document",
+    "deactivate_verification_document",
     "approve_verification_case",
     "create_verification_case",
     "expire_due_verification_grants",
@@ -108,6 +113,7 @@ __all__ += [
     "revoke_verification_grant",
     "start_verification_review",
     "submit_verification_case",
+    "update_verification_case",
     "withdraw_verification_case",
 ]
 
@@ -146,3 +152,4 @@ __all__ += [
     "suspend_organization_module",
     "update_organization_module_profile",
 ]
+

@@ -1,12 +1,14 @@
 # apps/subscriptions/constants.py
-#
-# TownLIT
+# TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-08-28.
-# Last Update by Hossein Sakkaki on 2026-08-28.
+# Last Update by Hossein Sakkaki on 2026-10-01.
 #
 
 from django.db import models
+
+
+ORGANIZATION_SUBSCRIPTION_AUDIENCE_KEY = "organization"
 
 
 class SubscriptionAccountStatus(models.TextChoices):

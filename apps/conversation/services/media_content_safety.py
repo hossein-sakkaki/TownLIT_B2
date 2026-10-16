@@ -3,7 +3,7 @@
 #  TownLIT-Backend
 #
 #  Created by Hossein Sakkaki on 2026-08-14.
-#  Last Update by Hossein Sakkaki on 2026-08-14.
+#  Last Update by Hossein Sakkaki on 2026-10-16.
 #
 
 from __future__ import annotations
@@ -17,21 +17,12 @@ from rest_framework import serializers
 from apps.content_safety.enums import (
     SafetyContext,
 )
-from apps.content_safety.exceptions import (
-    ContentSafetyUnavailableError,
-)
-from apps.content_safety.services.image import (
-    enforce_image_file_safety,
-)
-from apps.content_safety.services.normalization import (
-    normalize_text_for_safety,
-)
-from apps.content_safety.services.text import (
-    enforce_text_safety,
-)
-from apps.content_safety.services.video_transcription import (
-    transcribe_video_audio,
-)
+from apps.content_safety.exceptions import ContentSafetyUnavailableError
+from apps.content_safety.services.image import enforce_image_file_safety
+from apps.content_safety.services.normalization import normalize_text_for_safety
+from apps.content_safety.services.text import enforce_text_safety
+from apps.content_safety.services.video_transcription import transcribe_video_audio
+from apps.conversation.policies import ConversationSecurityMode, ConversationSecurityPolicy
 
 
 # ----------------------------------------------------------------------
@@ -512,7 +503,7 @@ def enforce_group_image_content_safety(
 # Group message media enforcement
 # ----------------------------------------------------------------------
 
-def enforce_group_message_media_content_safety(
+def enforce_backend_readable_message_media_content_safety(
     *,
     dialogue,
     file_obj,
@@ -523,7 +514,7 @@ def enforce_group_message_media_content_safety(
     mime_type: str | None = None,
 ) -> None:
     """
-    Protect backend-readable Group Messenger media.
+    Protect backend-readable Messenger media.
 
     Safety policy:
     - image: synchronous before persistence
@@ -537,11 +528,8 @@ def enforce_group_message_media_content_safety(
     if dialogue is None:
         return
 
-    if not getattr(
-        dialogue,
-        "is_group",
-        False,
-    ):
+    security = ConversationSecurityPolicy.resolve(dialogue)
+    if security.mode != ConversationSecurityMode.BACKEND_MANAGED:
         return
 
     if not file_obj:
@@ -591,7 +579,7 @@ def enforce_group_message_media_content_safety(
         # Video
         # --------------------------------------------------------------
         if normalized_field == "video":
-            # Group Messenger video is intentionally NOT inspected here.
+            # Backend-managed Messenger video is intentionally NOT inspected here.
             #
             # The Message and its authoritative storage source must first
             # be persisted. A ContentSafetyJob is then scheduled and the

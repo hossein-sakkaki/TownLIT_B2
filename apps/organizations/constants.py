@@ -3,7 +3,7 @@
 # TownLIT
 #
 # Created by Hossein Sakkaki on 2026-08-29.
-# Last Update by Hossein Sakkaki on 2026-08-30.
+# Last Update by Hossein Sakkaki on 2026-10-06.
 #
 
 from django.db import models
@@ -32,6 +32,34 @@ class OrganizationVisibility(models.TextChoices):
     UNLISTED = "unlisted", "Unlisted"
     PRIVATE = "private", "Private"
 
+
+class OrganizationServiceDeliveryMode(models.TextChoices):
+    IN_PERSON = "in_person", "In Person"
+    ONLINE = "online", "Online"
+    HYBRID = "hybrid", "Hybrid"
+
+
+class OrganizationContactChannel(models.TextChoices):
+    PHONE = "phone", "Phone"
+    EMAIL = "email", "Email"
+    WHATSAPP = "whatsapp", "WhatsApp"
+
+
+class OrganizationRepresentativeStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    ACCEPTED = "accepted", "Accepted"
+    DECLINED = "declined", "Declined"
+    REMOVED = "removed", "Removed"
+
+
+class OrganizationWeekday(models.IntegerChoices):
+    MONDAY = 0, "Monday"
+    TUESDAY = 1, "Tuesday"
+    WEDNESDAY = 2, "Wednesday"
+    THURSDAY = 3, "Thursday"
+    FRIDAY = 4, "Friday"
+    SATURDAY = 5, "Saturday"
+    SUNDAY = 6, "Sunday"
 
 class OrganizationConnectionType(models.TextChoices):
     FOLLOWER = "follower", "Follower"
@@ -96,6 +124,10 @@ class OrganizationPermissionKey:
     MANAGE_ROLES = "organizations.roles.manage"
     MANAGE_CONTENT = "organizations.content.manage"
     MANAGE_ANNOUNCEMENTS = "organizations.announcements.manage"
+    VIEW_MESSENGER = "organizations.messenger.view"
+    REPLY_MESSENGER = "organizations.messenger.reply"
+    ASSIGN_MESSENGER = "organizations.messenger.assign"
+    MANAGE_MESSENGER = "organizations.messenger.manage"
     MANAGE_MODULES = "organizations.modules.manage"
     MANAGE_BILLING = "organizations.billing.manage"
     MANAGE_VERIFICATION = "organizations.verification.manage"
@@ -110,6 +142,10 @@ DEFAULT_PERMISSION_DEFINITIONS = (
     (OrganizationPermissionKey.MANAGE_ROLES, "Manage Organization Roles", "access"),
     (OrganizationPermissionKey.MANAGE_CONTENT, "Manage Organization Content", "content"),
     (OrganizationPermissionKey.MANAGE_ANNOUNCEMENTS, "Manage Organization Announcements", "content"),
+    (OrganizationPermissionKey.VIEW_MESSENGER, "View Organization Messenger", "messenger"),
+    (OrganizationPermissionKey.REPLY_MESSENGER, "Reply as Organization", "messenger"),
+    (OrganizationPermissionKey.ASSIGN_MESSENGER, "Assign Organization Messenger Conversations", "messenger"),
+    (OrganizationPermissionKey.MANAGE_MESSENGER, "Manage Organization Messenger", "messenger"),
     (OrganizationPermissionKey.MANAGE_MODULES, "Manage Organization Modules", "modules"),
     (OrganizationPermissionKey.MANAGE_BILLING, "Manage Organization Billing", "billing"),
     (OrganizationPermissionKey.MANAGE_VERIFICATION, "Manage Organization Verification", "verification"),
@@ -140,6 +176,10 @@ DEFAULT_ROLE_DEFINITIONS = (
             OrganizationPermissionKey.MANAGE_ROLES,
             OrganizationPermissionKey.MANAGE_CONTENT,
             OrganizationPermissionKey.MANAGE_ANNOUNCEMENTS,
+            OrganizationPermissionKey.VIEW_MESSENGER,
+            OrganizationPermissionKey.REPLY_MESSENGER,
+            OrganizationPermissionKey.ASSIGN_MESSENGER,
+            OrganizationPermissionKey.MANAGE_MESSENGER,
             OrganizationPermissionKey.MANAGE_MODULES,
             OrganizationPermissionKey.MANAGE_SETTINGS,
         ),
@@ -392,7 +432,6 @@ DEFAULT_GOVERNANCE_RULES = (
 )
 
 
-
 class OrganizationModuleKey(models.TextChoices):
     CHURCH = "church", "Church & Congregational Life"
     MISSIONS = "missions", "Missions & Evangelism"
@@ -573,3 +612,9 @@ class OrganizationAuditAction(models.TextChoices):
     GOVERNANCE_DECIDED = "governance_decided", "Governance Decided"
     GOVERNANCE_EXECUTED = "governance_executed", "Governance Executed"
     GOVERNANCE_EXECUTION_FAILED = "governance_execution_failed", "Governance Execution Failed"
+    MESSENGER_THREAD_ASSIGNED = "messenger_thread_assigned", "Messenger Thread Assigned"
+    MESSENGER_THREAD_UNASSIGNED = "messenger_thread_unassigned", "Messenger Thread Unassigned"
+    MESSENGER_THREAD_RESOLVED = "messenger_thread_resolved", "Messenger Thread Resolved"
+    MESSENGER_THREAD_REOPENED = "messenger_thread_reopened", "Messenger Thread Reopened"
+    MESSENGER_THREAD_CLOSED = "messenger_thread_closed", "Messenger Thread Closed"
+

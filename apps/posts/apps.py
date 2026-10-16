@@ -17,13 +17,11 @@ class PostsConfig(AppConfig):
     def ready(self):
         # Register the Phase 8A content model without replacing
         # the existing posts/models/__init__.py surface.
-        from apps.posts.models import church_teaching as church_teaching_models
 
         # -------------------------------------------------
         # Media cleanup signals
         # -------------------------------------------------
         from apps.posts.signals import (
-            church_teaching_media_cleanup,
             journey_media_cleanup,
             moment_media_cleanup,
             prayer_media_cleanup,
@@ -40,8 +38,6 @@ class PostsConfig(AppConfig):
 
         # Keep imports explicit so Django retains signal registration.
         _ = (
-            church_teaching_models,
-            church_teaching_media_cleanup,
             journey_media_cleanup,
             moment_media_cleanup,
             prayer_media_cleanup,

@@ -33,11 +33,11 @@ from apps.organizations.modules.church.constants import (
 from apps.organizations.modules.church.models import ChurchTeachingSeries
 from apps.organizations.modules.church.services.access import ensure_church_permission
 from apps.organizations.modules.church.services.audit import record_church_audit
-from apps.posts.models.church_teaching import (
+from apps.organization_media.models.church_teaching import (
     ChurchTeachingContent,
     ChurchTeachingScriptureReference,
 )
-from apps.posts.services.church_teaching_content_safety import (
+from apps.organizations.modules.church.services.church_teaching_content_safety import (
     enforce_church_teaching_series_text_safety,
     enforce_church_teaching_text_safety,
     enforce_church_teaching_thumbnail_safety,
@@ -646,7 +646,7 @@ def publish_church_teaching_content(*, content, actor) -> ChurchTeachingContent:
         content_id = locked.pk
 
         def _ensure_published_subtitles():
-            from apps.posts.models.church_teaching import ChurchTeachingContent
+            from apps.organization_media.models.church_teaching import ChurchTeachingContent
             from apps.subtitles.services.organization_orchestrator import (
                 enqueue_organization_subtitles_for_target,
             )

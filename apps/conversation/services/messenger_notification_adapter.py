@@ -1,4 +1,9 @@
 # apps/conversation/services/messenger_notification_adapter.py
+# TownLIT-Backend
+#
+# Created by Hossein Sakkaki on 2026-10-06.
+# Last Update by Hossein Sakkaki on 2026-10-06.
+#
 
 import logging
 from typing import Iterable, Optional
@@ -6,6 +11,7 @@ from typing import Iterable, Optional
 from django.db import transaction
 
 from apps.conversation.models import Message
+from apps.conversation.policies import ConversationAccessPolicy
 from apps.conversation.services.boundary_access import (
     should_send_conversation_notification,
 )
@@ -148,7 +154,17 @@ def _recipient_can_receive_for_message(
         return False
 
     try:
-        if message.deleted_by_users.filter(id=recipient.id).exists():
+        if not ConversationAccessPolicy.can_view(
+            dialogue=dialogue,
+            user=recipient,
+        ).allowed:
+            return False
+
+        if not (
+            dialogue.visible_messages_for_user(recipient)
+            .filter(id=message.id)
+            .exists()
+        ):
             return False
 
         if getattr(message, "is_deleted", False):

@@ -1,23 +1,31 @@
 # apps/organizations/urls.py
 #
-# TownLIT
+# TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-08-29.
-# Last Update by Hossein Sakkaki on 2026-09-08.
+# Last Update by Hossein Sakkaki on 2026-10-05.
 #
 
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from apps.organizations.views import (
+    OrganizationAdministrationOverviewView,
+    OrganizationAuditActivityView,
     OrganizationBootstrapView,
+    OrganizationCommunityPeopleView,
+    OrganizationDiscoveryView,
     OrganizationGovernanceProposalCancelView,
     OrganizationGovernanceProposalDetailView,
     OrganizationGovernanceProposalFinalizeView,
     OrganizationGovernanceProposalOpenView,
+    OrganizationGovernanceOwnerCandidatesView,
     OrganizationGovernanceProposalsView,
     OrganizationGovernanceProposalVoteView,
     OrganizationGovernanceRulesView,
+    OrganizationMemberCandidatesView,
+    OrganizationMembersView,
+    OrganizationMembershipRequestsManagementView,
     OrganizationMembershipRequestViewSet,
     OrganizationMembershipViewSet,
     OrganizationModuleActivateView,
@@ -28,15 +36,19 @@ from apps.organizations.views import (
     OrganizationModulesView,
     OrganizationModuleSuspendView,
     OrganizationPlatformBootstrapView,
+    OrganizationRelationshipCandidatesView,
     OrganizationRelationshipConsentProposalView,
     OrganizationRelationshipDetailView,
     OrganizationRelationshipRequestView,
     OrganizationRelationshipsView,
+    OrganizationRoleAssignmentsManagementView,
+    OrganizationRolesView,
     OrganizationRoleAssignmentViewSet,
     OrganizationVerificationApproveView,
     OrganizationVerificationCaseDetailView,
     OrganizationVerificationCasesView,
     OrganizationVerificationDocumentCreateView,
+    OrganizationVerificationDocumentDetailView,
     OrganizationVerificationDocumentReviewView,
     OrganizationVerificationGrantRevokeView,
     OrganizationVerificationNeedsInformationView,
@@ -44,9 +56,20 @@ from apps.organizations.views import (
     OrganizationVerificationReviewQueueView,
     OrganizationVerificationStartReviewView,
     OrganizationVerificationSubmitView,
+    OrganizationVerificationSponsorRelationshipsView,
     OrganizationVerificationWithdrawView,
     OrganizationViewSet,
+    OrganizationBusinessHoursView,
+    OrganizationContactPointDetailView,
+    OrganizationContactPointsView,
+    OrganizationRepresentativeCandidatesView,
+    OrganizationRepresentativeDetailView,
+    OrganizationRepresentativeResponseView,
+    OrganizationRepresentativesView,
+    OrganizationSocialLinkDetailView,
+    OrganizationSocialLinksView,
 )
+from apps.organizations.views.profile import OrganizationSocialMediaTypesView
 
 
 router = DefaultRouter()
@@ -85,9 +108,72 @@ urlpatterns = [
         name="organization-module-catalog",
     ),
     path(
+        "discovery/",
+        OrganizationDiscoveryView.as_view(),
+        name="organization-discovery",
+    ),
+    path(
         "<slug:slug>/bootstrap/",
         OrganizationBootstrapView.as_view(),
         name="organization-bootstrap",
+    ),
+
+    # Public-safe Community relationship lists.
+    path(
+        "<slug:slug>/profile/community/",
+        OrganizationCommunityPeopleView.as_view(),
+        name="organization-community-people",
+    ),
+
+    # Administration.
+    path(
+        "<slug:slug>/administration/overview/",
+        OrganizationAdministrationOverviewView.as_view(),
+        name="organization-administration-overview",
+    ),
+    path(
+        "<slug:slug>/administration/activity/",
+        OrganizationAuditActivityView.as_view(),
+        name="organization-administration-activity",
+    ),
+
+    # People & Access.
+    path(
+        "<slug:slug>/people/member-candidates/",
+        OrganizationMemberCandidatesView.as_view({
+            "get": "list",
+        }),
+        name="organization-member-candidates",
+    ),
+    path(
+        "<slug:slug>/people/memberships/",
+        OrganizationMembersView.as_view({
+            "get": "list",
+        }),
+        name="organization-people-memberships",
+    ),
+    path(
+        "<slug:slug>/people/membership-requests/",
+        OrganizationMembershipRequestsManagementView.as_view({
+            "get": "list",
+            "post": "create",
+        }),
+        name="organization-people-membership-requests",
+    ),
+    path(
+        "<slug:slug>/people/roles/",
+        OrganizationRolesView.as_view({
+            "get": "list",
+        }),
+        name="organization-people-roles",
+    ),
+    path(
+        "<slug:slug>/people/role-assignments/",
+        OrganizationRoleAssignmentsManagementView.as_view({
+            "get": "list",
+            "post": "create",
+        }),
+        name="organization-people-role-assignments",
     ),
 
     # Organization modules.
@@ -127,6 +213,11 @@ urlpatterns = [
         "<slug:slug>/verification/cases/",
         OrganizationVerificationCasesView.as_view(),
         name="organization-verification-cases",
+    ),
+    path(
+        "<slug:slug>/verification/sponsor-relationships/",
+        OrganizationVerificationSponsorRelationshipsView.as_view(),
+        name="organization-verification-sponsor-relationships",
     ),
     path(
         "workflow/verification/review-queue/",
@@ -174,6 +265,11 @@ urlpatterns = [
         name="organization-verification-reject",
     ),
     path(
+        "workflow/verification/documents/<uuid:public_id>/",
+        OrganizationVerificationDocumentDetailView.as_view(),
+        name="organization-verification-document-detail",
+    ),
+    path(
         "workflow/verification/documents/<uuid:public_id>/review/",
         OrganizationVerificationDocumentReviewView.as_view(),
         name="organization-verification-document-review",
@@ -185,6 +281,11 @@ urlpatterns = [
     ),
 
     # Hierarchy and relationships.
+    path(
+        "<slug:slug>/relationships/candidates/",
+        OrganizationRelationshipCandidatesView.as_view(),
+        name="organization-relationship-candidates",
+    ),
     path(
         "<slug:slug>/relationships/",
         OrganizationRelationshipsView.as_view(),
@@ -211,6 +312,11 @@ urlpatterns = [
         "<slug:slug>/governance/rules/",
         OrganizationGovernanceRulesView.as_view(),
         name="organization-governance-rules",
+    ),
+    path(
+        "<slug:slug>/governance/owner-candidates/",
+        OrganizationGovernanceOwnerCandidatesView.as_view(),
+        name="organization-governance-owner-candidates",
     ),
     path(
         "<slug:slug>/governance/proposals/",
@@ -254,4 +360,83 @@ urlpatterns = [
         "<slug:slug>/modules/worship/",
         include("apps.organizations.modules.worship.urls"),
     ),
+    
+    # Organization profile.
+    path(
+        "<slug:slug>/profile/contacts/",
+        OrganizationContactPointsView.as_view({
+            "get": "list",
+            "post": "create",
+        }),
+        name="organization-profile-contacts",
+    ),
+    path(
+        "<slug:slug>/profile/contacts/<uuid:public_id>/",
+        OrganizationContactPointDetailView.as_view({
+            "patch": "partial_update",
+            "delete": "destroy",
+        }),
+        name="organization-profile-contact-detail",
+    ),
+    path(
+        "<slug:slug>/profile/business-hours/",
+        OrganizationBusinessHoursView.as_view({
+            "get": "list",
+            "put": "replace",
+        }),
+        name="organization-business-hours",
+    ),
+    path(
+        "<slug:slug>/profile/representative-candidates/",
+        OrganizationRepresentativeCandidatesView.as_view({
+            "get": "list",
+        }),
+        name="organization-representative-candidates",
+    ),
+    path(
+        "<slug:slug>/profile/representatives/",
+        OrganizationRepresentativesView.as_view({
+            "get": "list",
+            "post": "create",
+        }),
+        name="organization-representatives",
+    ),
+    path(
+        "<slug:slug>/profile/representatives/<uuid:public_id>/",
+        OrganizationRepresentativeDetailView.as_view({
+            "delete": "destroy",
+        }),
+        name="organization-representative-detail",
+    ),
+    path(
+        "<slug:slug>/profile/representatives/<uuid:public_id>/respond/",
+        OrganizationRepresentativeResponseView.as_view({
+            "post": "respond",
+        }),
+        name="organization-representative-response",
+    ),
+    path(
+        "<slug:slug>/profile/social-links/",
+        OrganizationSocialLinksView.as_view({
+            "get": "list",
+            "post": "create",
+        }),
+        name="organization-social-links",
+    ),
+    path(
+        "<slug:slug>/profile/social-links/<int:link_id>/",
+        OrganizationSocialLinkDetailView.as_view({
+            "patch": "partial_update",
+            "delete": "destroy",
+        }),
+        name="organization-social-link-detail",
+    ),
+    path(
+        "<slug:slug>/profile/social-media-types/",
+        OrganizationSocialMediaTypesView.as_view({
+            "get": "list",
+        }),
+        name="organization-social-media-types",
+    ),
+    
 ] + router.urls

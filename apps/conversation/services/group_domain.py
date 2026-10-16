@@ -1,8 +1,17 @@
 # apps/conversation/services/group_domain.py
+# TownLIT-Backend
+#
+# Created by Hossein Sakkaki on 2026-10-06.
+# Last Update by Hossein Sakkaki on 2026-10-06.
+#
 
 from django.db import transaction
 
 from apps.conversation.models import DialogueParticipant
+from apps.conversation.policies import (
+    ConversationMutationAction,
+    ConversationMutationPolicy,
+)
 
 
 def _error(code: str, message: str, status_code: int):
@@ -21,6 +30,20 @@ def _success(payload: dict):
         "ok": True,
         "payload": payload,
     }
+
+
+def _guard_group_mutation(*, dialogue, action):
+    decision = ConversationMutationPolicy.check(
+        dialogue=dialogue,
+        action=action,
+    )
+    if decision.allowed:
+        return None
+    return _error(
+        decision.code,
+        decision.message,
+        403,
+    )
 
 
 def build_group_role_changed_system_text(action: str, username: str) -> tuple[str, str]:
@@ -52,6 +75,13 @@ def add_group_participant(*, dialogue, acting_user, target_user):
     """
     if not dialogue.is_group:
         return _error("BAD_REQUEST", "Target dialogue is not a group.", 400)
+
+    guard = _guard_group_mutation(
+        dialogue=dialogue,
+        action=ConversationMutationAction.ADD_PARTICIPANT,
+    )
+    if guard:
+        return guard
 
     current_participant = DialogueParticipant.objects.filter(
         dialogue=dialogue,
@@ -91,6 +121,13 @@ def remove_group_participant(*, dialogue, acting_user, target_user):
     if not dialogue.is_group:
         return _error("BAD_REQUEST", "Target dialogue is not a group.", 400)
 
+    guard = _guard_group_mutation(
+        dialogue=dialogue,
+        action=ConversationMutationAction.REMOVE_PARTICIPANT,
+    )
+    if guard:
+        return guard
+
     if not dialogue.is_group_manager(acting_user):
         return _error("FORBIDDEN", "You are not authorized to remove participants.", 403)
 
@@ -129,6 +166,13 @@ def promote_group_participant_to_elder(*, dialogue, acting_user, target_user_id)
     if not dialogue.is_group:
         return _error("BAD_REQUEST", "Target dialogue is not a group.", 400)
 
+    guard = _guard_group_mutation(
+        dialogue=dialogue,
+        action=ConversationMutationAction.PROMOTE_TO_ELDER,
+    )
+    if guard:
+        return guard
+
     if not dialogue.is_founder(acting_user):
         return _error("FORBIDDEN", "Only the founder can promote to elder.", 403)
 
@@ -155,6 +199,13 @@ def demote_group_elder_to_participant(*, dialogue, acting_user, target_user_id):
     """
     if not dialogue.is_group:
         return _error("BAD_REQUEST", "Target dialogue is not a group.", 400)
+
+    guard = _guard_group_mutation(
+        dialogue=dialogue,
+        action=ConversationMutationAction.DEMOTE_TO_PARTICIPANT,
+    )
+    if guard:
+        return guard
 
     if not dialogue.is_founder(acting_user):
         return _error("FORBIDDEN", "Only the founder can demote elders.", 403)
@@ -186,6 +237,13 @@ def resign_group_elder_role(*, dialogue, acting_user):
     if not dialogue.is_group:
         return _error("BAD_REQUEST", "Target dialogue is not a group.", 400)
 
+    guard = _guard_group_mutation(
+        dialogue=dialogue,
+        action=ConversationMutationAction.RESIGN_ELDER,
+    )
+    if guard:
+        return guard
+
     participant = DialogueParticipant.objects.filter(
         dialogue=dialogue,
         user=acting_user,
@@ -213,6 +271,13 @@ def leave_group_as_participant(*, dialogue, acting_user):
     """
     if not dialogue.is_group:
         return _error("BAD_REQUEST", "Target dialogue is not a group.", 400)
+
+    guard = _guard_group_mutation(
+        dialogue=dialogue,
+        action=ConversationMutationAction.LEAVE_GROUP,
+    )
+    if guard:
+        return guard
 
     participant = DialogueParticipant.objects.filter(
         dialogue=dialogue,
@@ -246,6 +311,13 @@ def transfer_group_founder(*, dialogue, acting_user, new_founder_user_id):
     """
     if not dialogue.is_group:
         return _error("BAD_REQUEST", "Target dialogue is not a group.", 400)
+
+    guard = _guard_group_mutation(
+        dialogue=dialogue,
+        action=ConversationMutationAction.TRANSFER_FOUNDER,
+    )
+    if guard:
+        return guard
 
     if not dialogue.is_founder(acting_user):
         return _error("FORBIDDEN", "Only founder can transfer founder role.", 403)

@@ -1,4 +1,9 @@
 # apps/conversation/services/message_pins.py
+# TownLIT-Backend
+#
+# Created by Hossein Sakkaki on 2026-10-06.
+# Last Update by Hossein Sakkaki on 2026-10-06.
+#
 
 from datetime import timedelta
 
@@ -7,6 +12,11 @@ from django.db.models import F
 from django.utils import timezone
 
 from apps.conversation.models import Message, MessagePin
+from apps.conversation.policies import (
+    ConversationAccessPolicy,
+    ConversationContextKind,
+    ConversationContextPolicy,
+)
 from apps.conversation.constants import (
     PIN_NONE,
     PIN_1_HOUR,
@@ -18,6 +28,14 @@ from apps.conversation.constants import (
 
 
 MAX_MESSAGE_PINS_PER_DIALOGUE = 5
+
+
+def _organization_direct_feature_unavailable(dialogue) -> bool:
+    """Organization Direct pins are not part of the V1 contract."""
+    return (
+        ConversationContextPolicy.resolve(dialogue).kind
+        == ConversationContextKind.ORGANIZATION_DIRECT
+    )
 
 
 def _error(code: str, message: str, status_code: int):
@@ -90,19 +108,21 @@ def _duration_to_expiry_and_interval(pin_duration: str):
 
 
 def _can_pin_in_dialogue(dialogue, acting_user) -> bool:
-    """Any participant can pin in DM; only participants can pin in group."""
-    return dialogue.participants.filter(id=acting_user.id).exists()
+    """Pin actions require current Conversation read access."""
+    return ConversationAccessPolicy.can_view(
+        dialogue=dialogue,
+        user=acting_user,
+    ).allowed
 
 
 def _is_message_visible_to_user(message, acting_user) -> bool:
-    """Pinned target must be visible to the actor."""
-    if not message.dialogue.participants.filter(id=acting_user.id).exists():
-        return False
-
-    if message.deleted_by_users.filter(id=acting_user.id).exists():
-        return False
-
-    return True
+    """Pinned target must be inside the actor's current history window."""
+    return (
+        message.dialogue
+        .visible_messages_for_user(acting_user)
+        .filter(id=message.id)
+        .exists()
+    )
 
 
 def pin_message_for_dialogue(*, message_id, acting_user, pin_duration=PIN_NONE, reminders_enabled=False):
@@ -122,6 +142,13 @@ def pin_message_for_dialogue(*, message_id, acting_user, pin_duration=PIN_NONE, 
         return _error("NOT_FOUND", "Message not found.", 404)
 
     dialogue = message.dialogue
+
+    if _organization_direct_feature_unavailable(dialogue):
+        return _error(
+            "ORGANIZATION_DIRECT_FEATURE_NOT_AVAILABLE",
+            "Pins are not available for Organization Direct conversations.",
+            400,
+        )
 
     if not _can_pin_in_dialogue(dialogue, acting_user):
         return _error("FORBIDDEN", "You are not a participant of this dialogue.", 403)
@@ -186,6 +213,13 @@ def unpin_message_for_dialogue(*, message_id, acting_user):
 
     dialogue = message.dialogue
 
+    if _organization_direct_feature_unavailable(dialogue):
+        return _error(
+            "ORGANIZATION_DIRECT_FEATURE_NOT_AVAILABLE",
+            "Pins are not available for Organization Direct conversations.",
+            400,
+        )
+
     if not _can_pin_in_dialogue(dialogue, acting_user):
         return _error("FORBIDDEN", "You are not a participant of this dialogue.", 403)
 
@@ -217,11 +251,25 @@ def list_pinned_messages_for_dialogue(*, dialogue, acting_user):
     """
     Return all active pinned messages for one dialogue.
     """
+    if _organization_direct_feature_unavailable(dialogue):
+        return _error(
+            "ORGANIZATION_DIRECT_FEATURE_NOT_AVAILABLE",
+            "Pins are not available for Organization Direct conversations.",
+            400,
+        )
+
     if not _can_pin_in_dialogue(dialogue, acting_user):
         return _error("FORBIDDEN", "You are not a participant of this dialogue.", 403)
 
+    visible_message_ids = dialogue.visible_messages_for_user(
+        acting_user
+    ).values_list("id", flat=True)
+
     pins = list(
-        MessagePin.objects.filter(dialogue=dialogue)
+        MessagePin.objects.filter(
+            dialogue=dialogue,
+            message_id__in=visible_message_ids,
+        )
         .select_related("message", "message__sender", "pinned_by")
         .order_by("position", "created_at", "id")
     )

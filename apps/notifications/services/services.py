@@ -1,4 +1,9 @@
 # apps/notifications/services/services.py
+# TownLIT
+#
+# Created by Hossein Sakkaki on 2025-10-03.
+# Last Update by Hossein Sakkaki on 2026-10-03.
+#
 
 import logging
 from typing import Optional, Dict, Any
@@ -780,6 +785,47 @@ def _general_unread_notification_count_for_user(user) -> int:
         return 0
 
 
+def _personal_unread_notification_count_for_user(user) -> int:
+    """Count unread Personal Notification Center rows."""
+    if not user:
+        return 0
+
+    return max(
+        Notification.objects.filter(
+            user=user,
+            is_read=False,
+            organization_context__isnull=True,
+        )
+        .exclude(
+            notification_type__in=NOTIFICATION_TYPES_EXCLUDED_FROM_GENERAL_UNREAD
+        )
+        .count(),
+        0,
+    )
+
+
+def _organization_unread_notification_count_for_user(
+    user,
+    organization_id: int,
+) -> int:
+    """Count unread rows for one Organization notification context."""
+    if not user or not organization_id:
+        return 0
+
+    return max(
+        Notification.objects.filter(
+            user=user,
+            is_read=False,
+            organization_context_id=organization_id,
+        )
+        .exclude(
+            notification_type__in=NOTIFICATION_TYPES_EXCLUDED_FROM_GENERAL_UNREAD
+        )
+        .count(),
+        0,
+    )
+
+
 def _messenger_unread_count_for_user(user) -> int:
     """
     Count unread messenger messages using the same source as the
@@ -958,6 +1004,11 @@ def create_and_dispatch_notification(
     link: Optional[str] = None,
     dedupe: bool = True,
     extra_payload: Optional[Dict[str, Any]] = None,
+    title: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    organization_context=None,
+    respect_relationship_policy: bool = True,
+    suppress_self: bool = True,
 ):
     """
     Centralized notification creation and delivery.
@@ -981,7 +1032,8 @@ def create_and_dispatch_notification(
         return None
 
     if (
-        actor
+        suppress_self
+        and actor
         and getattr(actor, "id", None)
         == getattr(recipient, "id", None)
     ):
@@ -1013,24 +1065,25 @@ def create_and_dispatch_notification(
     # ------------------------------------------------------------
     # Boundary / Stillness policy
     # ------------------------------------------------------------
-    delivery_decision = apply_relationship_delivery_policy(
-        recipient=recipient,
-        actor=actor,
-        channels_mask=channels_mask,
-    )
-
-    if not delivery_decision.persist:
-        logger.info(
-            "[Notif] Suppressed by relationship policy "
-            "user=%s actor=%s type=%s reason=%s",
-            getattr(recipient, "id", None),
-            getattr(actor, "id", None),
-            notif_type,
-            delivery_decision.reason,
+    if respect_relationship_policy:
+        delivery_decision = apply_relationship_delivery_policy(
+            recipient=recipient,
+            actor=actor,
+            channels_mask=channels_mask,
         )
-        return None
 
-    channels_mask = delivery_decision.channels_mask
+        if not delivery_decision.persist:
+            logger.info(
+                "[Notif] Suppressed by relationship policy "
+                "user=%s actor=%s type=%s reason=%s",
+                getattr(recipient, "id", None),
+                getattr(actor, "id", None),
+                notif_type,
+                delivery_decision.reason,
+            )
+            return None
+
+        channels_mask = delivery_decision.channels_mask
 
     # ------------------------------------------------------------
     # Generic relation metadata
@@ -1117,13 +1170,16 @@ def create_and_dispatch_notification(
                     defaults={
                         "user": recipient,
                         "actor": actor,
+                        "title": (title or "").strip(),
                         "message": message,
                         "notification_type": notif_type,
+                        "organization_context": organization_context,
                         "target_content_type": target_ct,
                         "target_object_id": target_id,
                         "action_content_type": action_ct,
                         "action_object_id": action_id,
                         "link": resolved_link,
+                        "metadata": metadata or {},
                     },
                 )
 
@@ -1152,9 +1208,27 @@ def create_and_dispatch_notification(
                     notif.link = resolved_link
                     update_fields.append("link")
 
+                resolved_title = (title or "").strip()
+                if notif.title != resolved_title:
+                    notif.title = resolved_title
+                    update_fields.append("title")
+
                 if notif.message != message:
                     notif.message = message
                     update_fields.append("message")
+
+                if notif.organization_context_id != getattr(
+                    organization_context,
+                    "id",
+                    None,
+                ):
+                    notif.organization_context = organization_context
+                    update_fields.append("organization_context")
+
+                resolved_metadata = metadata or {}
+                if notif.metadata != resolved_metadata:
+                    notif.metadata = resolved_metadata
+                    update_fields.append("metadata")
 
                 if update_fields:
                     notif.save(
@@ -1181,13 +1255,16 @@ def create_and_dispatch_notification(
             notif = Notification.objects.create(
                 user=recipient,
                 actor=actor,
+                title=(title or "").strip(),
                 message=message,
                 notification_type=notif_type,
+                organization_context=organization_context,
                 target_content_type=target_ct,
                 target_object_id=target_id,
                 action_content_type=action_ct,
                 action_object_id=action_id,
                 link=resolved_link,
+                metadata=metadata or {},
             )
 
             logger.info(
@@ -1265,11 +1342,19 @@ def _deliver_notification(
                     "[Notif] No channel_layer; skipping WS"
                 )
             else:
-                unread_count = (
-                    _general_unread_notification_count_for_user(
-                        notif.user
+                if notif.organization_context_id:
+                    unread_count = (
+                        _organization_unread_notification_count_for_user(
+                            notif.user,
+                            notif.organization_context_id,
+                        )
                     )
-                )
+                else:
+                    unread_count = (
+                        _personal_unread_notification_count_for_user(
+                            notif.user
+                        )
+                    )
 
                 payload = {
                     "id": notif.id,
@@ -1289,6 +1374,11 @@ def _deliver_notification(
                         else None
                     ),
                     "unread": unread_count,
+                    "notification_context": (
+                        "organization"
+                        if notif.organization_context_id
+                        else "personal"
+                    ),
                     "target_content_type": notif.target_content_type_id,
                     "target_object_id": notif.target_object_id,
                     "action_content_type": notif.action_content_type_id,
@@ -1309,6 +1399,20 @@ def _deliver_notification(
                         "family": getattr(actor, "family", None),
                     }
 
+                organization = getattr(
+                    notif,
+                    "organization_context",
+                    None,
+                )
+
+                if organization is not None:
+                    payload["organization"] = {
+                        "public_id": str(organization.public_id),
+                        "slug": organization.slug,
+                        "name": organization.name,
+                        "short_name": organization.short_name or "",
+                    }
+
                 if extra_payload:
                     payload["extra"] = extra_payload
 
@@ -1319,7 +1423,11 @@ def _deliver_notification(
                     {
                         "type": "dispatch_event",
                         "app": "notifications",
-                        "event": "notification",
+                        "event": (
+                            "organization_notification"
+                            if notif.organization_context_id
+                            else "notification"
+                        ),
                         "data": payload,
                     },
                 )
@@ -1346,7 +1454,30 @@ def _deliver_notification(
                 "url": resolved_link,
                 "notification_type": notif.notification_type,
                 "notification_id": str(notif.id),
+                "notification_context": (
+                    "organization"
+                    if notif.organization_context_id
+                    else "personal"
+                ),
             }
+
+            organization = getattr(
+                notif,
+                "organization_context",
+                None,
+            )
+            if organization is not None:
+                base_data.update({
+                    "organization_public_id": str(organization.public_id),
+                    "organization_slug": organization.slug,
+                    "organization_name": organization.name,
+                    "organization_unread_count": (
+                        _organization_unread_notification_count_for_user(
+                            notif.user,
+                            organization.id,
+                        )
+                    ),
+                })
 
             if extra_payload:
                 try:
@@ -1510,3 +1641,4 @@ def deliver_existing_notification(
         push_body=push_body,
         email_subject=email_subject,
     )
+

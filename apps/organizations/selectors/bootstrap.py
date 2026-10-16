@@ -3,7 +3,7 @@
 # TownLIT
 #
 # Created by Hossein Sakkaki on 2026-08-30.
-# Last Update by Hossein Sakkaki on 2026-08-30.
+# Last Update by Hossein Sakkaki on 2026-10-16.
 #
 
 from django.db.models import Q
@@ -22,8 +22,16 @@ from apps.organizations.models import (
 from apps.organizations.services.access import (
     get_current_membership_for_user,
     user_has_organization_permission,
+    user_has_organization_permission_strict,
 )
 
+
+ORGANIZATION_MESSENGER_PERMISSION_KEYS = (
+    OrganizationPermissionKey.VIEW_MESSENGER,
+    OrganizationPermissionKey.REPLY_MESSENGER,
+    OrganizationPermissionKey.ASSIGN_MESSENGER,
+    OrganizationPermissionKey.MANAGE_MESSENGER,
+)
 
 ORGANIZATION_PERMISSION_KEYS = (
     OrganizationPermissionKey.VIEW_ADMIN,
@@ -32,6 +40,7 @@ ORGANIZATION_PERMISSION_KEYS = (
     OrganizationPermissionKey.MANAGE_ROLES,
     OrganizationPermissionKey.MANAGE_CONTENT,
     OrganizationPermissionKey.MANAGE_ANNOUNCEMENTS,
+    *ORGANIZATION_MESSENGER_PERMISSION_KEYS,
     OrganizationPermissionKey.MANAGE_MODULES,
     OrganizationPermissionKey.MANAGE_BILLING,
     OrganizationPermissionKey.MANAGE_VERIFICATION,
@@ -39,19 +48,31 @@ ORGANIZATION_PERMISSION_KEYS = (
     OrganizationPermissionKey.MANAGE_SETTINGS,
 )
 
+_ORGANIZATION_STRICT_PERMISSION_KEYS = frozenset(
+    ORGANIZATION_MESSENGER_PERMISSION_KEYS
+)
+
 
 def viewer_organization_permissions(*, organization, user):
-    return [
-        permission_key
-        for permission_key in ORGANIZATION_PERMISSION_KEYS
-        if user_has_organization_permission(
+    permissions = []
+
+    for permission_key in ORGANIZATION_PERMISSION_KEYS:
+        checker = (
+            user_has_organization_permission_strict
+            if permission_key in _ORGANIZATION_STRICT_PERMISSION_KEYS
+            else user_has_organization_permission
+        )
+
+        if checker(
             user=user,
             organization=organization,
             permission_key=permission_key,
             scope_type=OrganizationRoleScope.ORGANIZATION,
             scope_key="",
-        )
-    ]
+        ):
+            permissions.append(permission_key)
+
+    return permissions
 
 
 def viewer_membership_context(*, organization, user):
@@ -174,3 +195,4 @@ def open_governance_proposals_for_viewer(*, organization, user):
             OrganizationGovernanceProposalStatus.OPEN,
         )
     )
+

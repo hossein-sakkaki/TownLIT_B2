@@ -1,9 +1,18 @@
 # apps/conversation/services/dialogue_lifecycle.py
+# TownLIT-Backend
+#
+# Created by Hossein Sakkaki on 2026-10-06.
+# Last Update by Hossein Sakkaki on 2026-10-06.
+#
 
 from django.db import transaction
 from django.core.exceptions import ValidationError as DjangoValidationError
 
 from apps.conversation.models import Dialogue, DialogueParticipant, Message
+from apps.conversation.policies import (
+    ConversationMutationAction,
+    ConversationMutationPolicy,
+)
 from validators.groupNames.group_name_validator import validate_group_name
 
 from apps.conversation.services.boundary_access import (
@@ -188,6 +197,17 @@ def smart_delete_dialogue_for_user(*, dialogue, acting_user):
         })
 
     # Group dialogue
+    mutation = ConversationMutationPolicy.check(
+        dialogue=dialogue,
+        action=ConversationMutationAction.DELETE_GROUP,
+    )
+    if not mutation.allowed:
+        return _error(
+            mutation.code,
+            mutation.message,
+            403,
+        )
+
     participant = DialogueParticipant.objects.filter(
         dialogue=dialogue,
         user=acting_user,

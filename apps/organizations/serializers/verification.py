@@ -1,9 +1,9 @@
 # apps/organizations/serializers/verification.py
 #
-# TownLIT
+# TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-08-30.
-# Last Update by Hossein Sakkaki on 2026-08-30.
+# Last Update by Hossein Sakkaki on 2026-10-01.
 #
 
 from rest_framework import serializers
@@ -207,6 +207,49 @@ class OrganizationVerificationCaseCreateSerializer(serializers.Serializer):
     )
 
 
+class OrganizationVerificationCaseUpdateSerializer(serializers.Serializer):
+    legal_name = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        max_length=240,
+    )
+    registration_number = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        max_length=120,
+    )
+    jurisdiction_country = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        max_length=2,
+    )
+    jurisdiction_region = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        max_length=160,
+    )
+    registration_authority = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        max_length=240,
+    )
+    registered_address = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    organization_notes = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+
+
 class OrganizationVerificationDocumentCreateSerializer(serializers.Serializer):
     document_type = serializers.ChoiceField(
         choices=OrganizationVerificationDocumentType.choices,
@@ -251,3 +294,4 @@ class OrganizationVerificationApprovalSerializer(serializers.Serializer):
 
 class OrganizationVerificationRevokeSerializer(serializers.Serializer):
     reason = serializers.CharField(max_length=1000)
+

@@ -1,4 +1,9 @@
 # apps/conversation/services/message_mutations.py
+# TownLIT-Backend
+#
+# Created by Hossein Sakkaki on 2026-10-06.
+# Last Update by Hossein Sakkaki on 2026-10-06.
+#
 
 import base64
 
@@ -6,8 +11,16 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.conversation.models import Message, MessageEncryption
+from apps.conversation.policies import (
+    ConversationAccessPolicy,
+    ConversationContextKind,
+    ConversationContextPolicy,
+)
 from apps.conversation.services.content_safety import (
     enforce_group_message_content_safety,
+)
+from apps.conversation.services.message_visibility import (
+    visible_participant_ids_for_message,
 )
 
 def _error(code: str, message: str, status_code: int):
@@ -26,6 +39,14 @@ def _success(payload: dict):
         "ok": True,
         "payload": payload,
     }
+
+
+def _organization_direct_message_mutation_unavailable(dialogue) -> bool:
+    """Edits and permanent deletion are not part of Organization Direct V1."""
+    return (
+        ConversationContextPolicy.resolve(dialogue).kind
+        == ConversationContextKind.ORGANIZATION_DIRECT
+    )
 
 
 def _normalize_encrypted_contents(encrypted_contents):
@@ -79,6 +100,28 @@ def edit_message_content(message_id, acting_user, new_content=None, encrypted_co
 
     if message.sender_id != acting_user.id:
         return _error("FORBIDDEN", "Only sender can edit this message.", 403)
+
+    if _organization_direct_message_mutation_unavailable(message.dialogue):
+        return _error(
+            "ORGANIZATION_DIRECT_FEATURE_NOT_AVAILABLE",
+            "Message editing is not available for Organization Direct conversations.",
+            409,
+        )
+
+    access = ConversationAccessPolicy.can_send_as_self(
+        dialogue=message.dialogue,
+        user=acting_user,
+    )
+    if not access.allowed:
+        return _error(access.code, access.message, 403)
+
+    if not (
+        message.dialogue
+        .visible_messages_for_user(acting_user)
+        .filter(id=message.id)
+        .exists()
+    ):
+        return _error("NOT_FOUND", "Message not found.", 404)
 
     if not message.can_edit():
         return _error("FORBIDDEN", "You can only edit messages within 12 hours of sending.", 403)
@@ -208,6 +251,33 @@ def soft_delete_message_for_user(message_id, acting_user):
     except Message.DoesNotExist:
         return _error("NOT_FOUND", "Message not found.", 404)
 
+    access = ConversationAccessPolicy.can_view(
+        dialogue=message.dialogue,
+        user=acting_user,
+    )
+    if not access.allowed:
+        return _error(access.code, access.message, 403)
+
+    context = ConversationContextPolicy.resolve(message.dialogue)
+    if (
+        context.kind == ConversationContextKind.ORGANIZATION_DIRECT
+        and getattr(acting_user, "id", None)
+        != context.organization_context.participant_user_id
+    ):
+        return _error(
+            "ORGANIZATION_DIRECT_OPERATOR_MUTATION_FORBIDDEN",
+            "Organization operators cannot hide Organization Direct messages per-user.",
+            403,
+        )
+
+    if not (
+        message.dialogue
+        .visible_messages_for_user(acting_user)
+        .filter(id=message.id)
+        .exists()
+    ):
+        return _error("NOT_FOUND", "Message not found.", 404)
+
     if message.deleted_by_users.filter(id=acting_user.id).exists():
         return _error("BAD_REQUEST", "Message already deleted from your chat.", 400)
 
@@ -230,6 +300,28 @@ def hard_delete_message_for_user(message_id, acting_user):
     except Message.DoesNotExist:
         return _error("NOT_FOUND", "Message not found.", 404)
 
+    if _organization_direct_message_mutation_unavailable(message.dialogue):
+        return _error(
+            "ORGANIZATION_DIRECT_FEATURE_NOT_AVAILABLE",
+            "Permanent deletion is not available for Organization Direct conversations.",
+            409,
+        )
+
+    access = ConversationAccessPolicy.can_send_as_self(
+        dialogue=message.dialogue,
+        user=acting_user,
+    )
+    if not access.allowed:
+        return _error(access.code, access.message, 403)
+
+    if not (
+        message.dialogue
+        .visible_messages_for_user(acting_user)
+        .filter(id=message.id)
+        .exists()
+    ):
+        return _error("NOT_FOUND", "Message not found.", 404)
+
     if not message.can_hard_delete_for_user(acting_user):
         return _error(
             "FORBIDDEN",
@@ -240,7 +332,9 @@ def hard_delete_message_for_user(message_id, acting_user):
     dialogue = message.dialogue
     dialogue_slug = dialogue.slug
     deleted_message_id = message.id
-    participant_ids = list(dialogue.participants.values_list("id", flat=True))
+    participant_ids = visible_participant_ids_for_message(
+        message=message,
+    )
 
     # Delete attached files first
     if message.image:

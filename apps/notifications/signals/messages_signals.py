@@ -2,10 +2,15 @@
 
 import logging
 
+from django.db import transaction
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
 from apps.conversation.models import Message
+from apps.conversation.policies import (
+    ConversationContextKind,
+    ConversationContextPolicy,
+)
 from apps.conversation.services.boundary_access import (
     should_send_conversation_notification,
 )
@@ -106,6 +111,28 @@ def on_message_created(sender, instance: Message, created, **kwargs):
     dialogue = getattr(instance, "dialogue", None)
 
     if not actor or not dialogue:
+        return
+
+    try:
+        resolved_context = ConversationContextPolicy.resolve(dialogue)
+    except Exception:
+        resolved_context = None
+
+    if (
+        resolved_context is not None
+        and resolved_context.kind == ConversationContextKind.ORGANIZATION_DIRECT
+    ):
+        # Organization Direct owns recipient resolution and presentation in
+        # Conversation. Defer until commit so send-as-Organization attribution
+        # exists before push copy is built.
+        def _send_organization_direct_push(message_id=instance.id):
+            from apps.conversation.services.organization.direct_notifications import (
+                notify_organization_direct_message_push,
+            )
+
+            notify_organization_direct_message_push(message_id)
+
+        transaction.on_commit(_send_organization_direct_push)
         return
 
     recipients_qs = dialogue.participants.exclude(id=actor.id)

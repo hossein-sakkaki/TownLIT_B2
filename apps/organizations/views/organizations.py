@@ -40,6 +40,7 @@ from apps.organizations.serializers import (
     OrganizationRoleSerializer,
     OrganizationSerializer,
     OrganizationWriteSerializer,
+    OrganizationListSerializer,
 )
 from apps.organizations.services.access import (
     user_has_organization_permission,
@@ -112,6 +113,9 @@ class OrganizationViewSet(viewsets.ModelViewSet):
             "partial_update",
         }:
             return OrganizationWriteSerializer
+
+        if self.action == "list":
+            return OrganizationListSerializer
 
         return OrganizationSerializer
 

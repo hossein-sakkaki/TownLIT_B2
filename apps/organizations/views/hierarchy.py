@@ -1,28 +1,36 @@
 # apps/organizations/views/hierarchy.py
 #
-# TownLIT
+# TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-08-30.
-# Last Update by Hossein Sakkaki on 2026-08-30.
+# Last Update by Hossein Sakkaki on 2026-10-01.
 #
 
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db.models import Q
 
 from rest_framework import status
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.organizations.constants import (
+    OrganizationPermissionKey,
+    OrganizationStatus,
+    OrganizationVisibility,
+)
 from apps.organizations.models import Organization, OrganizationRelationship
 from apps.organizations.permissions import OrganizationsEnabledPermission
 from apps.organizations.selectors.bootstrap import organization_relationships_for_viewer
 from apps.organizations.serializers import (
     OrganizationGovernanceProposalSerializer,
+    OrganizationRelationshipCandidateSerializer,
     OrganizationRelationshipConsentProposalSerializer,
     OrganizationRelationshipCreateSerializer,
     OrganizationRelationshipSerializer,
 )
+from apps.organizations.services.access import user_has_organization_permission
 from apps.organizations.services.hierarchy import (
     create_relationship_consent_proposal,
     request_organization_relationship,
@@ -30,6 +38,59 @@ from apps.organizations.services.hierarchy import (
 
 from .access import get_visible_organization_or_404
 from .helpers import raise_drf_validation_error
+
+
+class OrganizationRelationshipCandidatesView(APIView):
+    permission_classes = [IsAuthenticated, OrganizationsEnabledPermission]
+
+    def get(self, request, slug):
+        organization = get_visible_organization_or_404(
+            user=request.user,
+            slug=slug,
+        )
+
+        if (
+            not getattr(request.user, "is_staff", False)
+            and not user_has_organization_permission(
+                user=request.user,
+                organization=organization,
+                permission_key=OrganizationPermissionKey.MANAGE_GOVERNANCE,
+            )
+        ):
+            raise PermissionDenied(
+                "You do not have permission to manage organization relationships."
+            )
+
+        query = (
+            request.query_params.get("q", "")
+            .strip()
+        )
+
+        if len(query) < 2:
+            return Response([])
+
+        queryset = (
+            Organization.objects
+            .filter(
+                status=OrganizationStatus.ACTIVE,
+                visibility=OrganizationVisibility.PUBLIC,
+            )
+            .exclude(pk=organization.pk)
+            .filter(
+                Q(name__icontains=query)
+                | Q(short_name__icontains=query)
+                | Q(slug__icontains=query)
+            )
+            .order_by("name", "id")[:25]
+        )
+
+        return Response(
+            OrganizationRelationshipCandidateSerializer(
+                queryset,
+                many=True,
+                context={"request": request},
+            ).data
+        )
 
 
 class OrganizationRelationshipsView(APIView):
@@ -170,3 +231,4 @@ class OrganizationRelationshipConsentProposalView(APIView):
             ).data,
             status=status.HTTP_201_CREATED,
         )
+

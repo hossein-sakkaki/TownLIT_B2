@@ -26,49 +26,59 @@ echo
 mkdir -p "$OUTPUT_DIR"
 
 echo "------------------------------------------------------------"
-echo " [1/9] Project Foundation"
+echo " [1/11] Project Foundation"
 echo "------------------------------------------------------------"
 /bin/bash "$SCRIPT_DIR/export_backend_foundation.sh"
 
 echo "------------------------------------------------------------"
-echo " [2/9] Core Domain Models"
+echo " [2/11] Core Domain Models"
 echo "------------------------------------------------------------"
 /bin/bash "$SCRIPT_DIR/export_backend_core_models.sh"
 
 echo "------------------------------------------------------------"
-echo " [3/9] Shared Infrastructure"
+echo " [3/11] Shared Infrastructure"
 echo "------------------------------------------------------------"
 /bin/bash "$SCRIPT_DIR/export_backend_shared_infrastructure.sh"
 
 echo "------------------------------------------------------------"
-echo " [4/9] Identity / Profile API"
+echo " [4/11] Identity / Profile API"
 echo "------------------------------------------------------------"
 /bin/bash "$SCRIPT_DIR/export_backend_identity_api.sh"
 
 echo "------------------------------------------------------------"
-echo " [5/9] Organizations"
+echo " [5/11] Organizations"
 echo "------------------------------------------------------------"
 /bin/bash "$SCRIPT_DIR/export_backend_organizations.sh"
 
 echo "------------------------------------------------------------"
-echo " [6/9] Conversation"
+echo " [6/11] Conversation"
 echo "------------------------------------------------------------"
 /bin/bash "$SCRIPT_DIR/export_backend_conversation.sh"
 
 echo "------------------------------------------------------------"
-echo " [7/9] Audio Catalog"
+echo " [7/11] Audio Catalog"
 echo "------------------------------------------------------------"
 /bin/bash "$SCRIPT_DIR/export_backend_audio_catalog.sh"
 
 echo "------------------------------------------------------------"
-echo " [8/9] Subscriptions / Entitlements"
+echo " [8/11] Subscriptions / Entitlements"
 echo "------------------------------------------------------------"
 /bin/bash "$SCRIPT_DIR/export_backend_subscriptions_entitlements.sh"
 
 echo "------------------------------------------------------------"
-echo " [9/9] Square and Stream"
+echo " [9/11] Square and Stream"
 echo "------------------------------------------------------------"
 /bin/bash "$SCRIPT_DIR/export_backend_square_streams.sh"
+
+echo "------------------------------------------------------------"
+echo " [10/11] Sanctuary"
+echo "------------------------------------------------------------"
+/bin/bash "$SCRIPT_DIR/export_backend_sanctuary.sh"
+
+echo "------------------------------------------------------------"
+echo " [11/11] Notifications"
+echo "------------------------------------------------------------"
+/bin/bash "$SCRIPT_DIR/export_backend_notifications.sh"
 
 echo
 echo "============================================================"
@@ -79,7 +89,7 @@ echo
 total_bytes=0
 total_lines=0
 
-for file in "$OUTPUT_DIR"/*.md; dos
+for file in "$OUTPUT_DIR"/*.md; do
     [[ -f "$file" ]] || continue
 
     filename="$(basename "$file")"

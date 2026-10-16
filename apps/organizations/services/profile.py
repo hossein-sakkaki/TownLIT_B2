@@ -1,9 +1,9 @@
 # apps/organizations/services/profile.py
 #
-# TownLIT
+# TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-08-29.
-# Last Update by Hossein Sakkaki on 2026-08-29.
+# Last Update by Hossein Sakkaki on 2026-09-22.
 #
 
 from django.core.exceptions import PermissionDenied
@@ -18,6 +18,9 @@ from apps.organizations.models import (
     Organization,
     OrganizationAuditLog,
 )
+from apps.organizations.feature_flags import (
+    ensure_organizations_enabled,
+)
 from apps.organizations.services.access import (
     user_has_organization_permission,
 )
@@ -30,6 +33,8 @@ def update_organization_profile(
     actor,
     validated_data,
 ):
+    ensure_organizations_enabled()
+
     organization = Organization.objects.select_for_update().get(
         pk=organization.pk
     )
@@ -77,3 +82,4 @@ def update_organization_profile(
     )
 
     return organization
+

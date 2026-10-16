@@ -1,4 +1,9 @@
 # apps/conversation/services/message_forward.py
+# TownLIT-Backend
+#
+# Created by Hossein Sakkaki on 2026-10-06.
+# Last Update by Hossein Sakkaki on 2026-10-16.
+#
 
 import base64
 import os
@@ -8,13 +13,17 @@ from django.core.files.base import ContentFile
 from django.db import transaction
 
 from apps.conversation.models import Dialogue, Message, MessageEncryption
+from apps.conversation.policies import (
+    ConversationAccessPolicy,
+    ConversationContextPolicy,
+)
 from apps.conversation.services.message_reply import build_reply_preview
 from apps.conversation.services.boundary_access import check_private_dialogue_boundary
 from apps.conversation.services.content_safety import (
     enforce_group_message_content_safety,
 )
 from apps.conversation.services.media_content_safety import (
-    enforce_group_message_media_content_safety,
+    enforce_backend_readable_message_media_content_safety,
 )
 
 FORWARD_MODE_BACKEND_ASSISTED = "backend_assisted"
@@ -84,12 +93,26 @@ def _encode_group_plaintext(content: str) -> bytes:
 
 
 def _is_message_visible_to_user(message, user) -> bool:
-    """Check visibility of source message for actor."""
-    if not message.dialogue.participants.filter(id=user.id).exists():
+    """Check current access plus the context-specific history boundary."""
+    if not ConversationAccessPolicy.can_view(
+        dialogue=message.dialogue,
+        user=user,
+    ).allowed:
         return False
-    if message.deleted_by_users.filter(id=user.id).exists():
-        return False
-    return True
+
+    return (
+        message.dialogue
+        .visible_messages_for_user(user)
+        .filter(id=message.id)
+        .exists()
+    )
+
+
+def _organization_forwarding_not_available(*, source_message, target_dialogue):
+    """Keep Organization forwarding disabled until its policy is approved."""
+    source_context = ConversationContextPolicy.resolve(source_message.dialogue)
+    target_context = ConversationContextPolicy.resolve(target_dialogue)
+    return source_context.is_organization or target_context.is_organization
 
 
 def _resolve_forward_mode(*, source_message, target_dialogue):
@@ -138,6 +161,19 @@ def validate_forward_request(*, source_message_id, target_dialogue_slug, acting_
         )
     except Dialogue.DoesNotExist:
         return _error("TARGET_DIALOGUE_NOT_FOUND", "Target dialogue not found.", 404)
+
+    if _organization_forwarding_not_available(
+        source_message=source_message,
+        target_dialogue=target_dialogue,
+    ):
+        return _error(
+            "ORGANIZATION_FORWARDING_NOT_AVAILABLE",
+            (
+                "Forwarding to or from Organization conversations "
+                "is not available yet."
+            ),
+            409,
+        )
 
     boundary_check = check_private_dialogue_boundary(
         dialogue=target_dialogue,
@@ -454,7 +490,7 @@ def create_forwarded_message_backend_assisted(
     # Inspect the existing source bytes before copying them into a new
     # storage key. Cache makes previously inspected identical media cheap,
     # while still enforcing the target publication path.
-    enforce_group_message_media_content_safety(
+    enforce_backend_readable_message_media_content_safety(
         dialogue=target_dialogue,
         file_obj=source_file,
         media_field_name=(
@@ -731,3 +767,4 @@ def create_forwarded_text_client_decrypted_group(
         "kind": "text",
         "plain_text": plain_text,
     })
+

@@ -1,6 +1,15 @@
 # apps/conversation/realtime/mixins/typing.py
+# TownLIT-Backend
+#
+# Last Update by Hossein Sakkaki on 2026-10-06.
+#
 
 import asyncio
+
+from channels.db import database_sync_to_async
+
+from apps.conversation.policies import ConversationContextKind, ConversationContextPolicy
+from apps.conversation.services.realtime_access import get_dialogue_for_user
 
 from apps.conversation.services.event_contracts import build_typing_status_event_data
 
@@ -49,6 +58,21 @@ class TypingMixin:
         is_typing = bool(data.get("is_typing", False))
 
         if not dialogue_slug:
+            return
+
+        dialogue = await database_sync_to_async(get_dialogue_for_user)(
+            dialogue_slug,
+            self.user,
+        )
+        if dialogue is None:
+            return
+
+        context = await database_sync_to_async(
+            ConversationContextPolicy.resolve
+        )(dialogue)
+        if context.kind == ConversationContextKind.ORGANIZATION_DIRECT:
+            # V1 intentionally disables typing for Organization Direct.
+            # Broadcasting the human operator would leak internal identity.
             return
 
         await self._broadcast_typing_status(dialogue_slug, is_typing)

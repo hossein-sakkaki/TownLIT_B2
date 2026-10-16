@@ -2,8 +2,8 @@
 #
 # TownLIT
 #
-# Created by Hossein Sakkaki on 2026-09-04.
-# Last Update by Hossein Sakkaki on 2026-09-04.
+# Created by Hossein Sakkaki on 2025-09-04.
+# Last Update by Hossein Sakkaki on 2026-10-03.
 #
 
 from django.conf import settings
@@ -303,6 +303,16 @@ class Notification(models.Model):
         blank=True,
     )
 
+    # Inbox context. Null means the Personal/general Notification Center.
+    # A value means this row belongs to that Organization workspace context.
+    organization_context = models.ForeignKey(
+        "organizations.Organization",
+        related_name="context_notifications",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+    )
+
     title = models.CharField(
         max_length=140,
         blank=True,
@@ -374,6 +384,8 @@ class Notification(models.Model):
 
         indexes = [
             Index(fields=["user", "-created_at"]),
+            Index(fields=["user", "organization_context", "-created_at"]),
+            Index(fields=["user", "organization_context", "is_read"]),
             Index(fields=["is_read", "user"]),
             Index(fields=["notification_type"]),
             Index(fields=["dedupe_key"]),

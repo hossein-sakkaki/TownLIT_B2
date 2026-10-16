@@ -1,9 +1,15 @@
 # apps/conversation/services/dialogue_pins.py
+# TownLIT-Backend
+#
+# Created by Hossein Sakkaki on 2026-10-06.
+# Last Update by Hossein Sakkaki on 2026-10-06.
+#
 
 from django.db import transaction
 from django.db.models import F, Max
 
 from apps.conversation.models import DialoguePin
+from apps.conversation.policies import ConversationAccessPolicy
 
 
 MAX_DIALOGUE_PINS = 5
@@ -28,8 +34,11 @@ def _success(payload: dict):
 
 
 def _is_dialogue_participant(dialogue, user) -> bool:
-    """Check dialogue membership."""
-    return dialogue.participants.filter(id=user.id).exists()
+    """Check current Conversation read access."""
+    return ConversationAccessPolicy.can_view(
+        dialogue=dialogue,
+        user=user,
+    ).allowed
 
 
 def _normalize_positions_for_user(user):
@@ -151,13 +160,23 @@ def list_pinned_dialogues_for_user(*, acting_user):
     """
     pins = list(
         DialoguePin.objects.filter(user=acting_user)
-        .select_related("dialogue")
+        .select_related(
+            "dialogue__organization_context__organization",
+        )
         .order_by("position", "pinned_at", "id")
     )
+    visible_pins = [
+        pin
+        for pin in pins
+        if ConversationAccessPolicy.can_view(
+            dialogue=pin.dialogue,
+            user=acting_user,
+        ).allowed
+    ]
 
     return _success({
-        "pins": pins,
-        "count": len(pins),
+        "pins": visible_pins,
+        "count": len(visible_pins),
     })
 
 

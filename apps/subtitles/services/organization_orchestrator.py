@@ -21,7 +21,7 @@ from apps.subtitles.services.transcript_builder import (
 from apps.translations.services.language_codes import normalize_language_code
 
 
-ORGANIZATION_TEACHING_MODEL_LABEL = "posts.churchteachingcontent"
+ORGANIZATION_TEACHING_MODEL_LABEL = "organization_media.churchteachingcontent"
 
 
 def is_organization_subtitle_target(target) -> bool:

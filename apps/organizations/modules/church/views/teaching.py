@@ -69,7 +69,7 @@ from apps.organizations.modules.church.services.teaching import (
 )
 from apps.organizations.permissions import OrganizationsEnabledPermission
 from apps.organizations.views.helpers import raise_drf_validation_error
-from apps.posts.models.church_teaching import ChurchTeachingContent
+from apps.organization_media.models.church_teaching import ChurchTeachingContent
 
 from .helpers import (
     get_church_campus_or_404,

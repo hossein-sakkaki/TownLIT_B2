@@ -3,7 +3,7 @@
 # TownLIT
 #
 # Created by Hossein Sakkaki on 2026-09-04.
-# Last Update by Hossein Sakkaki on 2026-09-04.
+# Last Update by Hossein Sakkaki on 2026-10-03.
 #
 
 from django.contrib import admin
@@ -30,6 +30,7 @@ class NotificationAdmin(admin.ModelAdmin):
         "id",
         "user",
         "notification_type",
+        "organization_context",
         "campaign",
         "short_title",
         "short_message",
@@ -40,6 +41,7 @@ class NotificationAdmin(admin.ModelAdmin):
 
     list_filter = (
         "notification_type",
+        "organization_context",
         "is_read",
         "campaign",
         ("created_at", admin.DateFieldListFilter),
@@ -52,18 +54,22 @@ class NotificationAdmin(admin.ModelAdmin):
         "title",
         "message",
         "campaign__internal_name",
+        "organization_context__name",
+        "organization_context__slug",
     )
 
     list_select_related = (
         "user",
         "actor",
         "campaign",
+        "organization_context",
     )
 
     readonly_fields = (
         "user",
         "actor",
         "campaign",
+        "organization_context",
         "title",
         "notification_type",
         "message",

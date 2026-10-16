@@ -1,9 +1,9 @@
 # apps/organizations/services/verification.py
 #
-# TownLIT
+# TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-08-29.
-# Last Update by Hossein Sakkaki on 2026-08-29.
+# Last Update by Hossein Sakkaki on 2026-10-01.
 #
 
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -237,6 +237,69 @@ def create_verification_case(
 
 
 @transaction.atomic
+def update_verification_case(
+    *,
+    verification_case,
+    actor,
+    validated_data,
+):
+    ensure_organization_verification_enabled()
+
+    verification_case = (
+        OrganizationVerificationCase.objects
+        .select_for_update()
+        .select_related("organization")
+        .get(pk=verification_case.pk)
+    )
+
+    _ensure_verification_manager(
+        organization=verification_case.organization,
+        actor=actor,
+    )
+
+    if verification_case.status not in {
+        OrganizationVerificationStatus.DRAFT,
+        OrganizationVerificationStatus.NEEDS_INFORMATION,
+    }:
+        raise ValidationError(
+            "Verification details can only be edited while the case is editable."
+        )
+
+    editable_fields = {
+        "legal_name",
+        "registration_number",
+        "jurisdiction_country",
+        "jurisdiction_region",
+        "registration_authority",
+        "registered_address",
+        "organization_notes",
+    }
+
+    changed_fields = []
+
+    for field, value in validated_data.items():
+        if field not in editable_fields:
+            continue
+
+        if getattr(verification_case, field) != value:
+            setattr(verification_case, field, value)
+            changed_fields.append(field)
+
+    if not changed_fields:
+        return verification_case
+
+    verification_case.full_clean()
+    verification_case.save(
+        update_fields=[
+            *changed_fields,
+            "updated_at",
+        ]
+    )
+
+    return verification_case
+
+
+@transaction.atomic
 def add_verification_document(
     *,
     verification_case,
@@ -272,6 +335,52 @@ def add_verification_document(
     )
     document.full_clean()
     document.save()
+    return document
+
+
+@transaction.atomic
+def deactivate_verification_document(
+    *,
+    document,
+    actor,
+):
+    ensure_organization_verification_enabled()
+
+    document = (
+        OrganizationVerificationDocument.objects
+        .select_for_update()
+        .select_related(
+            "verification_case__organization",
+        )
+        .get(pk=document.pk)
+    )
+
+    verification_case = document.verification_case
+
+    _ensure_verification_manager(
+        organization=verification_case.organization,
+        actor=actor,
+    )
+
+    if verification_case.status not in {
+        OrganizationVerificationStatus.DRAFT,
+        OrganizationVerificationStatus.NEEDS_INFORMATION,
+    }:
+        raise ValidationError(
+            "Documents can only be removed while the case is editable."
+        )
+
+    if not document.is_active:
+        return document
+
+    document.is_active = False
+    document.save(
+        update_fields=[
+            "is_active",
+            "updated_at",
+        ]
+    )
+
     return document
 
 
@@ -387,6 +496,12 @@ def review_verification_document(*, document, reviewer, accepted, note=None, now
     document = OrganizationVerificationDocument.objects.select_for_update().select_related(
         "verification_case"
     ).get(pk=document.pk)
+
+    if not document.is_active:
+        raise ValidationError(
+            "Inactive verification documents cannot be reviewed."
+        )
+
     document.review_status = (
         OrganizationVerificationDocumentReviewStatus.ACCEPTED
         if accepted
@@ -591,3 +706,4 @@ def revoke_verification_grant(*, grant, reviewer, reason, now=None):
         now=now,
     )
     return grant
+

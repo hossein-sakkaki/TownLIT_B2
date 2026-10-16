@@ -1,9 +1,9 @@
 # apps/organizations/views/verification.py
 #
-# TownLIT
+# TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-08-30.
-# Last Update by Hossein Sakkaki on 2026-08-30.
+# Last Update by Hossein Sakkaki on 2026-10-01.
 #
 
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -16,6 +16,8 @@ from rest_framework.views import APIView
 
 from apps.organizations.constants import (
     OrganizationPermissionKey,
+    OrganizationRelationshipStatus,
+    OrganizationRelationshipType,
     OrganizationVerificationStatus,
 )
 from apps.organizations.models import (
@@ -27,8 +29,10 @@ from apps.organizations.models import (
 from apps.organizations.permissions import OrganizationsEnabledPermission
 from apps.organizations.serializers import (
     OrganizationVerificationApprovalSerializer,
+    OrganizationRelationshipSerializer,
     OrganizationVerificationCaseCreateSerializer,
     OrganizationVerificationCaseSerializer,
+    OrganizationVerificationCaseUpdateSerializer,
     OrganizationVerificationDocumentCreateSerializer,
     OrganizationVerificationDocumentReviewSerializer,
     OrganizationVerificationDocumentSerializer,
@@ -40,6 +44,7 @@ from apps.organizations.services.access import user_has_organization_permission
 from apps.organizations.services.verification import (
     add_verification_document,
     approve_verification_case,
+    deactivate_verification_document,
     create_verification_case,
     mark_verification_needs_information,
     reject_verification_case,
@@ -47,7 +52,9 @@ from apps.organizations.services.verification import (
     revoke_verification_grant,
     start_verification_review,
     submit_verification_case,
+    update_verification_case,
     withdraw_verification_case,
+    get_active_verification_grant,
 )
 
 from .access import get_visible_organization_or_404
@@ -84,6 +91,53 @@ def _get_case(public_id):
     if not verification_case:
         raise NotFound("Verification case not found.")
     return verification_case
+
+
+class OrganizationVerificationSponsorRelationshipsView(APIView):
+    permission_classes = [IsAuthenticated, OrganizationsEnabledPermission]
+
+    def get(self, request, slug):
+        organization = get_visible_organization_or_404(
+            user=request.user,
+            slug=slug,
+        )
+        _ensure_can_view_cases(request.user, organization)
+
+        relationships = (
+            OrganizationRelationship.objects
+            .select_related(
+                "source_organization",
+                "target_organization",
+                "requested_by_organization",
+            )
+            .prefetch_related("consents__organization")
+            .filter(
+                target_organization=organization,
+                status=OrganizationRelationshipStatus.ACTIVE,
+                relationship_type__in=(
+                    OrganizationRelationshipType.PARENT_BRANCH,
+                    OrganizationRelationshipType.SPONSORSHIP,
+                ),
+            )
+            .order_by("-activated_at", "-created_at", "-id")
+        )
+
+        eligible = [
+            relationship
+            for relationship in relationships
+            if get_active_verification_grant(
+                organization=relationship.source_organization
+            )
+            is not None
+        ]
+
+        return Response(
+            OrganizationRelationshipSerializer(
+                eligible,
+                many=True,
+                context={"request": request},
+            ).data
+        )
 
 
 class OrganizationVerificationCasesView(APIView):
@@ -171,6 +225,30 @@ class OrganizationVerificationCaseDetailView(APIView):
             ).data
         )
 
+    def patch(self, request, public_id):
+        verification_case = _get_case(public_id)
+        serializer = OrganizationVerificationCaseUpdateSerializer(
+            data=request.data,
+            partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            verification_case = update_verification_case(
+                verification_case=verification_case,
+                actor=request.user,
+                validated_data=serializer.validated_data,
+            )
+        except DjangoValidationError as exc:
+            raise_drf_validation_error(exc)
+
+        return Response(
+            OrganizationVerificationCaseSerializer(
+                verification_case,
+                context={"request": request},
+            ).data
+        )
+
 
 class OrganizationVerificationDocumentCreateView(APIView):
     permission_classes = [IsAuthenticated, OrganizationsEnabledPermission]
@@ -197,6 +275,32 @@ class OrganizationVerificationDocumentCreateView(APIView):
                 context={"request": request},
             ).data,
             status=status.HTTP_201_CREATED,
+        )
+
+
+class OrganizationVerificationDocumentDetailView(APIView):
+    permission_classes = [IsAuthenticated, OrganizationsEnabledPermission]
+
+    def delete(self, request, public_id):
+        document = (
+            OrganizationVerificationDocument.objects
+            .select_related("verification_case__organization")
+            .filter(public_id=public_id)
+            .first()
+        )
+        if not document:
+            raise NotFound("Verification document not found.")
+
+        try:
+            deactivate_verification_document(
+                document=document,
+                actor=request.user,
+            )
+        except DjangoValidationError as exc:
+            raise_drf_validation_error(exc)
+
+        return Response(
+            status=status.HTTP_204_NO_CONTENT
         )
 
 
@@ -425,3 +529,4 @@ class OrganizationVerificationGrantRevokeView(APIView):
                 context={"request": request},
             ).data
         )
+

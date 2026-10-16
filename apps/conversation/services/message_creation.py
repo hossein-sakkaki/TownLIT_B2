@@ -1,4 +1,9 @@
 # apps/conversation/services/message_creation.py
+# TownLIT-Backend
+#
+# Created by Hossein Sakkaki on 2026-10-06.
+# Last Update by Hossein Sakkaki on 2026-10-16.
+#
 
 import base64
 import json
@@ -6,14 +11,20 @@ import json
 from django.db import transaction
 
 from apps.conversation.models import Dialogue, Message, MessageEncryption
+from apps.conversation.policies import (
+    ConversationAccessPolicy,
+    ConversationContextPolicy,
+    ConversationSecurityMode,
+    ConversationSecurityPolicy,
+)
 from common.mime_type_validator import validate_file_type, is_unsafe_file
 from apps.conversation.services.message_reply import validate_reply_target
 from apps.conversation.services.boundary_access import check_private_dialogue_boundary
 from apps.conversation.services.content_safety import (
-    enforce_group_message_content_safety,
+    enforce_backend_readable_message_content_safety,
 )
 from apps.conversation.services.media_content_safety import (
-    enforce_group_message_media_content_safety,
+    enforce_backend_readable_message_media_content_safety,
 )
 from apps.content_safety.services.media_jobs import (
     schedule_configured_content_safety_jobs,
@@ -162,24 +173,22 @@ def prepare_encrypted_file_request(
     return _success(normalized)
 
 
-def create_text_message(
+def create_backend_managed_text_message(
     *,
     dialogue,
     sender,
-    is_encrypted,
-    content=None,
-    encrypted_contents=None,
-    recipient_hidden_on_incoming=False,
-    recipient=None,
+    content,
     reply_to_message_id=None,
 ):
-    """
-    Create one text message in a shared backend service path.
-    Supports:
-    - Group plaintext messages
-    - DM encrypted messages
-    """
-    
+    """Create one backend-readable text message on the shared Message model."""
+    security = ConversationSecurityPolicy.resolve(dialogue)
+    if security.mode != ConversationSecurityMode.BACKEND_MANAGED:
+        return _error(
+            "BACKEND_MANAGED_REQUIRED",
+            "This conversation requires end-to-end encrypted message creation.",
+            400,
+        )
+
     reply_validation = validate_reply_target(
         dialogue=dialogue,
         acting_user=sender,
@@ -192,99 +201,158 @@ def create_text_message(
             400,
         )
 
-    reply_to_message = reply_validation["message_obj"]
-    
+    plain_text = str(content or "").strip()
+    if not plain_text:
+        return _error(
+            "BAD_REQUEST",
+            "Message content is required.",
+            400,
+        )
+
+    enforce_backend_readable_message_content_safety(
+        text=plain_text,
+        actor=sender,
+        field_name="content",
+    )
+
+    base64_str = base64.b64encode(
+        plain_text.encode("utf-8")
+    ).decode("utf-8")
+    content_bytes = base64_str.encode("utf-8")
+
+    message = Message.objects.create(
+        dialogue=dialogue,
+        sender=sender,
+        content_encrypted=content_bytes,
+        reply_to=reply_validation["message_obj"],
+    )
+
+    dialogue.last_message = message
+    dialogue.save(update_fields=["last_message"])
+
+    return _success({
+        "message": message,
+        "dialogue_slug": dialogue.slug,
+        "message_id": message.id,
+        "is_group": bool(dialogue.is_group),
+        "is_encrypted": False,
+        "reply_to_message_id": (
+            reply_validation["message_obj"].id
+            if reply_validation["message_obj"]
+            else None
+        ),
+    })
+
+
+def create_text_message(
+    *,
+    dialogue,
+    sender,
+    is_encrypted,
+    content=None,
+    encrypted_contents=None,
+    recipient_hidden_on_incoming=False,
+    recipient=None,
+    reply_to_message_id=None,
+):
+    """Create text through the context-aware shared Conversation engine."""
+    context = ConversationContextPolicy.resolve(dialogue)
+
+    if context.is_organization:
+        access = ConversationAccessPolicy.can_send_as_self(
+            dialogue=dialogue,
+            user=sender,
+        )
+        if not access.allowed:
+            return _error(
+                access.code or "FORBIDDEN",
+                access.message or "Conversation access denied.",
+                403,
+            )
+
+    # Preserve the existing reply-validation precedence for Personal
+    # Messenger while making the same target rule available to Org Direct.
+    reply_validation = validate_reply_target(
+        dialogue=dialogue,
+        acting_user=sender,
+        reply_to_message_id=reply_to_message_id,
+    )
+    if not reply_validation.get("ok"):
+        return _error(
+            reply_validation["code"],
+            reply_validation["message"],
+            400,
+        )
+
     boundary_check = check_private_dialogue_boundary(
         dialogue=dialogue,
         acting_user=sender,
     )
-
     if not boundary_check.allowed:
         return _error(
             boundary_check.code,
             boundary_check.message,
             403,
         )
-        
-    if dialogue.is_group:
+
+    security = ConversationSecurityPolicy.resolve(dialogue)
+    if security.mode == ConversationSecurityMode.BACKEND_MANAGED:
         if is_encrypted:
+            if getattr(dialogue, "is_group", False) and not context.is_organization:
+                return _error(
+                    "BAD_REQUEST",
+                    "Group messages should not be encrypted.",
+                    400,
+                )
             return _error(
                 "BAD_REQUEST",
-                "Group messages should not be encrypted.",
+                (
+                    "Backend-managed conversation messages must not use "
+                    "Personal E2EE envelopes."
+                ),
                 400,
             )
 
-        plain_text = (
-            content
-            or ""
-        ).strip()
-
-        if not plain_text:
+        if (
+            getattr(dialogue, "is_group", False)
+            and not context.is_organization
+            and not str(content or "").strip()
+        ):
             return _error(
                 "BAD_REQUEST",
                 "Message content is required for group chat.",
                 400,
             )
 
-        enforce_group_message_content_safety(
-            dialogue=dialogue,
-            text=plain_text,
-            actor=sender,
-            field_name="content",
-        )
-
-        base64_str = base64.b64encode(
-            plain_text.encode(
-                "utf-8"
-            )
-        ).decode(
-            "utf-8"
-        )
-
-        content_bytes = base64_str.encode(
-            "utf-8"
-        )
-
-        message = Message.objects.create(
+        return create_backend_managed_text_message(
             dialogue=dialogue,
             sender=sender,
-            content_encrypted=content_bytes,
-            reply_to=reply_to_message,
+            content=content,
+            reply_to_message_id=reply_to_message_id,
         )
 
-        dialogue.last_message = message
-        dialogue.save(
-            update_fields=[
-                "last_message",
-            ]
-        )
-
-        return _success({
-            "message": message,
-            "dialogue_slug": dialogue.slug,
-            "message_id": message.id,
-            "is_group": True,
-            "is_encrypted": False,
-            "reply_to_message_id":
-                reply_to_message.id
-                if reply_to_message
-                else None,
-        })
-
-    # DM flow
+    # Personal Direct E2EE flow remains unchanged.
     if not is_encrypted:
-        return _error("BAD_REQUEST", "DM messages must be encrypted on client.", 400)
+        return _error(
+            "BAD_REQUEST",
+            "DM messages must be encrypted on client.",
+            400,
+        )
 
     clean_items = _normalize_encrypted_contents(encrypted_contents)
     if not clean_items:
-        return _error("BAD_REQUEST", "encrypted_contents must be a non-empty valid list.", 400)
+        return _error(
+            "BAD_REQUEST",
+            "encrypted_contents must be a non-empty valid list.",
+            400,
+        )
 
     with transaction.atomic():
         message = Message.objects.create(
             dialogue=dialogue,
             sender=sender,
             content_encrypted=b"[Encrypted]",
-            reply_to=reply_to_message,
+            reply_to=reply_validation["message_obj"],
         )
 
         to_create = [
@@ -312,7 +380,11 @@ def create_text_message(
         "is_group": False,
         "is_encrypted": True,
         "encrypted_contents": clean_items[:500],
-        "reply_to_message_id": reply_to_message.id if reply_to_message else None,
+        "reply_to_message_id": (
+            reply_validation["message_obj"].id
+            if reply_validation["message_obj"]
+            else None
+        ),
     })
 
 
@@ -383,6 +455,9 @@ def create_file_message(
     Messenger media never enters server Media Conversion.
     """
 
+
+    security = ConversationSecurityPolicy.resolve(dialogue)
+
     reply_validation = validate_reply_target(
         dialogue=dialogue,
         acting_user=sender,
@@ -404,33 +479,19 @@ def create_file_message(
         ]
     )
 
-    boundary_check = (
-        check_private_dialogue_boundary(
-            dialogue=dialogue,
-            acting_user=sender,
-        )
-    )
-
-    if not boundary_check.allowed:
-        return _error(
-            boundary_check.code,
-            boundary_check.message,
-            403,
-        )
-
     is_forwarded = (
         forwarded_from_message
         is not None
     )
 
     # --------------------------------------------------------------
-    # Group media
+    # Backend-managed media
     # --------------------------------------------------------------
-    if dialogue.is_group:
+    if security.mode == ConversationSecurityMode.BACKEND_MANAGED:
         if is_encrypted_file:
             return _error(
                 "BAD_REQUEST",
-                "Group files must not be client-encrypted.",
+                "Backend-managed Messenger files must not be client-encrypted.",
                 400,
             )
 
@@ -443,7 +504,7 @@ def create_file_message(
         # Video intentionally returns immediately from this service and
         # enters the asynchronous ContentSafetyJob pipeline only after
         # the authoritative Message.video source has been persisted.
-        enforce_group_message_media_content_safety(
+        enforce_backend_readable_message_media_content_safety(
             dialogue=dialogue,
             file_obj=uploaded_file,
             media_field_name=field_name,
@@ -493,14 +554,13 @@ def create_file_message(
                 if not content_safety_jobs:
                     raise RuntimeError(
                         (
-                            "Group Messenger video did not create "
+                            "Backend-managed Messenger video did not create "
                             "a Content Safety job."
                         )
                     )
 
             else:
-                # Existing non-video Group Messenger behavior remains
-                # unchanged.
+                # Existing non-video backend-managed behavior remains unchanged.
                 dialogue.last_message = message
 
                 dialogue.save(
@@ -518,7 +578,7 @@ def create_file_message(
                 "message_id":
                     message.id,
                 "is_group":
-                    True,
+                    bool(dialogue.is_group),
                 "is_encrypted_file":
                     False,
                 "field_name":
@@ -543,12 +603,30 @@ def create_file_message(
         )
 
     # --------------------------------------------------------------
-    # Private E2EE media
+    # Personal Direct E2EE media
     # --------------------------------------------------------------
+    if security.mode != ConversationSecurityMode.END_TO_END_ENCRYPTED:
+        return _error(
+            "UNSUPPORTED_SECURITY_MODE",
+            "Unsupported Conversation media security mode.",
+            409,
+        )
+
+    boundary_check = check_private_dialogue_boundary(
+        dialogue=dialogue,
+        acting_user=sender,
+    )
+    if not boundary_check.allowed:
+        return _error(
+            boundary_check.code,
+            boundary_check.message,
+            403,
+        )
+
     if not is_encrypted_file:
         return _error(
             "BAD_REQUEST",
-            "DM file uploads must be end-to-end encrypted.",
+            "Personal Direct file uploads must be end-to-end encrypted.",
             400,
         )
 
@@ -667,3 +745,4 @@ def create_file_message(
                 ),
         }
     )
+

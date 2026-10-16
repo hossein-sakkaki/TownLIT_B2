@@ -1,0 +1,154 @@
+{# templates/admin/organizations/workflow_form.html
+TownLIT-Backend
+
+Created by Hossein Sakkaki on 2026-10-13.
+Last Update by Hossein Sakkaki on 2026-10-13.
+#}
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls %}
+
+{% block extrahead %}
+    {{ block.super }}
+    {{ media }}
+{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+    &rsaquo;
+    <a href="{% url 'admin:app_list' app_label=opts.app_label %}">
+        {{ opts.app_config.verbose_name }}
+    </a>
+    &rsaquo;
+    <a href="{% url opts|admin_urlname:'changelist' %}">
+        {{ opts.verbose_name_plural|capfirst }}
+    </a>
+    &rsaquo;
+    <a href="{{ back_url }}">{{ original }}</a>
+    &rsaquo;
+    {{ title }}
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+    {% if help_text %}
+        <p class="help">{{ help_text }}</p>
+    {% endif %}
+
+    {% if document_open_url %}
+        <div class="module" style="padding: 12px 16px; margin-bottom: 20px;">
+            <h2>Private verification document</h2>
+            <p>
+                The file remains private. TownLIT creates a fresh short-lived
+                signed URL only when an authorized admin opens or downloads it.
+            </p>
+            <p>
+                <a
+                    class="button"
+                    href="{{ document_open_url }}"
+                    target="_blank"
+                    rel="noopener"
+                >Open secure document</a>
+                <a class="button" href="{{ document_download_url }}">
+                    Download
+                </a>
+            </p>
+        </div>
+    {% endif %}
+
+    {% if document_rows %}
+        <div class="module" style="margin-bottom: 20px;">
+            <h2>Verification documents</h2>
+            <div class="results">
+                <table id="verification-documents-result-list">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Title</th>
+                            <th>Active</th>
+                            <th>Review status</th>
+                            <th>Reviewer note</th>
+                            <th>Secure file</th>
+                            <th>Decision</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in document_rows %}
+                            <tr class="{% cycle 'row1' 'row2' %}">
+                                <td>{{ row.document.get_document_type_display }}</td>
+                                <td>{{ row.document.title|default:"—" }}</td>
+                                <td>{{ row.document.is_active|yesno:"Yes,No" }}</td>
+                                <td>{{ row.document.get_review_status_display }}</td>
+                                <td>{{ row.document.review_note|default:"—" }}</td>
+                                <td>
+                                    <a
+                                        class="button"
+                                        href="{{ row.open_url }}"
+                                        target="_blank"
+                                        rel="noopener"
+                                    >Open</a>
+                                    <a class="button" href="{{ row.download_url }}">
+                                        Download
+                                    </a>
+                                </td>
+                                <td>
+                                    {% if row.document.is_active %}
+                                        <a class="button" href="{{ row.review_url }}">
+                                            Review
+                                        </a>
+                                    {% else %}
+                                        —
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        {% empty %}
+                            <tr>
+                                <td colspan="7">No verification documents.</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    {% endif %}
+
+    <form method="post" novalidate>
+        {% csrf_token %}
+
+        {% if form.non_field_errors %}
+            <ul class="errorlist nonfield">
+                {% for error in form.non_field_errors %}
+                    <li>{{ error }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+
+        <fieldset class="module aligned">
+            {% for field in form %}
+                <div class="form-row{% if field.errors %} errors{% endif %}">
+                    {{ field.errors }}
+                    <div>
+                        {{ field.label_tag }}
+                        {{ field }}
+                        {% if field.help_text %}
+                            <div class="help">{{ field.help_text }}</div>
+                        {% endif %}
+                    </div>
+                </div>
+            {% endfor %}
+        </fieldset>
+
+        <div class="submit-row">
+            <input
+                type="submit"
+                value="{{ submit_label|default:'Apply' }}"
+                class="default"
+            >
+            <a href="{{ back_url }}" class="button cancel-link">
+                {% translate "Cancel" %}
+            </a>
+        </div>
+    </form>
+</div>
+{% endblock %}

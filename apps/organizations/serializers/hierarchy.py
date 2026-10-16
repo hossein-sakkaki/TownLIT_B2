@@ -1,9 +1,9 @@
 # apps/organizations/serializers/hierarchy.py
 #
-# TownLIT
+# TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-08-30.
-# Last Update by Hossein Sakkaki on 2026-08-30.
+# Last Update by Hossein Sakkaki on 2026-10-01.
 #
 
 from rest_framework import serializers
@@ -13,12 +13,37 @@ from apps.organizations.constants import (
     OrganizationRelationshipType,
 )
 from apps.organizations.models import (
+    Organization,
     OrganizationRelationship,
     OrganizationRelationshipConsent,
 )
+from apps.organizations.selectors.verification import is_organization_verified
 
 
 from apps.organizations.services.access import user_has_organization_permission
+
+
+class OrganizationRelationshipCandidateSerializer(serializers.ModelSerializer):
+    is_verified = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Organization
+        fields = [
+            "public_id",
+            "name",
+            "short_name",
+            "slug",
+            "kind",
+            "country",
+            "city",
+            "is_verified",
+        ]
+        read_only_fields = fields
+
+    def get_is_verified(self, obj):
+        return is_organization_verified(
+            organization=obj,
+        )
 
 
 class OrganizationRelationshipConsentSerializer(serializers.ModelSerializer):
@@ -126,3 +151,4 @@ class OrganizationRelationshipCreateSerializer(serializers.Serializer):
 
 class OrganizationRelationshipConsentProposalSerializer(serializers.Serializer):
     organization_slug = serializers.SlugField()
+

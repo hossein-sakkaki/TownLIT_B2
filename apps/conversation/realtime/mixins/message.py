@@ -1,4 +1,9 @@
 # apps/conversation/realtime/mixins/message.py
+# TownLIT-Backend
+#
+# Created by Hossein Sakkaki on 2026-10-06.
+# Last Update by Hossein Sakkaki on 2026-10-06.
+#
 
 import base64
 
@@ -7,11 +12,21 @@ from channels.db import database_sync_to_async
 from django.utils import timezone
 
 from apps.conversation.models import Message, Dialogue, MessageEncryption
+from apps.conversation.policies import (
+    ConversationAccessPolicy,
+    ConversationContextKind,
+    ConversationContextPolicy,
+)
 from apps.accounts.models.devices import UserDeviceKey
 from apps.accounts.services.sender_verification import is_sender_device_verified
 from apps.core.websocket.services.redis_online_manager import get_online_status_for_users
 from apps.conversation.tasks import deliver_offline_message
 from apps.conversation.services.message_creation import create_text_message
+from apps.conversation.services.realtime_access import get_dialogue_for_user
+from apps.conversation.services.organization.direct_messages import (
+    send_organization_direct_participant_message,
+    send_organization_direct_reply,
+)
 from apps.conversation.services.event_contracts import (
     build_dm_chat_message_data,
     build_group_chat_message_data,
@@ -19,6 +34,11 @@ from apps.conversation.services.event_contracts import (
 )
 from apps.conversation.services.message_reply import build_reply_preview
 from apps.conversation.services.message_forward import build_forward_preview
+from apps.conversation.services.message_visibility import (
+    visible_participant_ids_for_message,
+)
+
+
 
 
 class MessageMixin:
@@ -50,15 +70,69 @@ class MessageMixin:
             )
             return
 
-        try:
-            dialogue = await sync_to_async(Dialogue.objects.get)(
-                slug=dialogue_slug,
-                participants=self.user,
-            )
-        except Dialogue.DoesNotExist:
+        dialogue = await database_sync_to_async(get_dialogue_for_user)(
+            dialogue_slug,
+            self.user,
+        )
+        if dialogue is None:
             await self._send_error(
                 code="NOT_FOUND",
                 message="Dialogue not found",
+            )
+            return
+
+        context = await database_sync_to_async(
+            ConversationContextPolicy.resolve
+        )(dialogue)
+
+        if context.kind == ConversationContextKind.ORGANIZATION_DIRECT:
+            if is_encrypted:
+                await self._send_error(
+                    code="ORGANIZATION_DIRECT_BACKEND_MANAGED",
+                    message=(
+                        "Organization Direct uses backend-managed messaging "
+                        "and must not use Personal DM encryption envelopes."
+                    ),
+                )
+                return
+
+            organization_context = context.organization_context
+            if self.user.id == organization_context.participant_user_id:
+                result = await database_sync_to_async(
+                    send_organization_direct_participant_message
+                )(
+                    organization=organization_context.organization,
+                    participant_user=self.user,
+                    content=content,
+                    reply_to_message_id=reply_to_message_id,
+                )
+            else:
+                result = await database_sync_to_async(
+                    send_organization_direct_reply
+                )(
+                    context=organization_context,
+                    acting_user=self.user,
+                    content=content,
+                    reply_to_message_id=reply_to_message_id,
+                )
+
+            if not result.get("ok"):
+                await self._send_error(
+                    code=result.get("code", "MESSAGE_CREATE_FAILED"),
+                    message=result.get("message", "Failed to create message"),
+                )
+            return
+
+        access = await database_sync_to_async(
+            lambda: ConversationAccessPolicy.can_send_as_self(
+                dialogue=dialogue,
+                user=self.user,
+            )
+        )()
+        if not access.allowed:
+            await self._send_error(
+                code=access.code or "FORBIDDEN",
+                message=access.message or "Conversation access denied",
             )
             return
 
@@ -156,7 +230,26 @@ class MessageMixin:
         """
         plain_message = self._decode_group_plaintext(message)
 
-        reply_preview = await database_sync_to_async(build_reply_preview)(
+        context = await database_sync_to_async(
+            ConversationContextPolicy.resolve
+        )(dialogue)
+        is_members_community = (
+            context.kind
+            == ConversationContextKind.ORGANIZATION_MEMBERS_COMMUNITY
+        )
+        if is_members_community:
+            visible_ids = set(
+                await database_sync_to_async(
+                    visible_participant_ids_for_message
+                )(message=message)
+            )
+            participants = [
+                participant
+                for participant in participants
+                if participant.id in visible_ids
+            ]
+
+        sender_reply_preview = await database_sync_to_async(build_reply_preview)(
             message=message,
             acting_user=self.user,
         )
@@ -164,15 +257,20 @@ class MessageMixin:
             message=message,
         )
 
-        base_payload = build_group_chat_message_data(
-            message=message,
-            plain_text=plain_message,
-            reply_preview=reply_preview,
-            forward_preview=forward_preview,
-        )
-
         for participant in participants:
-            payload = dict(base_payload)
+            reply_preview = sender_reply_preview
+            if is_members_community and participant.id != self.user.id:
+                reply_preview = await database_sync_to_async(build_reply_preview)(
+                    message=message,
+                    acting_user=participant,
+                )
+
+            payload = build_group_chat_message_data(
+                message=message,
+                plain_text=plain_message,
+                reply_preview=reply_preview,
+                forward_preview=forward_preview,
+            )
 
             if participant.id == self.user.id:
                 payload["is_delivered"] = False

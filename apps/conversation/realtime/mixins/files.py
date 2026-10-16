@@ -1,9 +1,14 @@
 # apps/conversation/realtime/mixins/files.py
+# TownLIT-Backend
+#
+# Last Update by Hossein Sakkaki on 2026-10-16.
+#
 
 from asgiref.sync import sync_to_async
 from channels.db import database_sync_to_async
 
 from apps.conversation.models import Message
+from apps.conversation.policies import ConversationContextKind, ConversationContextPolicy
 from apps.accounts.services.sender_verification import is_sender_device_verified
 from apps.conversation.services.realtime_access import get_dialogue_for_user
 from apps.conversation.services.file_realtime import (
@@ -73,7 +78,16 @@ class FileEventsMixin:
             )
 
     async def _load_dialogue_for_user(self, dialogue_slug):
-        return await sync_to_async(get_dialogue_for_user)(dialogue_slug, self.user)
+        return await database_sync_to_async(get_dialogue_for_user)(
+            dialogue_slug,
+            self.user,
+        )
+
+    async def _is_organization_direct(self, dialogue) -> bool:
+        context = await database_sync_to_async(
+            ConversationContextPolicy.resolve
+        )(dialogue)
+        return context.kind == ConversationContextKind.ORGANIZATION_DIRECT
 
     # ------------------------------------------------------------
     # FILE MESSAGE
@@ -84,6 +98,14 @@ class FileEventsMixin:
         file_type = (data.get("file_type") or "").strip().lower()
 
         if not dialogue_slug or not message_id or file_type not in self.VALID_FILE_TYPES:
+            return
+
+        dialogue = await self._load_dialogue_for_user(dialogue_slug)
+        if not dialogue:
+            return
+        if await self._is_organization_direct(dialogue):
+            # Organization Direct media is created/finalized by the REST
+            # shared-media path. Avoid a duplicate realtime mutation here.
             return
 
         try:
@@ -167,6 +189,17 @@ class FileEventsMixin:
         dialogue = await self._load_dialogue_for_user(dialogue_slug)
         if not dialogue:
             return
+        if await self._is_organization_direct(dialogue):
+            await self.consumer.send_app_event(
+                app="conversation",
+                event="upload_canceled",
+                data={
+                    "dialogue_slug": dialogue_slug,
+                    "file_type": file_type,
+                    "status": "cancelled",
+                },
+            )
+            return
 
         payload = build_upload_canceled_payload(
             dialogue_slug=dialogue_slug,
@@ -204,6 +237,10 @@ class FileEventsMixin:
         """
         dialogue = await self._load_dialogue_for_user(dialogue_slug)
         if not dialogue:
+            return
+        if await self._is_organization_direct(dialogue):
+            # Upload progress is local-only for Organization Direct so the
+            # underlying human operator identity is never exposed.
             return
 
         payload = build_file_upload_status_payload(
@@ -249,6 +286,9 @@ class FileEventsMixin:
         dialogue = await self._load_dialogue_for_user(dialogue_slug)
         if not dialogue:
             return
+        if await self._is_organization_direct(dialogue):
+            # Recording presence is intentionally hidden for Organization Direct.
+            return
 
         payload = build_recording_status_payload(
             dialogue_slug=dialogue_slug,
@@ -266,3 +306,4 @@ class FileEventsMixin:
                 "data": payload,
             },
         )
+

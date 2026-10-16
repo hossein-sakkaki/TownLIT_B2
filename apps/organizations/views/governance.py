@@ -3,7 +3,7 @@
 # TownLIT
 #
 # Created by Hossein Sakkaki on 2026-08-30.
-# Last Update by Hossein Sakkaki on 2026-08-30.
+# Last Update by Hossein Sakkaki on 2026-10-01.
 #
 
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -31,6 +31,7 @@ from apps.organizations.serializers import (
     OrganizationGovernanceProposalSerializer,
     OrganizationGovernanceRuleSerializer,
     OrganizationGovernanceVoteSerializer,
+    OrganizationMembershipManagementSerializer,
 )
 from apps.organizations.services.access import user_has_organization_permission
 from apps.organizations.services.governance import (
@@ -38,6 +39,7 @@ from apps.organizations.services.governance import (
     cast_governance_vote,
     create_governance_proposal,
     finalize_governance_proposal,
+    governance_owner_target_memberships,
     open_governance_proposal,
 )
 
@@ -45,16 +47,33 @@ from .access import get_visible_organization_or_404
 from .helpers import raise_drf_validation_error
 
 
-def _get_visible_proposal(user, public_id):
-    proposal = (
-        OrganizationGovernanceProposal.objects
+def _proposal_queryset_with_details(queryset):
+    return (
+        queryset
         .select_related(
             "organization",
             "rule",
-            "target_membership",
-            "relationship",
+            "target_membership__member__user",
+            "relationship__source_organization",
+            "relationship__target_organization",
+            "relationship__requested_by_organization",
+            "proposed_by_membership__member__user",
         )
-        .prefetch_related("electors", "votes__elector")
+        .prefetch_related(
+            "target_membership__role_assignments__role__permissions",
+            "relationship__consents__organization",
+            "relationship__consents__governance_proposal",
+            "electors",
+            "votes__elector",
+        )
+    )
+
+
+def _get_visible_proposal(user, public_id):
+    proposal = (
+        _proposal_queryset_with_details(
+            OrganizationGovernanceProposal.objects.all()
+        )
         .filter(public_id=public_id)
         .first()
     )
@@ -81,11 +100,18 @@ class OrganizationGovernanceRulesView(APIView):
             slug=slug,
         )
 
-        if not user_has_organization_permission(
+        can_view_admin = user_has_organization_permission(
             user=request.user,
             organization=organization,
             permission_key=OrganizationPermissionKey.VIEW_ADMIN,
-        ):
+        )
+        can_manage_governance = user_has_organization_permission(
+            user=request.user,
+            organization=organization,
+            permission_key=OrganizationPermissionKey.MANAGE_GOVERNANCE,
+        )
+
+        if not (can_view_admin or can_manage_governance):
             raise PermissionDenied(
                 "You do not have permission to view organization governance rules."
             )
@@ -94,6 +120,45 @@ class OrganizationGovernanceRulesView(APIView):
             OrganizationGovernanceRuleSerializer(
                 organization.governance_rules.filter(is_active=True),
                 many=True,
+            ).data
+        )
+
+
+class OrganizationGovernanceOwnerCandidatesView(APIView):
+    permission_classes = [IsAuthenticated, OrganizationsEnabledPermission]
+
+    def get(self, request, slug):
+        organization = get_visible_organization_or_404(
+            user=request.user,
+            slug=slug,
+        )
+
+        if not user_has_organization_permission(
+            user=request.user,
+            organization=organization,
+            permission_key=OrganizationPermissionKey.MANAGE_GOVERNANCE,
+        ):
+            raise PermissionDenied(
+                "You do not have permission to manage organization governance."
+            )
+
+        action_key = str(
+            request.query_params.get("action_key") or ""
+        ).strip()
+
+        try:
+            memberships = governance_owner_target_memberships(
+                organization=organization,
+                action_key=action_key,
+            )
+        except DjangoValidationError as exc:
+            raise_drf_validation_error(exc)
+
+        return Response(
+            OrganizationMembershipManagementSerializer(
+                memberships,
+                many=True,
+                context={"request": request},
             ).data
         )
 
@@ -108,9 +173,11 @@ class OrganizationGovernanceProposalsView(APIView):
         )
         return Response(
             OrganizationGovernanceProposalSerializer(
-                governance_proposals_for_viewer(
-                    organization=organization,
-                    user=request.user,
+                _proposal_queryset_with_details(
+                    governance_proposals_for_viewer(
+                        organization=organization,
+                        user=request.user,
+                    )
                 ),
                 many=True,
                 context={"request": request},

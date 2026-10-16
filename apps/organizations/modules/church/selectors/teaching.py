@@ -22,7 +22,7 @@ from apps.organizations.modules.church.services.access import (
     ensure_church_permission,
     user_has_church_permission,
 )
-from apps.posts.models.church_teaching import ChurchTeachingContent
+from apps.organization_media.models.church_teaching import ChurchTeachingContent
 
 
 def list_church_teaching_series(*, workspace, include_archived=False):

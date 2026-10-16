@@ -32,7 +32,7 @@ from apps.organizations.modules.church.models import (
     ChurchTeachingSeries,
 )
 
-from apps.posts.models.church_teaching import (
+from apps.organization_media.models.church_teaching import (
     ChurchTeachingContent,
     ChurchTeachingScriptureReference,
 )

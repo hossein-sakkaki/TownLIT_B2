@@ -62,6 +62,21 @@ class DeliveryMixin:
             return
 
         payload = result["payload"]
+        if payload.get("organization_direct") and payload.get("delivered_to_organization"):
+            await self.channel_layer.group_send(
+                f"user_{payload['participant_user_id']}",
+                {
+                    "type": "dispatch_event",
+                    "app": "conversation",
+                    "event": "organization_direct_delivery",
+                    "data": {
+                        "dialogue_slug": payload["dialogue_slug"],
+                        "message_id": payload["message_id"],
+                        "delivered_to_organization": True,
+                    },
+                },
+            )
+            return
         await self._broadcast_delivery_to_sender_by_payload(payload)
 
     async def mark_as_delivered(self, event):

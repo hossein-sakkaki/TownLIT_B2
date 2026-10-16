@@ -1,15 +1,36 @@
+# apps/conversation/services/content_safety.py
+# TownLIT-Backend
 #
-#  apps/conversation/services/content_safety.py
-#  TownLIT-Backend
-#
-#  Created by Hossein Sakkaki on 2026-08-14.
-#  Last Update by Hossein Sakkaki on 2026-08-14.
+# Created by Hossein Sakkaki on 2026-08-14.
+# Last Update by Hossein Sakkaki on 2026-10-06.
 #
 
 from __future__ import annotations
 
 from apps.content_safety.enums import SafetyContext
 from apps.content_safety.services.text import enforce_text_safety
+
+
+def enforce_backend_readable_message_content_safety(
+    *,
+    text,
+    actor,
+    field_name: str = "content",
+) -> None:
+    """Enforce the existing Messenger text policy for backend-readable content."""
+    if not isinstance(text, str):
+        return
+
+    cleaned = text.strip()
+    if not cleaned:
+        return
+
+    enforce_text_safety(
+        text=cleaned,
+        context=SafetyContext.GROUP_MESSAGE,
+        actor=actor,
+        field_name=field_name,
+    )
 
 
 def enforce_group_message_content_safety(
@@ -35,20 +56,8 @@ def enforce_group_message_content_safety(
     ):
         return
 
-    if not isinstance(
-        text,
-        str,
-    ):
-        return
-
-    cleaned = text.strip()
-
-    if not cleaned:
-        return
-
-    enforce_text_safety(
-        text=cleaned,
-        context=SafetyContext.GROUP_MESSAGE,
+    enforce_backend_readable_message_content_safety(
+        text=text,
         actor=actor,
         field_name=field_name,
     )

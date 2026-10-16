@@ -72,6 +72,7 @@ from apps.accounts.account_deletion.exceptions import (
     AccountDeletionError,
 )
 from apps.accounts.account_deletion.service import (
+    account_deletion_grace_days,
     cancel_account_deletion,
     schedule_account_deletion,
 )
@@ -1981,8 +1982,12 @@ class AuthViewSet(viewsets.ViewSet):
                 status=status.HTTP_409_CONFLICT,
             )
 
+        confirmation_code_length = 5
+
         active_code = str(
-            create_active_code(5)
+            create_active_code(
+                confirmation_code_length
+            )
         )
 
         expiration_minutes = (
@@ -2022,11 +2027,7 @@ class AuthViewSet(viewsets.ViewSet):
             "site_domain": settings.SITE_URL,
             "logo_base_url": settings.EMAIL_LOGO_URL,
             "expiration_minutes": expiration_minutes,
-            "grace_days": getattr(
-                settings,
-                "ACCOUNT_DELETION_GRACE_DAYS",
-                30,
-            ),
+            "grace_days": account_deletion_grace_days(),
             "current_year": timezone.now().year,
         }
 
@@ -2061,10 +2062,19 @@ class AuthViewSet(viewsets.ViewSet):
                     "A confirmation code was sent to "
                     "your email."
                 ),
+                "confirmation_code_length": (
+                    confirmation_code_length
+                ),
+                "confirmation_code_expires_in_minutes": (
+                    expiration_minutes
+                ),
+                "deletion_grace_days": (
+                    account_deletion_grace_days()
+                ),
             },
             status=status.HTTP_200_OK,
         )
-        
+                
         
     @action(
         detail=False,
@@ -2213,11 +2223,7 @@ class AuthViewSet(viewsets.ViewSet):
             "deletion_scheduled_for": (
                 deleted_user.deletion_scheduled_for
             ),
-            "grace_days": getattr(
-                settings,
-                "ACCOUNT_DELETION_GRACE_DAYS",
-                30,
-            ),
+            "grace_days": account_deletion_grace_days(),
             "logo_base_url": settings.EMAIL_LOGO_URL,
             "site_domain": settings.SITE_URL,
             "current_year": timezone.now().year,

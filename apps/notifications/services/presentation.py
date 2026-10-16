@@ -1,4 +1,9 @@
 # apps/notifications/services/presentation.py
+# TownLIT
+#
+# Created by Hossein Sakkaki on 2025-10-03.
+# Last Update by Hossein Sakkaki on 2026-10-03.
+#
 
 from __future__ import annotations
 
@@ -70,6 +75,38 @@ STATIC_PUSH_TITLES = {
 
     # Journey
     "new_journey": "New Journey update",
+
+    # Organizations
+    "organization_membership_requested": "New membership request",
+    "organization_membership_invited": "Organization invitation",
+    "organization_membership_accepted": "Membership accepted",
+    "organization_membership_rejected": "Membership request declined",
+    "organization_membership_withdrawn": "Membership request withdrawn",
+    "organization_membership_canceled": "Organization invitation canceled",
+    "organization_member_left": "Organization member left",
+    "organization_member_removed": "Organization membership ended",
+    "organization_role_assigned": "Organization role assigned",
+    "organization_role_revoked": "Organization role changed",
+    "organization_module_enabled": "Organization service enabled",
+    "organization_module_disabled": "Organization service disabled",
+    "organization_module_suspended": "Organization service suspended",
+    "organization_module_restored": "Organization service restored",
+    "organization_module_updated": "Organization service updated",
+    "organization_verification_needs_information": "Verification needs information",
+    "organization_verification_approved": "Organization verified",
+    "organization_verification_rejected": "Verification not approved",
+    "organization_verification_revoked": "Organization verification revoked",
+    "organization_relationship_requested": "Organization relationship request",
+    "organization_relationship_consent_approved": "Organization relationship approved",
+    "organization_relationship_consent_rejected": "Organization relationship declined",
+    "organization_relationship_activated": "Organization relationship active",
+    "organization_relationship_ended": "Organization relationship ended",
+    "organization_governance_opened": "Governance action requires attention",
+    "organization_governance_decided": "Governance decision recorded",
+    "organization_governance_execution_failed": "Governance action failed",
+    "organization_subscription_trial_started": "Organization trial started",
+    "organization_subscription_activated": "Organization subscription active",
+    "organization_billing_profile_updated": "Organization billing updated",
 }
 
 

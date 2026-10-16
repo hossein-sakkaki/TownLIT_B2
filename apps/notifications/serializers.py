@@ -2,8 +2,8 @@
 #
 # TownLIT
 #
-# Created by Hossein Sakkaki on 2026-09-04.
-# Last Update by Hossein Sakkaki on 2026-09-04.
+# Created by Hossein Sakkaki on 2025-09-04.
+# Last Update by Hossein Sakkaki on 2026-10-03.
 #
 
 from django.utils import timezone
@@ -166,6 +166,8 @@ class NotificationSerializer(serializers.ModelSerializer):
     )
 
     actor = UserMiniSerializer(read_only=True)
+    notification_context = serializers.SerializerMethodField()
+    organization = serializers.SerializerMethodField()
 
     class Meta:
         model = Notification
@@ -187,6 +189,8 @@ class NotificationSerializer(serializers.ModelSerializer):
             "action_content_type",
             "action_object_id",
             "actor",
+            "notification_context",
+            "organization",
         ]
 
         read_only_fields = [
@@ -201,7 +205,28 @@ class NotificationSerializer(serializers.ModelSerializer):
             "action_content_type",
             "action_object_id",
             "notification_type_display",
+            "notification_context",
+            "organization",
         ]
+
+    def get_notification_context(self, obj):
+        return (
+            "organization"
+            if obj.organization_context_id
+            else "personal"
+        )
+
+    def get_organization(self, obj):
+        organization = getattr(obj, "organization_context", None)
+        if organization is None:
+            return None
+
+        return {
+            "public_id": str(organization.public_id),
+            "slug": organization.slug,
+            "name": organization.name,
+            "short_name": organization.short_name or "",
+        }
 
 
 class NotificationMarkReadSerializer(serializers.ModelSerializer):

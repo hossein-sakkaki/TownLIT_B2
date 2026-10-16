@@ -90,4 +90,8 @@ urlpatterns = [
         ),
     ),
 
+
+    path("organization-media/", include("apps.organization_media.urls")),
+    path("organization-content/", include("apps.organization_content.urls")),
+    
 ]

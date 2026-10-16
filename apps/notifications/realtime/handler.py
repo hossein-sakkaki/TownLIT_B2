@@ -1,4 +1,9 @@
 # apps/notifications/realtime/handler.py
+# TownLIT
+#
+# Created by Hossein Sakkaki on 2025-10-03.
+# Last Update by Hossein Sakkaki on 2026-10-03.
+#
 
 import logging
 
@@ -68,6 +73,7 @@ class NotificationsHandler:
             .filter(
                 user_id=self.user.id,
                 is_read=False,
+                organization_context__isnull=True,
             )
             .exclude(
                 notification_type__in=(

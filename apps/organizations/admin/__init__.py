@@ -15,6 +15,7 @@ from . import organizations  # noqa: F401
 from . import roles  # noqa: F401
 from . import verification  # noqa: F401
 from . import modules  # noqa: F401
+from . import profile  # noqa: F401
 
 from apps.organizations.modules.church import admin as church_admin  # noqa: F401
 from apps.organizations.modules.worship import admin as worship_admin  # noqa: F401

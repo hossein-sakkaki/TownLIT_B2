@@ -130,6 +130,14 @@ from apps.organizations.modules.worship.models import (
     WorshipAuditLog,
 )
 
+
+from .profile import (
+    OrganizationBusinessHour,
+    OrganizationContactPoint,
+    OrganizationRepresentative,
+)
+
+
 __all__ += [
     "WorshipWorkspace",
     "OrganizationRightsParty",
@@ -137,4 +145,10 @@ __all__ += [
     "OrganizationMusicLicenseEvidence",
     "OrganizationMusicContribution",
     "WorshipAuditLog",
+]
+
+__all__ += [
+    "OrganizationBusinessHour",
+    "OrganizationContactPoint",
+    "OrganizationRepresentative",
 ]

@@ -3,7 +3,7 @@
 # TownLIT
 #
 # Created by Hossein Sakkaki on 2026-08-29.
-# Last Update by Hossein Sakkaki on 2026-08-29.
+# Last Update by Hossein Sakkaki on 2026-10-01.
 #
 
 from datetime import timedelta
@@ -155,6 +155,22 @@ def _validate_proposal_target(
                 "Target membership is not an active organization owner."
             )
 
+        active_owner_count = (
+            _active_role_assignments_queryset(
+                organization=organization,
+                now=timezone.now(),
+            )
+            .filter(role=owner_role)
+            .values("membership_id")
+            .distinct()
+            .count()
+        )
+
+        if active_owner_count <= 1:
+            raise ValidationError(
+                "The final organization owner cannot be removed."
+            )
+
     elif action_key == OrganizationGovernanceAction.ORGANIZATION_CLOSURE:
         if organization.status != OrganizationStatus.ACTIVE:
             raise ValidationError(
@@ -238,6 +254,62 @@ def _active_role_assignments_queryset(*, organization, now):
             Q(ends_at__isnull=True)
             | Q(ends_at__gt=now)
         )
+    )
+
+
+def governance_owner_target_memberships(
+    *,
+    organization,
+    action_key,
+    now=None,
+):
+    """Return valid active membership targets for owner governance actions."""
+    ensure_organization_governance_enabled()
+    now = now or timezone.now()
+
+    if action_key not in {
+        OrganizationGovernanceAction.OWNER_ADDITION,
+        OrganizationGovernanceAction.OWNER_REMOVAL,
+    }:
+        raise ValidationError({
+            "action_key": "Owner target lookup requires an owner governance action.",
+        })
+
+    owner_role = get_owner_role(organization)
+    owner_membership_ids = list(
+        _active_role_assignments_queryset(
+            organization=organization,
+            now=now,
+        )
+        .filter(role=owner_role)
+        .values_list("membership_id", flat=True)
+        .distinct()
+    )
+
+    memberships = (
+        OrganizationMembership.objects
+        .select_related("member__user")
+        .prefetch_related(
+            "role_assignments__role__permissions",
+        )
+        .filter(
+            organization=organization,
+            status=OrganizationMembershipStatus.ACTIVE,
+        )
+    )
+
+    if action_key == OrganizationGovernanceAction.OWNER_ADDITION:
+        return memberships.exclude(id__in=owner_membership_ids).order_by(
+            "member__user__id",
+            "id",
+        )
+
+    if len(owner_membership_ids) <= 1:
+        return memberships.none()
+
+    return memberships.filter(id__in=owner_membership_ids).order_by(
+        "member__user__id",
+        "id",
     )
 
 
