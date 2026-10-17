@@ -9,4 +9,4 @@
 def get_upload_path(category, file_type, sub_folder):
     """ Import FileUpload dynamically to avoid circular import issues. """
     from utils.common.utils import FileUpload
-    return FileUpload(category, file_type, sub_folder).dir_upload
+    return FileUpload(category, file_type, sub_folder)

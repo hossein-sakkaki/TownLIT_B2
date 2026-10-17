@@ -19,7 +19,7 @@ class Brand(SlugMixin):
     
     id = models.BigAutoField(primary_key=True)
     brand_title = models.CharField(max_length=100, verbose_name='Brand')
-    image_name = models.ImageField(upload_to=BRAND_IMAGE.dir_upload, validators=[validate_image_file, validate_image_size, validate_no_executable_file], verbose_name='Product group picture')
+    image_name = models.ImageField(upload_to=BRAND_IMAGE, validators=[validate_image_file, validate_image_size, validate_no_executable_file], verbose_name='Product group picture')
     url_name = 'brand_detail'
     
     def get_slug_source(self):
@@ -35,7 +35,7 @@ class ProductGroup(SlugMixin):
     
     id = models.BigAutoField(primary_key=True)
     group_title = models.CharField(max_length=100, verbose_name='Product Group Title')
-    image_name = models.ImageField(upload_to=PRODUCT_GROUP_IMAGE.dir_upload, validators=[validate_image_file, validate_image_size, validate_no_executable_file], verbose_name='Product Group Picture')
+    image_name = models.ImageField(upload_to=PRODUCT_GROUP_IMAGE, validators=[validate_image_file, validate_image_size, validate_no_executable_file], verbose_name='Product Group Picture')
     description = models.TextField(blank=True, verbose_name='Product Group Description')
     group_parent = models.ForeignKey('ProductGroup', on_delete=models.SET_NULL, null=True, blank=True, related_name='groups', verbose_name='Parent Product Group')
     
@@ -70,7 +70,7 @@ class Product(SlugMixin):
     product_name = models.CharField(max_length=150, verbose_name='Product Name')
     summary_description = models.TextField(null=True, blank=True, verbose_name='Summary Description')
     description = RichTextUploadingField(config_name='default', blank=True, null=True, verbose_name='Product Description')
-    image_name = models.ImageField(upload_to=PRODUCT_IMAGE.dir_upload, validators=[validate_image_file, validate_image_size, validate_no_executable_file], verbose_name='Product Picture')
+    image_name = models.ImageField(upload_to=PRODUCT_IMAGE, validators=[validate_image_file, validate_image_size, validate_no_executable_file], verbose_name='Product Picture')
     
     product_groups = models.ManyToManyField(ProductGroup, related_name='products', verbose_name='Product Group')
     brand = models.ForeignKey(Brand, on_delete=models.CASCADE, null=True, related_name='brands', verbose_name='Product Brand')
@@ -116,7 +116,7 @@ class Gallery(models.Model):
     
     id = models.BigAutoField(primary_key=True)
     product_gallery = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='product_gallery', verbose_name='Product Gallery')
-    image_name = models.ImageField(upload_to=PRODUCT_IMAGE.dir_upload, validators=[validate_image_file, validate_image_size, validate_no_executable_file], verbose_name='Product Picture')
+    image_name = models.ImageField(upload_to=PRODUCT_IMAGE, validators=[validate_image_file, validate_image_size, validate_no_executable_file], verbose_name='Product Picture')
     
     def clean(self):
         max_images = 6

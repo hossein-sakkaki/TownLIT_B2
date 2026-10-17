@@ -109,7 +109,7 @@ class CreativeComposition(
     # Uploaded source
     # -------------------------------------------------
     source_image = models.ImageField(
-        upload_to=SOURCE_IMAGE.dir_upload,
+        upload_to=SOURCE_IMAGE,
         max_length=700,
         null=True,
         blank=True,
@@ -168,7 +168,7 @@ class CreativeComposition(
     # Canonical render output
     # -------------------------------------------------
     rendered_image = models.ImageField(
-        upload_to=RENDERED_IMAGE.dir_upload,
+        upload_to=RENDERED_IMAGE,
         max_length=700,
         null=True,
         blank=True,
@@ -179,7 +179,7 @@ class CreativeComposition(
     )
 
     rendered_video = models.FileField(
-        upload_to=RENDERED_VIDEO.dir_upload,
+        upload_to=RENDERED_VIDEO,
         max_length=700,
         null=True,
         blank=True,
@@ -189,7 +189,7 @@ class CreativeComposition(
     )
 
     thumbnail = models.ImageField(
-        upload_to=THUMBNAIL_IMAGE.dir_upload,
+        upload_to=THUMBNAIL_IMAGE,
         max_length=700,
         null=True,
         blank=True,

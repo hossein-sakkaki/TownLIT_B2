@@ -80,7 +80,7 @@ class VideoTranscript(models.Model):
     full_text = models.TextField(blank=True, default="")  # Optional convenience
 
     stt_audio = models.FileField(
-        upload_to=STT_AUDIO.dir_upload,
+        upload_to=STT_AUDIO,
         null=True,
         blank=True,
         validators=[validate_audio_file, validate_no_executable_file],
@@ -290,7 +290,7 @@ class VoiceTrack(models.Model):
     )
 
     audio = models.FileField(
-        upload_to=VOICE_AUDIO.dir_upload,
+        upload_to=VOICE_AUDIO,
         null=True,
         blank=True,
         validators=[validate_audio_file, validate_no_executable_file],

@@ -82,7 +82,7 @@ class CreativeCompositionMedia(
     # -------------------------------------------------
 
     source_image = models.ImageField(
-        upload_to=SOURCE_IMAGE.dir_upload,
+        upload_to=SOURCE_IMAGE,
         max_length=700,
         null=True,
         blank=True,
@@ -103,7 +103,7 @@ class CreativeCompositionMedia(
     # -------------------------------------------------
 
     source_video = models.FileField(
-        upload_to=SOURCE_VIDEO.dir_upload,
+        upload_to=SOURCE_VIDEO,
         max_length=700,
         null=True,
         blank=True,

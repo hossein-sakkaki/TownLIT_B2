@@ -172,7 +172,7 @@ class UserFeedback(MediaConversionMixin, models.Model):
     title = models.CharField(max_length=255, verbose_name='Title')
     content = RichTextUploadingField(config_name='default', verbose_name='Content')
     screenshot = models.FileField(
-        upload_to=SCREENSHOT.dir_upload, 
+        upload_to=SCREENSHOT, 
         blank=True, null=True, 
         validators=[validate_image_file, validate_image_size, validate_no_executable_file], 
         verbose_name='Document')
@@ -311,12 +311,12 @@ class OfficialVideo(MediaConversionMixin, models.Model):
     episode_number = models.PositiveIntegerField(null=True, blank=True, verbose_name="Episode Number")
     view_count = models.PositiveIntegerField(default=0, verbose_name="View Count")
     video = models.FileField(
-                        upload_to=VIDEO.dir_upload,
+                        upload_to=VIDEO,
                         validators=[validate_video_file, validate_no_executable_file],
                         verbose_name="Video File",
     )
     thumbnail = models.FileField(
-                        upload_to=THUMBNAIL.dir_upload, 
+                        upload_to=THUMBNAIL, 
                         validators=[validate_image_file, validate_image_size, validate_no_executable_file], 
                         verbose_name="Thumbnail / Poster")
 

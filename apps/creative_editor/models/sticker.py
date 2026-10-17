@@ -87,7 +87,7 @@ class StickerAsset(
     title = models.CharField(max_length=120)
     description = models.TextField(blank=True, default="")
     image = models.ImageField(
-        upload_to=IMAGE.dir_upload,
+        upload_to=IMAGE,
         max_length=700,
         validators=[
             validate_image_file,

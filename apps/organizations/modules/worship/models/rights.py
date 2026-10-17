@@ -33,7 +33,7 @@ def organization_music_license_evidence_upload_to(
     instance,
     filename,
 ):
-    return LICENSE_EVIDENCE.dir_upload(
+    return LICENSE_EVIDENCE(
         instance,
         filename,
     )

@@ -34,28 +34,28 @@ ORGANIZATION_VERIFICATION_UPLOAD = FileUpload(
 
 
 def organization_logo_upload_to(instance, filename):
-    return ORGANIZATION_LOGO_UPLOAD.dir_upload(
+    return ORGANIZATION_LOGO_UPLOAD(
         instance,
         filename,
     )
 
 
 def organization_cover_upload_to(instance, filename):
-    return ORGANIZATION_COVER_UPLOAD.dir_upload(
+    return ORGANIZATION_COVER_UPLOAD.dir_load(
         instance,
         filename,
     )
 
 
 def organization_thumbnail_upload_to(instance, filename):
-    return ORGANIZATION_THUMBNAIL_UPLOAD.dir_upload(
+    return ORGANIZATION_THUMBNAIL_UPLOAD(
         instance,
         filename,
     )
 
 
 def organization_verification_upload_to(instance, filename):
-    return ORGANIZATION_VERIFICATION_UPLOAD.dir_upload(
+    return ORGANIZATION_VERIFICATION_UPLOAD(
         instance,
         filename,
     )

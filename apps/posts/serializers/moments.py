@@ -579,7 +579,7 @@ class MomentSerializer(
         """
         Save an extra image file using Moment's upload path.
         """
-        path = Moment.IMAGE.dir_upload(instance, uploaded_file.name)
+        path = Moment.IMAGE(instance, uploaded_file.name)
         return default_storage.save(path, uploaded_file)
 
     def _build_image_items_from_uploads(
