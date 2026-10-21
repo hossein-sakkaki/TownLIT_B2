@@ -3,7 +3,7 @@
 # TownLIT
 #
 # Created by Hossein Sakkaki on 2025-09-04.
-# Last Update by Hossein Sakkaki on 2026-10-03.
+# Last Update by Hossein Sakkaki on 2026-10-21.
 #
 
 from django.conf import settings
@@ -395,8 +395,8 @@ class Notification(models.Model):
         return f"Notif<{self.id}> to {self.user_id}: {self.message[:50]}"
 
     def get_target_safe(self):
-        """Return the target or None."""
-        if not self.target_content_type or not self.target_object_id:
+        """Return the referenced target or None."""
+        if self.target_content_type_id is None or self.target_object_id is None:
             return None
 
         try:
@@ -405,7 +405,18 @@ class Notification(models.Model):
             return None
 
     def is_target_unavailable(self) -> bool:
-        """Check whether the target is unavailable."""
+        """Return True only when an explicitly referenced target is unavailable."""
+        has_content_type = self.target_content_type_id is not None
+        has_object_id = self.target_object_id is not None
+
+        # System and campaign notifications may intentionally have no target.
+        if not has_content_type and not has_object_id:
+            return False
+
+        # A partial GenericForeignKey reference is invalid.
+        if not has_content_type or not has_object_id:
+            return True
+
         obj = self.get_target_safe()
 
         if obj is None:
