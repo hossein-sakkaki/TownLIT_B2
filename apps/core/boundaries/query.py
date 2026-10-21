@@ -54,6 +54,10 @@ class BoundaryVisibilityQuery:
             return qs
 
         model = qs.model
+        # OrganizationUpdate is owned by the organization, not by created_by.
+        # Its discoverability is validated by SquareQuery and publication safety.
+        if model._meta.label_lower == "organization_content.organizationupdate":
+            return qs
         field_names = {field.name for field in model._meta.get_fields()}
 
         # GenericForeignKey ownership pattern used by post-like models.

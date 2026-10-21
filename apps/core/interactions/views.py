@@ -1,4 +1,10 @@
 # apps/core/interactions/views.py
+# TownLIT
+#
+# Created by Hossein Sakkaki (original creation date not recorded).
+# Last Update by Hossein Sakkaki on 2026-10-19.
+
+# apps/core/interactions/views.py
 
 from django.apps import apps
 from django.contrib.contenttypes.models import ContentType
@@ -263,6 +269,18 @@ class InteractionReactionViewSet(viewsets.ModelViewSet):
     - GET    /interactions/reactions/summary/
     - POST   /interactions/reactions/toggle/
     """
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        from apps.organization_content.services.access import ensure_update_interaction_access
+        raw_ct = request.query_params.get("content_type") or request.data.get("content_type")
+        raw_oid = request.query_params.get("object_id") or request.data.get("object_id")
+        if raw_ct and raw_oid:
+            try:
+                content_type = _resolve_content_type(str(raw_ct))
+            except (ContentType.DoesNotExist, ContentType.MultipleObjectsReturned, ValueError):
+                return
+            ensure_update_interaction_access(content_type=content_type, object_id=raw_oid)
 
     permission_classes = [permissions.IsAuthenticated]
     queryset = Reaction.objects.none()  # not used (action-based only)

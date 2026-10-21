@@ -2,7 +2,7 @@
 # TownLIT
 #
 # Created by Hossein Sakkaki on 2026-09-27.
-# Last Update by Hossein Sakkaki on 2026-09-28.
+# Last Update by Hossein Sakkaki on 2026-10-19.
 
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
@@ -14,6 +14,7 @@ from apps.organization_content.models import (
     OrganizationFeedEntry,
     OrganizationUpdate,
 )
+from apps.organization_content.services.access import can_view_organization_content
 
 
 def _target_organization_id(target):
@@ -28,9 +29,9 @@ def _target_organization_id(target):
     return None
 
 
-def _target_is_public(target):
+def _target_is_public(target, *, viewer=None):
     if isinstance(target, OrganizationUpdate):
-        return target.is_publicly_available
+        return target.content_visibility_allowed(viewer=viewer)
 
     from apps.organization_media.models import ChurchTeachingContent
 
@@ -130,16 +131,17 @@ def set_home_visibility(
     return entry
 
 
-def visible_feed(organization, *, now=None):
+def visible_feed(organization, *, viewer=None, now=None, source=OrganizationFeedEntry.Source.UPDATE):
     now = now or timezone.now()
 
-    if organization.status != "active" or organization.visibility != "public":
+    if not can_view_organization_content(organization=organization, viewer=viewer):
         return []
 
     entries = (
         OrganizationFeedEntry.objects
         .filter(
             organization=organization,
+            source=source,
             is_active=True,
             starts_at__lte=now,
         )
@@ -160,5 +162,5 @@ def visible_feed(organization, *, now=None):
         for entry in entries
         if entry.content_object
         and _target_organization_id(entry.content_object) == organization.pk
-        and _target_is_public(entry.content_object)
+        and _target_is_public(entry.content_object, viewer=viewer)
     ]

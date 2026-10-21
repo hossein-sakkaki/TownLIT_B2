@@ -1,4 +1,10 @@
 # apps/core/visibility/policy.py
+# TownLIT
+#
+# Created by Hossein Sakkaki 2026-02-19.
+# Last Update by Hossein Sakkaki on 2026-10-19.
+
+# apps/core/visibility/policy.py
 
 from .constants import ( 
     VISIBILITY_GLOBAL,
@@ -36,6 +42,10 @@ class VisibilityPolicy:
         # 1) Moderation gates
         if not getattr(obj, "is_active", True) or getattr(obj, "is_hidden", False):
             return False
+
+        hook = getattr(obj, "content_visibility_allowed", None)
+        if callable(hook):
+            return bool(hook(viewer=viewer))
 
         # 2) Owner can always view
         if viewer and is_owner(viewer, obj):

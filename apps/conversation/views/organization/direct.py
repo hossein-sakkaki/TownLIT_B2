@@ -2,7 +2,7 @@
 # TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-10-06.
-# Last Update by Hossein Sakkaki on 2026-10-06.
+# Last Update by Hossein Sakkaki on 2026-10-18.
 #
 
 from __future__ import annotations
@@ -33,6 +33,10 @@ from apps.conversation.services.organization import (
     transition_organization_direct_thread,
 )
 from apps.conversation.services.read_delivery import mark_dialogue_read_for_user
+from apps.conversation.services.rate_limits import (
+    MessengerSendRateThrottle,
+    MessengerWorkflowRateThrottle,
+)
 from apps.organizations.models import Organization, OrganizationMembership
 
 
@@ -111,6 +115,7 @@ class OrganizationDirectParticipantConversationView(APIView):
 
 class OrganizationDirectParticipantMessageView(APIView):
     permission_classes = [IsAuthenticated, ConversationAccessPermission]
+    throttle_classes = [MessengerSendRateThrottle]
 
     def post(self, request, organization_slug):
         organization = _organization(organization_slug)
@@ -119,6 +124,7 @@ class OrganizationDirectParticipantMessageView(APIView):
             participant_user=request.user,
             content=request.data.get("content"),
             reply_to_message_id=request.data.get("reply_to_message_id"),
+            client_request_id=request.data.get("client_request_id"),
         )
         if not result.get("ok"):
             return _service_error(result)
@@ -137,7 +143,7 @@ class OrganizationDirectParticipantMessageView(APIView):
                 ).data,
                 "created": bool(payload["created"]),
             },
-            status=status.HTTP_201_CREATED,
+            status=result.get("status", status.HTTP_201_CREATED),
         )
 
 
@@ -296,6 +302,7 @@ class OrganizationDirectOperatorConversationView(APIView):
 
 class OrganizationDirectOperatorReplyView(APIView):
     permission_classes = [IsAuthenticated, ConversationAccessPermission]
+    throttle_classes = [MessengerSendRateThrottle]
 
     def post(self, request, organization_slug, dialogue_slug):
         organization = _organization(organization_slug)
@@ -314,6 +321,7 @@ class OrganizationDirectOperatorReplyView(APIView):
             acting_user=request.user,
             content=request.data.get("content"),
             reply_to_message_id=request.data.get("reply_to_message_id"),
+            client_request_id=request.data.get("client_request_id"),
         )
         if not result.get("ok"):
             return _service_error(result)
@@ -333,7 +341,7 @@ class OrganizationDirectOperatorReplyView(APIView):
                     },
                 ).data,
             },
-            status=status.HTTP_201_CREATED,
+            status=result.get("status", status.HTTP_201_CREATED),
         )
 
 
@@ -363,6 +371,7 @@ class OrganizationDirectOperatorReadView(APIView):
 
 class OrganizationDirectOperatorAssignView(APIView):
     permission_classes = [IsAuthenticated, ConversationAccessPermission]
+    throttle_classes = [MessengerWorkflowRateThrottle]
 
     def post(self, request, organization_slug, dialogue_slug):
         organization = _organization(organization_slug)
@@ -407,6 +416,7 @@ class OrganizationDirectOperatorAssignView(APIView):
 
 class OrganizationDirectOperatorLifecycleView(APIView):
     permission_classes = [IsAuthenticated, ConversationAccessPermission]
+    throttle_classes = [MessengerWorkflowRateThrottle]
     target_status = None
 
     def post(self, request, organization_slug, dialogue_slug):

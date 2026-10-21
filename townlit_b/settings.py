@@ -106,6 +106,26 @@ EMAIL_LOGO_URL = os.getenv(
     "https://www.townlit.com",
 )
 
+# ---------------------------------------------------------------------
+# Django Cache Configuration
+# ---------------------------------------------------------------------
+MESSENGER_THROTTLE_REDIS_URL = os.getenv(
+    "MESSENGER_THROTTLE_REDIS_URL",
+    "redis://redis:6379/1",
+)
+
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "townlit-default",
+    },
+    "messenger_throttle": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": MESSENGER_THROTTLE_REDIS_URL,
+        "KEY_PREFIX": "townlit:messenger:throttle",
+        "TIMEOUT": 300,
+    },
+}
 
 # ---- Cookies (read directly from env) ----------------------------------------
 # Valid values: "Lax" | "Strict" | "None"
@@ -377,6 +397,24 @@ MAX_ACTIVE_DEVICE_KEYS = int(os.getenv("MAX_ACTIVE_DEVICE_KEYS", "10"))
 CRYPTO_THROTTLE_RATE = os.getenv("CRYPTO_THROTTLE_RATE", "30/min")
 CRYPTO_HEAVY_THROTTLE_RATE = os.getenv("CRYPTO_HEAVY_THROTTLE_RATE", "10/min")
 
+# ---------------------------------------------------------------------
+# Messenger Rate Limiting
+# ---------------------------------------------------------------------
+
+MESSENGER_SEND_THROTTLE_RATE = os.getenv(
+    "MESSENGER_SEND_THROTTLE_RATE",
+    "30/min",
+)
+
+MESSENGER_MEDIA_THROTTLE_RATE = os.getenv(
+    "MESSENGER_MEDIA_THROTTLE_RATE",
+    "10/min",
+)
+
+MESSENGER_WORKFLOW_THROTTLE_RATE = os.getenv(
+    "MESSENGER_WORKFLOW_THROTTLE_RATE",
+    "60/min",
+)
 
 # Enforce sender verification only for DMs (True by default) --------------------------------------------------------
 REQUIRE_SENDER_VERIFIED_DMS_ONLY = os.getenv("REQUIRE_SENDER_VERIFIED_DMS_ONLY", "1").lower() in ("1","true","yes")
@@ -1340,5 +1378,10 @@ TOWNLIT_ORGANIZATIONS_ANDROID_ENABLED = env_bool(
 
 TOWNLIT_ORGANIZATIONS_WEB_ADMIN_ENABLED = env_bool(
     "TOWNLIT_ORGANIZATIONS_WEB_ADMIN_ENABLED",
+    False,
+)
+
+ORGANIZATION_CONTENT_WRITES_ENABLED = env_bool(
+    "ORGANIZATION_CONTENT_WRITES_ENABLED",
     False,
 )

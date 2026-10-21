@@ -2,7 +2,7 @@
 # TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-10-16.
-# Last Update by Hossein Sakkaki on 2026-10-16.
+# Last Update by Hossein Sakkaki on 2026-10-18.
 #
 
 from __future__ import annotations
@@ -118,6 +118,7 @@ def create_organization_direct_media_message(
     aes_key_encrypted_bytes=None,
     encrypted_keys_per_device=None,
     reply_to_message_id=None,
+    client_request_id=None,
 ):
     """Create Organization Direct media through the shared media engine."""
     context = _locked_direct_context(context)
@@ -149,20 +150,22 @@ def create_organization_direct_media_message(
         recipient=None,
         reply_to_message_id=reply_to_message_id,
         forwarded_from_message=None,
+        client_request_id=client_request_id,
     )
     if not result.get("ok"):
         return result
 
     message = result["payload"]["message"]
+    message_created = bool(result["payload"].get("created", True))
 
-    if not authorization["is_participant"]:
+    if message_created and not authorization["is_participant"]:
         create_organization_message_attribution(
             message=message,
             organization=context.organization,
             actor_membership=authorization["actor_membership"],
         )
 
-    if message.is_delivery_ready:
+    if message_created and message.is_delivery_ready:
         finalize_organization_direct_media_delivery(
             message=message,
             locked_context=context,

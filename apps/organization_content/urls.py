@@ -2,7 +2,7 @@
 # TownLIT
 #
 # Created by Hossein Sakkaki on 2026-09-27.
-# Last Update by Hossein Sakkaki on 2026-09-28.
+# Last Update by Hossein Sakkaki on 2026-10-20.
 
 from django.urls import path
 
@@ -43,6 +43,16 @@ urlpatterns = [
             "patch": "partial_update",
         }),
         name="organization-update-detail",
+    ),
+    path(
+        "<slug:slug>/updates/<uuid:public_id>/submit/",
+        OrganizationUpdateViewSet.as_view({"post": "submit"}),
+        name="organization-update-submit",
+    ),
+    path(
+        "<slug:slug>/updates/<uuid:public_id>/discard/",
+        OrganizationUpdateViewSet.as_view({"delete": "discard"}),
+        name="organization-update-discard",
     ),
     path(
         "<slug:slug>/updates/<uuid:public_id>/publish/",

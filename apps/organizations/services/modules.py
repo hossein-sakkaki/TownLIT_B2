@@ -3,7 +3,7 @@
 # TownLIT
 #
 # Created by Hossein Sakkaki on 2026-08-30.
-# Last Update by Hossein Sakkaki on 2026-08-30.
+# Last Update by Hossein Sakkaki on 2026-10-20.
 #
 
 from dataclasses import dataclass
@@ -37,6 +37,7 @@ from apps.organizations.selectors.verification import (
 from apps.organizations.services.access import (
     user_has_organization_permission,
 )
+from apps.organizations.services.lifecycle_policy import require_operational_organization
 from apps.organizations.modules.runtime import (
     initialize_organization_module_runtime,
 )
@@ -78,6 +79,8 @@ def _actor_can_manage_module(*, actor, organization, module_key) -> bool:
 
 
 def _require_actor_can_manage_module(*, actor, organization, module_key):
+    require_operational_organization(organization=organization)
+
     if not _actor_can_manage_module(
         actor=actor,
         organization=organization,
@@ -664,3 +667,4 @@ def restore_suspended_organization_module(*, activation, actor):
     )
 
     return activation
+

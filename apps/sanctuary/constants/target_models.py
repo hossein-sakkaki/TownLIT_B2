@@ -1,4 +1,10 @@
 # apps/sanctuary/constants/target_models.py
+# TownLIT
+#
+# Created by Hossein Sakkaki (original creation date not recorded).
+# Last Update by Hossein Sakkaki on 2026-10-19.
+
+# apps/sanctuary/constants/target_models.py
 
 from __future__ import annotations
 
@@ -27,6 +33,7 @@ from apps.sanctuary.constants.targets import (
 
 CONTENT_TARGET_MODELS = frozenset(
     {
+        "organization_content.organizationupdate",
         "posts.moment",
         "posts.prayer",
         "posts.testimony",

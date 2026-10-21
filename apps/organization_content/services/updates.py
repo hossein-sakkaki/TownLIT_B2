@@ -2,9 +2,11 @@
 # TownLIT
 #
 # Created by Hossein Sakkaki on 2026-09-28.
-# Last Update by Hossein Sakkaki on 2026-09-28.
+# Last Update by Hossein Sakkaki on 2026-10-20.
 
-from django.core.exceptions import PermissionDenied, ValidationError
+import uuid
+
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
@@ -23,18 +25,15 @@ from apps.organizations.constants import (
     OrganizationPermissionKey,
 )
 from apps.organizations.models import OrganizationAuditLog
-from apps.organizations.services.access import user_has_organization_permission
+from apps.organization_content.services.access import (
+    ensure_content_manager, ensure_update_editable, ensure_update_revision,
+)
+from apps.organization_content.services.content_safety import enforce_update_caption_safety
+from apps.organization_content.publishing_policy import MAX_CAPTION_WORDS, validate_media_selection
 
 
 def _ensure_manager(*, actor, organization):
-    if not user_has_organization_permission(
-        user=actor,
-        organization=organization,
-        permission_key=OrganizationPermissionKey.MANAGE_ANNOUNCEMENTS,
-    ):
-        raise PermissionDenied(
-            "You do not have permission to manage Organization updates."
-        )
+    ensure_content_manager(actor=actor, organization=organization)
 
 
 def _normalize_caption(value):
@@ -45,10 +44,12 @@ def _normalize_caption(value):
             "caption": "Caption is required.",
         })
 
+    if len(value.split()) > MAX_CAPTION_WORDS:
+        raise ValidationError({"caption": f"Use no more than {MAX_CAPTION_WORDS} words."})
     return value
 
 
-def _resolve_assets(*, organization, public_ids):
+def _resolve_assets(*, organization, public_ids, allow_pending=False):
     public_ids = list(dict.fromkeys(public_ids or []))
 
     if not public_ids:
@@ -58,7 +59,6 @@ def _resolve_assets(*, organization, public_ids):
         OrganizationMediaAsset.objects.filter(
             organization=organization,
             public_id__in=public_ids,
-            status=OrganizationMediaAsset.Status.READY,
         )
     )
 
@@ -72,7 +72,7 @@ def _resolve_assets(*, organization, public_ids):
     for public_id in public_ids:
         asset = by_id.get(str(public_id))
 
-        if not asset:
+        if not asset or asset.status == OrganizationMediaAsset.Status.ARCHIVED:
             raise ValidationError({
                 "media_public_ids": (
                     f"Ready Organization media asset "
@@ -80,8 +80,11 @@ def _resolve_assets(*, organization, public_ids):
                 )
             })
 
+        if not allow_pending and not asset.is_ready_for_publication():
+            raise ValidationError({"media_public_ids": "All media must pass safety checks and finish processing."})
         ordered.append(asset)
 
+    validate_media_selection(ordered)
     return ordered
 
 
@@ -113,21 +116,31 @@ def _audit(*, update, actor, event):
 
 
 @transaction.atomic
-def create_update(*, organization, actor, caption, media_public_ids=None):
+def create_update(*, organization, actor, caption, media_public_ids=None, public_id=None):
     ensure_organization_content_writes_enabled()
     _ensure_manager(actor=actor, organization=organization)
 
+    caption = _normalize_caption(caption)
+    organization = organization.__class__.objects.select_for_update().get(pk=organization.pk)
+    _ensure_manager(actor=actor, organization=organization)
+    if public_id:
+        existing = OrganizationUpdate.objects.filter(public_id=public_id).first()
+        if existing is not None:
+            if (existing.organization_id != organization.pk
+                    or existing.created_by_id != actor.pk):
+                raise ValidationError({"public_id": "This submission identifier is already in use."})
+            return existing
+    enforce_update_caption_safety(caption=caption, actor=actor)
     update = OrganizationUpdate(
-        organization=organization,
-        caption=_normalize_caption(caption),
-        created_by=actor,
+        public_id=public_id or uuid.uuid4(), organization=organization,
+        caption=caption, created_by=actor, caption_safety_verified=True,
     )
     update.full_clean()
     update.save()
 
     assets = _resolve_assets(
         organization=organization,
-        public_ids=media_public_ids,
+        public_ids=media_public_ids, allow_pending=True,
     )
     _replace_media(update=update, assets=assets)
 
@@ -153,15 +166,19 @@ def update_update(*, update, actor, validated_data):
         organization=update.organization,
     )
 
-    if update.status == OrganizationUpdate.Status.ARCHIVED:
-        raise ValidationError(
-            "Archived Organization updates cannot be edited."
-        )
+    ensure_update_editable(update)
+    if update.publish_requested_at and update.status == OrganizationUpdate.Status.DRAFT:
+        raise ValidationError("A submitted post cannot be modified while publishing is pending.")
+    ensure_update_revision(update=update, expected_updated_at=validated_data.get("expected_updated_at"))
 
     if "caption" in validated_data:
-        update.caption = _normalize_caption(
-            validated_data["caption"]
+        caption = _normalize_caption(validated_data["caption"])
+        enforce_update_caption_safety(
+            caption=caption, actor=actor,
+            instance=update if update.caption_safety_verified else None,
         )
+        update.caption = caption
+        update.caption_safety_verified = True
 
     update.full_clean()
     update.save()
@@ -170,6 +187,10 @@ def update_update(*, update, actor, validated_data):
         assets = _resolve_assets(
             organization=update.organization,
             public_ids=validated_data["media_public_ids"],
+            allow_pending=update.status == OrganizationUpdate.Status.DRAFT,
+        )
+        validate_media_selection(
+            assets, require_media=update.status == OrganizationUpdate.Status.PUBLISHED,
         )
         _replace_media(
             update=update,
@@ -195,6 +216,7 @@ def publish_update(
     starts_at=None,
     expires_at=None,
     is_pinned=False,
+    expected_updated_at=None,
 ):
     ensure_organization_content_writes_enabled()
 
@@ -207,17 +229,23 @@ def publish_update(
         organization=update.organization,
     )
 
+    if update.status == OrganizationUpdate.Status.PUBLISHED:
+        return update
+    ensure_update_editable(update)
+    ensure_update_revision(update=update, expected_updated_at=expected_updated_at)
     if update.status != OrganizationUpdate.Status.DRAFT:
-        raise ValidationError(
-            "Only draft Organization updates can be published."
-        )
-
-    if update.media_items.exclude(
-        asset__status=OrganizationMediaAsset.Status.READY
-    ).exists():
-        raise ValidationError(
-            "All attached media assets must be ready before publishing."
-        )
+        raise ValidationError("Only draft Organization updates can be published.")
+    if not update.is_active or update.is_suspended:
+        raise ValidationError("This Organization content cannot be published.")
+    from apps.sanctuary.services.held_content_access import is_under_active_safety_hold
+    if is_under_active_safety_hold(update):
+        raise ValidationError("This Organization content is under review.")
+    enforce_update_caption_safety(caption=update.caption, actor=actor)
+    update.caption_safety_verified = True
+    assets = [usage.asset for usage in update.media_items.select_related("asset")]
+    validate_media_selection(assets, require_media=True)
+    if any(not asset.is_ready_for_publication() for asset in assets):
+        raise ValidationError("All attached media must pass safety checks and finish processing before publishing.")
 
     publish_at = publish_at or timezone.now()
     feed_starts_at = starts_at or publish_at
@@ -362,3 +390,4 @@ def set_update_home_visibility(
     )
 
     return entry
+

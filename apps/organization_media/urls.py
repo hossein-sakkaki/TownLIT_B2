@@ -2,7 +2,7 @@
 # TownLIT
 #
 # Created by Hossein Sakkaki on 2026-09-27.
-# Last Update by Hossein Sakkaki on 2026-09-28.
+# Last Update by Hossein Sakkaki on 2026-10-19.
 
 from django.urls import path
 
@@ -11,6 +11,7 @@ from apps.organization_media.views import OrganizationMediaAssetViewSet
 
 asset_list = OrganizationMediaAssetViewSet.as_view({
     "get": "list",
+    "post": "create",
 })
 
 asset_detail = OrganizationMediaAssetViewSet.as_view({

@@ -18,6 +18,7 @@ from apps.core.streams.constants import (
     STREAM_LIMITED_EXTENSION_SCOPES,
 )
 from apps.core.streams.context import parse_stream_context
+from apps.core.streams.organization import organization_stream_page
 from apps.core.streams.engine import StreamEngine
 from apps.core.streams.query import StreamQuery
 from apps.core.streams.registry import get_stream_source
@@ -134,6 +135,9 @@ class StreamViewSet(viewsets.ViewSet):
                 },
                 status=status.HTTP_200_OK,
             )
+
+        if context.kind == "organization_update":
+            return organization_stream_page(request=request, context=context)
 
         source_start = perf_counter()
         source = get_stream_source(context.kind)
@@ -323,17 +327,20 @@ class StreamViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if context.kind not in STREAM_KINDS:
+        if context.kind not in STREAM_KINDS | {"organization_update"}:
             return Response(
                 {"detail": "Invalid kind"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if context.scope not in STREAM_SCOPES:
+        if context.scope not in STREAM_SCOPES | {"organization"}:
             return Response(
                 {"detail": "Invalid scope"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        if (context.kind == "organization_update") != (context.scope == "organization"):
+            return Response({"detail": "Organization streams require Organization scope."}, status=400)
 
         if context.mode not in STREAM_MODES:
             return Response(

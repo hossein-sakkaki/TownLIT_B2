@@ -3,7 +3,10 @@
 from rest_framework import serializers
 from django.contrib.contenttypes.models import ContentType
 from apps.posts.models.comment import Comment
-from apps.accounts.serializers.user_serializers import SimpleCustomUserSerializer 
+from apps.accounts.serializers.user_serializers import SimpleCustomUserSerializer
+from apps.posts.services.organization_comment_identity import (
+    legacy_public_name, public_organization_identity,
+) 
 
 
 def _sanctuary_target(obj: Comment) -> dict:
@@ -17,7 +20,8 @@ def _sanctuary_target(obj: Comment) -> dict:
     
     
 class SimpleCommentReadSerializer(serializers.ModelSerializer):
-    name = SimpleCustomUserSerializer(read_only=True)
+    name = serializers.SerializerMethodField()
+    organization_identity = serializers.SerializerMethodField()
     sanctuary_target = serializers.SerializerMethodField()
 
     class Meta:
@@ -25,6 +29,7 @@ class SimpleCommentReadSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "name",
+            "organization_identity",
             "comment",
             "published_at",
             "is_active",
@@ -34,8 +39,23 @@ class SimpleCommentReadSerializer(serializers.ModelSerializer):
     def get_sanctuary_target(self, obj):
         return _sanctuary_target(obj)
 
+    def get_name(self, obj):
+        if obj.acting_organization_id:
+            return legacy_public_name(
+                obj.acting_organization, request=self.context.get("request"),
+            )
+        return SimpleCustomUserSerializer(obj.name, context=self.context).data
+
+    def get_organization_identity(self, obj):
+        if not obj.acting_organization_id:
+            return None
+        return public_organization_identity(
+            obj.acting_organization, request=self.context.get("request"),
+        )
+
 class RootCommentReadSerializer(serializers.ModelSerializer):
-    name = SimpleCustomUserSerializer(read_only=True)
+    name = serializers.SerializerMethodField()
+    organization_identity = serializers.SerializerMethodField()
     content_type = serializers.SerializerMethodField()
     object_id = serializers.IntegerField(read_only=True)
     replies_count = serializers.IntegerField(read_only=True)
@@ -46,6 +66,7 @@ class RootCommentReadSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "name",
+            "organization_identity",
             "comment",
             "published_at",
             "is_active",
@@ -63,9 +84,24 @@ class RootCommentReadSerializer(serializers.ModelSerializer):
     def get_sanctuary_target(self, obj):
         return _sanctuary_target(obj)
 
+    def get_name(self, obj):
+        if obj.acting_organization_id:
+            return legacy_public_name(
+                obj.acting_organization, request=self.context.get("request"),
+            )
+        return SimpleCustomUserSerializer(obj.name, context=self.context).data
+
+    def get_organization_identity(self, obj):
+        if not obj.acting_organization_id:
+            return None
+        return public_organization_identity(
+            obj.acting_organization, request=self.context.get("request"),
+        )
+
 
 class CommentReadSerializer(serializers.ModelSerializer):
-    name = SimpleCustomUserSerializer(read_only=True)
+    name = serializers.SerializerMethodField()
+    organization_identity = serializers.SerializerMethodField()
     responses = serializers.SerializerMethodField()
     content_type = serializers.SerializerMethodField()
     object_id = serializers.IntegerField(read_only=True)
@@ -76,6 +112,7 @@ class CommentReadSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "name",
+            "organization_identity",
             "comment",
             "published_at",
             "is_active",
@@ -93,6 +130,20 @@ class CommentReadSerializer(serializers.ModelSerializer):
     def get_sanctuary_target(self, obj):
         return _sanctuary_target(obj)
 
+    def get_name(self, obj):
+        if obj.acting_organization_id:
+            return legacy_public_name(
+                obj.acting_organization, request=self.context.get("request"),
+            )
+        return SimpleCustomUserSerializer(obj.name, context=self.context).data
+
+    def get_organization_identity(self, obj):
+        if not obj.acting_organization_id:
+            return None
+        return public_organization_identity(
+            obj.acting_organization, request=self.context.get("request"),
+        )
+
     def get_responses(self, obj):
         prefetched = getattr(obj, "_prefetched_objects_cache", {}).get("responses")
 
@@ -106,7 +157,7 @@ class CommentReadSerializer(serializers.ModelSerializer):
             replies = (
                 obj.responses
                 .filter(is_active=True)
-                .select_related("name")
+                .select_related("name", "acting_organization")
                 .order_by("published_at")
             )
 
@@ -128,9 +179,11 @@ class CommentWriteSerializer(serializers.ModelSerializer):
         allow_null=True,
     )
 
+    acting_organization_id = serializers.IntegerField(write_only=True, required=False)
+
     class Meta:
         model = Comment
-        fields = ["id", "comment", "content_type", "object_id", "recomment"]
+        fields = ["id", "comment", "content_type", "object_id", "recomment", "acting_organization_id"]
         read_only_fields = ["id"]
 
     def validate(self, attrs):
@@ -197,6 +250,24 @@ class CommentWriteSerializer(serializers.ModelSerializer):
                         "recomment": "Reply target does not match the parent comment."
                     })
 
+        if is_create:
+            organization_id = attrs.pop("acting_organization_id", None)
+            if organization_id is not None:
+                from apps.posts.services.organization_comment_identity import (
+                    validate_comment_organization,
+                )
+                attrs["acting_organization"] = validate_comment_organization(
+                    user=self.context["request"].user,
+                    organization_id=organization_id,
+                    content_type=attrs.get("content_type"),
+                    object_id=attrs.get("object_id"),
+                )
+        else:
+            # Public-facing identity cannot be changed after publication.
+            if "acting_organization_id" in attrs:
+                raise serializers.ValidationError({
+                    "acting_organization_id": "Comment identity cannot be changed."
+                })
         return attrs
 
     def create(self, validated_data):

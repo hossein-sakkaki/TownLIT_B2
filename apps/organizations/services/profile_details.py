@@ -2,7 +2,7 @@
 # TownLIT
 #
 # Created by Hossein Sakkaki on 2026-09-27.
-# Last Update by Hossein Sakkaki on 2026-09-27.
+# Last Update by Hossein Sakkaki on 2026-10-20.
 #
 
 from django.contrib.contenttypes.models import ContentType
@@ -34,6 +34,9 @@ from apps.organizations.models import (
 from apps.organizations.services.access import (
     user_has_organization_permission,
 )
+from apps.organizations.services.lifecycle_policy import (
+    require_operational_organization,
+)
 
 
 def _ensure_profile_manager(
@@ -41,6 +44,8 @@ def _ensure_profile_manager(
     organization,
     actor,
 ):
+    require_operational_organization(organization=organization)
+
     if not user_has_organization_permission(
         user=actor,
         organization=organization,
@@ -229,6 +234,80 @@ def delete_contact_point(
     )
 
 
+_MINUTES_PER_DAY = 24 * 60
+_MINUTES_PER_WEEK = 7 * _MINUTES_PER_DAY
+
+
+def _clock_minutes(value):
+    return value.hour * 60 + value.minute + (value.second / 60)
+
+
+def _validate_weekly_business_hours(rows):
+    """Validate the complete weekly timetable before replacing any rows.
+
+    Overnight intervals end on the next day. Monday-to-Sunday boundaries
+    are treated as circular so a late Sunday shift cannot overlap Monday.
+    """
+    by_day = {day: [] for day in range(7)}
+    reserved_slots = set()
+    windows = []
+
+    for row in rows:
+        if row.weekday not in by_day:
+            raise ValidationError({"weekday": "Weekday must be between 0 and 6."})
+        slot = (row.weekday, row.sort_order)
+        if slot in reserved_slots:
+            raise ValidationError({
+                "sort_order": "Each weekday requires unique sort_order values."
+            })
+        reserved_slots.add(slot)
+        by_day[row.weekday].append(row)
+
+    for weekday, daily_rows in by_day.items():
+        special = [row for row in daily_rows if row.is_closed or row.is_24_hours]
+        if special and len(daily_rows) != 1:
+            raise ValidationError({
+                "weekday": (
+                    f"Day {weekday} cannot mix Closed/24 Hours "
+                    "with other business-hour intervals."
+                )
+            })
+        if not daily_rows:
+            continue
+        for row in daily_rows:
+            if row.is_closed:
+                continue
+            if row.is_24_hours:
+                start = weekday * _MINUTES_PER_DAY
+                end = start + _MINUTES_PER_DAY
+            else:
+                start = weekday * _MINUTES_PER_DAY + _clock_minutes(row.opens_at)
+                end = weekday * _MINUTES_PER_DAY + _clock_minutes(row.closes_at)
+                if end < start:
+                    end += _MINUTES_PER_DAY
+                    following_day = (weekday + 1) % 7
+                    if any(day.is_closed for day in by_day[following_day]):
+                        raise ValidationError({
+                            "weekday": (
+                                f"Overnight hours on day {weekday} "
+                                f"conflict with Closed day {following_day}."
+                            )
+                        })
+            windows.append((start, end, weekday))
+
+    # All windows are shorter than or equal to 24 hours. Checking a single
+    # neighboring weekly translation covers Sunday -> Monday boundaries.
+    for index, (first_start, first_end, _) in enumerate(windows):
+        for second_start, second_end, _ in windows[index + 1:]:
+            for week_shift in (-_MINUTES_PER_WEEK, 0, _MINUTES_PER_WEEK):
+                shifted_start = second_start + week_shift
+                shifted_end = second_end + week_shift
+                if first_start < shifted_end and shifted_start < first_end:
+                    raise ValidationError({
+                        "weekday": "Business-hour intervals cannot overlap."
+                    })
+
+
 @transaction.atomic
 def replace_business_hours(
     *,
@@ -241,31 +320,25 @@ def replace_business_hours(
         actor=actor,
     )
 
-    (
-        OrganizationBusinessHour.objects
-        .filter(
-            organization=organization
-        )
-        .delete()
-    )
-
+    # Validate the full proposed schedule before deleting the old one.
     rows = []
-
     for data in validated_rows:
         row = OrganizationBusinessHour(
             organization=organization,
             **data,
         )
+        # Old rows still exist at this point. The service checks uniqueness
+        # for the proposed replacement set; do not compare against old slots.
+        row.full_clean(validate_unique=False, validate_constraints=False)
+        rows.append(row)
 
-        row.full_clean()
+    _validate_weekly_business_hours(rows)
 
-        rows.append(
-            row
-        )
+    OrganizationBusinessHour.objects.filter(
+        organization=organization,
+    ).delete()
 
-    OrganizationBusinessHour.objects.bulk_create(
-        rows
-    )
+    OrganizationBusinessHour.objects.bulk_create(rows)
 
     _record_change(
         organization=organization,
@@ -277,17 +350,9 @@ def replace_business_hours(
         },
     )
 
-    return (
-        OrganizationBusinessHour.objects
-        .filter(
-            organization=organization
-        )
-        .order_by(
-            "weekday",
-            "sort_order",
-            "id",
-        )
-    )
+    return OrganizationBusinessHour.objects.filter(
+        organization=organization,
+    ).order_by("weekday", "sort_order", "id")
 
 
 @transaction.atomic
@@ -431,6 +496,8 @@ def respond_to_representative_invitation(
             pk=representative.pk
         )
     )
+
+    require_operational_organization(organization=representative.organization)
 
     if (
         representative

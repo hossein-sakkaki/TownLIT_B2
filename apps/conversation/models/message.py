@@ -2,7 +2,7 @@
 # TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-10-06.
-# Last Update by Hossein Sakkaki on 2026-10-16.
+# Last Update by Hossein Sakkaki on 2026-10-18.
 #
 
 from datetime import timedelta
@@ -79,6 +79,20 @@ class Message(models.Model):
     self_destruct_at = models.DateTimeField(null=True, blank=True, verbose_name="Self-destruct At")
     is_system = models.BooleanField(default=False)
     system_event = models.CharField(max_length=50, choices=SYSTEM_MESSAGE_EVENT_CHOICES, null=True, blank=True)
+    client_request_id = models.UUIDField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name="Client Request ID",
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("dialogue", "sender", "client_request_id"),
+                name="conversation_unique_message_client_request",
+            ),
+        ]
 
     @property
     def is_encrypted(self):

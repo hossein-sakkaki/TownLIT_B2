@@ -18,6 +18,13 @@ CustomUser = get_user_model()
 class Comment(models.Model):
     id = models.BigAutoField(primary_key=True)
     name = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='user_comments', verbose_name='Name')
+    # The real operator remains in `name`; public identity comes from the organization.
+    acting_organization = models.ForeignKey(
+        'organizations.Organization',
+        null=True, blank=True,
+        on_delete=models.PROTECT,
+        related_name='official_comments',
+    )
     comment = encrypt(models.TextField(blank=True, null=True, verbose_name='Comment'))
 
     content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE, db_index=True)
@@ -41,7 +48,7 @@ class Comment(models.Model):
         ]
 
     def __str__(self):
-        return f"Comment by {self.name.username}"
+        return f"Comment by {self.acting_organization.name if self.acting_organization_id else self.name.username}"
 
     @property
     def is_reply(self) -> bool:
@@ -81,5 +88,3 @@ class Comment(models.Model):
             import logging
             logging.getLogger(__name__).warning(f"[Comment.get_absolute_url] failed: {e}")
             return "#"
-
-

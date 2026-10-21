@@ -2,7 +2,7 @@
 # TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-10-06.
-# Last Update by Hossein Sakkaki on 2026-10-06.
+# Last Update by Hossein Sakkaki on 2026-10-18.
 #
 
 import base64
@@ -37,6 +37,10 @@ from apps.conversation.services.message_forward import build_forward_preview
 from apps.conversation.services.message_visibility import (
     visible_participant_ids_for_message,
 )
+from apps.conversation.services.rate_limits import (
+    MessengerSendRateThrottle,
+    check_messenger_rate_limit,
+)
 
 
 
@@ -62,6 +66,7 @@ class MessageMixin:
         content = (data.get("content") or "").strip()
         encrypted_contents = data.get("encrypted_contents", [])
         reply_to_message_id = self._normalize_reply_to_message_id(data)
+        client_request_id = data.get("client_request_id")
 
         if not dialogue_slug:
             await self._send_error(
@@ -86,6 +91,22 @@ class MessageMixin:
         )(dialogue)
 
         if context.kind == ConversationContextKind.ORGANIZATION_DIRECT:
+            rate_limit = await sync_to_async(
+                check_messenger_rate_limit
+            )(
+                user=self.user,
+                throttle_class=MessengerSendRateThrottle,
+            )
+            if not rate_limit.allowed:
+                await self._send_error(
+                    code="RATE_LIMITED",
+                    message="Too many Messenger messages. Please try again shortly.",
+                    details={
+                        "retry_after_seconds": rate_limit.retry_after_seconds,
+                    },
+                )
+                return
+
             if is_encrypted:
                 await self._send_error(
                     code="ORGANIZATION_DIRECT_BACKEND_MANAGED",
@@ -105,6 +126,7 @@ class MessageMixin:
                     participant_user=self.user,
                     content=content,
                     reply_to_message_id=reply_to_message_id,
+                    client_request_id=client_request_id,
                 )
             else:
                 result = await database_sync_to_async(
@@ -114,6 +136,7 @@ class MessageMixin:
                     acting_user=self.user,
                     content=content,
                     reply_to_message_id=reply_to_message_id,
+                    client_request_id=client_request_id,
                 )
 
             if not result.get("ok"):

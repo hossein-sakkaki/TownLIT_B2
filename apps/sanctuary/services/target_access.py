@@ -1,4 +1,8 @@
 # apps/sanctuary/services/target_access.py
+# TownLIT
+#
+# Created by Hossein Sakkaki (original creation date not recorded).
+# Last Update by Hossein Sakkaki on 2026-10-19.
 
 from __future__ import annotations
 
@@ -399,6 +403,10 @@ def resolve_target_owner_user_id(
     if target is None:
         return None
 
+    if getattr(getattr(target, "_meta", None), "label_lower", "") == "organization_content.organizationupdate":
+        # The operator is retained for audit; the Organization owns this post.
+        return None
+
     if isinstance(
         target,
         CustomUser,
@@ -630,6 +638,10 @@ def _validate_content_target(
         and owner_user_id
         and user_id == owner_user_id
     )
+
+    if getattr(getattr(target, "_meta", None), "label_lower", "") == "organization_content.organizationupdate":
+        from apps.sanctuary.services.ownership import get_owner_user_ids
+        is_owner = bool(user_id and user_id in get_owner_user_ids(target))
 
     if is_owner and not allow_self_target:
         _raise_access_error(

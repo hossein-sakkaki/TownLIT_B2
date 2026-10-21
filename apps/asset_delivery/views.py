@@ -58,6 +58,7 @@ from apps.audio_catalog.services.historical_usage import (
 logger = logging.getLogger(__name__)
 
 
+
 def _safe_can_deliver_asset(
     request,
     target,
@@ -66,16 +67,13 @@ def _safe_can_deliver_asset(
     intent: str,
 ) -> bool:
     """
-    Apply Sanctuary hold policy before ordinary target delivery rules.
+    Authorize asset delivery with Sanctuary checks first.
 
-    Active hold:
-    - ordinary users and owners are denied
-    - Sanctuary review admins may inspect only known target media fields
-
-    No active hold:
-    - target hooks remain authoritative
-    - visible CustomUser avatars can be delivered anonymously
-    - all remaining targets use the ordinary visibility policy
+    Organization public identity media:
+    - Public logos remain available to visitors.
+    - Public covers are available for display.
+    - Unlisted covers require authentication.
+    - Private or restricted assets use existing access rules.
     """
     viewer = getattr(
         request,
@@ -83,6 +81,7 @@ def _safe_can_deliver_asset(
         None,
     )
 
+    # Sanctuary restrictions always take precedence.
     if is_under_active_safety_hold(
         target
     ):
@@ -97,15 +96,83 @@ def _safe_can_deliver_asset(
             field_name,
         )
 
+    target_model = getattr(
+        getattr(target, "_meta", None),
+        "label_lower",
+        "",
+    )
+
+    # Organization public identity assets.
+    if target_model == "organizations.organization":
+        organization_status = getattr(
+            target,
+            "status",
+            None,
+        )
+
+        organization_visibility = getattr(
+            target,
+            "visibility",
+            None,
+        )
+
+        is_active = organization_status == "active"
+
+        is_authenticated = bool(
+            getattr(
+                viewer,
+                "is_authenticated",
+                False,
+            )
+        )
+
+        # Preserve existing public logo behavior.
+        if (
+            field_name == "logo"
+            and is_active
+            and organization_visibility in {
+                "public",
+                "unlisted",
+            }
+            and bool(
+                getattr(target, "logo", None)
+            )
+        ):
+            return True
+
+        # Public Organization covers are viewable
+        # without Organization management permissions.
+        if (
+            field_name == "cover_image"
+            and is_active
+            and bool(
+                getattr(target, "cover_image", None)
+            )
+            and intent in {
+                "preload",
+                "view",
+                "render",
+                "feed",
+                "detail",
+            }
+        ):
+            if organization_visibility == "public":
+                return True
+
+            if (
+                organization_visibility == "unlisted"
+                and is_authenticated
+            ):
+                return True
+
+    # Preserve existing target-specific policies.
     hook = getattr(
         target,
         "can_deliver_asset",
         None,
     )
 
-    if callable(
-        hook
-    ):
+    if callable(hook):
         try:
             return bool(
                 hook(
@@ -120,13 +187,8 @@ def _safe_can_deliver_asset(
                 extra={
                     "target_model": (
                         target._meta.label_lower
-                        if hasattr(
-                            target,
-                            "_meta",
-                        )
-                        else type(
-                            target
-                        ).__name__
+                        if hasattr(target, "_meta")
+                        else type(target).__name__
                     ),
                     "target_id": getattr(
                         target,
@@ -150,6 +212,7 @@ def _safe_can_deliver_asset(
         request,
         target,
     )
+
     
 def _join_cdn_url(key: str) -> str:
     """Build CDN absolute URL."""

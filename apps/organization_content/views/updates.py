@@ -2,7 +2,7 @@
 # TownLIT
 #
 # Created by Hossein Sakkaki on 2026-09-28.
-# Last Update by Hossein Sakkaki on 2026-09-28.
+# Last Update by Hossein Sakkaki on 2026-10-20.
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.shortcuts import get_object_or_404
@@ -13,6 +13,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.organization_content.models import OrganizationUpdate
+from apps.organization_content.services.publication import (request_update_publication, discard_unsubmitted_update)
 from apps.organization_content.serializers import (
     OrganizationUpdateCreateSerializer,
     OrganizationUpdateHomeVisibilitySerializer,
@@ -30,7 +31,7 @@ from apps.organization_content.services.updates import (
 from apps.organizations.constants import OrganizationPermissionKey
 from apps.organizations.models import Organization
 from apps.organizations.permissions import OrganizationsEnabledPermission
-from apps.organizations.services.access import user_has_organization_permission
+from apps.organization_content.services.access import can_manage_content
 from apps.organizations.views.helpers import raise_drf_validation_error
 
 
@@ -50,11 +51,7 @@ class OrganizationUpdateViewSet(viewsets.ViewSet):
     def ensure_manager(self):
         organization = self.get_organization()
 
-        if not user_has_organization_permission(
-            user=self.request.user,
-            organization=organization,
-            permission_key=OrganizationPermissionKey.MANAGE_ANNOUNCEMENTS,
-        ):
+        if not can_manage_content(actor=self.request.user, organization=organization):
             raise PermissionDenied(
                 "You do not have permission to manage Organization updates."
             )
@@ -256,3 +253,22 @@ class OrganizationUpdateViewSet(viewsets.ViewSet):
                 context={"request": request},
             ).data
         )
+
+
+    def submit(self, request, slug=None, public_id=None):
+        update = self.get_update()
+        try:
+            update = request_update_publication(update=update, actor=request.user)
+        except DjangoValidationError as exc:
+            raise_drf_validation_error(exc)
+        return Response(OrganizationUpdateSerializer(
+            update, context={"request": request},
+        ).data, status=status.HTTP_202_ACCEPTED)
+
+    def discard(self, request, slug=None, public_id=None):
+        update = self.get_update()
+        try:
+            discard_unsubmitted_update(update=update, actor=request.user)
+        except DjangoValidationError as exc:
+            raise_drf_validation_error(exc)
+        return Response(status=status.HTTP_204_NO_CONTENT)

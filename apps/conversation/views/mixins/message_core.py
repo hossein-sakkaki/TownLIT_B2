@@ -2,7 +2,7 @@
 # TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-10-06.
-# Last Update by Hossein Sakkaki on 2026-10-16.
+# Last Update by Hossein Sakkaki on 2026-10-18.
 #
 
 from django.db import transaction
@@ -24,7 +24,11 @@ from apps.conversation.serializers import MessageSerializer
 from apps.conversation.services.boundary_access import private_dialogue_boundary_response_payload
 from apps.conversation.services.message_creation import create_text_message
 from apps.conversation.services.organization import mark_after_participant_message
+from apps.conversation.services.organization.direct_realtime import (
+    schedule_organization_direct_message_realtime,
+)
 from apps.conversation.services.realtime_dispatch import broadcast_group_text_message
+from apps.conversation.services.rate_limits import MessengerSendRateThrottle
 from apps.conversation.utils import get_websocket_url
 
 
@@ -68,6 +72,7 @@ class MessageCoreActionsMixin:
         url_path='send-message',
         permission_classes=[IsAuthenticated],
         parser_classes=[JSONParser],
+        throttle_classes=[MessengerSendRateThrottle],
     )
     def send_message(self, request):
         user = request.user
@@ -76,6 +81,7 @@ class MessageCoreActionsMixin:
         encrypted_contents = request.data.get("encrypted_contents", [])
         content = (request.data.get("content") or "").strip()
         reply_to_message_id = request.data.get("reply_to_message_id")
+        client_request_id = request.data.get("client_request_id")
         if not dialogue_slug:
             return Response(
                 {"error": "dialogue_slug is required."},
@@ -151,6 +157,7 @@ class MessageCoreActionsMixin:
             recipient_hidden_on_incoming=recipient_hidden_on_incoming,
             recipient=recipient,
             reply_to_message_id=reply_to_message_id,
+            client_request_id=client_request_id,
         )
         if not result.get("ok"):
             return Response(
@@ -159,20 +166,25 @@ class MessageCoreActionsMixin:
             )
         payload = result["payload"]
         message = payload["message"]
+        message_created = bool(payload.get("created", True))
 
-        if resolved_context.kind == ConversationContextKind.ORGANIZATION_DIRECT:
+        if (
+            resolved_context.kind == ConversationContextKind.ORGANIZATION_DIRECT
+            and message_created
+        ):
             organization_context = resolved_context.organization_context
             mark_after_participant_message(
                 context=organization_context,
                 actor=user,
             )
             dialogue.deleted_by_users.remove(user)
+            schedule_organization_direct_message_realtime(message.id)
 
         # IMPORTANT:
         # REST is the single creation path.
         # After successful REST creation, backend broadcasts the canonical realtime event.
         # This fixes iOS live group delivery without sending a second websocket create event.
-        if dialogue.is_group:
+        if dialogue.is_group and message_created:
             transaction.on_commit(
                 lambda: broadcast_group_text_message(
                     message=message,
@@ -186,7 +198,11 @@ class MessageCoreActionsMixin:
                 "message_id": payload["message_id"],
                 "websocket_url": get_websocket_url(request),
             },
-            status=status.HTTP_201_CREATED,
+            status=(
+                status.HTTP_201_CREATED
+                if message_created
+                else status.HTTP_200_OK
+            ),
         )
 
     @action(detail=True, methods=["get"], url_path="get-message", permission_classes=[IsAuthenticated])

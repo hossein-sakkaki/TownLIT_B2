@@ -2,7 +2,7 @@
 # TownLIT
 #
 # Created by Hossein Sakkaki on 2026-09-28.
-# Last Update by Hossein Sakkaki on 2026-09-28.
+# Last Update by Hossein Sakkaki on 2026-10-20.
 
 from rest_framework import serializers
 
@@ -19,10 +19,12 @@ class OrganizationUpdateSerializer(serializers.ModelSerializer):
     media = serializers.SerializerMethodField()
     home_visibility = serializers.SerializerMethodField()
     is_publicly_available = serializers.BooleanField(read_only=True)
+    is_under_review = serializers.SerializerMethodField()
 
     class Meta:
         model = OrganizationUpdate
         fields = [
+            "id",
             "public_id",
             "organization_public_id",
             "caption",
@@ -30,12 +32,28 @@ class OrganizationUpdateSerializer(serializers.ModelSerializer):
             "media",
             "home_visibility",
             "is_publicly_available",
+            "is_under_review",
             "published_at",
             "archived_at",
+            "publish_requested_at",
+            "publish_error",
             "created_at",
             "updated_at",
         ]
         read_only_fields = fields
+
+    def get_is_under_review(self, obj):
+        from apps.sanctuary.services.held_content_access import is_under_active_safety_hold
+        return is_under_active_safety_hold(obj)
+
+    def to_representation(self, instance):
+        from apps.sanctuary.services.held_content_access import can_inspect_held_content
+        data = super().to_representation(instance)
+        viewer = getattr(self.context.get("request"), "user", None)
+        if not can_inspect_held_content(viewer=viewer, target=instance):
+            data["caption"] = "This content is temporarily unavailable during review."
+            data["media"] = []
+        return data
 
     def get_media(self, obj):
         assets = [
@@ -76,6 +94,7 @@ class PublicOrganizationUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = OrganizationUpdate
         fields = [
+            "id",
             "public_id",
             "organization_public_id",
             "caption",
@@ -100,6 +119,7 @@ class PublicOrganizationUpdateSerializer(serializers.ModelSerializer):
 
 
 class OrganizationUpdateCreateSerializer(serializers.Serializer):
+    public_id = serializers.UUIDField(required=False)
     caption = serializers.CharField()
     media_public_ids = serializers.ListField(
         child=serializers.UUIDField(),
@@ -109,6 +129,7 @@ class OrganizationUpdateCreateSerializer(serializers.Serializer):
 
 
 class OrganizationUpdatePatchSerializer(serializers.Serializer):
+    expected_updated_at = serializers.DateTimeField(required=False)
     caption = serializers.CharField(required=False)
     media_public_ids = serializers.ListField(
         child=serializers.UUIDField(),
@@ -117,6 +138,7 @@ class OrganizationUpdatePatchSerializer(serializers.Serializer):
 
 
 class OrganizationUpdatePublishSerializer(serializers.Serializer):
+    expected_updated_at = serializers.DateTimeField(required=False)
     publish_at = serializers.DateTimeField(required=False, allow_null=True)
     show_on_home = serializers.BooleanField(required=False, default=True)
     starts_at = serializers.DateTimeField(required=False, allow_null=True)
@@ -129,3 +151,4 @@ class OrganizationUpdateHomeVisibilitySerializer(serializers.Serializer):
     starts_at = serializers.DateTimeField(required=False, allow_null=True)
     expires_at = serializers.DateTimeField(required=False, allow_null=True)
     is_pinned = serializers.BooleanField(required=False, default=False)
+

@@ -3,7 +3,7 @@
 # TownLIT
 #
 # Created by Hossein Sakkaki on 2026-08-29.
-# Last Update by Hossein Sakkaki on 2026-10-06.
+# Last Update by Hossein Sakkaki on 2026-10-20.
 #
 
 from django.db import models
@@ -123,6 +123,7 @@ class OrganizationPermissionKey:
     MANAGE_MEMBERS = "organizations.members.manage"
     MANAGE_ROLES = "organizations.roles.manage"
     MANAGE_CONTENT = "organizations.content.manage"
+    REPLY_COMMENTS = "organizations.comments.reply"
     MANAGE_ANNOUNCEMENTS = "organizations.announcements.manage"
     VIEW_MESSENGER = "organizations.messenger.view"
     REPLY_MESSENGER = "organizations.messenger.reply"
@@ -141,6 +142,7 @@ DEFAULT_PERMISSION_DEFINITIONS = (
     (OrganizationPermissionKey.MANAGE_MEMBERS, "Manage Organization Members", "membership"),
     (OrganizationPermissionKey.MANAGE_ROLES, "Manage Organization Roles", "access"),
     (OrganizationPermissionKey.MANAGE_CONTENT, "Manage Organization Content", "content"),
+    (OrganizationPermissionKey.REPLY_COMMENTS, "Reply to Comments as Organization", "content"),
     (OrganizationPermissionKey.MANAGE_ANNOUNCEMENTS, "Manage Organization Announcements", "content"),
     (OrganizationPermissionKey.VIEW_MESSENGER, "View Organization Messenger", "messenger"),
     (OrganizationPermissionKey.REPLY_MESSENGER, "Reply as Organization", "messenger"),
@@ -175,6 +177,7 @@ DEFAULT_ROLE_DEFINITIONS = (
             OrganizationPermissionKey.MANAGE_MEMBERS,
             OrganizationPermissionKey.MANAGE_ROLES,
             OrganizationPermissionKey.MANAGE_CONTENT,
+            OrganizationPermissionKey.REPLY_COMMENTS,
             OrganizationPermissionKey.MANAGE_ANNOUNCEMENTS,
             OrganizationPermissionKey.VIEW_MESSENGER,
             OrganizationPermissionKey.REPLY_MESSENGER,
@@ -204,6 +207,7 @@ DEFAULT_ROLE_DEFINITIONS = (
         "permissions": (
             OrganizationPermissionKey.VIEW_ADMIN,
             OrganizationPermissionKey.MANAGE_CONTENT,
+            OrganizationPermissionKey.REPLY_COMMENTS,
             OrganizationPermissionKey.MANAGE_ANNOUNCEMENTS,
         ),
     },
@@ -617,4 +621,5 @@ class OrganizationAuditAction(models.TextChoices):
     MESSENGER_THREAD_RESOLVED = "messenger_thread_resolved", "Messenger Thread Resolved"
     MESSENGER_THREAD_REOPENED = "messenger_thread_reopened", "Messenger Thread Reopened"
     MESSENGER_THREAD_CLOSED = "messenger_thread_closed", "Messenger Thread Closed"
+
 

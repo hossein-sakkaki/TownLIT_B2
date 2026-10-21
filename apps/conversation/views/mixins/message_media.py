@@ -2,7 +2,7 @@
 # TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-10-06.
-# Last Update by Hossein Sakkaki on 2026-10-16.
+# Last Update by Hossein Sakkaki on 2026-10-18.
 #
 
 from django.shortcuts import get_object_or_404
@@ -33,6 +33,7 @@ from apps.conversation.services.organization.direct_media import (
     create_organization_direct_media_message,
 )
 from apps.conversation.utils import get_websocket_url
+from apps.conversation.services.rate_limits import MessengerMediaRateThrottle
 from common.aws.s3_utils import get_file_url
 
 
@@ -43,6 +44,7 @@ class MessageMediaActionsMixin:
         url_path='upload-file',
         permission_classes=[IsAuthenticated],
         parser_classes=[MultiPartParser, FormParser],
+        throttle_classes=[MessengerMediaRateThrottle],
     )
     def upload_file(
         self,
@@ -62,6 +64,11 @@ class MessageMediaActionsMixin:
         reply_to_message_id = (
             request.data.get(
                 "reply_to_message_id"
+            )
+        )
+        client_request_id = (
+            request.data.get(
+                "client_request_id"
             )
         )
         forwarded_from_message_id = (
@@ -404,6 +411,7 @@ class MessageMediaActionsMixin:
             "aes_key_encrypted_bytes": encrypted_payload["aes_key_encrypted_bytes"],
             "encrypted_keys_per_device": encrypted_payload["encrypted_keys_per_device"],
             "reply_to_message_id": reply_to_message_id,
+            "client_request_id": client_request_id,
         }
 
         if resolved_context.kind == ConversationContextKind.ORGANIZATION_DIRECT:
@@ -513,6 +521,8 @@ class MessageMediaActionsMixin:
             response_payload,
             status=(
                 status.HTTP_201_CREATED
+                if payload.get("created", True)
+                else status.HTTP_200_OK
             ),
         )
 

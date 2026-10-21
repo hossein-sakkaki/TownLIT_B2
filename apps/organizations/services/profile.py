@@ -3,7 +3,7 @@
 # TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-08-29.
-# Last Update by Hossein Sakkaki on 2026-09-22.
+# Last Update by Hossein Sakkaki on 2026-10-20.
 #
 
 from django.core.exceptions import PermissionDenied
@@ -24,6 +24,9 @@ from apps.organizations.feature_flags import (
 from apps.organizations.services.access import (
     user_has_organization_permission,
 )
+from apps.organizations.services.lifecycle_policy import (
+    require_operational_organization,
+)
 
 
 @transaction.atomic
@@ -38,6 +41,7 @@ def update_organization_profile(
     organization = Organization.objects.select_for_update().get(
         pk=organization.pk
     )
+    require_operational_organization(organization=organization)
 
     if not user_has_organization_permission(
         user=actor,
@@ -82,4 +86,5 @@ def update_organization_profile(
     )
 
     return organization
+
 

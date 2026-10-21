@@ -1,4 +1,8 @@
 # apps/content_safety/services/media_jobs.py
+# TownLIT
+#
+# Created by Hossein Sakkaki (original creation date not recorded).
+# Last Update by Hossein Sakkaki on 2026-10-19.
 
 from __future__ import annotations
 
@@ -994,11 +998,10 @@ def retry_content_safety_job(
             )
         )
 
-        if (
-            not actor_id
-            or locked.actor_id
-            != actor_id
-        ):
+        target = locked.content_object
+        permission_hook = getattr(target, "can_manage_content_safety", None)
+        allowed = bool(permission_hook(actor=actor)) if callable(permission_hook) else locked.actor_id == actor_id
+        if not actor_id or not allowed:
             raise ValidationError(
                 "You cannot retry this safety check."
             )

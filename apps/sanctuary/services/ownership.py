@@ -1,5 +1,10 @@
 # apps/sanctuary/services/ownership.py
 
+# TownLIT
+#
+# Created by Hossein Sakkaki (original creation date not recorded).
+# Last Update by Hossein Sakkaki on 2026-10-19.
+
 from typing import Callable, Dict, Iterable, Set
 from apps.organizations.selectors.ownership import (
     effective_organization_manager_user_ids,
@@ -107,4 +112,9 @@ def register_default_resolvers():
         "organizations",
         "organization",
         org_resolver,
+    )
+    register_owner_resolver(
+        "organization_content",
+        "organizationupdate",
+        lambda update: org_resolver(update.organization),
     )

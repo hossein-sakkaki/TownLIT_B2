@@ -6,7 +6,10 @@ from typing import List
 
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
-from django.db.models import Q, QuerySet
+from django.db.models import (
+    Q, QuerySet, Exists, OuterRef, Value, BooleanField, CharField, IntegerField,
+)
+from django.utils import timezone
 
 from apps.core.boundaries.query import BoundaryVisibilityQuery
 from apps.core.owner_visibility.query import OwnerVisibilityQuery
@@ -82,6 +85,12 @@ class SquareQuery:
                 kind != SQUARE_KIND_ALL
                 and source.kind != kind
             ):
+                continue
+
+            if source.kind == "organization_update":
+                querysets.append(
+                    SquareQuery._organization_updates(source, viewer=viewer)
+                )
                 continue
 
             qs = model.objects.all()
@@ -199,3 +208,79 @@ class SquareQuery:
             querysets.append(qs)
 
         return querysets
+
+    @staticmethod
+    def _organization_updates(source, *, viewer=None):
+        """Discover only published, public organization media updates.
+
+        OrganizationUpdate owns no GenericForeignKey owner or is_converted
+        flag. Shared ranking gets compatible annotations, but operator
+        privacy and the operator's identity never become post ownership.
+        """
+        from apps.organization_content.models import OrganizationUpdateMedia
+        from apps.organization_media.models import OrganizationMediaAsset
+        from apps.organizations.constants import OrganizationVisibility, OrganizationStatus
+        from apps.core.visibility.constants import VISIBILITY_GLOBAL
+
+        uses = OrganizationUpdateMedia.objects.filter(update_id=OuterRef("pk"))
+        ready = uses.filter(
+            asset__status=OrganizationMediaAsset.Status.READY,
+            asset__is_converted=True,
+        ).filter(
+            Q(asset__kind=OrganizationMediaAsset.Kind.IMAGE,
+              asset__image_safety_verified=True)
+            | Q(asset__kind=OrganizationMediaAsset.Kind.VIDEO)
+        )
+        unready = uses.exclude(
+            asset__status=OrganizationMediaAsset.Status.READY,
+            asset__is_converted=True,
+        ) | uses.filter(
+            asset__kind=OrganizationMediaAsset.Kind.IMAGE,
+            asset__image_safety_verified=False,
+        )
+
+        queryset = (
+            source.model.objects.select_related("organization")
+            .prefetch_related("media_items__asset")
+            .filter(
+                status=source.model.Status.PUBLISHED,
+                caption_safety_verified=True,
+                is_active=True,
+                is_suspended=False,
+                published_at__lte=timezone.now(),
+                organization__status=OrganizationStatus.ACTIVE,
+                organization__visibility=OrganizationVisibility.PUBLIC,
+            )
+            .annotate(_square_has_media=Exists(uses),
+                      _square_has_ready_media=Exists(ready),
+                      _square_has_unready_media=Exists(unready))
+            .filter(_square_has_media=True,
+                    _square_has_ready_media=True,
+                    _square_has_unready_media=False)
+            .annotate(
+                visibility=Value(VISIBILITY_GLOBAL, output_field=CharField()),
+                object_id=Value(0, output_field=IntegerField()),
+                square_kind=Value(source.kind, output_field=CharField()),
+                square_is_friend_owner=Value(False, output_field=BooleanField()),
+            )
+        )
+
+        if viewer is not None and getattr(viewer, "is_authenticated", False):
+            # Match the existing Boundary policy for organization GFK owners.
+            from apps.organizations.selectors.ownership import (
+                effective_organization_owner_memberships_queryset,
+            )
+            conflicting_owner = (
+                effective_organization_owner_memberships_queryset()
+                .filter(organization_id=OuterRef("organization_id"),
+                        member__is_active=True)
+                .filter(Exists(
+                    BoundaryVisibilityQuery._boundary_exists_for_user_id(
+                        viewer=viewer,
+                        user_id_outer_ref=OuterRef("member__user_id"),
+                    )
+                ))
+            )
+            queryset = queryset.exclude(Exists(conflicting_owner))
+
+        return queryset

@@ -2,10 +2,11 @@
 # TownLIT
 #
 # Created by Hossein Sakkaki on 2026-10-02.
-# Last Update by Hossein Sakkaki on 2026-10-02.
+# Last Update by Hossein Sakkaki on 2026-10-20.
 #
 
 from rest_framework import serializers
+from rest_framework.fields import empty
 
 from apps.organizations.constants import (
     OrganizationKind,
@@ -31,6 +32,19 @@ def _file_url(field, *, request=None) -> str | None:
         if request
         else url
     )
+
+
+class OptionalQueryBooleanField(serializers.BooleanField):
+    """Keep omitted query booleans distinct from explicit false values.
+
+    DRF can interpret a missing field in a QueryDict as unchecked HTML input.
+    For an optional search filter, omission must mean no filtering.
+    """
+
+    def get_value(self, dictionary):
+        if self.field_name not in dictionary:
+            return empty
+        return super().get_value(dictionary)
 
 
 class OrganizationDiscoveryQuerySerializer(
@@ -72,7 +86,7 @@ class OrganizationDiscoveryQuerySerializer(
         allow_null=True,
     )
 
-    verified = serializers.BooleanField(
+    verified = OptionalQueryBooleanField(
         required=False,
         allow_null=True,
     )
@@ -137,3 +151,4 @@ class OrganizationDiscoveryResultSerializer(
         return is_organization_verified(
             organization=obj
         )
+

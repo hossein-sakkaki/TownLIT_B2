@@ -3,7 +3,7 @@
 # TownLIT
 #
 # Created by Hossein Sakkaki on 2025-01-01.
-# Last Update by Hossein Sakkaki on 2026-08-14.
+# Last Update by Hossein Sakkaki on 2026-10-20.
 
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -15,11 +15,16 @@ from django.db import transaction
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 import logging
-from django.core.exceptions import ObjectDoesNotExist
+from django.core.exceptions import ObjectDoesNotExist, PermissionDenied as DjangoPermissionDenied
 
 from django.db.models import Prefetch, Count, Q
 from apps.core.pagination import ConfigurablePagination
 from apps.posts.models.comment import Comment
+from apps.posts.services.organization_comment_identity import (
+    validate_comment_organization, can_inspect_comment_operator,
+    public_organization_identity,
+)
+from apps.accounts.serializers.user_serializers import SimpleCustomUserSerializer
 from apps.posts.serializers.comments import (
     CommentReadSerializer,
     CommentWriteSerializer,
@@ -33,6 +38,10 @@ from apps.posts.services.boundary_interactions import (
 )
 from apps.posts.services.comment_content_safety import (
     enforce_comment_content_safety,
+)
+
+from apps.organization_content.services.access import (
+    can_manage_content, ensure_update_interaction_access, is_organization_update_type,
 )
 
 logger = logging.getLogger(__name__)
@@ -164,11 +173,34 @@ class CommentViewSet(viewsets.ModelViewSet):
     queryset = (
         Comment.objects
         .filter(is_active=True)
-        .select_related("name", "content_type")
+        .select_related("name", "content_type", "acting_organization")
         .order_by("-published_at")
     )
     permission_classes = [IsAuthenticated]
     pagination_class = ConfigurablePagination
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        raw_ct = request.query_params.get("content_type")
+        raw_oid = request.query_params.get("object_id")
+        if self.action == "create":
+            raw_ct, raw_oid = request.data.get("content_type"), request.data.get("object_id")
+        comment_id = kwargs.get("pk") or request.query_params.get("parent_id")
+        if comment_id:
+            try:
+                comment = Comment.objects.select_related("content_type").filter(pk=int(comment_id)).first()
+            except (TypeError, ValueError):
+                comment = None
+            if comment is not None:
+                if self.action == "destroy" and comment.name_id == getattr(request.user, "pk", None):
+                    return
+                ensure_update_interaction_access(content_type=comment.content_type, object_id=comment.object_id)
+        if raw_ct and raw_oid:
+            try:
+                content_type = _resolve_content_type(str(raw_ct))
+            except (ContentType.DoesNotExist, ContentType.MultipleObjectsReturned, ValueError):
+                return
+            ensure_update_interaction_access(content_type=content_type, object_id=raw_oid)
 
     # ---------------------------------------------------------------------
     # Permissions
@@ -187,6 +219,9 @@ class CommentViewSet(viewsets.ModelViewSet):
         except Exception:
             logger.exception("Failed to resolve comment target for ownership check")
             return False
+
+        if is_organization_update_type(instance.content_type):
+            return can_manage_content(actor=user, organization=target.organization)
 
         owner_field_candidates = [
             "name_id",
@@ -236,6 +271,8 @@ class CommentViewSet(viewsets.ModelViewSet):
 
         try:
             serializer.is_valid(raise_exception=True)
+        except (PermissionDenied, DjangoPermissionDenied) as error:
+            return Response({"detail": str(error)}, status=status.HTTP_403_FORBIDDEN)
         except Exception:
             logger.warning(
                 "Comment validation failed",
@@ -368,6 +405,11 @@ class CommentViewSet(viewsets.ModelViewSet):
     # Core QuerySet filter
     def get_queryset(self):
         qs = super().get_queryset()
+        # An unscoped legacy list must not enumerate Organization draft comments.
+        if not self.kwargs.get("pk") and not (
+            self.request.query_params.get("content_type") and self.request.query_params.get("object_id")
+        ):
+            qs = qs.exclude(content_type__app_label="organization_content", content_type__model="organizationupdate")
         ct = self.request.query_params.get("content_type")
         oid = self.request.query_params.get("object_id")
 
@@ -395,6 +437,10 @@ class CommentViewSet(viewsets.ModelViewSet):
     # -----------------------------------------------------------------
     # Create with WS broadcast (safe)
     def perform_create(self, serializer):
+        ensure_update_interaction_access(
+            content_type=serializer.validated_data.get("content_type"),
+            object_id=serializer.validated_data.get("object_id"),
+        )
         inst: Comment = serializer.save()
 
         serialized = CommentReadSerializer(
@@ -473,6 +519,63 @@ class CommentViewSet(viewsets.ModelViewSet):
         )
         
     
+    @action(
+        detail=False, methods=["get"], url_path="acting_identity",
+        permission_classes=[IsAuthenticated],
+    )
+    def acting_identity(self, request):
+        """Resolve verified actor ability for the active Organization workspace."""
+        try:
+            cto = _resolve_content_type(request.query_params.get("content_type", ""))
+            organization = validate_comment_organization(
+                user=request.user,
+                organization_id=int(request.query_params["organization_id"]),
+                content_type=cto,
+                object_id=int(request.query_params["object_id"]),
+            )
+        except (KeyError, ValueError, TypeError, ContentType.DoesNotExist):
+            return Response({"detail": "Invalid Organization comment target."}, status=400)
+        return Response({
+            "can_reply": True,
+            "organization": public_organization_identity(organization, request=request),
+        })
+
+    @action(
+        detail=False, methods=["get"], url_path="internal_attribution",
+        permission_classes=[IsAuthenticated],
+    )
+    def internal_attribution(self, request):
+        """No actor data ever enters public reads, realtime payloads or shared caches."""
+        try:
+            ids = [int(value) for value in request.query_params.get("ids", "").split(",")]
+            if not 1 <= len(ids) <= 50 or any(value <= 0 for value in ids):
+                raise ValueError("Invalid ids")
+        except ValueError:
+            return Response({"detail": "Up to 50 valid ids required."}, status=400)
+
+        data = {}
+        for comment in Comment.objects.filter(
+            id__in=ids, acting_organization__isnull=False, is_active=True,
+        ).select_related("name", "acting_organization"):
+            if can_inspect_comment_operator(user=request.user, comment=comment):
+                actor_data = SimpleCustomUserSerializer(
+                    comment.name, context=self.get_serializer_context(),
+                ).data
+                allowed_fields = (
+                    "id", "username", "name", "family", "avatar_url",
+                    "avatar_cdn_url", "avatar_version", "profile_image",
+                    "is_verified_identity", "is_townlit_verified",
+                    "label_color", "label",
+                )
+                data[str(comment.id)] = {
+                    "operator": {
+                        key: actor_data.get(key) for key in allowed_fields
+                    },
+                }
+        response = Response({"attribution": data})
+        response["Cache-Control"] = "no-store, private"
+        return response
+
     # -----------------------------------------------------------------
     # THREAD — all top-level comments + 1-level replies
     @action(
@@ -508,14 +611,14 @@ class CommentViewSet(viewsets.ModelViewSet):
                 recomment__isnull=True,
                 is_active=True,
             )
-            .select_related("name", "content_type")
+            .select_related("name", "content_type", "acting_organization")
             .prefetch_related(
                 Prefetch(
                     "responses",
                     queryset=(
                         Comment.objects
                         .filter(is_active=True)
-                        .select_related("name")
+                        .select_related("name", "acting_organization")
                         .order_by("published_at")
                     ),
                 )
@@ -638,7 +741,7 @@ class CommentViewSet(viewsets.ModelViewSet):
                 recomment__isnull=True,
                 is_active=True,
             )
-            .select_related("name", "content_type")
+            .select_related("name", "content_type", "acting_organization")
             .annotate(
                 replies_count=Count(
                     "responses",
@@ -701,7 +804,7 @@ class CommentViewSet(viewsets.ModelViewSet):
                 recomment__is_active=True,
                 is_active=True,
             )
-            .select_related("name")
+            .select_related("name", "acting_organization")
             .order_by("published_at")
         )
 

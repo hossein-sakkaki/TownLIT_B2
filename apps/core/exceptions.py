@@ -1,7 +1,18 @@
 # apps/core/exceptions.py
+# TownLIT
+#
+# Created by Hossein Sakkaki on 2026-10-19.
+# Last Update by Hossein Sakkaki on 2026-10-19.
+
+import logging
+
 from rest_framework.views import exception_handler as drf_exception_handler
 from rest_framework.response import Response
 from rest_framework import status
+
+
+logger = logging.getLogger(__name__)
+
 
 def custom_exception_handler(exc, context):
     """
@@ -11,7 +22,13 @@ def custom_exception_handler(exc, context):
     """
     resp = drf_exception_handler(exc, context)
     if resp is None:
-        # Not handled by DRF default (e.g., plain Exception)
+        request = context.get("request")
+        logger.error(
+            "Unhandled API exception: %s %s",
+            getattr(request, "method", "UNKNOWN"),
+            getattr(request, "path", ""),
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
         return Response(
             {"message": "An unexpected error occurred.", "error": str(exc)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -30,3 +47,4 @@ def custom_exception_handler(exc, context):
         "error": data,
     }
     return Response(normalized, status=resp.status_code)
+

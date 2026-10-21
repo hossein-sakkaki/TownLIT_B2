@@ -41,7 +41,7 @@ def organization_logo_upload_to(instance, filename):
 
 
 def organization_cover_upload_to(instance, filename):
-    return ORGANIZATION_COVER_UPLOAD.dir_load(
+    return ORGANIZATION_COVER_UPLOAD(
         instance,
         filename,
     )

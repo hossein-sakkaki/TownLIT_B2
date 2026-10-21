@@ -2,7 +2,7 @@
 # TownLIT
 #
 # Created by Hossein Sakkaki on 2026-09-27.
-# Last Update by Hossein Sakkaki on 2026-09-27.
+# Last Update by Hossein Sakkaki on 2026-10-20.
 
 """Organization-owned standalone public updates. Not a Church or Event model."""
 
@@ -14,7 +14,14 @@ from django.db import models
 from django.utils import timezone
 
 
-class OrganizationUpdate(models.Model):
+from apps.core.interactions.mixins import InteractionCounterMixin
+from apps.core.interactions.models import ReactionBreakdownMixin
+from apps.core.moderation.mixins import ModerationTargetMixin
+
+
+class OrganizationUpdate(
+    ModerationTargetMixin, InteractionCounterMixin, ReactionBreakdownMixin, models.Model,
+):
     class Status(models.TextChoices):
         DRAFT = "draft", "Draft"
         PUBLISHED = "published", "Published"
@@ -25,6 +32,7 @@ class OrganizationUpdate(models.Model):
         "organizations.Organization", on_delete=models.PROTECT, related_name="public_updates"
     )
     caption = models.TextField()
+    caption_safety_verified = models.BooleanField(default=False)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.DRAFT)
     # Reuse the existing cross-content interaction tables; do not duplicate them.
     reactions = GenericRelation(
@@ -38,11 +46,13 @@ class OrganizationUpdate(models.Model):
         related_name="organization_updates_created",
     )
     published_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL,
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
         related_name="organization_updates_published",
     )
     published_at = models.DateTimeField(null=True, blank=True)
     archived_at = models.DateTimeField(null=True, blank=True)
+    publish_requested_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    publish_error = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -55,16 +65,38 @@ class OrganizationUpdate(models.Model):
             raise ValidationError({"caption": "Caption is required."})
         if self.status == self.Status.PUBLISHED and not self.published_at:
             raise ValidationError({"published_at": "Published updates need a timestamp."})
+        if self.status == self.Status.PUBLISHED and self.pk and not self.media_items.exists():
+            raise ValidationError({"status": "Published Organization content requires a photo or video."})
         if self.status == self.Status.ARCHIVED and not self.archived_at:
             raise ValidationError({"archived_at": "Archived updates need a timestamp."})
 
     @property
     def is_publicly_available(self):
-        return (self.status == self.Status.PUBLISHED
-                and self.organization.status == "active"
-                and self.organization.visibility == "public"
-                and self.published_at is not None
-                and self.published_at <= timezone.now())
+        """Publication readiness; viewer access is checked by the visibility hook."""
+        from apps.organization_content.services.access import organization_has_profile_content_feed
+        from apps.sanctuary.services.held_content_access import is_under_active_safety_hold
+        if not (
+            self.is_active and not self.is_suspended and self.caption_safety_verified
+            and self.status == self.Status.PUBLISHED
+            and organization_has_profile_content_feed(self.organization)
+            and self.published_at is not None and self.published_at <= timezone.now()
+        ):
+            return False
+        if is_under_active_safety_hold(self):
+            return False
+        assets = [usage.asset for usage in self.media_items.select_related("asset")]
+        return bool(assets) and all(asset.is_ready_for_publication() for asset in assets)
+
+    def content_visibility_allowed(self, *, viewer):
+        # Public interactions must never inherit the operator's personal privacy.
+        from apps.organization_content.services.access import can_view_organization_content
+        return (
+            can_view_organization_content(organization=self.organization, viewer=viewer)
+            and self.is_publicly_available
+        )
+
+    def is_available(self):
+        return self.is_publicly_available
 
 
 class OrganizationUpdateMedia(models.Model):
@@ -86,3 +118,5 @@ class OrganizationUpdateMedia(models.Model):
         if self.asset_id and self.update_id:
             if self.asset.organization_id != self.update.organization_id:
                 raise ValidationError("Update and media asset must belong to the same Organization.")
+
+

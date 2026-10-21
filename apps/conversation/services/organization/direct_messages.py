@@ -2,7 +2,7 @@
 # TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-10-06.
-# Last Update by Hossein Sakkaki on 2026-10-15.
+# Last Update by Hossein Sakkaki on 2026-10-18.
 #
 
 from __future__ import annotations
@@ -55,6 +55,7 @@ def send_organization_direct_participant_message(
     participant_user,
     content,
     reply_to_message_id=None,
+    client_request_id=None,
 ):
     plain_text = str(content or "").strip()
     if not plain_text:
@@ -105,27 +106,36 @@ def send_organization_direct_participant_message(
         sender=participant_user,
         content=plain_text,
         reply_to_message_id=reply_to_message_id,
+        client_request_id=client_request_id,
     )
     if not result.get("ok"):
         if context_result.created:
             transaction.set_rollback(True)
         return result
 
-    mark_after_participant_message(
-        context=context,
-        actor=participant_user,
-    )
+    message_created = bool(result["payload"].get("created", True))
+    if message_created:
+        mark_after_participant_message(
+            context=context,
+            actor=participant_user,
+        )
 
-    context.dialogue.deleted_by_users.remove(participant_user)
-    schedule_organization_direct_message_realtime(result["payload"]["message"].id)
+        context.dialogue.deleted_by_users.remove(participant_user)
+        schedule_organization_direct_message_realtime(
+            result["payload"]["message"].id
+        )
 
     return _success(
         {
             "context": context,
             "message": result["payload"]["message"],
             "created": context_result.created,
+            "message_created": message_created,
+            "idempotent_replay": bool(
+                result["payload"].get("idempotent_replay", False)
+            ),
         },
-        201,
+        201 if message_created else 200,
     )
 
 
@@ -136,6 +146,7 @@ def send_organization_direct_reply(
     acting_user,
     content,
     reply_to_message_id=None,
+    client_request_id=None,
 ):
     plain_text = str(content or "").strip()
     if not plain_text:
@@ -193,35 +204,48 @@ def send_organization_direct_reply(
         sender=acting_user,
         content=plain_text,
         reply_to_message_id=reply_to_message_id,
+        client_request_id=client_request_id,
     )
     if not result.get("ok"):
         return result
 
     message = result["payload"]["message"]
-    attribution = create_organization_message_attribution(
-        message=message,
-        organization=context.organization,
-        actor_membership=actor_membership,
-    )
+    message_created = bool(result["payload"].get("created", True))
 
-    mark_after_organization_reply(
-        context=context,
-        actor=acting_user,
-        actor_membership=actor_membership,
-    )
+    if message_created:
+        attribution = create_organization_message_attribution(
+            message=message,
+            organization=context.organization,
+            actor_membership=actor_membership,
+        )
 
-    # A new Organization reply should make a previously hidden thread visible
-    # again without restoring the participant's old soft-deleted messages.
-    context.dialogue.deleted_by_users.remove(context.participant_user)
-    schedule_organization_direct_message_realtime(message.id)
+        mark_after_organization_reply(
+            context=context,
+            actor=acting_user,
+            actor_membership=actor_membership,
+        )
+
+        # A new Organization reply should make a previously hidden thread visible
+        # again without restoring the participant's old soft-deleted messages.
+        context.dialogue.deleted_by_users.remove(context.participant_user)
+        schedule_organization_direct_message_realtime(message.id)
+    else:
+        try:
+            attribution = message.organization_attribution
+        except Exception:
+            attribution = None
 
     return _success(
         {
             "context": context,
             "message": message,
             "attribution": attribution,
+            "message_created": message_created,
+            "idempotent_replay": bool(
+                result["payload"].get("idempotent_replay", False)
+            ),
         },
-        201,
+        201 if message_created else 200,
     )
 
 

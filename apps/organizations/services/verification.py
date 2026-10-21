@@ -3,7 +3,7 @@
 # TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-08-29.
-# Last Update by Hossein Sakkaki on 2026-10-01.
+# Last Update by Hossein Sakkaki on 2026-10-20.
 #
 
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -29,9 +29,12 @@ from apps.organizations.models import (
     OrganizationVerificationGrant,
 )
 from apps.organizations.services.access import user_has_organization_permission
+from apps.organizations.services.lifecycle_policy import require_operational_organization
 
 
 def _ensure_verification_manager(*, organization, actor):
+    require_operational_organization(organization=organization)
+
     if getattr(actor, "is_staff", False):
         return
     if not user_has_organization_permission(
@@ -706,4 +709,5 @@ def revoke_verification_grant(*, grant, reviewer, reason, now=None):
         now=now,
     )
     return grant
+
 

@@ -1,4 +1,10 @@
 # apps/posts/models/reaction.py
+# TownLIT
+#
+# Created by Hossein Sakkaki (original creation date not recorded).
+# Last Update by Hossein Sakkaki on 2026-10-19.
+
+# apps/posts/models/reaction.py
 
 from django.db import models
 from django.utils import timezone
@@ -37,6 +43,17 @@ class Reaction(models.Model):
     content_object = GenericForeignKey('content_type', 'object_id')
 
     timestamp = models.DateTimeField(default=timezone.now, verbose_name='Timestamp')
+
+    def save(self, *args, **kwargs):
+        from apps.organization_content.services.access import (
+            ensure_update_interaction_access, is_organization_update_type,
+        )
+        if is_organization_update_type(self.content_type):
+            ensure_update_interaction_access(content_type=self.content_type, object_id=self.object_id)
+            if (self.message or "").strip():
+                from django.core.exceptions import ValidationError
+                raise ValidationError("Private reaction messages are not supported for Organization content.")
+        return super().save(*args, **kwargs)
 
     def __str__(self):
         return f'{self.name.username} reacted with {self.reaction_type}'

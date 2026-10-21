@@ -2,13 +2,13 @@
 # TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-10-06.
-# Last Update by Hossein Sakkaki on 2026-10-16.
+# Last Update by Hossein Sakkaki on 2026-10-18.
 #
 
 import base64
 import json
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 
 from apps.conversation.models import Dialogue, Message, MessageEncryption
 from apps.conversation.policies import (
@@ -27,7 +27,16 @@ from apps.conversation.services.media_content_safety import (
     enforce_backend_readable_message_media_content_safety,
 )
 from apps.content_safety.services.media_jobs import (
+    current_content_safety_jobs,
     schedule_configured_content_safety_jobs,
+)
+from validators.mediaValidators.conversation_upload_limits import (
+    validate_conversation_media_size,
+)
+from apps.conversation.services.message_idempotency import (
+    existing_message_for_client_request,
+    message_media_field,
+    normalize_client_request_id,
 )
 
 
@@ -173,12 +182,27 @@ def prepare_encrypted_file_request(
     return _success(normalized)
 
 
+def _decode_backend_managed_text(message) -> str:
+    raw = getattr(message, "content_encrypted", None)
+    if not raw:
+        return ""
+    try:
+        if isinstance(raw, memoryview):
+            raw = raw.tobytes()
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8", errors="ignore")
+        return base64.b64decode(raw).decode("utf-8")
+    except Exception:
+        return ""
+
+
 def create_backend_managed_text_message(
     *,
     dialogue,
     sender,
     content,
     reply_to_message_id=None,
+    client_request_id=None,
 ):
     """Create one backend-readable text message on the shared Message model."""
     security = ConversationSecurityPolicy.resolve(dialogue)
@@ -189,6 +213,71 @@ def create_backend_managed_text_message(
             400,
         )
 
+    try:
+        request_id = normalize_client_request_id(client_request_id)
+    except ValueError as exc:
+        return _error(
+            "INVALID_CLIENT_REQUEST_ID",
+            str(exc),
+            400,
+        )
+
+    plain_text = str(content or "").strip()
+    if not plain_text:
+        return _error(
+            "BAD_REQUEST",
+            "Message content is required.",
+            400,
+        )
+
+    try:
+        expected_reply_to_id = (
+            int(reply_to_message_id)
+            if reply_to_message_id not in (None, "")
+            else None
+        )
+    except (TypeError, ValueError):
+        return _error(
+            "BAD_REQUEST",
+            "Invalid reply target.",
+            400,
+        )
+
+    existing = existing_message_for_client_request(
+        dialogue=dialogue,
+        sender=sender,
+        client_request_id=request_id,
+    )
+    if existing is not None:
+        if message_media_field(existing) is not None or existing.is_system:
+            return _error(
+                "IDEMPOTENCY_KEY_REUSED",
+                "client_request_id was already used for a different message kind.",
+                409,
+            )
+        if _decode_backend_managed_text(existing) != plain_text:
+            return _error(
+                "IDEMPOTENCY_KEY_REUSED",
+                "client_request_id was already used with different message content.",
+                409,
+            )
+        if existing.reply_to_id != expected_reply_to_id:
+            return _error(
+                "IDEMPOTENCY_KEY_REUSED",
+                "client_request_id was already used with different reply metadata.",
+                409,
+            )
+        return _success({
+            "message": existing,
+            "dialogue_slug": dialogue.slug,
+            "message_id": existing.id,
+            "is_group": bool(dialogue.is_group),
+            "is_encrypted": False,
+            "reply_to_message_id": existing.reply_to_id,
+            "created": False,
+            "idempotent_replay": True,
+        })
+
     reply_validation = validate_reply_target(
         dialogue=dialogue,
         acting_user=sender,
@@ -198,14 +287,6 @@ def create_backend_managed_text_message(
         return _error(
             reply_validation["code"],
             reply_validation["message"],
-            400,
-        )
-
-    plain_text = str(content or "").strip()
-    if not plain_text:
-        return _error(
-            "BAD_REQUEST",
-            "Message content is required.",
             400,
         )
 
@@ -220,15 +301,46 @@ def create_backend_managed_text_message(
     ).decode("utf-8")
     content_bytes = base64_str.encode("utf-8")
 
-    message = Message.objects.create(
-        dialogue=dialogue,
-        sender=sender,
-        content_encrypted=content_bytes,
-        reply_to=reply_validation["message_obj"],
-    )
-
-    dialogue.last_message = message
-    dialogue.save(update_fields=["last_message"])
+    try:
+        with transaction.atomic():
+            message = Message.objects.create(
+                dialogue=dialogue,
+                sender=sender,
+                content_encrypted=content_bytes,
+                reply_to=reply_validation["message_obj"],
+                client_request_id=request_id,
+            )
+            dialogue.last_message = message
+            dialogue.save(update_fields=["last_message"])
+    except IntegrityError:
+        existing = existing_message_for_client_request(
+            dialogue=dialogue,
+            sender=sender,
+            client_request_id=request_id,
+        )
+        if existing is None:
+            raise
+        if (
+            message_media_field(existing) is not None
+            or existing.is_system
+            or _decode_backend_managed_text(existing) != plain_text
+            or existing.reply_to_id != expected_reply_to_id
+        ):
+            return _error(
+                "IDEMPOTENCY_KEY_REUSED",
+                "client_request_id is already associated with a different message.",
+                409,
+            )
+        return _success({
+            "message": existing,
+            "dialogue_slug": dialogue.slug,
+            "message_id": existing.id,
+            "is_group": bool(dialogue.is_group),
+            "is_encrypted": False,
+            "reply_to_message_id": existing.reply_to_id,
+            "created": False,
+            "idempotent_replay": True,
+        })
 
     return _success({
         "message": message,
@@ -241,8 +353,9 @@ def create_backend_managed_text_message(
             if reply_validation["message_obj"]
             else None
         ),
+        "created": True,
+        "idempotent_replay": False,
     })
-
 
 def create_text_message(
     *,
@@ -254,6 +367,7 @@ def create_text_message(
     recipient_hidden_on_incoming=False,
     recipient=None,
     reply_to_message_id=None,
+    client_request_id=None,
 ):
     """Create text through the context-aware shared Conversation engine."""
     context = ConversationContextPolicy.resolve(dialogue)
@@ -329,6 +443,7 @@ def create_text_message(
             sender=sender,
             content=content,
             reply_to_message_id=reply_to_message_id,
+            client_request_id=client_request_id,
         )
 
     # Personal Direct E2EE flow remains unchanged.
@@ -388,15 +503,10 @@ def create_text_message(
     })
 
 
-def validate_upload_input(*, uploaded_file, max_file_size=1000 * 1024 * 1024):
-    """
-    Validate uploaded file and resolve target model field.
-    """
+def validate_upload_input(*, uploaded_file):
+    """Validate file type and authoritative per-kind Messenger size."""
     if not uploaded_file:
         return _error("BAD_REQUEST", "File is required.", 400)
-
-    if uploaded_file.size > max_file_size:
-        return _error("BAD_REQUEST", "File too large. Max size is 1000MB.", 400)
 
     file_name = (uploaded_file.name or "").lower()
     file_type = uploaded_file.content_type or "application/octet-stream"
@@ -416,12 +526,23 @@ def validate_upload_input(*, uploaded_file, max_file_size=1000 * 1024 * 1024):
             400,
         )
 
+    size_validation = validate_conversation_media_size(
+        uploaded_file=uploaded_file,
+        field_name=field_name,
+    )
+    if not size_validation.get("ok"):
+        return _error(
+            size_validation["code"],
+            size_validation["message"],
+            size_validation["status"],
+        )
+
     return _success({
         "field_name": field_name,
         "file_name": file_name,
         "file_type": file_type,
+        "max_bytes": size_validation["max_bytes"],
     })
-
 
 def create_file_message(
     *,
@@ -437,56 +558,47 @@ def create_file_message(
     recipient=None,
     reply_to_message_id=None,
     forwarded_from_message=None,
+    client_request_id=None,
 ):
-    """
-    Create one file message in a shared backend service path.
-
-    Supports:
-    - Group non-encrypted file messages
-    - DM encrypted file messages
-    - Forward metadata for client-side media forwarding
-
-    Content Safety:
-    - Group image: synchronous before persistence
-    - Group audio: synchronous transcript safety before persistence
-    - Group video: asynchronous after persistence
-    - Private E2EE media: never inspected by backend Content Safety
-
-    Messenger media never enters server Media Conversion.
-    """
-
+    """Create one media message through the shared Conversation model."""
+    # Enforce the same validator for REST, realtime and direct service callers.
+    size_check = validate_conversation_media_size(
+        uploaded_file=uploaded_file,
+        field_name=field_name,
+    )
+    if not size_check["ok"]:
+        return _error(
+            size_check["code"],
+            size_check["message"],
+            size_check["status"],
+        )
 
     security = ConversationSecurityPolicy.resolve(dialogue)
+
+    try:
+        request_id = normalize_client_request_id(client_request_id)
+    except ValueError as exc:
+        return _error(
+            "INVALID_CLIENT_REQUEST_ID",
+            str(exc),
+            400,
+        )
 
     reply_validation = validate_reply_target(
         dialogue=dialogue,
         acting_user=sender,
         reply_to_message_id=reply_to_message_id,
     )
-
-    if not reply_validation.get(
-        "ok"
-    ):
+    if not reply_validation.get("ok"):
         return _error(
             reply_validation["code"],
             reply_validation["message"],
             400,
         )
 
-    reply_to_message = (
-        reply_validation[
-            "message_obj"
-        ]
-    )
+    reply_to_message = reply_validation["message_obj"]
+    is_forwarded = forwarded_from_message is not None
 
-    is_forwarded = (
-        forwarded_from_message
-        is not None
-    )
-
-    # --------------------------------------------------------------
-    # Backend-managed media
-    # --------------------------------------------------------------
     if security.mode == ConversationSecurityMode.BACKEND_MANAGED:
         if is_encrypted_file:
             return _error(
@@ -495,15 +607,39 @@ def create_file_message(
                 400,
             )
 
-        requires_async_video_safety = (
-            field_name == "video"
+        existing = existing_message_for_client_request(
+            dialogue=dialogue,
+            sender=sender,
+            client_request_id=request_id,
         )
+        if existing is not None:
+            existing_field = message_media_field(existing)
+            if (
+                existing_field != field_name
+                or existing.reply_to_id != (reply_to_message.id if reply_to_message else None)
+            ):
+                return _error(
+                    "IDEMPOTENCY_KEY_REUSED",
+                    "client_request_id was already used for a different media request.",
+                    409,
+                )
+            return _success({
+                "message": existing,
+                "dialogue_slug": dialogue.slug,
+                "message_id": existing.id,
+                "is_group": bool(dialogue.is_group),
+                "is_encrypted_file": False,
+                "field_name": existing_field,
+                "content_safety_jobs": current_content_safety_jobs(existing),
+                "reply_to_message_id": existing.reply_to_id,
+                "is_forwarded": bool(existing.is_forwarded),
+                "forwarded_from_message_id": existing.forwarded_from_id,
+                "created": False,
+                "idempotent_replay": True,
+            })
 
-        # Image/audio remain synchronous.
-        #
-        # Video intentionally returns immediately from this service and
-        # enters the asynchronous ContentSafetyJob pipeline only after
-        # the authoritative Message.video source has been persisted.
+        requires_async_video_safety = field_name == "video"
+
         enforce_backend_readable_message_media_content_safety(
             dialogue=dialogue,
             file_obj=uploaded_file,
@@ -511,100 +647,84 @@ def create_file_message(
             actor=sender,
             audit_field_name=field_name,
             validation_field_name="file",
-            mime_type=getattr(
-                uploaded_file,
-                "content_type",
-                None,
-            ),
+            mime_type=getattr(uploaded_file, "content_type", None),
         )
 
         content_safety_jobs = []
+        try:
+            with transaction.atomic():
+                message = Message.objects.create(
+                    dialogue=dialogue,
+                    sender=sender,
+                    is_encrypted_file=False,
+                    is_delivery_ready=not requires_async_video_safety,
+                    reply_to=reply_to_message,
+                    is_forwarded=is_forwarded,
+                    forwarded_from=forwarded_from_message,
+                    client_request_id=request_id,
+                    **{field_name: uploaded_file},
+                )
 
-        with transaction.atomic():
-            message = Message.objects.create(
-                dialogue=dialogue,
-                sender=sender,
-                is_encrypted_file=False,
-                is_delivery_ready=(
-                    not requires_async_video_safety
-                ),
-                reply_to=reply_to_message,
-                is_forwarded=is_forwarded,
-                forwarded_from=(
-                    forwarded_from_message
-                ),
-                **{
-                    field_name:
-                        uploaded_file
-                },
-            )
-
-            if requires_async_video_safety:
-                content_safety_jobs = (
-                    schedule_configured_content_safety_jobs(
+                if requires_async_video_safety:
+                    content_safety_jobs = schedule_configured_content_safety_jobs(
                         instance=message,
                         actor=sender,
-                        submitted_data={
-                            "video":
-                                uploaded_file
-                        },
+                        submitted_data={"video": uploaded_file},
                     )
-                )
-
-                if not content_safety_jobs:
-                    raise RuntimeError(
-                        (
-                            "Backend-managed Messenger video did not create "
-                            "a Content Safety job."
+                    if not content_safety_jobs:
+                        raise RuntimeError(
+                            "Backend-managed Messenger video did not create a Content Safety job."
                         )
-                    )
-
-            else:
-                # Existing non-video backend-managed behavior remains unchanged.
-                dialogue.last_message = message
-
-                dialogue.save(
-                    update_fields=[
-                        "last_message"
-                    ]
+                else:
+                    dialogue.last_message = message
+                    dialogue.save(update_fields=["last_message"])
+        except IntegrityError:
+            existing = existing_message_for_client_request(
+                dialogue=dialogue,
+                sender=sender,
+                client_request_id=request_id,
+            )
+            if existing is None:
+                raise
+            existing_field = message_media_field(existing)
+            if existing_field != field_name:
+                return _error(
+                    "IDEMPOTENCY_KEY_REUSED",
+                    "client_request_id was already used for a different media request.",
+                    409,
                 )
+            return _success({
+                "message": existing,
+                "dialogue_slug": dialogue.slug,
+                "message_id": existing.id,
+                "is_group": bool(dialogue.is_group),
+                "is_encrypted_file": False,
+                "field_name": existing_field,
+                "content_safety_jobs": current_content_safety_jobs(existing),
+                "reply_to_message_id": existing.reply_to_id,
+                "is_forwarded": bool(existing.is_forwarded),
+                "forwarded_from_message_id": existing.forwarded_from_id,
+                "created": False,
+                "idempotent_replay": True,
+            })
 
-        return _success(
-            {
-                "message":
-                    message,
-                "dialogue_slug":
-                    dialogue.slug,
-                "message_id":
-                    message.id,
-                "is_group":
-                    bool(dialogue.is_group),
-                "is_encrypted_file":
-                    False,
-                "field_name":
-                    field_name,
-                "content_safety_jobs":
-                    content_safety_jobs,
-                "reply_to_message_id":
-                    (
-                        reply_to_message.id
-                        if reply_to_message
-                        else None
-                    ),
-                "is_forwarded":
-                    is_forwarded,
-                "forwarded_from_message_id":
-                    (
-                        forwarded_from_message.id
-                        if forwarded_from_message
-                        else None
-                    ),
-            }
-        )
+        return _success({
+            "message": message,
+            "dialogue_slug": dialogue.slug,
+            "message_id": message.id,
+            "is_group": bool(dialogue.is_group),
+            "is_encrypted_file": False,
+            "field_name": field_name,
+            "content_safety_jobs": content_safety_jobs,
+            "reply_to_message_id": reply_to_message.id if reply_to_message else None,
+            "is_forwarded": is_forwarded,
+            "forwarded_from_message_id": (
+                forwarded_from_message.id if forwarded_from_message else None
+            ),
+            "created": True,
+            "idempotent_replay": False,
+        })
 
-    # --------------------------------------------------------------
-    # Personal Direct E2EE media
-    # --------------------------------------------------------------
     if security.mode != ConversationSecurityMode.END_TO_END_ENCRYPTED:
         return _error(
             "UNSUPPORTED_SECURITY_MODE",
@@ -630,119 +750,61 @@ def create_file_message(
             400,
         )
 
-    if (
-        not aes_key_encrypted_bytes
-        or not encrypted_for_device
-    ):
+    if not aes_key_encrypted_bytes or not encrypted_for_device:
         return _error(
             "BAD_REQUEST",
-            (
-                "Missing E2EE fields: "
-                "aes_key_encrypted and encrypted_for_device."
-            ),
+            "Missing E2EE fields: aes_key_encrypted and encrypted_for_device.",
             400,
         )
 
     clean_items = _normalize_encrypted_contents(
-        encrypted_keys_per_device
-        or []
+        encrypted_keys_per_device or []
     )
 
-    # Private media is E2EE ciphertext.
-    # Never send these bytes through Content Safety.
     with transaction.atomic():
         message = Message.objects.create(
             dialogue=dialogue,
             sender=sender,
             is_encrypted_file=True,
             is_delivery_ready=True,
-            encrypted_for_device=(
-                encrypted_for_device
-            ),
-            aes_key_encrypted=(
-                aes_key_encrypted_bytes
-            ),
+            encrypted_for_device=encrypted_for_device,
+            aes_key_encrypted=aes_key_encrypted_bytes,
             reply_to=reply_to_message,
             is_forwarded=is_forwarded,
-            forwarded_from=(
-                forwarded_from_message
-            ),
-            **{
-                field_name:
-                    uploaded_file
-            },
+            forwarded_from=forwarded_from_message,
+            **{field_name: uploaded_file},
         )
 
-        if (
-            recipient_hidden_on_incoming
-            and recipient
-        ):
-            message.deleted_by_users.add(
-                recipient
-            )
+        if recipient_hidden_on_incoming and recipient:
+            message.deleted_by_users.add(recipient)
 
         to_create = [
             MessageEncryption(
                 message=message,
-                device_id=(
-                    item[
-                        "device_id"
-                    ]
-                ),
-                encrypted_content=(
-                    item[
-                        "encrypted_content"
-                    ]
-                ),
+                device_id=item["device_id"],
+                encrypted_content=item["encrypted_content"],
             )
-            for item in clean_items[
-                :500
-            ]
+            for item in clean_items[:500]
         ]
-
         if to_create:
-            MessageEncryption.objects.bulk_create(
-                to_create
-            )
+            MessageEncryption.objects.bulk_create(to_create)
 
         dialogue.last_message = message
+        dialogue.save(update_fields=["last_message"])
 
-        dialogue.save(
-            update_fields=[
-                "last_message"
-            ]
-        )
-
-    return _success(
-        {
-            "message":
-                message,
-            "dialogue_slug":
-                dialogue.slug,
-            "message_id":
-                message.id,
-            "is_group":
-                False,
-            "is_encrypted_file":
-                True,
-            "field_name":
-                field_name,
-            "content_safety_jobs":
-                [],
-            "reply_to_message_id":
-                (
-                    reply_to_message.id
-                    if reply_to_message
-                    else None
-                ),
-            "is_forwarded":
-                is_forwarded,
-            "forwarded_from_message_id":
-                (
-                    forwarded_from_message.id
-                    if forwarded_from_message
-                    else None
-                ),
-        }
-    )
-
+    return _success({
+        "message": message,
+        "dialogue_slug": dialogue.slug,
+        "message_id": message.id,
+        "is_group": False,
+        "is_encrypted_file": True,
+        "field_name": field_name,
+        "content_safety_jobs": [],
+        "reply_to_message_id": reply_to_message.id if reply_to_message else None,
+        "is_forwarded": is_forwarded,
+        "forwarded_from_message_id": (
+            forwarded_from_message.id if forwarded_from_message else None
+        ),
+        "created": True,
+        "idempotent_replay": False,
+    })

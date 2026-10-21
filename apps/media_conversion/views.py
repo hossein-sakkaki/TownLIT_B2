@@ -1,4 +1,10 @@
 # apps/media_conversion/views.py
+# TownLIT
+#
+# Created by Hossein Sakkaki (original creation date not recorded).
+# Last Update by Hossein Sakkaki on 2026-10-19.
+
+# apps/media_conversion/views.py
 import logging
 
 from django.apps import apps
@@ -104,6 +110,10 @@ def _safe_can_view_target(request, target_obj) -> bool:
             return False
     except Exception:
         return False
+
+    if getattr(getattr(target_obj, "_meta", None), "label_lower", "") == "organization_media.organizationmediaasset":
+        from apps.organization_media.services.access import can_manage_media
+        return can_manage_media(actor=request.user, organization=target_obj.organization)
 
     # 1) VisibilityPolicy (if exists)
     try:
