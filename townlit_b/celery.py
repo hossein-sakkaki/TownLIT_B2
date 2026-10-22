@@ -1,4 +1,8 @@
+
 # townlit_b/celery.py
+# TownLIT
+#
+# Last Update by Hossein Sakkaki on 2026-10-22.
 
 from __future__ import absolute_import, unicode_literals
 
@@ -66,6 +70,7 @@ app.conf.beat_schedule = {
             "maintenance_tasks.delete_expired_tokens"
         ),
         "schedule": crontab(
+            minute=0,
             hour="*/2",
         ),
     },
@@ -147,7 +152,7 @@ app.conf.beat_schedule = {
             minute="*",
         ),
     },
-    
+
     # Delete abandoned users daily.
     "delete-abandoned-users-daily": {
         "task": (
@@ -252,7 +257,7 @@ app.conf.beat_schedule = {
             minute=20,
         ),
     },
-    
+
     # Recover stale Creative Editor renders every 5 minutes.
     "recover-stale-creative-renders-every-5-minutes": {
         "task": (
@@ -263,7 +268,7 @@ app.conf.beat_schedule = {
             minute="*/5",
         ),
     },
-    
+
     # Process expired Journey entries every 5 minutes.
     "process-expired-journey-entries": {
         "task": (

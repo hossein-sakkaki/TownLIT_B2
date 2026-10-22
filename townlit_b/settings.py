@@ -303,6 +303,7 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
     'Range',
     'x-device-id',
     "x-install-id",
+    "x-internal-request",
 ]
 CORS_EXPOSE_HEADERS = ['Content-Range', 'Accept-Ranges']
 
@@ -425,6 +426,7 @@ SENDER_VERIFIED_GRACE_MINUTES = int(os.getenv("SENDER_VERIFIED_GRACE_MINUTES", "
 
 # -------------------------------------------------------------------------------------------------------------------
 REST_FRAMEWORK = {
+    "LIST_SERIALIZER_ERRORS_AS_DICT": False,
     # --- Auth ---
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework_simplejwt.authentication.JWTAuthentication',
@@ -843,7 +845,16 @@ STATICFILES_DIRS = [
     os.path.join(BASE_DIR, 'townlit_local_static'),
 ]
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
+# Storage backends
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
 
 
 
@@ -854,7 +865,7 @@ SERVE_FILES_PUBLICLY = os.getenv('SERVE_FILES_PUBLICLY', 'False').lower() in ('t
 USE_S3 = os.getenv('USE_S3', 'False').lower() in ('true', '1', 't')
 
 if USE_S3:
-    DEFAULT_FILE_STORAGE = "apps.core.storages.PrivateMediaStorage"
+    STORAGES["default"]["BACKEND"] = "apps.core.storages.PrivateMediaStorage"
 
     AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
     AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
@@ -875,7 +886,6 @@ if USE_S3:
     MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/'
 
 else:
-    DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
     MEDIA_URL = '/media/'
     MEDIA_ROOT = os.path.join(BASE_DIR, 'media/')
 
