@@ -37,7 +37,7 @@ from .models import (
 from apps.conversation.models import Dialogue
 from .serializers import (
         TermsAndPolicySerializer, FAQSerializer, SiteAnnouncementSerializer,
-        UserFeedbackSerializer, UserActionLogSerializer, PrayerSerializer,
+        UserFeedbackSerializer, UserActionLogSerializer, PrayerSerializer, PublicPrayerSerializer,
         VideoCategorySerializer, VideoSeriesSerializer, OfficialVideoSerializer,
         OfficialVideoCreateUpdateSerializer, VideoViewLogSerializer, UserAgreementSerializer
     )
@@ -289,16 +289,44 @@ class PrayerViewSet(viewsets.ModelViewSet):
     pagination_class = PrayerPagination
 
     def get_permissions(self):
-        if self.action == 'respond':
-            return [IsAdminUserStrict()]
-        elif self.action in ['list']:
+        public_actions = {
+            "list",
+            "retrieve",
+            "create",
+            "total_count",
+        }
+
+        if self.action in public_actions:
             return [AllowAny()]
-        return [AllowAny()]  # create allowed for everyone
+
+        return [IsAdminUserStrict()]
+
 
     def get_queryset(self):
-        if self.action == 'list':
-            return Prayer.objects.filter(is_active=True, allow_display=True).order_by('-submitted_at')
-        return super().get_queryset()
+        queryset = Prayer.objects.all().order_by("-submitted_at")
+
+        if self.action == "list":
+            return queryset.filter(
+                is_active=True,
+                allow_display=True,
+            )
+
+        if self.action == "retrieve":
+            if not is_platform_admin(self.request.user):
+                return queryset.filter(
+                    is_active=True,
+                    allow_display=True,
+                )
+
+        return queryset
+
+
+    def get_serializer_class(self):
+        if self.action in {"list", "retrieve"}:
+            if not is_platform_admin(self.request.user):
+                return PublicPrayerSerializer
+
+        return PrayerSerializer
     
     @method_decorator(ratelimit(key='user_or_ip', rate='5/m', method='POST', block=True))
     def create(self, request, *args, **kwargs):
@@ -362,7 +390,7 @@ class VideoSeriesViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [AllowAny]
     
 
-class OfficialVideoViewSet(viewsets.ModelViewSet):
+class OfficialVideoViewSet(viewsets.ReadOnlyModelViewSet):
     lookup_field = "slug"
     queryset = OfficialVideo.objects.filter(is_active=True, publish_date__lte=timezone.now())
     serializer_class = OfficialVideoSerializer
@@ -386,7 +414,7 @@ class OfficialVideoViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
     @action(detail=True, methods=["post"], permission_classes=[AllowAny])
-    def track_view(self, request, pk=None):
+    def track_view(self, request, slug=None):
         video = self.get_object()
         ip = get_client_ip(request)
         user_agent = request.META.get("HTTP_USER_AGENT", "")[:255]

@@ -107,7 +107,21 @@ class PrayerSerializer(serializers.ModelSerializer):
             validated_data['user'] = user
         return super().create(validated_data)
 
+class PublicPrayerSerializer(PrayerSerializer):
+    """Expose only fields intended for public prayer display."""
 
+    class Meta(PrayerSerializer.Meta):
+        fields = [
+            "id",
+            "full_name",
+            "content",
+            "allow_display",
+            "admin_response",
+            "responded_at",
+            "submitted_at",
+            "display_name",
+        ]
+        
 # VIDEO CATEGORY Serializer -----------------------------------------------------------------------------------------
 class VideoCategorySerializer(serializers.ModelSerializer):
     class Meta:
