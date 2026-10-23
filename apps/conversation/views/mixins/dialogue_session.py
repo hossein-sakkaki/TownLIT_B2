@@ -6,6 +6,7 @@
 #
 
 import asyncio
+from datetime import timezone as datetime_timezone
 from datetime import datetime
 import logging
 
@@ -205,7 +206,7 @@ class DialogueSessionActionsMixin:
             last_seen_ts = asyncio.run(get_last_seen(participant.id))
             if last_seen_ts:
                 # ✅ datetime آگاه به منطقه
-                last_seen_dt = datetime.fromtimestamp(last_seen_ts, tz=timezone.utc)
+                last_seen_dt = datetime.fromtimestamp(last_seen_ts, tz=datetime_timezone.utc)
                 return Response({
                     'user_id': participant.id,
                     'is_online': False,
