@@ -159,17 +159,6 @@ app.conf.beat_schedule = {
         ),
     },
 
-    # Delete abandoned users daily.
-    "delete-abandoned-users-daily": {
-        "task": (
-            "apps.accounts.tasks."
-            "maintenance_tasks.delete_abandoned_users"
-        ),
-        "schedule": crontab(
-            hour=3,
-            minute=0,
-        ),
-    },
 
     # Sanctuary reviewer fallback every 2 hours.
     "check-for-inactive-reviewers-every-2-hours": {
