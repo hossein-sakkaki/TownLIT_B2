@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from celery import shared_task
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -30,6 +31,20 @@ def process_expired_journey_entries(self):
     - viewer-record cascade
     - immutable media cleanup after commit
     """
+
+    # Keep lifecycle processing paused until explicitly enabled.
+    if not getattr(
+        settings,
+        "JOURNEY_LIFECYCLE_TASK_ENABLED",
+        False,
+    ):
+        return {
+            "selected": 0,
+            "archived": 0,
+            "deleted": 0,
+            "skipped": 0,
+            "disabled": True,
+        }
 
     now = timezone.now()
 

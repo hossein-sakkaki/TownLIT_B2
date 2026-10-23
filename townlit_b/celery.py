@@ -26,6 +26,12 @@ app.config_from_object(
 
 app.autodiscover_tasks()
 
+# Register nested task modules not covered by autodiscovery.
+app.conf.imports = tuple(app.conf.imports or ()) + (
+    "apps.accounts.tasks.maintenance_tasks",
+    "apps.posts.tasks.journeys",
+)
+
 
 # Route domain-specific tasks to dedicated queues.
 app.conf.task_routes = {

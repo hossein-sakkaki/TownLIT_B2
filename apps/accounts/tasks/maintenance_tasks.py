@@ -43,6 +43,17 @@ def delete_abandoned_users():
     """
     Delete registrations that never completed onboarding.
     """
+    # Require explicit approval before deleting abandoned registrations.
+    if not getattr(
+        settings,
+        "AUTO_DELETE_ABANDONED_USERS_ENABLED",
+        False,
+    ):
+        logger.warning(
+            "[Maintenance] Abandoned user deletion is disabled."
+        )
+        return 0
+
     threshold = (
         timezone.now()
         - timedelta(hours=2)
