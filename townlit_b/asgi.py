@@ -2,8 +2,11 @@
 import os
 import django
 
+from townlit_b.security_logging import install_sensitive_logging_filters
+
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "townlit_b.settings")
 django.setup()
+install_sensitive_logging_filters()
 
 from django.core.asgi import get_asgi_application
 from channels.routing import ProtocolTypeRouter, URLRouter
