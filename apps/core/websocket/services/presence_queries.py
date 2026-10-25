@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from datetime import timezone as datetime_timezone
 from typing import Iterable
 
 from django.utils import timezone
@@ -59,7 +60,7 @@ async def get_last_seen_payload(user_id: int) -> dict | None:
     if not ts:
         return None
 
-    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+    dt = datetime.fromtimestamp(ts, tz=datetime_timezone.utc)
 
     return {
         "user_id": user_id,

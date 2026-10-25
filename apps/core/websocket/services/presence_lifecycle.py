@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import time
 from datetime import datetime
+from datetime import timezone as datetime_timezone
 
 from django.utils import timezone
 from django.utils.timesince import timesince
@@ -52,7 +53,7 @@ async def mark_user_offline(user_id: int, socket_id: str) -> dict | None:
         finally:
             await redis_conn.close()
 
-    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+    dt = datetime.fromtimestamp(ts, tz=datetime_timezone.utc)
 
     return {
         "user_id": int(user_id),
