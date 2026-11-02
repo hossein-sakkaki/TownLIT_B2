@@ -92,12 +92,22 @@ class CentralWebSocketConsumer(AsyncJsonWebsocketConsumer):
         device_id = (qs.get("device_id", [""])[0] or "").strip().lower()
         self.device_id = device_id if device_id else None
 
-        # Register handlers only after passing all gates
+        await self._activate_authenticated_session(
+            accept_socket=True,
+        )
+
+    async def _activate_authenticated_session(
+        self,
+        *,
+        accept_socket: bool,
+        strict_handlers: bool = False,
+    ):
+        # Activate feature handlers only after authentication.
         self._register_handlers()
 
-        # Accept socket
         self.connected = True
-        await self.accept()
+        if accept_socket:
+            await self.accept()
 
         # Run handler connect hooks
         for name, handler in self.handlers.items():
@@ -111,6 +121,12 @@ class CentralWebSocketConsumer(AsyncJsonWebsocketConsumer):
                         e,
                         exc_info=True,
                     )
+                    if strict_handlers:
+                        raise
+
+                # A handler may explicitly deny access by closing the socket.
+                if strict_handlers and getattr(self, "_v2_close_requested", False):
+                    raise RuntimeError("WebSocket activation denied by handler")
 
         # Start heartbeat
         self._last_pong_ts = time.time()

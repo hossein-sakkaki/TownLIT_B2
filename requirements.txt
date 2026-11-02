@@ -96,7 +96,7 @@ supervisor==4.2.5
 tomli==2.2.1
 Twisted==24.11.0
 txaio==23.1.1
-typing_extensions==4.7.1
+typing_extensions==4.12.2
 tzdata==2024.1
 urllib3==2.0.4
 uvicorn[standard]==0.34.3

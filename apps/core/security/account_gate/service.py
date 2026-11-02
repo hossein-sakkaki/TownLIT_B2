@@ -23,7 +23,7 @@ def is_authenticated_user(user) -> bool:
         return False
 
 
-def is_restricted_owner_user(user) -> bool:
+def is_restricted_owner_user(user, *, fail_closed: bool = False) -> bool:
     """
     Return True only when the authenticated user's own Member profile
     is temporarily restricted.
@@ -56,8 +56,8 @@ def is_restricted_owner_user(user) -> bool:
             is_hidden_by_confidants=True,
         ).exists()
     except Exception:
-        # Fail closed would risk locking users out because of transient errors.
-        # Fail open keeps availability; view-level gates still apply.
+        if fail_closed:
+            raise
         return False
 
 
