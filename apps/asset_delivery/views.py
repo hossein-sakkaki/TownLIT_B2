@@ -3,7 +3,7 @@
 # TownLIT
 #
 # Created by Hossein Sakkaki on 2026-08-31.
-# Last Update by Hossein Sakkaki on 2026-09-07.
+# Last Update by Hossein Sakkaki on 2026-11-02.
 #
 
 import uuid
@@ -18,7 +18,6 @@ from django.contrib.contenttypes.models import ContentType
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
-
 from rest_framework.response import Response
 
 from apps.asset_delivery.constants import PlaybackAuthMode, PlaybackIntent
@@ -58,7 +57,6 @@ from apps.audio_catalog.services.historical_usage import (
 logger = logging.getLogger(__name__)
 
 
-
 def _safe_can_deliver_asset(
     request,
     target,
@@ -75,111 +73,45 @@ def _safe_can_deliver_asset(
     - Unlisted covers require authentication.
     - Private or restricted assets use existing access rules.
     """
-    viewer = getattr(
-        request,
-        "user",
-        None,
-    )
+    viewer = getattr(request, "user", None)
 
-    # Sanctuary restrictions always take precedence.
-    if is_under_active_safety_hold(
-        target
-    ):
-        if not can_inspect_held_content(
-            viewer=viewer,
-            target=target,
-        ):
+    if is_under_active_safety_hold(target):
+        if not can_inspect_held_content(viewer=viewer, target=target):
             return False
+        return held_asset_field_is_allowed(target, field_name)
 
-        return held_asset_field_is_allowed(
-            target,
-            field_name,
-        )
+    target_model = getattr(getattr(target, "_meta", None), "label_lower", "")
 
-    target_model = getattr(
-        getattr(target, "_meta", None),
-        "label_lower",
-        "",
-    )
-
-    # Organization public identity assets.
     if target_model == "organizations.organization":
-        organization_status = getattr(
-            target,
-            "status",
-            None,
-        )
-
-        organization_visibility = getattr(
-            target,
-            "visibility",
-            None,
-        )
-
+        organization_status = getattr(target, "status", None)
+        organization_visibility = getattr(target, "visibility", None)
         is_active = organization_status == "active"
+        is_authenticated = bool(getattr(viewer, "is_authenticated", False))
 
-        is_authenticated = bool(
-            getattr(
-                viewer,
-                "is_authenticated",
-                False,
-            )
-        )
-
-        # Preserve existing public logo behavior.
         if (
             field_name == "logo"
             and is_active
-            and organization_visibility in {
-                "public",
-                "unlisted",
-            }
-            and bool(
-                getattr(target, "logo", None)
-            )
+            and organization_visibility in {"public", "unlisted"}
+            and bool(getattr(target, "logo", None))
         ):
             return True
 
-        # Public Organization covers are viewable
-        # without Organization management permissions.
         if (
             field_name == "cover_image"
             and is_active
-            and bool(
-                getattr(target, "cover_image", None)
-            )
-            and intent in {
-                "preload",
-                "view",
-                "render",
-                "feed",
-                "detail",
-            }
+            and bool(getattr(target, "cover_image", None))
+            and intent in {"preload", "view", "render", "feed", "detail"}
         ):
             if organization_visibility == "public":
                 return True
-
-            if (
-                organization_visibility == "unlisted"
-                and is_authenticated
-            ):
+            if organization_visibility == "unlisted" and is_authenticated:
                 return True
 
-    # Preserve existing target-specific policies.
-    hook = getattr(
-        target,
-        "can_deliver_asset",
-        None,
-    )
-
+    hook = getattr(target, "can_deliver_asset", None)
     if callable(hook):
         try:
             return bool(
-                hook(
-                    viewer=viewer,
-                    field_name=field_name,
-                    intent=intent,
-                )
+                hook(viewer=viewer, field_name=field_name, intent=intent)
             )
         except Exception:
             logger.exception(
@@ -190,30 +122,19 @@ def _safe_can_deliver_asset(
                         if hasattr(target, "_meta")
                         else type(target).__name__
                     ),
-                    "target_id": getattr(
-                        target,
-                        "pk",
-                        None,
-                    ),
+                    "target_id": getattr(target, "pk", None),
                     "field_name": field_name,
                     "intent": intent,
                 },
             )
-
             return False
 
-    if safe_can_deliver_public_user_avatar(
-        target,
-        field_name=field_name,
-    ):
+    if safe_can_deliver_public_user_avatar(target, field_name=field_name):
         return True
 
-    return safe_can_view_target(
-        request,
-        target,
-    )
+    return safe_can_view_target(request, target)
 
-    
+
 def _join_cdn_url(key: str) -> str:
     """Build CDN absolute URL."""
     base = (getattr(settings, "ASSET_CDN_BASE_URL", "") or "").rstrip("/")
@@ -229,84 +150,54 @@ def _is_hls_path(key: str) -> bool:
 
 
 def _hls_cookie_scope_from_key(key: str) -> str:
-    """
-    Use broad scope for HLS assets.
-    """
-
+    """Use broad scope for HLS assets."""
     parts = key.strip("/").split("/")
-
     if len(parts) >= 2 and parts[0] == "posts" and parts[1] == "videos":
         return "/posts/videos/"
-
     return "/"
 
 
 def _cookie_scope_from_key(key: str) -> str:
-    """
-    Scope cookies to parent directory.
-    """
-
+    """Scope cookies to parent directory."""
     k = (key or "").strip("/")
     if not k:
         return "/"
-
     parent = os.path.dirname(k).strip("/")
     if not parent:
         return "/"
-
     return f"/{parent}/"
 
 
 class AssetPlaybackViewSet(viewsets.ViewSet):
-    """
-    Playback gateway.
-    Backend authorizes, CDN delivers.
-    """
+    """Playback gateway. Backend authorizes, CDN delivers."""
 
     permission_classes = [AllowAny]
 
     def _resolve_target(self, raw_data):
-        """
-        Resolve target from request data.
-        """
-
+        """Resolve target from request data."""
         lookup = parse_target_lookup(raw_data)
-
         if lookup["mode"] == "content_type":
             return get_target_by_content_type(
-                lookup["content_type_id"],
-                lookup["object_id"],
+                lookup["content_type_id"], lookup["object_id"]
             )
-
         if lookup["mode"] == "app_model_object":
             return get_target_by_app_model(
-                lookup["app_label"],
-                lookup["model"],
-                lookup["object_id"],
+                lookup["app_label"], lookup["model"], lookup["object_id"]
             )
-
         if lookup["mode"] == "app_model_slug":
             return get_target_by_slug(
-                lookup["app_label"],
-                lookup["model"],
-                lookup["slug"],
+                lookup["app_label"], lookup["model"], lookup["slug"]
             )
-
         raise ValueError("Invalid target lookup mode.")
 
     def _validate_intent(self, raw_intent: str) -> str:
-        """
-        Validate playback intent.
-        """
-
+        """Validate playback intent."""
         intent = (raw_intent or PlaybackIntent.PRELOAD).strip().lower()
-
         if intent not in PlaybackIntent.ALL:
             raise ValueError(
                 f"Invalid intent '{intent}'. "
                 f"Allowed: {sorted(PlaybackIntent.ALL)}"
             )
-
         return intent
 
     def _set_cloudfront_signed_cookies(
@@ -317,18 +208,12 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
         ttl: int,
         cookie_path: str,
     ) -> None:
-        """
-        Set CloudFront signed cookies.
-        """
-
+        """Set CloudFront signed cookies."""
         ck = signed_url_to_cookies(signed_url)
-
         cookie_domain = (
             getattr(settings, "ASSET_CDN_COOKIE_DOMAIN", "") or ".townlit.com"
         ).strip() or ".townlit.com"
-
         secure = bool(getattr(settings, "ASSET_CDN_COOKIE_SECURE", True))
-
         common = dict(
             max_age=int(ttl),
             secure=secure,
@@ -337,41 +222,41 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
             domain=cookie_domain,
             path=cookie_path,
         )
-
         response.set_cookie("CloudFront-Policy", ck.policy, **common)
         response.set_cookie("CloudFront-Signature", ck.signature, **common)
         response.set_cookie("CloudFront-Key-Pair-Id", ck.key_pair_id, **common)
 
     def _build_meta(self, *, key: str, intent: str) -> dict:
-        """
-        Build lightweight metadata.
-        """
-
+        """Build lightweight metadata."""
         return {
             "is_hls": _is_hls_path(key),
-            "cookie_scope": _hls_cookie_scope_from_key(key) if _is_hls_path(key) else _cookie_scope_from_key(key),
+            "cookie_scope": (
+                _hls_cookie_scope_from_key(key)
+                if _is_hls_path(key)
+                else _cookie_scope_from_key(key)
+            ),
             "intent": intent,
         }
 
-    def _sign_key(self, *, key: str, kind: str, field_name: str, intent: str) -> dict:
-        """
-        Sign a storage key for delivery.
-        """
-
+    def _sign_key(
+        self,
+        *,
+        key: str,
+        kind: str,
+        field_name: str,
+        intent: str,
+    ) -> dict:
+        """Sign a storage key for delivery."""
         ttl = int(getattr(settings, "ASSET_CDN_DEFAULT_TTL_SECONDS", 900))
-
         sign_key = key
         if _is_hls_path(key):
             sign_key = os.path.dirname(key).rstrip("/") + "/*"
-
         resource_url = _join_cdn_url(sign_key)
         signed = build_signed_url(resource_url=resource_url, expires_in=ttl)
         expires_at = timezone.now() + timedelta(seconds=int(signed.expires_in))
-
         clean_url = signed.url
         if _is_hls_path(key):
             clean_url = strip_query(_join_cdn_url(key))
-
         payload = {
             "url": clean_url,
             "expires_in": int(signed.expires_in),
@@ -383,16 +268,12 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
             "cache_key": key,
             "intent": intent,
             "meta": self._build_meta(key=key, intent=intent),
-
-            # Internal fields
             "_signed_url_raw": signed.url,
             "_source_key": key,
         }
-
         PlaybackURLSerializer(
             data={k: v for k, v in payload.items() if not k.startswith("_")}
         ).is_valid(raise_exception=True)
-
         return payload
 
     def _resolve_playback_key(
@@ -402,18 +283,18 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
         field_name: str,
         job_kind: str,
     ) -> str | None:
-        """
-        Resolve the current storage key.
+        """Resolve the current published media key."""
+        # Video Testimony posters are published synchronously after conversion.
+        # An older DONE image job must not override the current FileField.
+        target_model = getattr(getattr(target, "_meta", None), "label_lower", "")
+        if field_name == "thumbnail" and target_model == "posts.testimony":
+            current_key = resolve_fallback_filefield_key(target, field_name)
+            if current_key:
+                return current_key
 
-        Audio artwork is updated synchronously and does not create a new
-        conversion job, so its current FileField must be preferred.
-        """
+        # Audio artwork follows its existing synchronous update contract.
         if field_name == "audio_artwork":
-            current_key = resolve_fallback_filefield_key(
-                target,
-                field_name,
-            )
-
+            current_key = resolve_fallback_filefield_key(target, field_name)
             if current_key:
                 return current_key
 
@@ -422,14 +303,9 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
             field_name=field_name,
             kind=job_kind,
         )
-
         if job_key:
             return job_key
-
-        return resolve_fallback_filefield_key(
-            target,
-            field_name,
-        )
+        return resolve_fallback_filefield_key(target, field_name)
 
     def _build_playback(
         self,
@@ -439,23 +315,17 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
         field_name: str,
         intent: str,
     ) -> dict:
-        """
-        Resolve the asset key and sign it.
-        """
+        """Resolve the asset key and sign it."""
         job_kind = "image" if kind in ("thumbnail", "image") else kind
-
         fields_to_try = [field_name]
-
         if field_name == "thumbnail":
             fields_to_try.append("image")
-
         for fname in fields_to_try:
             key = self._resolve_playback_key(
                 target=target,
                 field_name=fname,
                 job_kind=job_kind,
             )
-
             if key:
                 return self._sign_key(
                     key=key,
@@ -463,17 +333,12 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
                     field_name=fname,
                     intent=intent,
                 )
-
         raise ValueError("Playback source not found.")
 
     def _should_set_cookies(self, *, key: str, intent: str) -> bool:
-        """
-        Decide if response should set cookies.
-        """
-
+        """Decide if response should set cookies."""
         if _is_hls_path(key):
             return True
-
         return intent in {
             PlaybackIntent.PRELOAD,
             PlaybackIntent.VIEW,
@@ -484,81 +349,50 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
         }
 
     def _public_payload(self, payload: dict) -> dict:
-        """
-        Remove internal signing fields before returning response.
-        """
-
-        return {
-            k: v
-            for k, v in payload.items()
-            if not k.startswith("_")
-        }
+        """Remove internal signing fields before returning response."""
+        return {k: v for k, v in payload.items() if not k.startswith("_")}
 
     def _normalize_batch_item_data(self, item: dict) -> dict:
-        """
-        Normalize nested batch item target into the flat shape used by
-        parse_target_lookup().
-        """
-
+        """Normalize nested batch item target for parse_target_lookup()."""
         raw = dict(item or {})
         target = raw.pop("target", None)
-
         if isinstance(target, dict):
             target_type = (target.get("type") or "").strip().lower()
-
             if target_type in {"object", "app_model_object"}:
                 raw["app_label"] = target.get("app_label")
                 raw["model"] = target.get("model")
                 raw["object_id"] = target.get("object_id")
-
             elif target_type in {"slug", "app_model_slug"}:
                 raw["app_label"] = target.get("app_label")
                 raw["model"] = target.get("model")
                 raw["slug"] = target.get("slug")
-
             elif target_type in {"content_type", "content_type_object"}:
                 raw["content_type_id"] = target.get("content_type_id")
                 raw["object_id"] = target.get("object_id")
-
             else:
-                # Also allow clients to omit type and send direct target fields.
                 for key in (
-                    "app_label",
-                    "model",
-                    "object_id",
-                    "slug",
-                    "content_type_id",
+                    "app_label", "model", "object_id", "slug", "content_type_id"
                 ):
                     if key in target and key not in raw:
                         raw[key] = target.get(key)
-
         return raw
 
-    def _build_batch_item_payload(self, *, request, index: int, item: dict) -> dict:
-        """
-        Resolve one batch item.
-
-        Returns an internal result dict. Internal asset fields are stripped later.
-        """
-
+    def _build_batch_item_payload(
+        self, *, request, index: int, item: dict
+    ) -> dict:
+        """Resolve a single batch item for the response."""
         raw = self._normalize_batch_item_data(item)
-
         field_name = (raw.get("field_name") or "").strip()
         kind = (raw.get("kind") or "").strip().lower()
         intent = self._validate_intent(raw.get("intent"))
-
         raw_app_label = raw.get("app_label")
         raw_model = raw.get("model")
         field_name = resolve_field_alias(raw_app_label, raw_model, field_name)
-
         if not field_name:
             raise ValueError("Missing 'field_name'.")
-
         if kind not in {"video", "audio", "image", "thumbnail", "file"}:
             raise ValueError("Invalid 'kind'.")
-
         target = self._resolve_target(raw)
-
         if not _safe_can_deliver_asset(
             request,
             target,
@@ -571,31 +405,20 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
                 "error": "Access restricted.",
                 "status_code": status.HTTP_403_FORBIDDEN,
             }
-
         payload = self._build_playback(
             target=target,
             kind=kind,
             field_name=field_name,
             intent=intent,
         )
-
-        return {
-            "index": index,
-            "ok": True,
-            "_payload": payload,
-        }
+        return {"index": index, "ok": True, "_payload": payload}
 
     def _is_batch_hls_result(self, result: dict) -> bool:
-        """
-        Check if a successful internal batch result is HLS.
-        """
-
+        """Check if a successful batch result is HLS."""
         if not result.get("ok"):
             return False
-
         payload = result.get("_payload") or {}
         key = payload.get("_source_key") or ""
-
         return bool(key and _is_hls_path(key))
 
     def _make_public_batch_result(
@@ -604,17 +427,7 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
         *,
         hls_cookie_enabled: bool,
     ) -> dict:
-        """
-        Convert one internal batch result into public response shape.
-
-        Non-HLS batch assets use signed_url mode because one HTTP response
-        cannot safely set many different CloudFront cookie policies with the
-        same cookie names.
-
-        HLS requires cookies because the playlist and segments need a wildcard
-        cookie policy. We only enable it when there is one HLS item in the batch.
-        """
-
+        """Serialize a batch result using signed URLs for non-HLS media."""
         if not result.get("ok"):
             return {
                 "index": result.get("index", 0),
@@ -624,11 +437,9 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
                     result.get("status_code") or status.HTTP_400_BAD_REQUEST
                 ),
             }
-
         payload = dict(result.get("_payload") or {})
         key = payload.get("_source_key") or ""
         is_hls = bool(key and _is_hls_path(key))
-
         if is_hls and not hls_cookie_enabled:
             return {
                 "index": result.get("index", 0),
@@ -636,41 +447,26 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
                 "error": "Multiple HLS cookie-scoped assets are not supported in one batch. Resolve this item individually.",
                 "status_code": status.HTTP_409_CONFLICT,
             }
-
         public_payload = self._public_payload(payload)
-
         if not is_hls:
-            # Non-HLS payloads already include signed query params in the URL.
-            # Returning signed_url avoids depending on response-level cookies.
             public_payload["auth_mode"] = getattr(
-                PlaybackAuthMode,
-                "SIGNED_URL",
-                "signed_url",
+                PlaybackAuthMode, "SIGNED_URL", "signed_url"
             )
-
         return {
             "index": result.get("index", 0),
             "ok": True,
             "asset": public_payload,
         }
-        
-    def _handle_get(self, request, kind: str, default_field: str):
-        """
-        Handle playback GET requests.
-        """
 
+    def _handle_get(self, request, kind: str, default_field: str):
+        """Handle playback GET requests."""
         field_name = (request.query_params.get("field_name") or default_field).strip()
         intent = self._validate_intent(request.query_params.get("intent"))
-
         raw_app_label = request.query_params.get("app_label")
         raw_model = request.query_params.get("model")
         field_name = resolve_field_alias(raw_app_label, raw_model, field_name)
-
         try:
-            target = self._resolve_target(
-                request.query_params
-            )
-
+            target = self._resolve_target(request.query_params)
             if not _safe_can_deliver_asset(
                 request,
                 target,
@@ -678,32 +474,29 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
                 intent=intent,
             ):
                 return Response(
-                    {
-                        "detail": "Access restricted.",
-                    },
+                    {"detail": "Access restricted."},
                     status=status.HTTP_403_FORBIDDEN,
                 )
-
             payload = self._build_playback(
                 target=target,
                 kind=kind,
                 field_name=field_name,
                 intent=intent,
             )
-
-            resp_payload = {k: v for k, v in payload.items() if not k.startswith("_")}
+            resp_payload = {
+                k: v for k, v in payload.items() if not k.startswith("_")
+            }
             resp = Response(resp_payload, status=status.HTTP_200_OK)
-
             key = payload.get("_source_key") or ""
             raw_signed_url = payload.get("_signed_url_raw") or ""
-
-            if key and raw_signed_url and self._should_set_cookies(key=key, intent=intent):
+            if key and raw_signed_url and self._should_set_cookies(
+                key=key, intent=intent
+            ):
                 cookie_path = (
                     _hls_cookie_scope_from_key(key)
                     if _is_hls_path(key)
                     else _cookie_scope_from_key(key)
                 )
-
                 ttl = int(payload["expires_in"])
                 self._set_cloudfront_signed_cookies(
                     resp,
@@ -711,13 +504,10 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
                     ttl=ttl,
                     cookie_path=cookie_path,
                 )
-
             return resp
-
         except ValueError as e:
             return Response(
-                {"detail": str(e)},
-                status=status.HTTP_400_BAD_REQUEST,
+                {"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST
             )
         except Exception:
             logger.exception("asset_delivery.playback.get failed")
@@ -740,7 +530,9 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=["get"], url_path="thumbnail")
     def thumbnail(self, request):
-        return self._handle_get(request, kind="thumbnail", default_field="thumbnail")
+        return self._handle_get(
+            request, kind="thumbnail", default_field="thumbnail"
+        )
 
     @action(detail=False, methods=["get"], url_path="file")
     def file(self, request):
@@ -748,35 +540,25 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=["post"], url_path="refresh")
     def refresh(self, request):
-        """
-        Refresh playback using target lookup.
-        """
-
+        """Refresh playback using target lookup."""
         field_name = (request.data.get("field_name") or "").strip()
         kind = (request.data.get("kind") or "").strip().lower()
         intent = self._validate_intent(request.data.get("intent"))
-
         raw_app_label = request.data.get("app_label")
         raw_model = request.data.get("model")
         field_name = resolve_field_alias(raw_app_label, raw_model, field_name)
-
         if not field_name:
             return Response(
                 {"detail": "Missing 'field_name'."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
         if kind not in {"video", "audio", "image", "thumbnail", "file"}:
             return Response(
                 {"detail": "Invalid 'kind'."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
         try:
-            target = self._resolve_target(
-                request.data
-            )
-
+            target = self._resolve_target(request.data)
             if not _safe_can_deliver_asset(
                 request,
                 target,
@@ -784,32 +566,29 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
                 intent=intent,
             ):
                 return Response(
-                    {
-                        "detail": "Access restricted.",
-                    },
+                    {"detail": "Access restricted."},
                     status=status.HTTP_403_FORBIDDEN,
                 )
-
             payload = self._build_playback(
                 target=target,
                 kind=kind,
                 field_name=field_name,
                 intent=intent,
             )
-
-            resp_payload = {k: v for k, v in payload.items() if not k.startswith("_")}
+            resp_payload = {
+                k: v for k, v in payload.items() if not k.startswith("_")
+            }
             resp = Response(resp_payload, status=status.HTTP_200_OK)
-
             key = payload.get("_source_key") or ""
             raw_signed_url = payload.get("_signed_url_raw") or ""
-
-            if key and raw_signed_url and self._should_set_cookies(key=key, intent=intent):
+            if key and raw_signed_url and self._should_set_cookies(
+                key=key, intent=intent
+            ):
                 cookie_path = (
                     _hls_cookie_scope_from_key(key)
                     if _is_hls_path(key)
                     else _cookie_scope_from_key(key)
                 )
-
                 ttl = int(payload["expires_in"])
                 self._set_cloudfront_signed_cookies(
                     resp,
@@ -817,13 +596,10 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
                     ttl=ttl,
                     cookie_path=cookie_path,
                 )
-
             return resp
-
         except ValueError as e:
             return Response(
-                {"detail": str(e)},
-                status=status.HTTP_400_BAD_REQUEST,
+                {"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST
             )
         except Exception:
             logger.exception("asset_delivery.playback.refresh failed")
@@ -834,30 +610,16 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=["post"], url_path="batch")
     def batch(self, request):
-        """
-        Resolve multiple playback assets in one request.
-
-        Important cookie rule:
-        - Non-HLS assets are returned as signed URLs.
-        - One HLS asset can be returned with response-level CloudFront cookies.
-        - Multiple HLS assets in one batch are rejected per item so clients can
-          fall back to individual resolve calls.
-        """
-
+        """Resolve batch assets and select safe CloudFront authorization."""
         serializer = PlaybackBatchRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-
         items = serializer.validated_data["items"]
-
         internal_results = []
-
         for index, item in enumerate(items):
             try:
                 internal_results.append(
                     self._build_batch_item_payload(
-                        request=request,
-                        index=index,
-                        item=item,
+                        request=request, index=index, item=item
                     )
                 )
             except ValueError as e:
@@ -872,9 +634,7 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
             except Exception:
                 logger.exception(
                     "asset_delivery.playback.batch item failed",
-                    extra={
-                        "batch_index": index,
-                    },
+                    extra={"batch_index": index},
                 )
                 internal_results.append(
                     {
@@ -884,55 +644,39 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
                         "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
                     }
                 )
-
         hls_results = [
-            result
-            for result in internal_results
-            if self._is_batch_hls_result(result)
+            result for result in internal_results if self._is_batch_hls_result(result)
         ]
-
         hls_cookie_enabled = len(hls_results) == 1
-
         public_results = [
             self._make_public_batch_result(
-                result,
-                hls_cookie_enabled=hls_cookie_enabled,
+                result, hls_cookie_enabled=hls_cookie_enabled
             )
             for result in internal_results
         ]
-
-        response_payload = {
-            "results": public_results,
-        }
-
+        response_payload = {"results": public_results}
         response_serializer = PlaybackBatchResponseSerializer(
             data=response_payload
         )
         response_serializer.is_valid(raise_exception=True)
-
         resp = Response(
-            response_serializer.validated_data,
-            status=status.HTTP_200_OK,
+            response_serializer.validated_data, status=status.HTTP_200_OK
         )
-
         if hls_cookie_enabled:
             payload = hls_results[0].get("_payload") or {}
             key = payload.get("_source_key") or ""
             raw_signed_url = payload.get("_signed_url_raw") or ""
-
             if key and raw_signed_url:
                 ttl = int(payload["expires_in"])
                 cookie_path = _hls_cookie_scope_from_key(key)
-
                 self._set_cloudfront_signed_cookies(
                     resp,
                     signed_url=raw_signed_url,
                     ttl=ttl,
                     cookie_path=cookie_path,
                 )
-
         return resp
-    
+
     @action(
         detail=False,
         methods=["post"],
@@ -940,20 +684,15 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
         permission_classes=[IsAuthenticated],
     )
     def historical_audio(self, request):
-        """
-        Deliver audio only through an exact active historical grant.
-        """
-
+        """Deliver audio only through an exact active historical grant."""
         raw_variant_id = str(
             request.data.get("variant_public_id") or ""
         ).strip()
-
         if not raw_variant_id:
             return Response(
                 {"detail": "variant_public_id is required."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
         try:
             variant_public_id = uuid.UUID(raw_variant_id)
         except ValueError:
@@ -961,55 +700,35 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
                 {"detail": "Invalid variant_public_id."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
         try:
             intent = self._validate_intent(
-                request.data.get("intent")
-                or PlaybackIntent.PRELOAD
+                request.data.get("intent") or PlaybackIntent.PRELOAD
             )
-
             if intent == "download":
                 return Response(
                     {"detail": "Historical standalone download is not allowed."},
                     status=status.HTTP_403_FORBIDDEN,
                 )
-
-            content_target = self._resolve_target(
-                request.data
-            )
-
-            if is_under_active_safety_hold(
-                content_target
-            ):
+            content_target = self._resolve_target(request.data)
+            if is_under_active_safety_hold(content_target):
                 if not can_inspect_held_content(
-                    viewer=request.user,
-                    target=content_target,
+                    viewer=request.user, target=content_target
                 ):
                     return Response(
                         {"detail": "Access restricted."},
                         status=status.HTTP_403_FORBIDDEN,
                     )
-
-            elif not safe_can_view_target(
-                request,
-                content_target,
-            ):
+            elif not safe_can_view_target(request, content_target):
                 return Response(
                     {"detail": "Access restricted."},
                     status=status.HTTP_403_FORBIDDEN,
                 )
-
             content_type = ContentType.objects.get_for_model(
-                content_target,
-                for_concrete_model=False,
+                content_target, for_concrete_model=False
             )
-
             grant = (
-                AudioUsageGrant.objects
-                .select_related(
-                    "track",
-                    "variant",
-                    "content_type",
+                AudioUsageGrant.objects.select_related(
+                    "track", "variant", "content_type"
                 )
                 .filter(
                     content_type=content_type,
@@ -1019,80 +738,52 @@ class AssetPlaybackViewSet(viewsets.ViewSet):
                 )
                 .first()
             )
-
             if grant is None:
                 return Response(
                     {"detail": "Historical audio grant is unavailable."},
                     status=status.HTTP_403_FORBIDDEN,
                 )
-
-            availability = can_render_existing_audio_usage(
-                grant
-            )
-
+            availability = can_render_existing_audio_usage(grant)
             if not availability.allowed:
                 return Response(
                     {"detail": availability.reason},
                     status=status.HTTP_403_FORBIDDEN,
                 )
-
             payload = self._build_playback(
                 target=grant.variant,
                 kind="audio",
                 field_name="audio_file",
                 intent=intent,
             )
-
             public_payload = {
-                key: value
-                for key, value in payload.items()
-                if not key.startswith("_")
+                key: value for key, value in payload.items() if not key.startswith("_")
             }
-
             response = Response(
-                public_payload,
-                status=status.HTTP_200_OK,
+                public_payload, status=status.HTTP_200_OK
             )
-
             key = payload.get("_source_key") or ""
-            raw_signed_url = (
-                payload.get("_signed_url_raw") or ""
-            )
-
-            if (
-                key
-                and raw_signed_url
-                and self._should_set_cookies(
-                    key=key,
-                    intent=intent,
-                )
+            raw_signed_url = payload.get("_signed_url_raw") or ""
+            if key and raw_signed_url and self._should_set_cookies(
+                key=key, intent=intent
             ):
                 cookie_path = (
                     _hls_cookie_scope_from_key(key)
                     if _is_hls_path(key)
                     else _cookie_scope_from_key(key)
                 )
-
                 self._set_cloudfront_signed_cookies(
                     response,
                     signed_url=raw_signed_url,
                     ttl=int(payload["expires_in"]),
                     cookie_path=cookie_path,
                 )
-
             return response
-
         except ValueError as exc:
             return Response(
-                {"detail": str(exc)},
-                status=status.HTTP_400_BAD_REQUEST,
+                {"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST
             )
-
         except Exception:
-            logger.exception(
-                "asset_delivery.historical_audio failed"
-            )
-
+            logger.exception("asset_delivery.historical_audio failed")
             return Response(
                 {"detail": "Internal error."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,

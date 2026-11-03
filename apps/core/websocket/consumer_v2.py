@@ -99,6 +99,7 @@ class CentralWebSocketConsumerV2(CentralWebSocketConsumer):
 
         if settings.DEBUG:
             allowed.update((
+                "https://dev.townlit.com",
                 "http://localhost:3000",
                 "http://127.0.0.1:3000",
             ))
