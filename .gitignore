@@ -69,3 +69,6 @@ townlit_b/service-account.json
 # ChatGPT generated source snapshots
 # =============================
 chatgpt_sources/
+
+# Python virtual environment
+.venv/
