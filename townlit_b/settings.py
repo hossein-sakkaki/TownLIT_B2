@@ -89,6 +89,11 @@ SITE_URL = os.getenv(
     "https://www.townlit.com",
 )
 
+# Browser-facing password reset links must not use the API host.
+PASSWORD_RESET_FRONTEND_URL = (
+    os.getenv("PASSWORD_RESET_FRONTEND_URL") or SITE_URL
+).strip().rstrip("/")
+
 APP_LINK_BASE_URL = (
     os.getenv(
         "APP_LINK_BASE_URL",

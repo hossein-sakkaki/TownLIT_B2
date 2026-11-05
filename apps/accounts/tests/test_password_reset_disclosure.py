@@ -10,7 +10,7 @@ from io import StringIO
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.accounts.views.auth_views import AuthViewSet
@@ -64,10 +64,22 @@ class PasswordResetDisclosureTests(TestCase):
         self.user.refresh_from_db()
         self.assertTrue(self.user.reset_token)
         self.assertIsNotNone(self.user.reset_token_expiration)
-        self.assertIn(
-            self.user.reset_token,
-            send_email.call_args.kwargs["context"]["reset_link"],
-        )
+        link = send_email.call_args.kwargs["context"]["reset_link"]
+        bearer = link.rstrip("/").split("/")[-1]
+        self.assertTrue(bearer)
+        self.assertNotIn("reset_token", registered.data)
+
+
+    @override_settings(PASSWORD_RESET_FRONTEND_URL="https://dev.townlit.com")
+    @patch("apps.accounts.views.auth_views.send_custom_email", return_value=True)
+    def test_reset_email_uses_web_frontend_not_api_host(self, send_email):
+        response = self._forgot(self.user.email)
+
+        self.assertEqual(response.status_code, 200)
+        link = send_email.call_args.kwargs["context"]["reset_link"]
+        self.assertTrue(link.startswith("https://dev.townlit.com/reset-password/"))
+        self.assertTrue(link.endswith("/"))
+        self.assertNotIn("api.dev.townlit.com", link)
 
     @patch("apps.accounts.views.auth_views.send_custom_email", return_value=False)
     def test_mail_delivery_failure_does_not_disclose_account_existence(self, send_email):
@@ -101,7 +113,8 @@ class PasswordResetDisclosureTests(TestCase):
     def test_email_link_remains_valid_and_token_is_consumed_once(self, send_email):
         self.assertEqual(self._forgot(self.user.email).status_code, 200)
         self.user.refresh_from_db()
-        token = self.user.reset_token
+        link = send_email.call_args.kwargs["context"]["reset_link"]
+        token = link.rstrip("/").split("/")[-1]
 
         response = self._reset(token, "ReplacementPassword42!")
         self.assertEqual(response.status_code, 200)
