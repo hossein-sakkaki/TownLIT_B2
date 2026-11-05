@@ -4,7 +4,8 @@ from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
-from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+from rest_framework_simplejwt.views import TokenRefreshView
+from apps.accounts.views.token_obtain_views import TownLITTokenObtainPairView
 
 from apps.advancement.admin.site import advancement_admin_site 
 from apps.accounting.admin.site import accounting_admin_site
@@ -14,7 +15,7 @@ urlpatterns = [
     path('ckeditor/', include('ckeditor_uploader.urls')),
 
     # Auth tokens (optionally move under /api/v1/auth/ later)
-    path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
+    path('api/token/', TownLITTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
 
     # ✅ Versioned API gateway (single source of truth)
