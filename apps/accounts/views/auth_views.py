@@ -58,6 +58,14 @@ from apps.accounts.serializers.auth_serializers import (
     ProfileLanguageSelectionSerializer,
     ProfileLanguageOptionSerializer,
 )
+from apps.accounts.services.password_reset_tokens import (
+    issue_password_reset_token_v2,
+    password_reset_lookup_value,
+    should_issue_password_reset_token_v2,
+)
+from apps.accounts.services.two_factor_login import (
+    consume_login_two_factor_code,
+)
 from apps.accounts.services.profile_languages import (
     get_profile_language_options,
 )
@@ -1318,12 +1326,41 @@ class AuthViewSet(viewsets.ViewSet):
                 "message": "Two-factor authentication is not enabled for this user."
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        token_status = user.validate_two_factor_token(otp_code)
+        # Reject malformed codes before performing an expensive bcrypt check.
+        if len(otp_code) != 6 or not otp_code.isascii() or not otp_code.isdigit():
+            return Response({
+                "message": "Invalid OTP code. Please try again."
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Consume the code exactly once under a row lock. This prevents an
+        # OTP from minting multiple token pairs during concurrent requests.
+        token_status, user = consume_login_two_factor_code(
+            user_id=user.pk,
+            otp_code=otp_code,
+        )
+
+        if token_status == "suspended":
+            return Response({
+                "message": (
+                    "Your account is temporarily suspended for a LITSanctuary review. "
+                    "This protective step helps keep you and the community safe. "
+                    "Access may be restored once the review completes."
+                ),
+                "is_suspended": True,
+                "email": user.email,
+            }, status=status.HTTP_423_LOCKED)
+
+        if token_status == "inactive":
+            return Response({
+                "message": "User account is not active. Please verify your email or contact support."
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        if token_status == "disabled":
+            return Response({
+                "message": "Two-factor authentication is not enabled for this user."
+            }, status=status.HTTP_400_BAD_REQUEST)
 
         if token_status == "valid":
-            user.last_login = timezone.now()
-            user.save(update_fields=['last_login'])
-
             refresh = RefreshToken.for_user(user)
             access = refresh.access_token
 
@@ -1586,8 +1623,6 @@ class AuthViewSet(viewsets.ViewSet):
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        # Use one public response for registered and unregistered addresses.
-        # Neither the reset token nor account existence is public information.
         public_message = (
             "If an account exists for this email address, "
             "you will receive a password reset link shortly. "
@@ -1599,16 +1634,21 @@ class AuthViewSet(viewsets.ViewSet):
         except CustomUser.DoesNotExist:
             return Response({"message": public_message}, status=status.HTTP_200_OK)
 
-        # Preserve the legacy Fernet token and reset-link contract. A later
-        # migration can replace the stored bearer token after compatibility review.
-        reset_token = cipher_suite.encrypt(user.email.encode()).decode()
+        # Readers accept both token formats. Issuance stays legacy until all
+        # application instances have been upgraded, avoiding mixed-version failures.
+        if should_issue_password_reset_token_v2():
+            reset_token, stored_verifier = issue_password_reset_token_v2()
+        else:
+            reset_token = cipher_suite.encrypt(user.email.encode()).decode()
+            stored_verifier = reset_token
+
         expiration_minutes = settings.RESET_LINK_EXPIRATION_MINUTES
         expiration_time = timezone.now() + datetime.timedelta(minutes=expiration_minutes)
-        user.reset_token = reset_token
+        user.reset_token = stored_verifier
         user.reset_token_expiration = expiration_time
         user.save(update_fields=['reset_token', 'reset_token_expiration'])
 
-        reset_link = f'{settings.SITE_URL}/reset-password/{reset_token}/'
+        reset_link = f'{settings.PASSWORD_RESET_FRONTEND_URL}/reset-password/{reset_token}/'
         context = {
             'name': user.name or "User",
             'reset_link': reset_link,
@@ -1630,55 +1670,86 @@ class AuthViewSet(viewsets.ViewSet):
             delivered = False
 
         if not delivered:
-            # Do not log the address, reset link, token, or mail exception.
             logger.warning("Password reset email delivery was unsuccessful.")
 
         return Response({"message": public_message}, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=['post'], permission_classes=[AllowAny], url_path='reset-password/(?P<reset_token>[^/.]+)')
     def reset_password(self, request, reset_token):
-        try:
-            user = CustomUser.objects.get(reset_token=reset_token)
-            if user.reset_token_expiration < timezone.now():
-                return Response(
-                    {"message": "This password reset link has expired. Please request a new one."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-        except CustomUser.DoesNotExist:
+        # Never query by a token before applying format/length restrictions.
+        lookup_value = password_reset_lookup_value(reset_token)
+        if lookup_value is None:
             return Response(
                 {"message": "Invalid or expired reset link. Please try again."},
-                status=status.HTTP_404_NOT_FOUND
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            candidate_id = CustomUser.objects.values_list('pk', flat=True).get(
+                reset_token=lookup_value,
+            )
+        except (CustomUser.DoesNotExist, CustomUser.MultipleObjectsReturned):
+            return Response(
+                {"message": "Invalid or expired reset link. Please try again."},
+                status=status.HTTP_404_NOT_FOUND,
             )
 
         serializer = ResetPasswordSerializer(data=request.data)
-        if serializer.is_valid():
-            new_password = serializer.validated_data['new_password']
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+        # Lock only the user primary-key row, not the non-indexed reset_token
+        # search. The second comparison protects against concurrent consumption.
+        with transaction.atomic():
+            user = CustomUser.objects.select_for_update().get(pk=candidate_id)
+
+            if user.reset_token != lookup_value:
+                return Response(
+                    {"message": "Invalid or expired reset link. Please try again."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            now = timezone.now()
+            if (
+                user.reset_token_expiration is None
+                or user.reset_token_expiration <= now
+            ):
+                return Response(
+                    {"message": "This password reset link has expired. Please request a new one."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            new_password = serializer.validated_data['new_password']
             if check_password(new_password, user.password):
                 return Response(
                     {"message": "The new password must be different from your current password."},
-                    status=status.HTTP_400_BAD_REQUEST
+                    status=status.HTTP_400_BAD_REQUEST,
                 )
 
             user.set_password(new_password)
             user.reset_token = None
             user.reset_token_expiration = None
-            user.last_login = timezone.now()
-            user.save()
+            user.last_login = now
+            user.save(update_fields=[
+                'password',
+                'reset_token',
+                'reset_token_expiration',
+                'last_login',
+            ])
 
-            refresh = RefreshToken.for_user(user)
-            access = refresh.access_token
-            user_data = CustomUserSerializer(user, context={"request": request}).data
+        # Preserve existing response contract; E2EE and login behavior are
+        # outside this isolated storage-hardening phase.
+        refresh = RefreshToken.for_user(user)
+        access = refresh.access_token
+        user_data = CustomUserSerializer(user, context={"request": request}).data
 
-            return Response({
-                "refresh": str(refresh),
-                "access": str(access),
-                "is_member": user.is_member,
-                "user": user_data,
-            }, status=status.HTTP_200_OK)
+        return Response({
+            "refresh": str(refresh),
+            "access": str(access),
+            "is_member": user.is_member,
+            "user": user_data,
+        }, status=status.HTTP_200_OK)
 
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
     # Enable 2FA ----------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='enable-2fa', permission_classes=[IsAuthenticated])
     def enable_2fa(self, request):
