@@ -3,7 +3,7 @@
 #  TownLIT-Backend
 #
 #  Created by Hossein Sakkaki on 2023-01-01.
-#  Last Update by Hossein Sakkaki on 2026-08-14.
+#  Last Update by Hossein Sakkaki on 2026-11-05.
 #
 
 from datetime import timedelta
@@ -37,7 +37,7 @@ from apps.media_conversion.services.readiness import get_media_ready_state
 from utils.api.error_response import build_validation_error_response
 
 from validators.user_validators import validate_phone_number
-from utils.common.utils import create_active_code, send_sms, mask_phone
+from utils.common.utils import create_active_code, send_sms
 from utils.email.email_tools import send_custom_email
 from django.contrib.auth import get_user_model
 from apps.profiles.services.profile_content_safety import (
@@ -462,7 +462,7 @@ class MemberViewSet(viewsets.ModelViewSet):
             )
 
             if not success:
-                logger.error(f"❌ Failed to send email change confirmation to current email: {user.email}")
+                logger.error("Email change confirmation delivery failed for user_id=%s", user.id)
                 return Response(
                     {"error": "Failed to send confirmation email to your current address. Please try again later."},
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -488,7 +488,7 @@ class MemberViewSet(viewsets.ModelViewSet):
             )
 
             if not success:
-                logger.error(f"❌ Failed to send verification email to new address: {new_email}")
+                logger.error("New email verification delivery failed for user_id=%s", user.id)
                 return Response(
                     {"error": "Failed to send verification email to the new address. Please try again later."},
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -505,7 +505,7 @@ class MemberViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_200_OK)
 
         except Exception as e:
-            return Response({"error": "An unexpected error occurred.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({"error": "An unexpected error occurred."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=False, methods=['post'], url_path='confirm-email-change', permission_classes=[IsAuthenticated])
     def confirm_email_change(self, request):
@@ -605,10 +605,6 @@ class MemberViewSet(viewsets.ModelViewSet):
             user.mobile_verification_expiry = timezone.now() + timedelta(minutes=settings.PHONE_CODE_EXPIRATION_MINUTES)
             user.save()
 
-            # Debugging logs
-            print('===================')
-            print(f"Original Code: {verification_code}")  # Delete after test ------------------------------------------------------------------------------
-            print('===================')
             
             if user.name and user.name.strip():
                 greeting = f"Good to See You {user.name.capitalize()},"  #  Onward
@@ -629,12 +625,9 @@ The TownLIT Team 🌍
 """
             )
             logger.info(
-                "PHONE_VERIFICATION_SMS_RESULT user_id=%s phone=%s success=%s message_id=%s error=%s",
+                "PHONE_VERIFICATION_SMS_RESULT user_id=%s success=%s",
                 user.id,
-                mask_phone(new_phone),
-                sms_response.get("success"),
-                sms_response.get("message_id"),
-                sms_response.get("error"),
+                bool(sms_response.get("success")),
             )
             if not sms_response["success"]:
                 raise Exception(sms_response["error"])
@@ -644,7 +637,7 @@ The TownLIT Team 🌍
             }, status=status.HTTP_200_OK)
         
         except Exception as e:
-            return Response({"error": f"An unexpected error occurred: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({"error": "An unexpected error occurred. Please try again later."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=False, methods=['post'], url_path='verify-phone', permission_classes=[IsAuthenticated])
     def verify_phone(self, request):
@@ -674,7 +667,7 @@ The TownLIT Team 🌍
             user.save()
             return Response({"message": "Phone number added successfully."}, status=status.HTTP_200_OK)
         except Exception as e:
-            return Response({"error": f"An unexpected error occurred: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({"error": "An unexpected error occurred. Please try again later."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
     @action(detail=False, methods=['post'], url_path='remove-phone', permission_classes=[IsAuthenticated])
     def remove_phone(self, request):
@@ -738,5 +731,3 @@ The TownLIT Team 🌍
         member.save(update_fields=["academic_record"])
 
         return Response({"message": "Academic record deleted successfully."}, status=status.HTTP_200_OK)
-    
-    

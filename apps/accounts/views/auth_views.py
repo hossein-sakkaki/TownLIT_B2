@@ -1581,57 +1581,59 @@ class AuthViewSet(viewsets.ViewSet):
 
     # Forgot Password -------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='forget-password', permission_classes=[AllowAny])
-    def forget_password(self, request): # Forget Password
-        ser_data = ForgetPasswordSerializer(data=request.data)
-        if ser_data.is_valid():
-            try:
-                user = CustomUser.objects.get(email=ser_data.validated_data['email'])  
-                reset_token = cipher_suite.encrypt(user.email.encode()).decode()
-                expiration_minutes = settings.RESET_LINK_EXPIRATION_MINUTES
-                expiration_time = timezone.now() + datetime.timedelta(minutes=expiration_minutes)
-                user.reset_token = reset_token
-                user.reset_token_expiration = expiration_time
-                user.save()
-                reset_link = f'{settings.SITE_URL}/reset-password/{reset_token}/' 
-                
-                # Send reset your password link via email
-                subject = "Password Reset Link"
-                context = {
-                    'name': user.name or "User",
-                    'reset_link': reset_link,
-                    "expiration_minutes": expiration_minutes,
-                    "site_domain": settings.SITE_URL,
-                    "logo_base_url": settings.EMAIL_LOGO_URL,
-                    "current_year": timezone.now().year,
-                }
-                success = send_custom_email(
-                    to=user.email,
-                    subject=subject,
-                    template_path='emails/account/forget_password_email.html',
-                    context=context,
-                    text_template_path=None 
-                )
-                if success:
-                    return Response({
-                        "message": (
-                            "A password reset link has been sent to your email. "
-                            "Please check your inbox and click the secure link to continue the process. "
-                            "If you don’t see the email, kindly check your spam or promotions folder as well."
-                        ),
-                        "reset_token": reset_token
-                    }, status=status.HTTP_200_OK)
-                else:
-                    return Response({
-                        "error": (
-                            "We couldn’t send the reset link at this moment. "
-                            "Please try again later or contact us if the issue continues. "
-                            "We’re here to help you regain access with peace and care."
-                        )
-                    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-                                    
-            except CustomUser.DoesNotExist:
-                return Response({"message": "The provided email does not exist in our system."}, status=status.HTTP_404_NOT_FOUND)
-        return Response(ser_data.errors, status=status.HTTP_400_BAD_REQUEST)
+    def forget_password(self, request):
+        serializer = ForgetPasswordSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        # Use one public response for registered and unregistered addresses.
+        # Neither the reset token nor account existence is public information.
+        public_message = (
+            "If an account exists for this email address, "
+            "you will receive a password reset link shortly. "
+            "Please check your inbox and spam folder."
+        )
+
+        try:
+            user = CustomUser.objects.get(email=serializer.validated_data['email'])
+        except CustomUser.DoesNotExist:
+            return Response({"message": public_message}, status=status.HTTP_200_OK)
+
+        # Preserve the legacy Fernet token and reset-link contract. A later
+        # migration can replace the stored bearer token after compatibility review.
+        reset_token = cipher_suite.encrypt(user.email.encode()).decode()
+        expiration_minutes = settings.RESET_LINK_EXPIRATION_MINUTES
+        expiration_time = timezone.now() + datetime.timedelta(minutes=expiration_minutes)
+        user.reset_token = reset_token
+        user.reset_token_expiration = expiration_time
+        user.save(update_fields=['reset_token', 'reset_token_expiration'])
+
+        reset_link = f'{settings.SITE_URL}/reset-password/{reset_token}/'
+        context = {
+            'name': user.name or "User",
+            'reset_link': reset_link,
+            'expiration_minutes': expiration_minutes,
+            'site_domain': settings.SITE_URL,
+            'logo_base_url': settings.EMAIL_LOGO_URL,
+            'current_year': timezone.now().year,
+        }
+
+        try:
+            delivered = send_custom_email(
+                to=user.email,
+                subject="Password Reset Link",
+                template_path='emails/account/forget_password_email.html',
+                context=context,
+                text_template_path=None,
+            )
+        except Exception:
+            delivered = False
+
+        if not delivered:
+            # Do not log the address, reset link, token, or mail exception.
+            logger.warning("Password reset email delivery was unsuccessful.")
+
+        return Response({"message": public_message}, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=['post'], permission_classes=[AllowAny], url_path='reset-password/(?P<reset_token>[^/.]+)')
     def reset_password(self, request, reset_token):
