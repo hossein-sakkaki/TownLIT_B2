@@ -434,7 +434,7 @@ REST_FRAMEWORK = {
     "LIST_SERIALIZER_ERRORS_AS_DICT": False,
     # --- Auth ---
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'apps.accounts.authentication.SessionGenerationJWTAuthentication',
     ],
 
     # --- Permissions ---
@@ -467,6 +467,18 @@ REST_FRAMEWORK = {
         "crypto_heavy": CRYPTO_HEAVY_THROTTLE_RATE,
     },
 }
+
+# Rollout gate: keep disabled until REST, Refresh and both WebSocket paths
+# have passed development verification and credential-change integration.
+AUTH_SESSION_GENERATION_ENFORCE = env_bool(
+    "AUTH_SESSION_GENERATION_ENFORCE", default=False,
+)
+
+# Password changes invalidate previous JWT generations and reset never logs in.
+# Keep disabled until Web/iOS/other clients support login_required responses.
+AUTH_PASSWORD_SECURITY_V2_ENABLED = env_bool(
+    "AUTH_PASSWORD_SECURITY_V2_ENABLED", default=False,
+)
 
 from datetime import timedelta
 SIMPLE_JWT = {
@@ -503,7 +515,7 @@ SIMPLE_JWT = {
     "SLIDING_TOKEN_REFRESH_LIFETIME": timedelta(days=1),
 
     "TOKEN_OBTAIN_SERIALIZER": "rest_framework_simplejwt.serializers.TokenObtainPairSerializer",
-    "TOKEN_REFRESH_SERIALIZER": "rest_framework_simplejwt.serializers.TokenRefreshSerializer",
+    "TOKEN_REFRESH_SERIALIZER": "apps.accounts.serializers.session_refresh.SessionGenerationTokenRefreshSerializer",
     "TOKEN_VERIFY_SERIALIZER": "rest_framework.simplejwt.serializers.TokenVerifySerializer",
     "TOKEN_BLACKLIST_SERIALIZER": "rest_framework_simplejwt.serializers.TokenBlacklistSerializer",
     "SLIDING_TOKEN_OBTAIN_SERIALIZER": "rest_framework.simplejwt.serializers.TokenObtainSlidingSerializer",

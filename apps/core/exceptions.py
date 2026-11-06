@@ -22,15 +22,23 @@ def custom_exception_handler(exc, context):
     """
     resp = drf_exception_handler(exc, context)
     if resp is None:
+        # Request paths may contain password-reset bearer tokens. Exception
+        # messages and tracebacks can also include tokens or credentials.
+        # Never write those untrusted values to the general application log.
         request = context.get("request")
+        view = context.get("view")
+        method = getattr(request, "method", "UNKNOWN")
+        if method not in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}:
+            method = "UNKNOWN"
+        view_name = type(view).__name__ if view is not None else "UNKNOWN"
         logger.error(
-            "Unhandled API exception: %s %s",
-            getattr(request, "method", "UNKNOWN"),
-            getattr(request, "path", ""),
-            exc_info=(type(exc), exc, exc.__traceback__),
+            "Unhandled API exception: method=%s view=%s exception_type=%s",
+            method,
+            view_name,
+            type(exc).__name__,
         )
         return Response(
-            {"message": "An unexpected error occurred.", "error": str(exc)},
+            {"message": "An unexpected error occurred.", "error": "Internal server error."},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
@@ -47,4 +55,3 @@ def custom_exception_handler(exc, context):
         "error": data,
     }
     return Response(normalized, status=resp.status_code)
-

@@ -6,6 +6,12 @@ from django.contrib.auth import get_user_model
 from urllib.parse import parse_qs
 from channels.db import database_sync_to_async
 from channels.middleware import BaseMiddleware
+from apps.accounts.services.session_generation_policy import (
+    session_generation_enforced,
+    session_generation_from_payload,
+    session_generation_matches,
+)
+from apps.core.websocket.access_auth import _account_allows_websocket
 import logging
 
 logger = logging.getLogger("django")
@@ -31,6 +37,21 @@ class JWTAuthMiddleware(BaseMiddleware):
             await send({"type": "websocket.close"})
             return
 
+        # For the legacy socket's periodic session-generation revalidation.
+        # jwt.decode is repeated only with enforcement on; the signature is
+        # reverified and the raw credential is never retained on the socket.
+        if session_generation_enforced():
+            try:
+                signed = jwt.decode(
+                    token, settings.SECRET_KEY, algorithms=["HS256"]
+                )
+                scope["townlit_session_generation"] = (
+                    session_generation_from_payload(signed)
+                )
+            except Exception:
+                await send({"type": "websocket.close"})
+                return
+
         return await super().__call__(scope, receive, send)
 
     @database_sync_to_async
@@ -41,13 +62,25 @@ class JWTAuthMiddleware(BaseMiddleware):
         try:
             payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
             user_id = payload.get("user_id")
-            return User.objects.get(id=user_id)
+            user = User.objects.get(id=user_id)
+            if session_generation_enforced():
+                if payload.get("token_type") != "access":
+                    return None
+                if not _account_allows_websocket(user):
+                    return None
+            if not session_generation_matches(
+                user.pk, session_generation_from_payload(payload)
+            ):
+                return None
+            return user
         except jwt.ExpiredSignatureError:
             logger.error("❌ JWT Error: Token has expired")
         except jwt.DecodeError:
             logger.error("❌ JWT Error: Invalid token")
         except User.DoesNotExist:
             logger.error("❌ JWT Error: User not found")
+        except Exception:
+            logger.warning("WebSocket authentication unavailable")
 
         return None
 

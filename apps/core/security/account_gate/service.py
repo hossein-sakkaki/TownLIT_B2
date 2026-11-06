@@ -81,9 +81,9 @@ def resolve_authenticated_user_from_request(request):
 
     # SimpleJWT fallback.
     try:
-        from rest_framework_simplejwt.authentication import JWTAuthentication
+        from apps.accounts.authentication import SessionGenerationJWTAuthentication
 
-        result = JWTAuthentication().authenticate(request)
+        result = SessionGenerationJWTAuthentication().authenticate(request)
 
         if result:
             jwt_user, _token = result

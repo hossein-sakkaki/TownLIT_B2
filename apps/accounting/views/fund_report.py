@@ -7,7 +7,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.authentication import SessionAuthentication
-from rest_framework_simplejwt.authentication import JWTAuthentication
+from apps.accounts.authentication import SessionGenerationJWTAuthentication
 
 from apps.accounting.reports.exporters.base import build_period_label
 from apps.accounting.reports.fund_service import FundReportService
@@ -35,7 +35,7 @@ class BaseFundReportView(APIView):
     Base view for fund reports.
     """
 
-    authentication_classes = [SessionAuthentication, JWTAuthentication]
+    authentication_classes = [SessionAuthentication, SessionGenerationJWTAuthentication]
     permission_classes = [IsAuthenticated]
     report_service = FundReportService()
 

@@ -14,6 +14,7 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import AccessToken
 
 from django.conf import settings
+from apps.accounts.services.session_jwt import SESSION_GENERATION_CLAIM
 
 from apps.core.websocket.access_auth import (
     authenticate_websocket_access_token,
@@ -47,6 +48,7 @@ class CentralWebSocketConsumerV2(CentralWebSocketConsumer):
         self._v2_access_monitor = None
         self._v2_close_requested = False
         self._v2_expires_at = 0
+        self._v2_session_generation = None
 
         if self.scope.get("path") not in ("/ws/v2", "/ws/v2/"):
             await self.close(code=self.CLOSE_INVALID_PATH)
@@ -139,6 +141,7 @@ class CentralWebSocketConsumerV2(CentralWebSocketConsumer):
                     allowed = await check_websocket_session_access(
                         self.user.id,
                         self.device_id,
+                        self._v2_session_generation,
                     )
                 except Exception:
                     logger.warning(
@@ -233,7 +236,9 @@ class CentralWebSocketConsumerV2(CentralWebSocketConsumer):
             return
 
         try:
-            expires_at = int(AccessToken(message["token"])["exp"])
+            authenticated_access = AccessToken(message["token"])
+            expires_at = int(authenticated_access["exp"])
+            session_generation = authenticated_access.get(SESSION_GENERATION_CLAIM)
         except (TokenError, KeyError, TypeError, ValueError):
             await self._reject(self.CLOSE_UNAUTHORIZED)
             return
@@ -245,7 +250,7 @@ class CentralWebSocketConsumerV2(CentralWebSocketConsumer):
         # Device and mutable account state must pass *before* any handler runs.
         try:
             device_allowed = await check_websocket_session_access(
-                user.id, device_id
+                user.id, device_id, session_generation
             )
         except Exception:
             logger.warning("[WS V2] Initial device authorization unavailable")
@@ -263,6 +268,7 @@ class CentralWebSocketConsumerV2(CentralWebSocketConsumer):
         self.device_id = device_id
         self._v2_authenticated = True
         self._v2_expires_at = expires_at
+        self._v2_session_generation = session_generation
         self._v2_expiry_task = asyncio.create_task(
             self._enforce_session_expiry()
         )

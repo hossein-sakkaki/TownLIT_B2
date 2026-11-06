@@ -63,6 +63,12 @@ from apps.accounts.services.password_reset_tokens import (
     password_reset_lookup_value,
     should_issue_password_reset_token_v2,
 )
+from apps.accounts.services.session_jwt import issue_session_refresh_token
+from apps.accounts.services.password_session_policy import (
+    password_security_v2_enabled,
+    password_security_v2_ready,
+)
+from apps.accounts.services.session_security import increment_session_generation
 from apps.accounts.services.two_factor_login import (
     consume_login_two_factor_code,
 )
@@ -929,7 +935,7 @@ class AuthViewSet(viewsets.ViewSet):
             except Exception as e:
                 logger.warning(f"Failed to mark invite as used: {str(e)}")
 
-        refresh = RefreshToken.for_user(user)
+        refresh = issue_session_refresh_token(user)
         access = refresh.access_token
 
         user_data = CustomUserSerializer(
@@ -1161,7 +1167,7 @@ class AuthViewSet(viewsets.ViewSet):
                     status=status.HTTP_410_GONE,
                 )
 
-            refresh = RefreshToken.for_user(user)
+            refresh = issue_session_refresh_token(user)
             access = refresh.access_token
 
             react_user = ReactivationUserSerializer(
@@ -1255,7 +1261,7 @@ class AuthViewSet(viewsets.ViewSet):
         user.last_login = timezone.now()
         user.save(update_fields=['last_login'])
 
-        refresh = RefreshToken.for_user(user)
+        refresh = issue_session_refresh_token(user)
         access = refresh.access_token
         user_data = CustomUserSerializer(
             user,
@@ -1361,7 +1367,7 @@ class AuthViewSet(viewsets.ViewSet):
             }, status=status.HTTP_400_BAD_REQUEST)
 
         if token_status == "valid":
-            refresh = RefreshToken.for_user(user)
+            refresh = issue_session_refresh_token(user)
             access = refresh.access_token
 
             if user.is_deleted:
@@ -1396,7 +1402,7 @@ class AuthViewSet(viewsets.ViewSet):
                         status=status.HTTP_410_GONE,
                     )
 
-                refresh = RefreshToken.for_user(user)
+                refresh = issue_session_refresh_token(user)
                 access = refresh.access_token
 
                 react_user = ReactivationUserSerializer(
@@ -1698,6 +1704,13 @@ class AuthViewSet(viewsets.ViewSet):
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+        secure_password_flow = password_security_v2_enabled()
+        if secure_password_flow and not password_security_v2_ready():
+            return Response(
+                {"message": "Password recovery is temporarily unavailable."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
         # Lock only the user primary-key row, not the non-indexed reset_token
         # search. The second comparison protects against concurrent consumption.
         with transaction.atomic():
@@ -1729,17 +1742,35 @@ class AuthViewSet(viewsets.ViewSet):
             user.set_password(new_password)
             user.reset_token = None
             user.reset_token_expiration = None
-            user.last_login = now
-            user.save(update_fields=[
+            changed_fields = [
                 'password',
                 'reset_token',
                 'reset_token_expiration',
-                'last_login',
-            ])
+            ]
+            if not secure_password_flow:
+                # Preserve the legacy last-login behavior until client migration.
+                user.last_login = now
+                changed_fields.append('last_login')
+            user.save(update_fields=changed_fields)
 
-        # Preserve existing response contract; E2EE and login behavior are
-        # outside this isolated storage-hardening phase.
-        refresh = RefreshToken.for_user(user)
+            if secure_password_flow:
+                # Password write and revocation are one atomic database change.
+                increment_session_generation(user.pk)
+
+        if secure_password_flow:
+            # A reset link proves mailbox control, not completion of login 2FA.
+            # Always require full login (including 2FA when configured).
+            return Response(
+                {
+                    "message": "Password changed successfully. Please sign in again.",
+                    "login_required": True,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        # Preserve existing response contract until the coordinated client
+        # rollout enables the secure password flow.
+        refresh = issue_session_refresh_token(user)
         access = refresh.access_token
         user_data = CustomUserSerializer(user, context={"request": request}).data
 
@@ -1933,17 +1964,69 @@ class AuthViewSet(viewsets.ViewSet):
         user = request.user
         old_password = request.data.get('old_password')
         new_password = request.data.get('new_password')
-        
+
         if not old_password or not new_password:
-            return Response({"error": "Both old and new passwords are required."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "Both old and new passwords are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        secure_password_flow = password_security_v2_enabled()
+        if secure_password_flow and not password_security_v2_ready():
+            return Response(
+                {"error": "Password security is temporarily unavailable."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        if secure_password_flow:
+            try:
+                with transaction.atomic():
+                    # Recheck the password under the authoritative user lock.
+                    # A concurrent reset/change cannot overwrite this operation.
+                    locked_user = CustomUser.objects.select_for_update().get(
+                        pk=user.pk,
+                    )
+                    if not locked_user.check_password(old_password):
+                        return Response(
+                            {"error": "The current password is incorrect."},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                    if check_password(new_password, locked_user.password):
+                        return Response(
+                            {"error": "The new password must be different from your current password."},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                    locked_user.set_password(new_password)
+                    locked_user.save(update_fields=["password"])
+                    increment_session_generation(locked_user.pk)
+            except Exception:
+                # Do not expose exception details or submitted credentials.
+                logger.error("Secure password change failed.")
+                return Response(
+                    {"error": "An unexpected error occurred. Please try again later."},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+
+            return Response(
+                {
+                    "message": "Password updated successfully. Please sign in again.",
+                    "login_required": True,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        # Legacy contract while older clients still require their session.
         if not user.check_password(old_password):
             return Response({"error": "The current password is incorrect."}, status=status.HTTP_400_BAD_REQUEST)
         try:
             user.set_password(new_password)
             user.save()
-            update_session_auth_hash(request, user)
+            # JWT-authenticated API requests may not carry a Django session.
+            # Preserve any real Django session without requiring one to exist.
+            if getattr(request, "session", None) is not None:
+                update_session_auth_hash(request, user)
             return Response({"message": "Password updated successfully."}, status=status.HTTP_200_OK)
-        except Exception as e:
+        except Exception:
             return Response({"error": "An unexpected error occurred. Please try again later."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     # PINs Manage -----------------------------------------------------------------------------------------------

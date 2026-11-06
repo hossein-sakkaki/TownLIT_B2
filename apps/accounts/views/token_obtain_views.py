@@ -15,6 +15,8 @@ from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.views import TokenObtainPairView
 
+from apps.accounts.services.session_jwt import SESSION_GENERATION_CLAIM
+from apps.accounts.services.session_security import get_session_generation
 from apps.core.security.account_gate.service import is_restricted_owner_user
 
 
@@ -36,7 +38,9 @@ class TownLITTokenObtainPairSerializer(TokenObtainPairSerializer):
         ):
             raise AuthenticationFailed("Account access is unavailable.")
 
-        return super().get_token(user)
+        token = super().get_token(user)
+        token[SESSION_GENERATION_CLAIM] = get_session_generation(user.pk)
+        return token
 
 
 class TownLITTokenObtainPairView(TokenObtainPairView):

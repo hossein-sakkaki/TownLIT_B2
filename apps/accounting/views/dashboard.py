@@ -4,7 +4,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.authentication import SessionAuthentication
-from rest_framework_simplejwt.authentication import JWTAuthentication
+from apps.accounts.authentication import SessionGenerationJWTAuthentication
 
 from apps.accounting.dashboard.service import AccountingDashboardService
 
@@ -14,7 +14,7 @@ class AccountingDashboardView(APIView):
     Financial dashboard endpoint.
     """
 
-    authentication_classes = [SessionAuthentication, JWTAuthentication]
+    authentication_classes = [SessionAuthentication, SessionGenerationJWTAuthentication]
     permission_classes = [IsAuthenticated]
     dashboard_service = AccountingDashboardService()
 

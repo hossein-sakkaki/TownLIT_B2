@@ -13,6 +13,8 @@ from urllib.parse import parse_qs
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from django.contrib.auth import get_user_model
+from apps.accounts.services.session_generation_policy import session_generation_enforced
+from apps.core.websocket.access_auth import check_legacy_websocket_session_access
 
 # Registered handlers
 from apps.core.websocket.handlers.presence import PresenceHandler
@@ -249,6 +251,18 @@ class CentralWebSocketConsumer(AsyncJsonWebsocketConsumer):
         """
         try:
             while True:
+                if session_generation_enforced():
+                    try:
+                        current = await check_legacy_websocket_session_access(
+                            self.user.pk,
+                            self.scope.get("townlit_session_generation"),
+                        )
+                    except Exception:
+                        current = False
+                    if not current:
+                        await self.close(code=4401)
+                        return
+
                 await self.send_system("ping", ts=int(time.time()))
 
                 if (time.time() - self._last_pong_ts) > self.HEARTBEAT_TIMEOUT:

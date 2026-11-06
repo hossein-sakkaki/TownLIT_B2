@@ -8,7 +8,10 @@ import logging
 
 from channels.db import database_sync_to_async
 from django.contrib.auth import get_user_model
-from rest_framework_simplejwt.authentication import JWTAuthentication
+from apps.accounts.authentication import SessionGenerationJWTAuthentication
+from apps.accounts.services.session_generation_policy import (
+    session_generation_matches,
+)
 from rest_framework_simplejwt.tokens import AccessToken
 
 from apps.accounts.models.devices import UserDeviceKey
@@ -51,7 +54,7 @@ def validate_access_token_for_websocket(raw_token):
 
     try:
         validated_token = AccessToken(raw_token)
-        user = JWTAuthentication().get_user(validated_token)
+        user = SessionGenerationJWTAuthentication().get_user(validated_token)
 
         if not _account_allows_websocket(user):
             return None
@@ -71,7 +74,7 @@ authenticate_websocket_access_token = database_sync_to_async(
 )
 
 
-def validate_websocket_session_access(user_id: int, device_id: str) -> bool:
+def validate_websocket_session_access(user_id: int, device_id: str, session_generation=None) -> bool:
     """Recheck mutable account and registered-device state for V2."""
     if not isinstance(user_id, int) or user_id <= 0 or not device_id:
         return False
@@ -79,6 +82,8 @@ def validate_websocket_session_access(user_id: int, device_id: str) -> bool:
     try:
         user = User.objects.get(pk=user_id)
         if not _account_allows_websocket(user):
+            return False
+        if not session_generation_matches(user_id, session_generation):
             return False
 
         return UserDeviceKey.objects.filter(
@@ -96,4 +101,24 @@ def validate_websocket_session_access(user_id: int, device_id: str) -> bool:
 
 check_websocket_session_access = database_sync_to_async(
     validate_websocket_session_access
+)
+
+
+def validate_legacy_websocket_session_access(user_id: int, session_generation=None) -> bool:
+    """Recheck a legacy socket's mutable account and signed generation."""
+    if not isinstance(user_id, int) or user_id <= 0:
+        return False
+    try:
+        user = User.objects.get(pk=user_id)
+        return (
+            _account_allows_websocket(user)
+            and session_generation_matches(user_id, session_generation)
+        )
+    except Exception:
+        logger.warning("[WS AUTH V1] Session revalidation unavailable")
+        return False
+
+
+check_legacy_websocket_session_access = database_sync_to_async(
+    validate_legacy_websocket_session_access
 )
