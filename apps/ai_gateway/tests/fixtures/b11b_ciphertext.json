@@ -1,0 +1,7 @@
+{
+  "profile": "Django 5.2.18 / cryptography 43.0.1 / django-cryptography-5 2.0.3",
+  "purpose": "Public synthetic ciphertext; test settings and test-only keys; no production data",
+  "value": "B1.1B synthetic unicode round trip: café",
+  "field_ciphertext": "gAAAAABq7sVIpaISA5WegT7p60AAgMRPQi9lSG5A8wcS8qhQW1ROJAf0qw95SfcDYlSsqe2qxrycHqWDnvsIpzgup5OpIrv6Lj1ZpaG1KTPaBMqfu8tVsM5I2pk41QLNVjDTSAtEcotDMxiAJo7W2lWPZESaDayvQA==",
+  "fernet_ciphertext": "gAAAAABq7sVIbypwXWQqBJfv-TW6kd8Iby3K6m3YTuf2mLwrZ0YgmnY2TX7WRV2TCd09hWsqbIoLz7dvAJqgwU8qyI3-kx5nA031u77kOHwzkznA_fnk4jAOdOrcN-HN10hYlmWjZrRW"
+}
