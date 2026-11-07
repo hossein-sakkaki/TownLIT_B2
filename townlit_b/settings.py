@@ -1,8 +1,9 @@
 # townlit_b/settings.py
 # TownLIT-Backend
-# Original Git author: hossein-sakkaki; first tracked on 2025-04-16.
-# B1 changes created by Codex on 2026-11-06.
-# Last Update by Codex on 2026-11-06.
+#
+# Created by Hossein Sakkaki on 2025-04-16.
+# Last Update by Hossein Sakkaki on 2026-11-06.
+#
 
 from pathlib import Path
 import os

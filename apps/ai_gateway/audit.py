@@ -1,14 +1,15 @@
 # apps/ai_gateway/audit.py
 # TownLIT-Backend
-# Created by Codex on 2026-11-06.
-# Last Update by Codex on 2026-11-06.
+#
+# Created by Hossein Sakkaki on 2026-11-06.
+# Last Update by Hossein Sakkaki on 2026-11-06.
+#
 
 """Bounded denial events; no caller identity, URL, body or credential logging."""
 
 import logging
 
 from .errors import ERRORS
-
 
 logger = logging.getLogger("townlit.ai_gateway")
 

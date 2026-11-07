@@ -1,13 +1,15 @@
 # apps/ai_gateway/replay.py
 # TownLIT-Backend
-# Created by Codex on 2026-11-06.
-# Last Update by Codex on 2026-11-06.
+#
+# Created by Hossein Sakkaki on 2026-11-06.
+# Last Update by Hossein Sakkaki on 2026-11-06.
+#
 
 """Internal nonce reservation primitive; never a substitute for verified proof."""
 
 import hashlib
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from django.db import DatabaseError, IntegrityError, transaction
 from django.utils import timezone
@@ -22,18 +24,28 @@ def reserve_nonce(identity, *, nonce, timestamp, purpose="request"):
     if not isinstance(identity, VerifiedIdentity):
         raise GatewayDenied()
     now = timezone.now()
-    if (not isinstance(nonce, str) or not re.fullmatch(r"[0-9a-f]{32,128}", nonce)
-            or purpose not in {"request", "assertion"}
-            or not hasattr(timestamp, "tzinfo") or not timezone.is_aware(timestamp)
-            or abs((now - timestamp).total_seconds()) > 60):
+    if (
+        not isinstance(nonce, str)
+        or not re.fullmatch(r"[0-9a-f]{32,128}", nonce)
+        or type(purpose) is not str
+        or purpose not in {"request", "assertion"}
+        or type(timestamp) is not datetime
+        or not timezone.is_aware(timestamp)
+        or abs((now - timestamp).total_seconds()) > 60
+    ):
         raise GatewayDenied("invalid_request")
     try:
         with transaction.atomic():
             principal, _, _ = require_metadata_permission(
-                identity, "gateway.capabilities", 1, identity.principal_id, lock=True,
+                identity,
+                "gateway.capabilities",
+                1,
+                identity.principal_id,
+                lock=True,
             )
             RequestNonce.objects.create(
-                principal=principal, purpose=purpose,
+                principal=principal,
+                purpose=purpose,
                 digest=hashlib.sha256(nonce.encode("ascii")).hexdigest(),
                 expires_at=now + timedelta(minutes=10),
             )

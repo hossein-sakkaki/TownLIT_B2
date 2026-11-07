@@ -1,8 +1,9 @@
 # api/v1/api_urls.py
 # TownLIT-Backend
-# Original Git author: hossein-sakkaki; first tracked on 2025-05-26.
-# B1 changes created by Codex on 2026-11-06.
-# Last Update by Codex on 2026-11-06.
+#
+# Created by Hossein Sakkaki on 2025-05-26.
+# Last Update by Hossein Sakkaki on 2026-11-06.
+#
 
 from django.urls import include, path
 

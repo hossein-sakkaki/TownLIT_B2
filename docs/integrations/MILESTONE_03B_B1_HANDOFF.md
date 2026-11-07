@@ -1,5 +1,7 @@
 # TownLIT B1 — Default-deny Secure Gateway core
 
+Final review and current acceptance evidence: [B1 acceptance review](MILESTONE_03B_B1_ACCEPTANCE_REVIEW.md). The counts below describe the original implementation checkpoint.
+
 `docs/integrations/MILESTONE_03B_B1_HANDOFF.md` · TownLIT-Backend
 Created by Codex on 2026-11-06. Last Update by Codex on 2026-11-06.
 

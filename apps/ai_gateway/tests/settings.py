@@ -1,7 +1,9 @@
 # apps/ai_gateway/tests/settings.py
 # TownLIT-Backend
-# Created by Codex on 2026-11-06.
-# Last Update by Codex on 2026-11-06.
+#
+# Created by Hossein Sakkaki on 2026-11-06.
+# Last Update by Hossein Sakkaki on 2026-11-06.
+#
 
 """In-memory fixtures only; never import production settings or read .env files."""
 

@@ -1,7 +1,9 @@
 # apps/ai_gateway/registry.py
 # TownLIT-Backend
-# Created by Codex on 2026-11-06.
-# Last Update by Codex on 2026-11-06.
+#
+# Created by Hossein Sakkaki on 2026-11-06.
+# Last Update by Hossein Sakkaki on 2026-11-06.
+#
 
 """Code-reviewed metadata registry. There are no callable domain handlers."""
 
@@ -17,9 +19,13 @@ class Operation:
     allowed_agents: frozenset[str]
 
 
-OPERATIONS = MappingProxyType({
-    ("gateway.capabilities", 1): Operation(
-        "gateway.capabilities", 1, "gateway.metadata",
-        frozenset({"phoebe", "silas", "micah"}),
-    ),
-})
+OPERATIONS = MappingProxyType(
+    {
+        ("gateway.capabilities", 1): Operation(
+            "gateway.capabilities",
+            1,
+            "gateway.metadata",
+            frozenset({"phoebe", "silas", "micah"}),
+        ),
+    }
+)
