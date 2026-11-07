@@ -147,3 +147,17 @@ DR-03 real security profile and DR-04–15 remain open. Keep PR #4 Draft for own
 review. Any enablement, staging/production release, credential provisioning or
 financial/legal authority requires separate approval. After this disabled core,
 Office O1 remains an offline typed/fake client checkpoint, not live dispatch.
+
+## Hosted CI bootstrap correction
+
+Initial hosted run https://github.com/hossein-sakkaki/TownLIT_B2/actions/runs/42326682422
+at `67093f99a8c1365d0d7ba9c0cb3b81c352450082` installed the complete manifest
+on Python 3.12.16, passed pip check, headers and Ruff, then failed before tests:
+mysqladmin ping caught the image's temporary initialization server during its
+restart. Gateway/regression/migration steps were **skipped**, not passed.
+Readiness now requires mysqld as final PID 1 plus a SQL query against the fixed
+synthetic database. A fresh local digest-pinned container passed that exact
+readiness condition and was removed. No TCP or weaker credential fallback.
+Checkout/setup-python were also moved to verified immutable v5.0.0/v6.0.0 SHAs
+whose action manifests declare Node 24, addressing the runner deprecation notice.
+The corrected workflow passes actionlint; subsequent hosted results remain gated.
