@@ -84,8 +84,8 @@ jobs:
       - name: Check B1 headers, code quality and formatting
         run: |
           python scripts/check_ai_gateway_headers.py
-          ruff check --select E4,E7,E9,F,I apps/ai_gateway scripts/check_ai_gateway_headers.py scripts/ai_gateway_dependency_profile.py scripts/check_jwt_user_transitions.py apps/accounts/serializers/session_refresh.py apps/accounts/tests/test_refresh_user_id_compatibility.py apps/accounts/tests/test_jwt_user_acceptance.py apps/accounts/tests/jwt_transition_worker.py
-          ruff format --check apps/ai_gateway scripts/check_ai_gateway_headers.py scripts/ai_gateway_dependency_profile.py scripts/check_jwt_user_transitions.py apps/accounts/serializers/session_refresh.py apps/accounts/tests/test_refresh_user_id_compatibility.py apps/accounts/tests/test_jwt_user_acceptance.py apps/accounts/tests/jwt_transition_worker.py
+          ruff check --select E4,E7,E9,F,I apps/ai_gateway scripts/check_ai_gateway_headers.py scripts/ai_gateway_dependency_profile.py scripts/check_jwt_user_transitions.py apps/accounts/serializers/session_refresh.py apps/accounts/tests/test_refresh_user_id_compatibility.py apps/accounts/tests/test_jwt_user_acceptance.py apps/accounts/tests/test_refresh_failure_contract.py apps/accounts/tests/jwt_transition_worker.py
+          ruff format --check apps/ai_gateway scripts/check_ai_gateway_headers.py scripts/ai_gateway_dependency_profile.py scripts/check_jwt_user_transitions.py apps/accounts/serializers/session_refresh.py apps/accounts/tests/test_refresh_user_id_compatibility.py apps/accounts/tests/test_jwt_user_acceptance.py apps/accounts/tests/test_refresh_failure_contract.py apps/accounts/tests/jwt_transition_worker.py
 
       - name: Start disposable MySQL with no network or published ports
         run: |
@@ -144,6 +144,7 @@ jobs:
         run: |
           python -m apps.ai_gateway.tests.run backend test \
             apps.accounts.tests.test_jwt_user_acceptance \
+            apps.accounts.tests.test_refresh_failure_contract \
             apps.accounts.tests.test_password_reset_disclosure \
             apps.accounts.tests.test_account_deletion_organization_guard \
             apps.accounts.tests.test_litshield_organization_contract \

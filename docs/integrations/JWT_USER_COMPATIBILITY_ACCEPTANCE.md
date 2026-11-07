@@ -72,7 +72,9 @@ Its new files are `apps/accounts/tests/jwt_transition_worker.py`,
 updates `tests/test_ws_access_auth.py` with a real-user-shaped fixture and
 `apps/ai_gateway/tests/settings_backend.py` with the production-default phone
 TTL for the previously unrun disclosure test. Existing security assertions stay
-unchanged. No runtime authentication logic changed during this gate.
+unchanged. No runtime authentication logic changed during the initial gate at
+349450c2. The subsequent AUTH-02 remediation below changes only the refresh
+boundary and its directly required tests/CI coverage and documentation.
 It does not reattribute security-branch runtime changes to PR #7.
 
 ## Authentication behavior impact matrix
@@ -102,14 +104,20 @@ findings are not silently upgraded to runtime acceptance.
 | Suspended / restricted owner | Existing action exceptions/owner gate; no general domain authorization from a JWT | Same domain gates, stricter WS paths | Limited refresh preserved for active current/generation-valid user; suspended logout/declared recovery exceptions untouched | No domain-flag policy | No domain-flag policy | Domain exceptions preserved, WS tightening belongs to S | Focused permission fixtures + existing WS gates; actual suspended/restricted clients pending |
 | Inactive / physically deleted user | Access denies; 5.3.1 refresh may still mint without current user check | With OFF parent can mint; missing state alone is zero under ON | Unconditionally denies current inactive/missing user | Parent refresh lacks this denial | Active current-user check; missing lookup can otherwise raise | Intentional P tightening, including OFF; AUTH-01 unapproved release decision | Focused inactive/deleted/rule tests; source authorization is not deployed release approval |
 | Expired/tampered tokens | JWT expiry/signature checks | Same crypto requirements; generation failures also deny | Verify first, never normalize unsigned data | Generic invalid/expired error text | Distinct expired-token error text | Denial maintained; exact errors not identical | Tamper/expiry tests; client status/detail assumptions reviewed statically only |
-| DB/policy failure | Blacklist DB already required; user lookup failures not checked in 5.3.1 refresh | ON generation outage denies; OFF delegates errors | Additional user/blacklist read; failures become 401 with no credentials | Some parent DB/missing-user failures otherwise propagate | More parent user/outstanding DB work | Fail-closed maintained; outage error/availability contract changes in P | Enforcement-OFF outage + query-cost tests; no production load/failover proof; iOS/Web/Android can erase credentials after failures |
+| DB/policy failure | Blacklist DB already required; user lookup failures not checked in 5.3.1 refresh | ON generation outage denies; OFF delegates errors | AUTH-02: typed dependency failures 503; unexpected failures 500; known invalid/account denial remains 401/403; never return credentials on failure | Some parent DB/missing-user failures otherwise propagate | More parent user/outstanding DB work | Deliberate refresh error-contract repair; fail-closed remains | Fault tests/ledger below; iOS and Web startup can still erase credentials on transient failures; operational/client acceptance OPEN |
 | Concurrent refresh / retry | Parent check/blacklist sequence, no atomic single-consumer guarantee | Same parent behavior | Parent semantics intentionally retained | Two consumers may verify before either blacklists | Same check/use race; new outstanding records do not serialize consumption | Existing race/lost-response incompatibility risk; not a new exactly-once guarantee | Controlled real-MySQL synchronized race/G; real device multi-request/multi-tab retry acceptance pending |
 
 ## PR #7 trusted-boundary review and explicit decisions
 
-The only runtime adapter is `_verified_refresh_user_id` in the refresh serializer.
-`RefreshToken(raw)` verifies signature, expiry, refresh type and blacklist before
-normalization. Strings must be 1–19 ASCII decimal digits, no leading zero, and
+The only identity adapter is `_verified_refresh_user_id` in the refresh serializer.
+AUTH-02 adds `_RefreshTokenPreflight`: upstream decoding verifies the signature,
+then `Token.verify` checks expiry, required claims and refresh type before any
+database work. Only then is the signed user ID normalized. The boundary next
+checks the authoritative blacklist before user/generation lookup or parent
+delegation; the unmodified parent rechecks the blacklist before rotation. This
+ordering denies known malformed/type/ID inputs even when blacklist DB access is
+unavailable. It does not skip a blacklist decision or add another decoding pass.
+Strings must be 1–19 ASCII decimal digits, no leading zero, and
 in `1..9223372036854775807`; native integers must have exactly integer type.
 Booleans, floats, signs, whitespace, Unicode digits, containers and overflow deny
 before account/generation lookup. The signed payload is never rewritten.
@@ -134,25 +142,118 @@ No explicit deployed-client/operations approval was found in repository/PR
 metadata. Keep this decision OPEN; do not quietly gate or remove the check to
 reproduce the old permissive behavior.
 
-### AUTH-02 — availability, errors and concurrency (release blocker)
+### AUTH-02 — server error classification repaired; client/release acceptance OPEN
 
 The extra read is an availability dependency even with generation enforcement
 OFF. Explicit query-cost tests compare valid parent and P refresh in each full
 profile; database outage tests assert controlled denial with no credentials.
 These tests cannot prove that added query volume, table-specific errors or
 latency will never cause a broad outage. Blacklisting already required a working
-DB, but that does not make the added reads or changed 401 mapping unchanged.
+DB, but that does not make the added reads or status contract unchanged.
 A failed late parent rotation can consume an old token; retry is not idempotent.
 
-iOS clears tokens on refresh failure, including non-auth/network/5xx failures;
-Android clears on 400/401/403; Web clears on 400/401 when the stored refresh still
-matches the failed attempt. P's DB/policy 401 can therefore cause forced logout,
-including while enforcement is OFF. Preserve fail-closed denial; separately
-approve a transient-error contract, operational budgets and client handling.
+At initial checkpoint 349450c2, broad exception handling incorrectly mapped
+DB/policy failures to 401. AUTH-02 removes that credential classification:
+recognized unavailable-dependency exceptions return sanitized 503; unexpected
+failures return sanitized 500. No failure response returns access/refresh data.
+AUTH-01's active-account check remains unconditional and unapproved for release.
+
+iOS still clears tokens on non-cancelled refresh failures, including 503;
+Android's refresher preserves them on 5xx/network errors. Web's central helper
+preserves them on 5xx/network errors, but RootAppShell startup's broad catch
+still deletes them. Server remediation alone does not preserve every deployed
+client's tokens. Preserve fail-closed denial; complete the separate client fixes,
+operational budgets and deployed-build acceptance below.
 The race characterization records what parent behavior actually does; passing
 it does not approve two live descendant refresh chains as a security policy.
 
-## Actual execution ledger
+## AUTH-02 exact refresh error contract
+
+The classification is scoped to `SessionGenerationTokenRefreshSerializer` under
+the existing HS256/signing settings. No REST access, WebSocket, login, password,
+2FA, shared validator, settings, production dependency or consumption protocol
+is changed. Missing/empty request fields and malformed JSON continue to use
+DRF's request-validation 400; they are not retryable dependency failures.
+View-level throttling remains 429. This serializer adds neither a retry loop nor
+a Retry-After promise; 503 is not evidence that replay is safe or will succeed.
+
+| Boundary outcome | HTTP / machine code | Credential/state semantics |
+| --- | --- | --- |
+| Invalid signature, expired JWT, invalid encoding, wrong token type, missing required JWT claim, invalid canonical user ID; invalid enforced generation shape | 401 / `token_not_valid` | Known-invalid checks occur before DB access; no user lookup/rotation |
+| Readable blacklist says consumed/blacklisted; readable generation says revoked | 401 / `token_not_valid` | Never return credentials; retain blacklist/generation |
+| Missing/inactive user or false authentication rule, including parent's current-user denial/deletion race | 401 / `token_not_valid` | AUTH-01 unchanged; no relaxation when generation flag is OFF |
+| Explicit DRF PermissionDenied from the account rule | 403 / existing DRF permission-denial shape | Sanitized fixed account message; does not become 503 |
+| Django OperationalError / InterfaceError; built-in ConnectionError / TimeoutError anywhere inside refresh validation/parent delegation | 503 / `refresh_unavailable` | Authoritative decision unavailable; deny without credentials; no retry, blacklist deletion or generation reset |
+| Other unexpected errors, including programming/schema/integrity failures | 500 / `refresh_failed` | Fail closed; no internal exception details/tokens in the response |
+
+OperationalError/InterfaceError denote dependency unavailability, not a guarantee
+that the cause is temporary or retries will repair it. ProgrammingError and
+IntegrityError are deliberately not made retryable 503s. No blanket DatabaseError
+or Exception→503 mapping exists. A token whose stored revocation state cannot be
+read is **not known valid**: it receives 503 without credentials; after recovery,
+the same revoked/blacklisted token receives 401. It is impossible to attest that
+stored state during an outage, and this contract never assumes generation zero
+or an empty blacklist in that situation.
+
+Typed DRF APIException subclasses carry only fixed public strings. The existing
+TownLIT DRF handler wraps them as these exact JSON bodies:
+
+```json
+{"message":"Session validation temporarily unavailable. Please try again later.","error":{"detail":"Session validation temporarily unavailable. Please try again later.","code":"refresh_unavailable"}}
+```
+
+```json
+{"message":"Session validation failed.","error":{"detail":"Session validation failed.","code":"refresh_failed"}}
+```
+
+Token-invalid messages retain the upstream/application denial contract rather
+than exposing exception text. Explicit account exceptions are replaced by the
+fixed `Account access is unavailable.` message. No new catch logs raw exceptions,
+request payloads, SQL, JWTs or traceback details. No change to the shared exception
+handler is needed. HTTP transport/proxy failures after the response leaves this
+boundary cannot be detected or reclassified by the serializer.
+
+### Failure stage and retry limits
+
+| Injected failure stage | Expected result | Later use of submitted token |
+| --- | --- | --- |
+| Backend acquisition before signature verification | Typed connection/timeout: 503; unexpected: 500; no normalization or credentials | Can succeed after recovery if still valid/unconsumed |
+| First blacklist read / parent's repeated blacklist read | 503, no consumption | Can succeed after recovery; known-invalid local shape still returns 401 before the failed read |
+| Current-user read / generation read | 503; no credentials; no generation fallback | Valid unconsumed token may retry; revoked token still denied once state is readable |
+| Parent's current-user read (5.5.1 only) | 503, no consumption | Can succeed after recovery; 5.3.1 has no such parent lookup |
+| Before parent's blacklist write; old outstanding-row get/create or blacklist-row get/create | 503, no successful consumption in the injected case | Tested later retry succeeds; ambiguous real commit failures are not promised recoverable |
+| After real blacklist write but before method returns / JTI rotation failure | 503, no returned credentials; consumed parent retained | Retry receives 401; reauthentication may be unavoidable |
+| New rotated outstanding-row creation (5.5.1 only) | 503 after parent consumption; no returned pair | Retry receives 401; 5.3.1 does not call outstand during rotation |
+| Successful rotation response lost before client persists it | Server completed 200; client sees no acknowledgement/new pair | Old-token retry receives 401; server cannot transparently recover a lost child credential |
+
+Fault injection exercises real MySQL token state while failing specific calls.
+A separate transaction test closes/reopens the real connection and injects the
+driver connection failure. This is not a physical database failover/load test.
+Current production settings use autocommit, without ATOMIC_REQUESTS; no new
+transaction wraps rotation. Do not undo committed blacklists to make retries
+work. An ambiguous commit, lost response or local persistence failure can still
+require full login/2FA. No exactly-once, idempotent refresh, grace period, replay
+cache, new refresh family or guaranteed transparent recovery is introduced.
+
+## AUTH-02 verification checkpoint
+
+At the initial remediation push, scoped lint/format/whitespace/header checks and
+the two strict-ID unit tests in each independent full-manifest profile pass.
+Full real-MySQL migrations, the 66 selected cases, the existing 82 acceptance
+cases, 15 new fault-contract cases, Gateway/migration checks and impacted
+cross-version runs are in progress. Their results are not inferred from the
+historical green gate below; this section must be completed from actual logs/CI
+before final handoff. PR #7 remains Draft and blocked.
+
+The changed outage assertions intentionally require the newly authorized 503
+contract, and additionally require sanitized code/body, no credentials, preserved
+blacklist/generation state and safe later retry where consumption did not occur.
+Existing invalid/revoked/inactive/malformed 401 assertions remain strict. The
+blacklist-outage fixture now expects signed-ID preflight before the unavailable
+read so known malformed input cannot be mislabeled as an outage. No security
+denial is converted to successful authentication to obtain a pass.
+
+## Actual execution ledger — initial mandatory gate (historical)
 
 The gate's source/test checkpoint is
 `b9b84ce367071bd861f3d59282d08b7afdc78ab3`. All source/test logic in the completed
@@ -280,6 +381,76 @@ Freshly fetched default branch refs (checkout source remains unmodified):
 | iOS | `95179ad944a1731dee9c22036bbfead5d08159d7` | AuthTokens stores String/String; refresh decodes String access/optional String refresh and saves rotation. URLSessionAPIClient is a final class with separate refresh calls in normal/upload 401 retry paths; no shared refresh flight/lock found. Its refresh catch clears tokens except CancellationError. Current password DTOs/repository support login_required; deployed app build unknown |
 | Android | `cb59509327863128922eaf0cc99f2b8d1dc24176` | TLTokenRefresher synchronizes per instance, reuses a changed access token after waiting, saves rotated pair, clears credentials on 400/401/403 but retains on network/5xx. Session store reloads the shared token store; WS provider sees newly persisted access. Multiple refresher instances/processes are not a proven single flight. Current reset DTO still requires refresh/access/is_member; password change ignores login_required (CLIENT-01) |
 | Web (`TownLIT_F`) | `614756be5f075850a22c1b3af8729b86d2d3544c` | authRefresh coalesces per-tab requests, saves rotation, clears only a still-current failed refresh on 400/401; no cross-tab lock. websocketManager stores this.token; RootAppShell captures a token in its connection effect; a refresh storage/cookie write alone is not a proven WS token update |
+
+### AUTH-02 client status/transport review — same freshly fetched source refs
+
+The following describes the **refresh response**, rather than the original
+protected-resource 401 that triggers renewal. It is read-only source inspection;
+no mobile build, browser/device acceptance or deployed-version attestation was
+performed. A server-side 503 never instructs token deletion, but cannot prevent
+existing client code from doing so.
+
+| Refresh outcome | iOS URLSessionAPIClient | Android TLTokenRefresher / authenticator | Web authRefresh / outer startup |
+| --- | --- | --- | --- |
+| 401 | Maps to unauthorized; refresh catch clears stored tokens and throws refreshFailed | Clears tokens; returns null, authenticator stops and exposes original protected-request 401 | Central helper clears only if stored refresh still matches failed snapshot; base/upload redirect only if credentials are gone; startup catch also clears |
+| 403 | Refresh catch clears tokens and throws refreshFailed | Clears tokens; returns null; caller may see original protected 401 | Helper preserves tokens and propagates error; RootAppShell bootstrap catch still clears |
+| 429 | Refresh catch clears tokens; no rate-limit-specific retry/preservation in that method | Preserves tokens, returns null; no Retry-After/backoff in refresher; original protected 401 may reach caller | Helper preserves tokens, propagates; no retry/backoff in helper; startup catch still clears |
+| 500 / 502 / 503 / 504 | Each is an error caught by refresh catch; clears tokens | Each preserves tokens; returns null; authenticator can collapse transient refresh outcome into original 401 | Each preserves tokens in helper; base/upload propagate refresh error; startup catch still clears |
+| Network timeout / lost connection | TransportFailed reaches refresh catch and clears; cancellation alone is rethrown without clearing | execute failure returns null, retains tokens; body read/decode failure also retains; original 401 can remain visible | Axios rejection without 400/401 retains tokens in helper; bootstrap rejection still clears. Plain refresh axios call sets no explicit timeout/retry loop |
+| Lost response after successful rotation | Usually treated as transport failure and clears; cancellation may retain the now-consumed parent | Keeps old pair if no successful body/persist; subsequent old-refresh retry is 401 and clears | Helper keeps old pair if response never installed; bootstrap can clear immediately; subsequent old-refresh retry is 401 unless another tab already installed a new pair |
+| Concurrent refresh | Normal/upload 401 paths call separate refresh operations; no shared flight or snapshot guard found; failure can erase another success, stale success can replace credentials | Per-instance synchronized lock reuses changed access after waiting; does not serialize multiple instances/processes; no compare-before-clear guard in rejected refresh branch | One flight shared by base/upload per tab; successful install and rejected-session deletion compare submitted snapshot; no cross-tab atomic refresh coordination |
+
+Important outer-boundary findings:
+
+- Web `RootAppShell.tsx:330–440` unwraps fetchAuthMe/profile initialization in
+  one try/catch; its catch unconditionally removes access/refresh/user state and
+  dispatches setLogout. `authSlice.ts:94–106` reduces fetchAuthMe failures to a
+  message, losing status information. Thus claiming Web sessions survive all
+  503s based only on authRefresh would be incorrect. This finding supplements
+  the initial gate, which inspected the helper but did not identify this catch.
+- Android `TLTokenAuthenticator.kt:64–68` returns null when renewal fails,
+  regardless of whether refresh returned 401, 503 or a transport failure. The
+  protected request can therefore still surface its original 401. The inspected
+  bootstrap catches fresh-me failure and falls back to restored user state;
+  other UI callers must not infer definitive token invalidity from that collapsed
+  outcome. Token retention in the refresher is not proof of all UI behavior.
+- iOS `URLSessionAPIClient.swift:732–780` turns all non-cancellation refresh
+  failures into refreshFailed after clearing. It loses the distinction this
+  server remediation introduces. A malformed 200 response also follows that
+  catch; a failure saving the rotated pair occurs afterward and cannot recover
+  the old consumed token.
+
+Narrow client recommendations for separate client changes/releases:
+
+1. iOS: retain tokens on 429, 5xx, timeout/network/decode failures; preserve a
+   typed unavailable result instead of refreshFailed; clear only a definitive
+   refresh credential denial for the still-current submitted snapshot. Share a
+   refresh flight between normal/upload callers, and guard installs against
+   logout/account switch. Do not treat a protected-resource 401 or arbitrary
+   policy 403 as proof that every stored credential is invalid.
+2. Web: preserve status/category through fetchAuthMe and the bootstrap boundary;
+   on temporary failure retain credentials and show a retryable unavailable UI
+   while server authorization remains denied. Keep existing snapshot guards.
+   Review cross-tab coordination and update the WS connection's token after
+   renewal in a separately tested client change.
+3. Android: retain existing transient-error token retention; propagate a typed
+   refresh-unavailable outcome through the authenticator/network/UI boundary,
+   avoiding the ambiguous original 401. Review a shared refresher lifetime and
+   compare-before-clear guards. Address CLIENT-01 independently before password
+   V2. Do not change backend account policy to compensate.
+4. First validate client fault/status/parallel-request/WS tests with synthetic
+   staging endpoints, then release the iOS and Web fixes and identify actually
+   deployed versions; validate Android's outer handling. Only after AUTH-01 and
+   normal release approvals, canary the Backend status contract with flags/pins
+   unchanged and observe nonsecret error rates/session retention. A server-only
+   rollout cannot promise existing iOS/Web session preservation. A later modern
+   dependency rollout remains separate. None of this order is deployed here.
+
+Retries need bounded backoff/jitter and 429 Retry-After handling where present,
+but no automatic retry scheme can recover a consumed parent whose new pair was
+lost. Network stacks may retry at transport level; phase-specific transport
+behavior was not executed on devices. Always keep ambiguous/lost-ack and
+concurrent-refresh limitations visible; never promise idempotency from 503.
 
 ### CLIENT-01 — Android secure-password response incompatibility
 

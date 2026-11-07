@@ -110,6 +110,13 @@ class RefreshUserIDCompatibilityTests(TestCase):
         self.assertNotIn("access", response.data)
         self.assertNotIn("refresh", response.data)
 
+    def _assert_unavailable(self, response):
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.data["error"]["code"], "refresh_unavailable")
+        self.assertNotIn("access", response.data)
+        self.assertNotIn("refresh", response.data)
+        self.assertNotIn("synthetic outage", str(response.data))
+
     def test_legacy_integer_claim_rotates_without_changing_wire_type(self):
         self._assert_rotation(int)
 
@@ -263,7 +270,7 @@ class RefreshUserIDCompatibilityTests(TestCase):
             "apps.accounts.services.session_generation_policy.get_session_generation",
             side_effect=OperationalError("synthetic outage"),
         ):
-            self._assert_denied(self._refresh(token))
+            self._assert_unavailable(self._refresh(token))
         self.assertFalse(
             BlacklistedToken.objects.filter(token__jti=token["jti"]).exists()
         )
@@ -276,12 +283,13 @@ class RefreshUserIDCompatibilityTests(TestCase):
             "get",
             side_effect=OperationalError("synthetic outage"),
         ):
-            self._assert_denied(self._refresh(token))
+            self._assert_unavailable(self._refresh(token))
         self.assertFalse(
             BlacklistedToken.objects.filter(token__jti=token["jti"]).exists()
         )
+        self.assertEqual(self._refresh(token).status_code, 200)
 
-    def test_blacklist_database_failure_denies_before_normalization(self):
+    def test_blacklist_database_failure_denies_after_signed_preflight(self):
         token = self._token()
         with patch.object(
             BlacklistedToken.objects,
@@ -289,10 +297,15 @@ class RefreshUserIDCompatibilityTests(TestCase):
             side_effect=OperationalError("synthetic outage"),
         ):
             with patch(
-                "apps.accounts.serializers.session_refresh._verified_refresh_user_id"
+                "apps.accounts.serializers.session_refresh._verified_refresh_user_id",
+                wraps=_verified_refresh_user_id,
             ) as normalize:
-                self._assert_denied(self._refresh(token))
-                normalize.assert_not_called()
+                self._assert_unavailable(self._refresh(token))
+                normalize.assert_called_once_with(token["user_id"])
+        self.assertFalse(
+            BlacklistedToken.objects.filter(token__jti=token["jti"]).exists()
+        )
+        self.assertEqual(self._refresh(token).status_code, 200)
 
     def test_outstanding_database_failure_denies_rotation(self):
         token = self._token()
@@ -301,7 +314,11 @@ class RefreshUserIDCompatibilityTests(TestCase):
             "get_or_create",
             side_effect=OperationalError("synthetic outage"),
         ):
-            self._assert_denied(self._refresh(token))
+            self._assert_unavailable(self._refresh(token))
+        self.assertFalse(
+            BlacklistedToken.objects.filter(token__jti=token["jti"]).exists()
+        )
+        self.assertEqual(self._refresh(token).status_code, 200)
 
     def test_malformed_generation_claims_are_still_denied(self):
         for claim in ("0", True, -1, 0.0):

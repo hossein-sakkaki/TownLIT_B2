@@ -42,11 +42,19 @@ class RefreshAvailabilityAcceptanceTests(TestCase):
             response = APIClient().post(
                 "/api/token/refresh/", {"refresh": str(token)}, format="json"
             )
-        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.data["error"]["code"], "refresh_unavailable")
+        self.assertNotIn("synthetic unavailable", str(response.data))
         self.assertNotIn("refresh", response.data)
         self.assertNotIn("access", response.data)
         self.assertFalse(
             BlacklistedToken.objects.filter(token__jti=token["jti"]).exists()
+        )
+        self.assertEqual(
+            APIClient()
+            .post("/api/token/refresh/", {"refresh": str(token)}, format="json")
+            .status_code,
+            200,
         )
 
     def test_unenforced_valid_refresh_adds_one_user_and_one_blacklist_read(self):
