@@ -1,9 +1,8 @@
+# apps/accounts/serializers/user_serializers.py
+# TownLIT-Backend
 #
-#  apps/accounts/serializers/user_serializers.py
-#  TownLIT-Backend
-#
-#  Created by Hossein Sakkaki on 2023-01-01.
-#  Last Update by Hossein Sakkaki on 2026-07-30.
+# Created by Hossein Sakkaki on 2023-01-01.
+# Last Update by Hossein Sakkaki on 2026-11-06.
 #
 
 from rest_framework import serializers
@@ -510,7 +509,7 @@ class PublicCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
             "country", "country_display",
             "primary_language", "primary_language_display",
             "secondary_language", "secondary_language_display",
-            "city", "birthday",
+            "city",
 
             # contact fields
             "email", "mobile_number",
@@ -536,6 +535,7 @@ class PublicCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
     # -------------------------------------------------------
     def to_representation(self, instance):
         rep = super().to_representation(instance)
+        rep.pop("birthday", None)
 
         # respect privacy flags
         if not getattr(instance, 'show_email', False):

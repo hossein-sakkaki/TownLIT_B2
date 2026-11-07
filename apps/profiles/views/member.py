@@ -1,9 +1,8 @@
+# apps/profiles/views/member.py
+# TownLIT-Backend
 #
-#  apps/profiles/views/member.py
-#  TownLIT-Backend
-#
-#  Created by Hossein Sakkaki on 2023-01-01.
-#  Last Update by Hossein Sakkaki on 2026-11-05.
+# Created by Hossein Sakkaki on 2023-01-01.
+# Last Update by Hossein Sakkaki on 2026-11-06.
 #
 
 from datetime import timedelta
@@ -13,7 +12,10 @@ from django.conf import settings
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
+from django.core.validators import validate_email as validate_django_email
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from cryptography.fernet import Fernet
 
 from rest_framework import status, viewsets
@@ -22,6 +24,13 @@ from rest_framework.exceptions import MethodNotAllowed, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.accounts.services.email_change_security import (
+    EMAIL_CHANGE_MAX_ATTEMPTS,
+    email_change_expired,
+    new_email_change_state,
+    pending_new_email,
+    verify_email_change_codes,
+)
 from apps.profiles.models.member import Member
 from apps.profiles.models.relationships import Fellowship
 from apps.profiles.serializers.member import (
@@ -412,177 +421,156 @@ class MemberViewSet(viewsets.ModelViewSet):
         )
 
     # Request Email Actions -------------------------------------------------------------------------------------------------
-    @action(detail=False, methods=['post'], url_path='request-email-change', permission_classes=[IsAuthenticated])
+    @action(detail=False, methods=["post"], url_path="request-email-change", permission_classes=[IsAuthenticated])
     def request_email_change(self, request):
-        
+        new_email = request.data.get("new_email")
+        if not isinstance(new_email, str):
+            return Response({"error": "Invalid email address."}, status=status.HTTP_400_BAD_REQUEST)
+        new_email = new_email.strip()
         try:
-            user = request.user
-            new_email = request.data.get('new_email')
-            
-            # Validate the new email address & 30 Days & not already used
-            if not new_email or not isinstance(new_email, str):
-                return Response({"error": "Invalid email address."}, status=status.HTTP_400_BAD_REQUEST)
-            if user.last_email_change and timezone.now() - user.last_email_change < timedelta(days=30):
-                return Response({"error": "You can only change your email once per month."}, status=status.HTTP_403_FORBIDDEN)
-            if CustomUser.objects.filter(email=new_email).exists():
-                return Response(
-                    {"error": "The new email is already associated with another account."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            old_email_code = create_active_code(5)
-            new_email_code = create_active_code(5)
-            expiration_minutes = settings.EMAIL_CODE_EXPIRATION_MINUTES                      
-            expiration_time = timezone.now() + timedelta(minutes=expiration_minutes)
-            
-            user.user_active_code_expiry = expiration_time
-            user.email_change_tokens = {
-                "old_email_code": old_email_code,
-                "new_email_code": new_email_code,
-                "new_email": new_email,
-            }
-            user.save()
+            validate_django_email(new_email)
+        except DjangoValidationError:
+            return Response({"error": "Invalid email address."}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Send email to the current email address
-            subject = "Email Change Request - Confirm with Current Email"
-            context = {
-                "user": user,
-                "code": old_email_code,
-                "site_domain": settings.SITE_URL,
-                "logo_base_url": settings.EMAIL_LOGO_URL,
-                "expiration_minutes": expiration_minutes,
-                "current_year": timezone.now().year,
-            }
-
-            success = send_custom_email(
-                to=user.email,
-                subject=subject,
-                template_path="emails/account/email_change_old.html",
-                context=context,
-                text_template_path=None
-            )
-
-            if not success:
-                logger.error("Email change confirmation delivery failed for user_id=%s", user.id)
-                return Response(
-                    {"error": "Failed to send confirmation email to your current address. Please try again later."},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-
-            # Send email to the new email address
-            subject = "Verify Your New Email"
-            context = {
-                "user": user,
-                "code": new_email_code,
-                "site_domain": settings.SITE_URL,
-                "logo_base_url": settings.EMAIL_LOGO_URL,
-                "expiration_minutes": expiration_minutes,
-                "current_year": timezone.now().year,
-            }
-
-            success = send_custom_email(
-                to=new_email,
-                subject=subject,
-                template_path="emails/account/email_change_new.html",
-                context=context,
-                text_template_path=None
-            )
-
-            if not success:
-                logger.error("New email verification delivery failed for user_id=%s", user.id)
-                return Response(
-                    {"error": "Failed to send verification email to the new address. Please try again later."},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-
-            return Response({
-                "message": f"Verification codes have been sent to {user.email} and {new_email}. They are valid for {expiration_minutes} minutes.",
-                "code_type": "email",
-                "old_email": user.email,
-                "new_email": new_email,
-                "expiry_minutes": expiration_minutes,
-                "timestamp": timezone.now(),
-                "expires_at": expiration_time,
-            }, status=status.HTTP_200_OK)
-
-        except Exception as e:
-            return Response({"error": "An unexpected error occurred."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @action(detail=False, methods=['post'], url_path='confirm-email-change', permission_classes=[IsAuthenticated])
-    def confirm_email_change(self, request):
         try:
-            user = request.user
-            old_email_code = request.data.get('old_email_code')
-            new_email_code = request.data.get('new_email_code')
+            with transaction.atomic():
+                user = CustomUser.objects.select_for_update().get(pk=request.user.pk)
+                if user.last_email_change and timezone.now() - user.last_email_change < timedelta(days=30):
+                    return Response({"error": "You can only change your email once per month."}, status=status.HTTP_403_FORBIDDEN)
+                if CustomUser.objects.filter(email__iexact=new_email).exists():
+                    return Response({"error": "The new email is already associated with another account."}, status=status.HTTP_400_BAD_REQUEST)
+                previous = user.email_change_tokens or {}
+                if previous.get("v") == 2 and not email_change_expired(previous):
+                    created_at = parse_datetime(previous.get("created_at", ""))
+                    if created_at and timezone.is_aware(created_at) and (timezone.now() - created_at) < timedelta(seconds=60):
+                        return Response({"error": "Please wait before requesting new verification codes."}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
-            # Check if the email change request exists
-            if not user.email_change_tokens:
-                return Response({"error": "No email change request found."}, status=status.HTTP_400_BAD_REQUEST)
-
-            # Validate the provided codes
-            if not old_email_code or not new_email_code:
-                return Response({"error": "Both verification codes are required."}, status=status.HTTP_400_BAD_REQUEST)
-
-            if (
-                str(user.email_change_tokens.get("old_email_code")) != str(old_email_code) or
-                str(user.email_change_tokens.get("new_email_code")) != str(new_email_code)
-            ):
-                return Response({"error": "Invalid verification codes."}, status=status.HTTP_400_BAD_REQUEST)
-            
-            if user.user_active_code_expiry and timezone.now() > user.user_active_code_expiry:
-                return Response({"error": "The verification codes have expired. Please request a new email change."}, status=status.HTTP_400_BAD_REQUEST)
-
-            tokens = user.email_change_tokens or {}
-            new_email = tokens.get("new_email")
-
-            if not new_email:
-                return Response(
-                    {"error": "Invalid or expired email change request."},
-                    status=status.HTTP_400_BAD_REQUEST
+                old_code = create_active_code(5)
+                new_code = create_active_code(5)
+                expiration_minutes = settings.EMAIL_CODE_EXPIRATION_MINUTES
+                expiration_time = timezone.now() + timedelta(minutes=expiration_minutes)
+                user.email_change_tokens = new_email_change_state(
+                    user_id=user.pk,
+                    old_code=old_code,
+                    new_code=new_code,
+                    new_email=new_email,
+                    expires_at=expiration_time,
                 )
+                user.save(update_fields=["email_change_tokens"])
+                current_email = user.email
+        except Exception:
+            logger.error("Email change request preparation failed user_id=%s", request.user.pk)
+            return Response({"error": "Unable to create email change request."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
+        message_common = {
+            "user": user,
+            "site_domain": settings.SITE_URL,
+            "logo_base_url": settings.EMAIL_LOGO_URL,
+            "expiration_minutes": expiration_minutes,
+            "current_year": timezone.now().year,
+        }
+        for to, subject, template, code in (
+            (current_email, "Email Change Request - Confirm with Current Email", "emails/account/email_change_old.html", old_code),
+            (new_email, "Verify Your New Email", "emails/account/email_change_new.html", new_code),
+        ):
             try:
-                with transaction.atomic():
-                    user.email = new_email
-                    user.last_email_change = timezone.now()
-                    user.email_change_tokens = None
-                    user.user_active_code_expiry = None
-                    user.save()
-
-            except IntegrityError:
-                return Response(
-                    {"error": "This email is already in use by another account."},
-                    status=status.HTTP_400_BAD_REQUEST
+                success = send_custom_email(
+                    to=to,
+                    subject=subject,
+                    template_path=template,
+                    context={**message_common, "code": code},
+                    text_template_path=None,
                 )
-
-            # Notify the user about the successful email change
-            subject = "Your Email Has Been Successfully Changed"
-            context = {
-                "user": user,
-                "new_email": user.email,
-                "site_domain": settings.SITE_URL,
-                "logo_base_url": settings.EMAIL_LOGO_URL,
-                "current_year": timezone.now().year,
-            }
-
-            success = send_custom_email(
-                to=user.email,
-                subject=subject,
-                template_path="emails/account/email_change_notification.html",
-                context=context,
-                text_template_path=None
-            )
-
+            except Exception:
+                success = False
             if not success:
-                return Response({"error": "Failed to send email change notification."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                logger.error("Email change message delivery failed user_id=%s", user.pk)
+                # Invalidate the exact request after a failed delivery, without clearing a newer request.
+                with transaction.atomic():
+                    locked = CustomUser.objects.select_for_update().get(pk=user.pk)
+                    if locked.email_change_tokens == user.email_change_tokens:
+                        locked.email_change_tokens = None
+                        locked.save(update_fields=["email_change_tokens"])
+                return Response({"error": "Verification email delivery failed. Please try again later."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
-            return Response({"message": "Email has been successfully updated."}, status=status.HTTP_200_OK)
-                    
-        except Exception as e:
-            logger.exception("Confirm email change failed")
-            return Response(
-                {"error": "Email confirmation failed. Please contact support."},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        return Response({
+            "message": "Verification codes have been sent to both email addresses.",
+            "code_type": "email",
+            "old_email": current_email,
+            "new_email": new_email,
+            "expiry_minutes": expiration_minutes,
+            "timestamp": timezone.now(),
+            "expires_at": expiration_time,
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["post"], url_path="confirm-email-change", permission_classes=[IsAuthenticated])
+    def confirm_email_change(self, request):
+        old_code = request.data.get("old_email_code")
+        new_code = request.data.get("new_email_code")
+        if not old_code or not new_code:
+            return Response({"error": "Both verification codes are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            with transaction.atomic():
+                user = CustomUser.objects.select_for_update().get(pk=request.user.pk)
+                state = user.email_change_tokens
+                if not isinstance(state, dict) or not state:
+                    return Response({"error": "No email change request found."}, status=status.HTTP_400_BAD_REQUEST)
+                if email_change_expired(state, legacy_expires_at=user.user_active_code_expiry):
+                    user.email_change_tokens = None
+                    user.save(update_fields=["email_change_tokens"])
+                    return Response({"error": "Verification codes have expired. Request new codes."}, status=status.HTTP_400_BAD_REQUEST)
+
+                attempts = int(state.get("failed_attempts", 0) or 0)
+                if attempts >= EMAIL_CHANGE_MAX_ATTEMPTS:
+                    user.email_change_tokens = None
+                    user.save(update_fields=["email_change_tokens"])
+                    return Response({"error": "Too many attempts. Request new verification codes."}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+                if not verify_email_change_codes(state, old_code, new_code, user_id=user.pk):
+                    attempts += 1
+                    state["failed_attempts"] = attempts
+                    user.email_change_tokens = None if attempts >= EMAIL_CHANGE_MAX_ATTEMPTS else state
+                    user.save(update_fields=["email_change_tokens"])
+                    return Response({"error": "Invalid verification codes."}, status=status.HTTP_400_BAD_REQUEST)
+
+                new_email = pending_new_email(state, user.pk)
+                if not new_email or CustomUser.objects.filter(email__iexact=new_email).exclude(pk=user.pk).exists():
+                    return Response({"error": "Email address is no longer available."}, status=status.HTTP_400_BAD_REQUEST)
+                user.email = new_email
+                user.last_email_change = timezone.now()
+                user.email_change_tokens = None
+                # The legacy expiry is not used for new v2 requests.
+                if state.get("v") != 2:
+                    user.user_active_code_expiry = None
+                    user.save(update_fields=["email", "last_email_change", "email_change_tokens", "user_active_code_expiry"])
+                else:
+                    user.save(update_fields=["email", "last_email_change", "email_change_tokens"])
+        except IntegrityError:
+            return Response({"error": "This email is already in use by another account."}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.error("Confirm email change failed user_id=%s", request.user.pk)
+            return Response({"error": "Email confirmation failed. Please contact support."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        # Success is authoritative even if the post-commit notification fails.
+        try:
+            sent = send_custom_email(
+                to=user.email,
+                subject="Your Email Has Been Successfully Changed",
+                template_path="emails/account/email_change_notification.html",
+                context={
+                    "user": user,
+                    "new_email": user.email,
+                    "site_domain": settings.SITE_URL,
+                    "logo_base_url": settings.EMAIL_LOGO_URL,
+                    "current_year": timezone.now().year,
+                },
+                text_template_path=None,
             )
+            if not sent:
+                logger.warning("Email change notification could not be delivered user_id=%s", user.pk)
+        except Exception:
+            logger.warning("Email change notification failed user_id=%s", user.pk)
+        return Response({"message": "Email has been successfully updated."}, status=status.HTTP_200_OK)
 
     # Phone Number Actions -------------------------------------------------------------------------------------------------
     @action(detail=False, methods=['post'], url_path='request-phone-verification', permission_classes=[IsAuthenticated])

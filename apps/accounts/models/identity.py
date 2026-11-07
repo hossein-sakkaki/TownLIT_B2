@@ -1,8 +1,17 @@
 # apps/accounts/models/identity.py
+# TownLIT-Backend
+#
+# Original Created date: verify from Git history before final commit.
+# Last Update by Hossein Sakkaki on 2026-11-06.
+#
 
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
+
+from apps.accounts.services.identity_private_fields import (
+    encrypt_identity_field,
+)
 
 from apps.accounts.constants.identity_audit import (
     IDENTITY_AUDIT_ACTION_CHOICES,
@@ -38,6 +47,9 @@ class IdentityVerification(models.Model):
 
     provider_reference = models.CharField(max_length=255, null=True, blank=True, db_index=True)
     provider_payload = models.JSONField(null=True, blank=True)
+    # Shadow ciphertext columns; legacy columns remain until Stage B verification.
+    provider_payload_encrypted = models.TextField(null=True, blank=True, editable=False)
+    notes_encrypted = models.TextField(null=True, blank=True, editable=False)
 
     verified_at = models.DateTimeField(null=True, blank=True, db_index=True)
     revoked_at = models.DateTimeField(null=True, blank=True, db_index=True)
@@ -55,6 +67,23 @@ class IdentityVerification(models.Model):
 
     def __str__(self):
         return f"IV({self.user_id}) {self.method}:{self.status}:{self.level}"
+
+    def save(self, *args, **kwargs):
+        # Write encrypted shadows for modified sensitive fields, including update_fields.
+        # IdentityVerification has a unique user_id, available before first insert.
+        fields = kwargs.get("update_fields")
+        requested = set(fields) if fields is not None else None
+        for name in ("provider_payload", "notes"):
+            if requested is not None and name not in requested:
+                continue
+            value = getattr(self, name)
+            encrypted_name = f"{name}_encrypted"
+            setattr(self, encrypted_name, encrypt_identity_field(name, value, self.user_id))
+            if requested is not None:
+                requested.add(encrypted_name)
+        if requested is not None:
+            kwargs["update_fields"] = requested
+        return super().save(*args, **kwargs)
 
     def mark_verified(self, level=None):
         self.status = IV_STATUS_VERIFIED

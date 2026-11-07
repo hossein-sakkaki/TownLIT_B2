@@ -1,7 +1,16 @@
 # apps/accounts/admin/identity_admin.py
+# TownLIT-Backend
+#
+# Original Created date: verify from Git history before final commit.
+# Last Update by Hossein Sakkaki on 2026-11-06.
+#
 
 from django.contrib import admin, messages
 from django.core.exceptions import PermissionDenied
+from django import forms
+from django.utils.html import format_html
+import json
+import logging
 
 from ..models import IdentityVerification, IdentityAuditLog, IdentityGrant
 from ..services.identity_verification_service import (
@@ -9,6 +18,8 @@ from ..services.identity_verification_service import (
     admin_revoke_identity,
     admin_unverify_identity,
 )
+
+logger = logging.getLogger(__name__)
 
 # IdentityVerification Admin -----------------------------------------------------------
 @admin.register(IdentityVerification)
@@ -46,7 +57,7 @@ class IdentityVerificationAdmin(admin.ModelAdmin):
         "status",
         "level",
         "provider_reference",
-        "provider_payload",
+        "provider_payload_view",
         "created_at",
         "updated_at",
         "verified_at",
@@ -63,7 +74,7 @@ class IdentityVerificationAdmin(admin.ModelAdmin):
         }),
         ("Provider Data", {
             "classes": ("collapse",),
-            "fields": ("provider_reference", "provider_payload")
+            "fields": ("provider_reference", "provider_payload_view")
         }),
         ("Timestamps", {
             "fields": ("created_at", "updated_at", "verified_at", "revoked_at", "rejected_at")
@@ -72,6 +83,61 @@ class IdentityVerificationAdmin(admin.ModelAdmin):
             "fields": ("notes",)
         }),
     )
+
+    def get_fieldsets(self, request, obj=None):
+        fieldsets = list(super().get_fieldsets(request, obj))
+        if not request.user.is_superuser:
+            result = []
+            for title, options in fieldsets:
+                options = dict(options)
+                options["fields"] = tuple(
+                    "notes_masked" if value == "notes" else
+                    "provider_reference_masked" if value == "provider_reference" else value
+                    for value in options["fields"]
+                )
+                result.append((title, options))
+            return result
+        return fieldsets
+
+    def get_readonly_fields(self, request, obj=None):
+        fields = tuple(super().get_readonly_fields(request, obj))
+        if not request.user.is_superuser:
+            return fields + ("notes_masked", "provider_reference_masked", "risk_flag")
+        return fields
+
+    def get_search_fields(self, request):
+        fields = tuple(super().get_search_fields(request))
+        if not request.user.is_superuser:
+            return tuple(name for name in fields if name != "provider_reference")
+        return fields
+
+    @admin.display(description="Provider reference (restricted)")
+    def provider_reference_masked(self, obj):
+        return "[Protected: superuser only]" if obj and obj.provider_reference else "—"
+
+    def get_object(self, request, object_id, from_field=None):
+        obj = super().get_object(request, object_id, from_field=from_field)
+        if obj is not None:
+            obj._dp_admin_can_reveal = bool(request.user.is_superuser)
+            obj._dp_admin_actor_id = request.user.pk
+        return obj
+
+    @admin.display(description="Provider payload (restricted)")
+    def provider_payload_view(self, obj):
+        if not obj:
+            return "—"
+        if not getattr(obj, "_dp_admin_can_reveal", False):
+            return "[Protected: superuser only]"
+        logger.info(
+            "Identity provider payload viewed in admin actor_id=%s iv_id=%s",
+            getattr(obj, "_dp_admin_actor_id", None), obj.pk,
+        )
+        payload = obj.provider_payload
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str) if payload is not None else "—"
+
+    @admin.display(description="Admin notes (restricted)")
+    def notes_masked(self, obj):
+        return "[Protected: superuser only]" if obj and obj.notes_encrypted else "—"
 
     actions = [
         "mark_verified_strong",
@@ -122,7 +188,7 @@ class IdentityVerificationAdmin(admin.ModelAdmin):
             except Exception as exc:
                 self.message_user(
                     request,
-                    f"Failed to verify {iv.user}: {exc}",
+                    f"Identity operation failed for record {iv.pk}.",
                     level=messages.ERROR,
                 )
 
@@ -150,7 +216,7 @@ class IdentityVerificationAdmin(admin.ModelAdmin):
             except Exception as exc:
                 self.message_user(
                     request,
-                    f"Failed to verify {iv.user}: {exc}",
+                    f"Identity operation failed for record {iv.pk}.",
                     level=messages.ERROR,
                 )
 
@@ -177,7 +243,7 @@ class IdentityVerificationAdmin(admin.ModelAdmin):
             except Exception as exc:
                 self.message_user(
                     request,
-                    f"Failed to revoke {iv.user}: {exc}",
+                    f"Identity operation failed for record {iv.pk}.",
                     level=messages.ERROR,
                 )
 
@@ -207,7 +273,7 @@ class IdentityVerificationAdmin(admin.ModelAdmin):
             except Exception as exc:
                 self.message_user(
                     request,
-                    f"Failed to fully unverify {iv.user}: {exc}",
+                    f"Identity operation failed for record {iv.pk}.",
                     level=messages.ERROR,
                 )
 
@@ -376,7 +442,7 @@ class IdentityGrantAdmin(admin.ModelAdmin):
             except Exception as exc:
                 self.message_user(
                     request,
-                    f"Failed to revoke grant for {grant.user}: {exc}",
+                    f"Identity grant action failed for record {grant.pk}.",
                     level=messages.ERROR,
                 )
 

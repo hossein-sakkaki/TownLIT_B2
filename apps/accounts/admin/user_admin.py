@@ -1,4 +1,9 @@
 # apps/accounts/admin/user_admin.py
+# TownLIT-Backend
+#
+# Original Created date: verify from Git history before final commit.
+# Last Update by Hossein Sakkaki on 2026-11-06.
+#
 
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
@@ -71,7 +76,7 @@ class CustomUserAdmin(UserAdmin):
         "is_suspended", "is_deleted", "is_account_paused", "register_date",
     ]
     search_fields = ["email", "username", "mobile_number", "name", "family"]
-    readonly_fields = ["register_date", "last_login", "email", "is_verified_identity", "identity_level"]
+    readonly_fields = ["register_date", "last_login", "email", "is_verified_identity", "identity_level", "email_change_request_pending"]
     ordering = ["-id"]
     filter_horizontal = ("groups", "user_permissions")
 
@@ -96,7 +101,6 @@ class CustomUserAdmin(UserAdmin):
             "fields": (
                 "two_factor_enabled", "two_factor_token_expiry",
                 "pin_security_enabled",
-                "access_pin", "delete_pin",
             )
         }),
         ("Sanctuary / Moderation", {
@@ -106,7 +110,7 @@ class CustomUserAdmin(UserAdmin):
             "fields": (
                 "user_active_code_expiry", "mobile_verification_expiry",
                 "reset_token_expiration", "last_email_change",
-                "email_change_tokens",
+                "email_change_request_pending",
             )
         }),
         ("Deletion", {
@@ -140,6 +144,10 @@ class CustomUserAdmin(UserAdmin):
             return [inline(self.model, self.admin_site) for inline in self.inlines]
         return []
 
+    @admin.display(description="Email change pending", boolean=True)
+    def email_change_request_pending(self, obj):
+        return bool(obj and obj.email_change_tokens)
+
     def profile_image_thumbnail(self, obj):
         if obj.image_name:
             return format_html(
@@ -149,3 +157,4 @@ class CustomUserAdmin(UserAdmin):
         return ""
     profile_image_thumbnail.short_description = "Profile Image"
     
+
