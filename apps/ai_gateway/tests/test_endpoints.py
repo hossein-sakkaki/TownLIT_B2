@@ -6,9 +6,10 @@
 from unittest.mock import patch
 from uuid import UUID
 
-from django.test import Client, SimpleTestCase, override_settings
+from django.test import Client, RequestFactory, SimpleTestCase, override_settings
 
 from apps.ai_gateway.security import UnavailableSecurity
+from apps.ai_gateway.views import denied_endpoint
 
 
 class DenialTests(SimpleTestCase):
@@ -52,3 +53,17 @@ class DenialTests(SimpleTestCase):
         for method in ("verify", "issue"):
             with self.assertRaisesMessage(Exception, "security_unavailable"):
                 getattr(UnavailableSecurity(), method)("synthetic")
+
+    @override_settings(AI_GATEWAY_ENABLED=True)
+    def test_human_superuser_and_tampered_transport_still_denied(self):
+        from types import SimpleNamespace
+
+        for method, path, body in (("GET", "/capabilities/?scope=all", b""),
+                                   ("POST", "/accounting/post/", b'{"is_staff":true}'),
+                                   ("PATCH", "/advancement/opportunities/", b"tampered")):
+            request = RequestFactory().generic(method, path, body,
+                                               HTTP_SIGNATURE="synthetic-forged",
+                                               HTTP_CONTENT_DIGEST="sha-256=:forged:")
+            request.user = SimpleNamespace(is_authenticated=True, is_staff=True, is_superuser=True)
+            response = denied_endpoint(request)
+            self.assertEqual(response.status_code, 503)

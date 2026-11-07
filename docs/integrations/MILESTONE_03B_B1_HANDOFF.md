@@ -65,3 +65,77 @@ security/migration tests and record exact outcomes here before review. Do not
 merge, deploy, run production migrations, provision credentials or enable agents.
 O1 next: a separate Office branch with typed offline Gateway client/fault-injection
 transport only; no real network dispatch or tool registration.
+
+## Metadata checkpoint (baseline regressions still running)
+
+Implemented six additive metadata tables in `ai_gateway.0001_initial`:
+ServicePrincipal, OfficeOrganizationBinding, OperationGrant, RequestNonce,
+IdempotencyReceipt and AuditEvent. Defaults do not activate principals, bindings
+or grants. There are no domain ownership changes/backfills. Organization UUIDs
+are provisional references, **not verified Organization FKs or domain authority**.
+The sole operation checks exact principal metadata scope; real module-specific
+record bindings/selectors remain deferred. There is no wildcard scope.
+
+`policy.py` intersects fixed operation/version, agent, environment, exact org IDs,
+metadata record, token-scope-shaped internal input and current unexpired grant.
+`VerifiedIdentity` is an internal test/policy value, not a verified HTTP identity.
+No HTTP code constructs it from claims, headers, certificate strings or users.
+Chloe and the nonregistered internal agents always deny. `replay.py` reserves
+hashed nonces with a timestamp bound and DB uniqueness; `receipts.py` persists
+strict v1 metadata envelope receipts and audit atomically, rechecking grants on
+replay. These are internal primitives, not business POST/capabilities handlers.
+No opaque reference can cause ORM model lookup or function invocation.
+
+Lock order: principal -> organization -> grant -> receipt -> audit. Internal grant
+revocation locks principal before grant/audit, so it serializes with receipt
+reservation. No authority-changing provisioning endpoints exist. Nonce rows are
+retained beyond their minimum 10-minute lifetime (no cleanup job); receipts have
+no eviction/reuse path. Production retention/immutable audit export remain open.
+Application audit is structured metadata, not a tamper-proof database. Disabled
+HTTP attempts produce bounded log events without DB dependency; authoritative
+persistent denial/rate controls must be reviewed before any live enablement.
+
+Executed against disposable MySQL **8.4.13**, mysqlclient **2.2.6** and the full
+pinned baseline Python environment:
+
+```
+../b1-venv/bin/python -m django test apps.ai_gateway.tests --settings=apps.ai_gateway.tests.settings_mysql -v 1
+../b1-venv/bin/python -m apps.ai_gateway.tests.run mysql test apps.ai_gateway.tests -v 1
+../b1-venv/bin/python -m django makemigrations ai_gateway --check --dry-run --settings=apps.ai_gateway.tests.settings_mysql
+../b1-venv/bin/python -m django migrate ai_gateway --settings=apps.ai_gateway.tests.settings_mysql --noinput
+../b1-venv/bin/python -m django migrate ai_gateway zero --settings=apps.ai_gateway.tests.settings_mysql --noinput
+../b1-venv/bin/python -m django migrate ai_gateway --settings=apps.ai_gateway.tests.settings_mysql --noinput
+```
+
+Both MySQL test runs: **21 passed**, including two-connection nonce, same-key
+receipt and revoke/reserve races. No concurrency claim is based on SQLite.
+Migration drift check: no changes; apply/reverse/reapply all succeeded. A later
+transport-denial case brings core discovery to **22 tests, 19 passed / 3 MySQL
+cases explicitly skipped on SQLite**. MySQL rerun with that case remains pending.
+
+Full baseline requirements installation succeeded; `pip check`: no broken
+requirements. Initial toolchain failures (headers, then missing default clang)
+were resolved by local extracted headers and `CC=gcc`; no dependency pins changed.
+Baseline libraries include Django 5.2.18, DRF 3.18.3, asgiref 3.12.1,
+django-celery-beat 2.8.1, django-cryptography-5 2.0.3, SimpleJWT 5.3.1,
+PyJWT 2.8.0, cryptography 43.0.1. These existing crypto packages are **not an
+approved Gateway crypto stack**. OAuth assertions/access JWT/mTLS/RFC 9421
+verification, issuer/key/cert lifecycle and real token issuance are deferred.
+No JWT/signature cryptography has been handwritten or selected without review.
+
+The isolated runner clears inherited environment variables and prohibits Python
+outbound network/subprocess execution except Django's exact local Git version
+metadata probe. MySQL uses a fixed local socket and fixed disposable DB names.
+Full Backend regression settings read app/middleware/auth declarations from AST
+without executing production settings or loading .env. Broker/cache/channel/email
+and media stores are local; there are no workers or real service credentials.
+Normal production settings cannot be tested as configured because their Firebase
+credential file is intentionally absent. No credential file was created.
+
+Backend `check` under isolated settings completed with an existing CKEditor 4
+unsupported/security warning, a Requests/chardet version warning and expected
+missing-Firebase notice. These warnings are not remediated or approved by B1.
+Full migration plan loaded, including accounts/0105 and third-party migrations.
+Selected existing human-auth and new isolation regressions are still running;
+results are not yet claimed. Production storage ACLs, old encrypted ciphertext,
+full client/socket deployment behavior and advisory remediation remain unverified.

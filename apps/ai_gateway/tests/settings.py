@@ -15,6 +15,7 @@ MIDDLEWARE = ["django.middleware.csrf.CsrfViewMiddleware"]
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 USE_TZ = True
 AI_GATEWAY_ENABLED = False
+AI_GATEWAY_ENVIRONMENT = "synthetic"
 EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
 CELERY_TASK_ALWAYS_EAGER = True
 CELERY_BROKER_URL = "memory://"
