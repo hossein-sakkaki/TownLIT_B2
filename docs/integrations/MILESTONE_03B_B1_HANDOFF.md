@@ -1,199 +1,199 @@
-# TownLIT B1 — Default-deny Gateway core
+# TownLIT B1 — Default-deny Secure Gateway core
 
-TownLIT-Backend · `docs/integrations/MILESTONE_03B_B1_HANDOFF.md`
+`docs/integrations/MILESTONE_03B_B1_HANDOFF.md` · TownLIT-Backend
 Created by Codex on 2026-11-06. Last Update by Codex on 2026-11-06.
 
-## Scope and baseline
+## Status and repository evidence
 
-Owner's B1 instruction authorizes isolated synthetic implementation/testing and a
-Draft PR against `security/django-5.2-lts-20261022`, not main. Baseline freshly
-verified: `524dbffbb68ed7e1b74b72d6e088618ff73ae779`. Main/merge base:
-`544b96b0b42434d9f52d672a6a418c21d9967eb6`; full history, 0 main-only / 14
-security-only commits, no merge commits in that range. Feature branch:
-`feat/milestone-03b-ai-gateway-core`. Existing workspace TownLIT_B and Office
-checkouts were clean and preserved. No Backend snapshot-only work was imported.
+Restricted B1 implementation only. **Every public Gateway capability remains
+unavailable, including when its global kill switch is enabled.** No domain
+handler, real token issuer, credential provisioning, agent, external action,
+merge or deployment is enabled. Synthetic test success is not release approval.
 
-Office PR #3 remains Draft/unmerged. Authoritative documents read from its
-`docs/milestone-03a-backend-audit` tip
-`28f9ecf8684404d4b7cef856e8abfa841806a0ea`: AGENTS.md, audit, contract, plan,
-decision register, baseline review and usage-safe checkpoint policy. Owner's
-current instruction supersedes the documents' earlier no-implementation scope
-for B1 only. DR-01/02 are authorized for this exact isolated baseline/scope;
-DR-03 uses the safe metadata-only fallback. No real verifier is approved by B1.
-All real read/mutation/release decisions DR-04–15 remain open.
+- Repository: `hossein-sakkaki/TownLIT_B2`.
+- Verified base/PR target: `security/django-5.2-lts-20261022` at
+  `524dbffbb68ed7e1b74b72d6e088618ff73ae779`.
+- Main/merge base: `544b96b0b42434d9f52d672a6a418c21d9967eb6`; full history,
+  0 main-only / 14 security-only commits, no merge commits in that range.
+- Feature: `feat/milestone-03b-ai-gateway-core`;
+  [Draft PR #4](https://github.com/hossein-sakkaki/TownLIT_B2/pull/4), remain unmerged.
+- Checkpoints: `0659a076773cee1af4af68527197989fec5060f0` endpoints;
+  `f976ce76ef8af93915ef32a045a1f64a64e27d19` metadata/transactions;
+  `9c5d0528b84063bfb44e53374c1f9b94d8981a94` MySQL labels;
+  `6afc25bbf88a398b1264cfa84894c41814bad542` CORS/test fixtures.
+  The PR's head is the final pushed SHA; this file cannot contain its own commit hash.
+- GitHub app reported push permission and published the branch/checkpoints; local
+  fetched head matches. Existing `TownLIT_B` and Office working trees were clean
+  and preserved. No snapshot-only Backend edits were imported or overwritten.
 
-## Endpoint checkpoint
+Office PR #3 remains Draft/unmerged. Read AGENTS.md, audit, contract, plan,
+decision register, baseline review and usage-safe policy from authoritative
+`docs/milestone-03a-backend-audit` at
+`28f9ecf8684404d4b7cef856e8abfa841806a0ea`. The current owner instruction
+supersedes their earlier documentation-only authorization for this B1 scope.
+No Office runtime or research-branch source was changed.
 
-Added isolated Django app and `/api/v1/ai-integrations/` denial stubs, including
-`token/`, `capabilities/` and unknown paths. Global switch defaults false; true
-still returns security unavailable. No credentials or tokens are issued or
-verified; certificate/request-proof interfaces explicitly fail closed. No domain
-operation handlers, human-user impersonation or authentication middleware changes.
-Existing CSRF applies. Errors/log events exclude caller data and use server IDs.
-Only code-reviewed metadata operation `gateway.capabilities` schema v1 is reserved;
-it is not publicly executable. No domain operation is registered.
+Reviewed the full 14-commit consequences without repeating the domain audit:
+Django/dependency upgrade, UTC compatibility, Celery guards/task registration,
+legacy/V2 socket changes, redaction, reset/2FA/session authentication, STORAGES,
+accounts/0105, and broader media changes. The security baseline is not a minimal
+auth-only series. In particular, token issuance requires accounts/0105 even with
+session-generation enforcement off. Existing rollout/reset/storage flags were
+not changed. Gateway has no dependency on human tokens or auth-user privileges.
 
-Executed with Python 3.12.14, Django 5.2.18, asgiref 3.12.1, sqlparse 0.4.4:
+## Implemented modules and schema
 
-```
-../b1-core-venv/bin/python -m django test apps.ai_gateway.tests.test_endpoints --settings=apps.ai_gateway.tests.settings -v 2
-```
+`apps/ai_gateway/` contains:
 
-Result: **4 tests passed**, no database used. Covers disabled/enabled/malformed
-switch, 6 paths × 7 methods × 4 switch values, forged certificate/identity headers,
-security/audit exceptions, redacted errors, unavailable issuance and retained CSRF.
-These denials do not prove cryptographic verification or end-to-end mTLS.
-`git diff --check` and Python compile checks passed.
-
-## Pending next checkpoint
-
-Metadata models, migration and policy/replay/receipt implementation are being
-validated separately; do not infer a pass from the endpoint checkpoint. Baseline
-full-manifest installation initially lacked MySQL headers; dependency-only Debian
-headers were extracted under `work/` without system installation. Full isolated
-manifest install is in progress. Disposable MySQL 8.4 uses `--network none` and
-synthetic empty-password local socket access only; no remote DB is configured.
-MySQL transactions, migration reversal, accounts/0105, human authentication,
-storage/encryption and full routing regression remain unverified at this checkpoint.
-
-## Recovery and gates
-
-Fetch the same feature branch and inspect the existing Draft PR before resuming;
-never duplicate branches or PRs. PR head is the authoritative pushed SHA (a file
-cannot contain its own commit hash). Preserve any local work. Complete metadata
-security/migration tests and record exact outcomes here before review. Do not
-merge, deploy, run production migrations, provision credentials or enable agents.
-O1 next: a separate Office branch with typed offline Gateway client/fault-injection
-transport only; no real network dispatch or tool registration.
-
-## Metadata checkpoint (baseline regressions still running)
-
-Implemented six additive metadata tables in `ai_gateway.0001_initial`:
-ServicePrincipal, OfficeOrganizationBinding, OperationGrant, RequestNonce,
-IdempotencyReceipt and AuditEvent. Defaults do not activate principals, bindings
-or grants. There are no domain ownership changes/backfills. Organization UUIDs
-are provisional references, **not verified Organization FKs or domain authority**.
-The sole operation checks exact principal metadata scope; real module-specific
-record bindings/selectors remain deferred. There is no wildcard scope.
-
-`policy.py` intersects fixed operation/version, agent, environment, exact org IDs,
-metadata record, token-scope-shaped internal input and current unexpired grant.
-`VerifiedIdentity` is an internal test/policy value, not a verified HTTP identity.
-No HTTP code constructs it from claims, headers, certificate strings or users.
-Chloe and the nonregistered internal agents always deny. `replay.py` reserves
-hashed nonces with a timestamp bound and DB uniqueness; `receipts.py` persists
-strict v1 metadata envelope receipts and audit atomically, rechecking grants on
-replay. These are internal primitives, not business POST/capabilities handlers.
-No opaque reference can cause ORM model lookup or function invocation.
-
-Lock order: principal -> organization -> grant -> receipt -> audit. Internal grant
-revocation locks principal before grant/audit, so it serializes with receipt
-reservation. No authority-changing provisioning endpoints exist. Nonce rows are
-retained beyond their minimum 10-minute lifetime (no cleanup job); receipts have
-no eviction/reuse path. Production retention/immutable audit export remain open.
-Application audit is structured metadata, not a tamper-proof database. Disabled
-HTTP attempts produce bounded log events without DB dependency; authoritative
-persistent denial/rate controls must be reviewed before any live enablement.
-
-Executed against disposable MySQL **8.4.13**, mysqlclient **2.2.6** and the full
-pinned baseline Python environment:
-
-```
-../b1-venv/bin/python -m django test apps.ai_gateway.tests --settings=apps.ai_gateway.tests.settings_mysql -v 1
-../b1-venv/bin/python -m apps.ai_gateway.tests.run mysql test apps.ai_gateway.tests -v 1
-../b1-venv/bin/python -m django makemigrations ai_gateway --check --dry-run --settings=apps.ai_gateway.tests.settings_mysql
-../b1-venv/bin/python -m django migrate ai_gateway --settings=apps.ai_gateway.tests.settings_mysql --noinput
-../b1-venv/bin/python -m django migrate ai_gateway zero --settings=apps.ai_gateway.tests.settings_mysql --noinput
-../b1-venv/bin/python -m django migrate ai_gateway --settings=apps.ai_gateway.tests.settings_mysql --noinput
-```
-
-Both MySQL test runs: **21 passed**, including two-connection nonce, same-key
-receipt and revoke/reserve races. No concurrency claim is based on SQLite.
-Migration drift check: no changes; apply/reverse/reapply all succeeded. A later
-transport-denial case brings core discovery to **22 tests, 19 passed / 3 MySQL
-cases explicitly skipped on SQLite**. MySQL rerun with that case remains pending.
-
-Full baseline requirements installation succeeded; `pip check`: no broken
-requirements. Initial toolchain failures (headers, then missing default clang)
-were resolved by local extracted headers and `CC=gcc`; no dependency pins changed.
-Baseline libraries include Django 5.2.18, DRF 3.18.3, asgiref 3.12.1,
-django-celery-beat 2.8.1, django-cryptography-5 2.0.3, SimpleJWT 5.3.1,
-PyJWT 2.8.0, cryptography 43.0.1. These existing crypto packages are **not an
-approved Gateway crypto stack**. OAuth assertions/access JWT/mTLS/RFC 9421
-verification, issuer/key/cert lifecycle and real token issuance are deferred.
-No JWT/signature cryptography has been handwritten or selected without review.
-
-The isolated runner clears inherited environment variables and prohibits Python
-outbound network/subprocess execution except Django's exact local Git version
-metadata probe. MySQL uses a fixed local socket and fixed disposable DB names.
-Full Backend regression settings read app/middleware/auth declarations from AST
-without executing production settings or loading .env. Broker/cache/channel/email
-and media stores are local; there are no workers or real service credentials.
-Normal production settings cannot be tested as configured because their Firebase
-credential file is intentionally absent. No credential file was created.
-
-Backend `check` under isolated settings completed with an existing CKEditor 4
-unsupported/security warning, a Requests/chardet version warning and expected
-missing-Firebase notice. These warnings are not remediated or approved by B1.
-Full migration plan loaded, including accounts/0105 and third-party migrations.
-Selected existing human-auth and new isolation regressions are still running;
-results are not yet claimed. Production storage ACLs, old encrypted ciphertext,
-full client/socket deployment behavior and advisory remediation remain unverified.
-
-
-## Required-case evidence map (updated core)
-
-| Requirement | Actual evidence / limit |
+| Modules | Behavior |
 | --- | --- |
-| 1 Disabled Gateway | All public paths/methods and complete synthetic policy configuration deny. |
-| 2 Unknown identity/operation | Current metadata tests; no dynamic handlers exist. |
-| 3 Missing grants | Denied; principals/bindings/grants inactive by default. |
-| 4 Agent/org combinations | Exact canonical agent and organization intersection, including MySQL collation checks. |
-| 5 Cross-org/record | Exact **principal metadata** record and invented org fixtures only. Real domain bindings/selectors deferred; all domain HTTP paths deny. |
-| 6 Chloe | Always denies even with an active mistaken metadata grant. |
-| 7 JWT negative matrix | **Deferred: no Gateway JWT verifier or issuance implemented.** Stub refusal is not cryptographic verification. |
-| 8 Certificates | Forged metadata never authorizes a public request. Actual trusted-hop/mTLS verification deferred. |
-| 9 Transport tampering | Mutated method/path/body/digest/signature cannot pass denial stubs. RFC 9421 cryptographic tamper detection deferred. |
-| 10 Replay/idempotency | Real MySQL nonce uniqueness, conflicting metadata payloads, same-key serialization. No domain effect/recovery claim. |
-| 11 Revoked grants | Next call/replay denies; two-connection revoke/reserve serialization tested. |
-| 12 Dependency outages | Policy/replay/audit failures deny; receipt/revoke audit failure rolls back metadata. |
-| 13 Domain records | New code/migration has no domain services/backfills; full baseline snapshot/SQL check pending. |
-| 14 Authentication/routing | Source unchanged outside new app registration/include/kill switch; selected runtime regressions pending. |
-| 15 Migration/schema | Core MySQL apply/reverse/reapply and drift passed; full baseline graph still running. |
+| apps, urls, views | Isolated `/api/v1/ai-integrations/` denial stubs, including token/capabilities/unknown paths and methods. |
+| security | Dedicated identity value and credential/access-token/certificate/request-proof Protocols; concrete verification and issuance always unavailable. A constructed VerifiedIdentity is an internal fixture/policy input, never verified HTTP identity. |
+| registry, policy | Immutable code-reviewed `gateway.capabilities` schema-v1 metadata registry; current principal/agent/environment/org/exact metadata-record/scope/grant intersection. Chloe and all unregistered agents deny. No dispatch functions or dynamic model invocation. |
+| validation | Bounded strict metadata envelope, duplicate/unknown key rejection, exact types/UUID, versioned canonical digest. No domain JSON schema accepted. |
+| replay | Timestamp bounds, hashed nonce reservation and unconditional database uniqueness. |
+| receipts | Atomic metadata receipt/audit, same-key digest conflict, current authorization on replay, serialized grant revocation. No business operation or caller callback. |
+| audit, errors | Fixed redacted codes, server UUIDs, bounded denial logs; persistent metadata audit excludes arbitrary body/headers/URLs/secrets. |
+| tests | Isolated SQLite/MySQL profiles, environment-clearing/outbound-I/O-blocking runner, core and selected full-Backend regressions. |
 
-Latest core commands use `python -m apps.ai_gateway.tests.run` with `mysql` or
-`core` profile. **23/23 passed on MySQL; SQLite 20 passed and 3 explicitly skipped**.
-Core and Backend tests now have separate fixed disposable test database names to
-avoid interference. The baseline graph has 744 application migration files plus
-third-party migrations. After the completed core transaction tests, disposable
-MySQL `innodb_flush_log_at_trx_commit` was set to 2 to reduce fresh-schema setup
-cost (binary logging was already off). No crash-durability claims are made.
+Production integration changes only register the app, add the new API include,
+add `AI_GATEWAY_ENABLED` default false, and exclude only the machine prefix from
+browser CORS/preflight. Existing human CORS, CSRF, middleware, REST/business/root
+URLs and WebSocket sources remain unchanged. Native middleware CSRF rejection
+can return its normal 403 before the Gateway error envelope. No broad auth bypass.
 
-## CORS and baseline-test fixture checkpoint
+`apps/ai_gateway/migrations/0001_initial.py` creates six metadata tables only:
+ServicePrincipal, OfficeOrganizationBinding, OperationGrant, RequestNonce,
+IdempotencyReceipt and AuditEvent. Principals/bindings/grants default inactive;
+expiry is required for grants. Scoped unconditional uniqueness/indexes and
+protective metadata FKs apply. No RunPython/backfill or Accounting/Advancement
+ownership/schema change, ledger, opportunity store or domain record grant exists.
 
-Added a CORS URL exclusion only for the new machine prefix. An allow-all-browser
-CORS fixture proves Gateway preflight stays denied without allow-origin headers
-while an unrelated human preflight retains existing handling. No authentication
-middleware exception or human CORS origin change was introduced.
+Organization UUIDs are **provisional references, not verified Organization FKs or
+domain ownership**. The sole record scope is the exact principal metadata record.
+Real module-specific organization/record/FK selectors remain unavailable. No
+collection wildcard, creator/name inference or automatic legacy-record grant.
 
-Latest Gateway suite: **24/24 passed on MySQL; SQLite 21 passed / 3 explicit skips**.
-This supersedes earlier core test counts above.
+Writers lock principal -> organization -> grant -> receipt -> audit. Grant
+revocation locks principal before grant/audit and serializes with reservations.
+Exact loaded labels are rechecked to prevent MySQL case-insensitive collation
+from broadening policy. Nonces are retained beyond their 10-minute minimum;
+no cleanup exists. Receipts have no eviction/reuse path. Audit is ordinary
+protected application metadata, not cryptographically immutable storage. Disabled
+HTTP requests use bounded log events without a DB dependency; live denial-audit
+retention/export and shared rate enforcement remain gated.
 
-The first complete Backend run created the full existing migration graph on
-MySQL, including accounts/0105, then ran **66 tests: 52 passed, 4 failures and 10
-errors**. It does not establish regression success. Five errors came from the
-new synthetic fixture trying to assign read-only CustomUser.is_staff; this was
-corrected to set only existing is_superuser. Five OTP errors were missing test
-EMAIL_CODE_EXPIRATION_MINUTES; four reset failures were the missing test
-RESET_LINK_EXPIRATION_MINUTES. Isolated defaults now match the baseline's 10/30
-minute values. No existing authentication source was changed. A full rerun with
-`--keepdb` is pending so additional fixture errors can be corrected without
-repeating fresh-schema creation. Do not treat this checkpoint as a green
-regression run.
+## Actual validation
 
-The real MySQL baseline migration run also reports existing conditional-unique
-constraint warnings (models.W036) in accounts/boundaries/main/profiles/sanctuary.
-Those baseline constraints are not enforced by MySQL. B1 introduces no
-conditional unique constraints; its unconditional metadata uniqueness was tested.
-These warnings and the pre-existing finance/report findings remain release
-review items, not security issues silently fixed by B1.
+Environment: Python 3.12.14; complete unchanged baseline requirements installed;
+`pip check` passed. Django 5.2.18, DRF 3.18.3, asgiref 3.12.1,
+django-celery-beat 2.8.1, django-cryptography-5 2.0.3, SimpleJWT 5.3.1,
+PyJWT 2.8.0, cryptography 43.0.1, mysqlclient 2.2.6. Existing crypto packages
+are **not an approved Gateway verifier stack**. No new JOSE/signature library
+or handwritten JWT/HTTP-signature cryptography was added.
+
+MySQL 8.4.13, image `mysql:8.4` digest
+`sha256:a81d043930e51745522bd5c430961cf8286f0a23f0a9a2a6e0108f7ea71b0902`.
+Only a task-owned `--network none` container and fixed sibling
+`b1-mysql-socket/mysqld.sock` were used. DBs are `townlit_b1_disposable`,
+`test_townlit_b1_gateway`, `test_townlit_b1_disposable`; no configurable remote
+host/credential fallback. Headers were extracted locally for mysqlclient and
+`CC=gcc` used after the missing-header/default-clang build failures. Pins and
+system packages were not changed. Binary logging was off; after initial core
+transaction checks, disposable `innodb_flush_log_at_trx_commit=2` reduced schema
+setup cost. No crash-durability claim.
+
+From Backend root, using the isolated environment's Python:
+
+```
+python -m apps.ai_gateway.tests.run mysql test apps.ai_gateway.tests -v 1
+python -m apps.ai_gateway.tests.run core test apps.ai_gateway.tests -v 1
+python -m apps.ai_gateway.tests.run mysql makemigrations ai_gateway --check --dry-run
+python -m apps.ai_gateway.tests.run backend makemigrations ai_gateway --check --dry-run
+python -m apps.ai_gateway.tests.run mysql migrate ai_gateway --noinput
+python -m apps.ai_gateway.tests.run mysql migrate ai_gateway zero --noinput
+python -m apps.ai_gateway.tests.run mysql migrate ai_gateway --noinput
+python -m apps.ai_gateway.tests.run backend check
+```
+
+Core: **24/24 MySQL tests passed**, including two-connection nonce/same-key/revoke
+races. SQLite: **21 passed / 3 explicit MySQL skips**. Migration drift: none.
+Gateway migration apply/reverse/reapply succeeded on MySQL. Full Backend graph,
+including accounts/0105 and third-party migrations, applied in disposable MySQL.
+
+Full selected regression command:
+
+```
+python -m apps.ai_gateway.tests.run backend test apps.ai_gateway.tests.backend_regression apps.accounts.tests.test_session_jwt_issuance apps.accounts.tests.test_session_generation_enforcement apps.accounts.tests.test_session_security_foundation apps.accounts.tests.test_legacy_token_obtain_policy apps.accounts.tests.test_password_reset_token_v2 apps.accounts.tests.test_password_session_revocation apps.accounts.tests.test_two_factor_login_single_use apps.accounts.tests.test_backend_exception_redaction --noinput --keepdb -v 1
+```
+
+**66/66 selected Backend tests passed** (61 existing authentication/security tests
+and 5 new integration-boundary tests), after all **800 migration records** applied.
+The new tests verify human JWT and superuser sessions cannot authorize Gateway,
+accounts/0105-backed generation revocation, unchanged human/business/socket route
+definitions, current-library synthetic encrypted-field round trip and local
+storage, plus before/after snapshots of every Accounting/Advancement model and
+zero domain SQL during denied requests. Only an artificial Advancement fixture
+was created for the snapshot; all data was disposable. These are not complete
+Backend or production-client regression tests.
+
+The first full 66-test attempt had 52 passes, 4 failures and 10 errors: the new
+fixture assigned read-only is_staff (five errors), and isolated expiry defaults
+were missing (OTP/reset errors/failures). Corrected the fixture and test settings
+only; existing authentication source was not modified. Final results above
+supersede that failed attempt; it is not hidden or counted as a pass.
+
+Normal production settings were not executed successfully because the required
+Firebase credential file is intentionally absent. Isolated settings load only
+literal/bounded app/middleware/REST/JWT declarations from source AST, never .env;
+synthetic secrets, in-memory email/broker/cache/channel/media, no workers. The
+runner clears inherited environment and rejects Python outbound network and
+subprocesses except Django's exact local Git version probe. No mTLS fixture is
+represented as a real TLS connection.
+
+Observed baseline warnings: unsupported CKEditor 4, Requests/chardet version
+compatibility, expected missing Firebase, and MySQL models.W036 for existing
+conditional unique constraints in accounts/boundaries/main/profiles/sanctuary.
+Those conditional constraints are not enforced by MySQL. B1 has no conditional
+uniqueness. These findings are recorded, not remediated or approved by B1.
+`git diff --check`, compilation and changed-runtime import/scope checks passed.
+
+## Security evidence and deferred gates
+
+| Required cases | Evidence / honest limit |
+| --- | --- |
+| Disabled, unknown identity/operation, missing configuration/grants | Deny tests, including complete synthetic metadata configuration and all public methods. |
+| Agent/org/record isolation; Chloe | Canonical labels, invented organizations, exact principal metadata record; deliberately bad Chloe grant. Real domain selectors never exist/enabled. |
+| JWT issuer/audience/alg/expiry/signature | **Not implemented/tested as verification.** All credentials meet an unavailable boundary. |
+| Certificate/proxy trust | Forged headers cannot authorize; actual certificate-chain/trusted-hop/mTLS verification deferred. |
+| Body/method/path/header tampering | Public denial tests only; RFC 9421 cryptographic detection deferred. |
+| Nonces/idempotency/revocation | Real MySQL uniqueness, conflict, two-connection races and current grant checks; no domain/network exactly-once claim. |
+| Security/audit store failure | Fail closed; metadata receipt/revocation audit failure rolls back. |
+| Domain and human compatibility | 66 selected Backend checks passed, including unchanged domain snapshots/zero domain SQL and JWT/session/router/0105 checks; no production/full-suite claim. |
+| Schema | Core reversible migration and full disposable baseline/0105 graph; no production migration. |
+
+Deferred: OAuth/private_key_jwt, short-lived audience-bound ES256 service access
+tokens, real issuer/key/cert registry and rotation, authenticated TLS terminator,
+RFC 9421 library/profile, distributed rate limits, authoritative organization and
+domain FK bindings, real capabilities, proposals/drafts/human authority/files,
+events and all agent tools. These require reviewed versions/synthetic vectors
+and later gates; **the public Gateway cannot enable them by configuration**.
+
+Owner instruction authorizes DR-01/02 for this exact isolated baseline/scope;
+DR-03 uses the metadata-only fallback and its real crypto profile remains open.
+DR-04–15 remain open: authoritative ownership, principal lifecycle, issuer/proxy/
+key custody, existing report/finance findings, security stores, human review,
+privacy/files/retention/residency, recovery, events and deployment. No release
+approval follows from this work. Old encrypted ciphertext compatibility, private
+storage ACLs, real clients/SSO/ingress, full socket handshakes/load/security-advisory
+remediation and the complete Backend test suite remain unverified.
+
+## Recovery and next checkpoint
+
+Fetch and reuse this feature branch/PR; compare remote SHA and worktree before
+resuming. Preserve local work and do not duplicate branches, PRs or migrations.
+The next **separate** Office O1 checkpoint is a typed Gateway client with offline
+fake transport, bounded retries/same-key lost-ack recovery and Chloe-denial tests.
+Keep network dispatch, credential use, agent tools and domain operations off.
+Staging/production access, credential provisioning, releases and any final
+financial/legal authority require separate owner decisions. Do not merge/deploy.
