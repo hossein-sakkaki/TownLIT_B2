@@ -84,8 +84,8 @@ jobs:
       - name: Check B1 headers, code quality and formatting
         run: |
           python scripts/check_ai_gateway_headers.py
-          ruff check --select E4,E7,E9,F,I apps/ai_gateway scripts/check_ai_gateway_headers.py
-          ruff format --check apps/ai_gateway scripts/check_ai_gateway_headers.py
+          ruff check --select E4,E7,E9,F,I apps/ai_gateway scripts/check_ai_gateway_headers.py scripts/ai_gateway_dependency_profile.py apps/accounts/serializers/session_refresh.py apps/accounts/tests/test_refresh_user_id_compatibility.py
+          ruff format --check apps/ai_gateway scripts/check_ai_gateway_headers.py scripts/ai_gateway_dependency_profile.py apps/accounts/serializers/session_refresh.py apps/accounts/tests/test_refresh_user_id_compatibility.py
 
       - name: Start disposable MySQL with no network or published ports
         run: |
@@ -135,6 +135,10 @@ jobs:
             apps.accounts.tests.test_two_factor_login_single_use \
             apps.accounts.tests.test_backend_exception_redaction \
             --noinput -v 2
+
+      - name: Verify signed refresh claims and current account policy
+        run: |
+          python -m apps.ai_gateway.tests.run backend test apps.accounts.tests.test_refresh_user_id_compatibility --noinput -v 2
 
       - name: Remove only this job's disposable database container
         if: always()
