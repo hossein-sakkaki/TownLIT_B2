@@ -7,15 +7,15 @@
 import base64
 import json
 import os
-from io import StringIO
 from unittest.mock import patch
 from cryptography.fernet import Fernet
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.test import TestCase
 from apps.accounts.services.contact_protection import index_matches
 
-class ContactShadowTests(TestCase):
+class ContactCutoverRegressions(TestCase):
     def setUp(self):
         self.patcher = patch.dict(os.environ, {
             "TOWNLIT_DP_FERNET_KEYS_JSON": json.dumps({"dev_1": Fernet.generate_key().decode()}),
@@ -26,53 +26,29 @@ class ContactShadowTests(TestCase):
         self.patcher.start()
         self.addCleanup(self.patcher.stop)
 
-    def test_creation_shadows_email_and_mobile(self):
+    def test_email_shadow_and_phone_ciphertext_updated(self):
         User = get_user_model()
-        u = User.objects.create_user(email="Contact@Example.test", username="contacttest",
-                                     mobile_number="+16045550123", password="TestPassword123!")
-        u.refresh_from_db()
-        self.assertNotIn("Contact@Example.test", u.email_encrypted)
-        self.assertNotIn("+16045550123", u.mobile_number_encrypted)
-        self.assertTrue(index_matches(u.email_blind_index, u.email, field="email"))
-        self.assertTrue(index_matches(u.mobile_number_blind_index, u.mobile_number, field="mobile_number"))
+        user = User.objects.create_user(email="stageb-first@example.test", username="stagebfirst",
+                                        mobile_number="+16045550001", password="TestPassword123!")
+        user.email = "stageb-second@example.test"
+        user.mobile_number = "+16045550002"
+        user.save(update_fields=["email", "mobile_number"])
+        user.refresh_from_db()
+        self.assertEqual(user.email, "stageb-second@example.test")
+        self.assertEqual(user.mobile_number, "+16045550002")
+        self.assertTrue(index_matches(user.email_blind_index, user.email, field="email"))
+        self.assertTrue(index_matches(user.mobile_number_blind_index, user.mobile_number, field="mobile_number"))
+        self.assertTrue(user.email_encrypted.startswith("tdp1:"))
 
-    def test_update_fields_and_backfill(self):
+    def test_mass_contact_write_rejected(self):
         User = get_user_model()
-        u = User.objects.create_user(email="first@example.test", username="contactchange",
-                                     password="TestPassword123!")
-        u.email = "new@example.test"
-        u.mobile_number = "+16045550555"
-        u.save(update_fields=["email", "mobile_number"])
-        u.refresh_from_db()
-        self.assertEqual(u.email, "new@example.test")
-        self.assertEqual(u.mobile_number, "+16045550555")
-        with self.assertRaises(ValueError):
-            User.objects.filter(pk=u.pk).update(email="unsafe@example.test")
-        out = StringIO()
-        call_command("backfill_contact_protection", "--verify-only", stdout=out)
-        self.assertIn("conflicts=0", out.getvalue())
-
-    def test_legacy_backfill(self):
-        User = get_user_model()
-        u = User.objects.create_user(email="backfill@example.test", username="contactbackfill",
-                                     mobile_number="+16045550111", password="TestPassword123!")
-        User._base_manager.filter(pk=u.pk).update(email_encrypted=None,
-                email_blind_index=None, mobile_number_encrypted=None,
-                mobile_number_blind_index=None)
-        out = StringIO()
-        call_command("backfill_contact_protection", "--apply", stdout=out)
-        self.assertIn("conflicts=0", out.getvalue())
-        out2 = StringIO()
-        call_command("backfill_contact_protection", "--verify-only", stdout=out2)
-        self.assertIn("pending=0", out2.getvalue())
-
-    def test_null_phone_legacy_record_is_not_pending(self):
-        User = get_user_model()
-        user = User.objects.create_user(email="nullphone@example.test", username="nullphone",
+        user = User.objects.create_user(email="write-rejected@example.test", username="writereject",
                                         password="TestPassword123!")
-        User._base_manager.filter(pk=user.pk).update(
-            mobile_number=None, mobile_number_encrypted=None, mobile_number_blind_index=None,
-        )
-        out = StringIO()
-        call_command("backfill_contact_protection", "--verify-only", stdout=out)
-        self.assertIn("pending=0", out.getvalue())
+        with self.assertRaises(ValueError):
+            User.objects.filter(pk=user.pk).update(email="bad@example.test")
+        with self.assertRaises(ValueError):
+            User.objects.filter(pk=user.pk).update(mobile_number_encrypted="bad")
+
+    def test_backfill_command_disabled_after_cutover(self):
+        with self.assertRaises(CommandError):
+            call_command("backfill_contact_protection")

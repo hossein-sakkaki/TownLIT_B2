@@ -192,7 +192,10 @@ class CustomUserManager(BaseUserManager):
 
 
 class CustomUser(EncryptedPropertyFieldsMixin, AbstractBaseUser, PermissionsMixin):
-    protected_field_specs = {"birthday": ("birthday_encrypted", "date")}
+    protected_field_specs = {
+        "birthday": ("birthday_encrypted", "date"),
+        "mobile_number": ("mobile_number_encrypted", "text"),
+    }
 
     IMAGE = FileUpload('accounts', 'photos', 'custom_user')
 
@@ -215,14 +218,6 @@ class CustomUser(EncryptedPropertyFieldsMixin, AbstractBaseUser, PermissionsMixi
         self.last_email_change = timezone.now()
         self.save()
 
-    mobile_number = models.CharField(
-        max_length=20,
-        unique=False,
-        null=True,
-        blank=True,
-        validators=[validate_phone_number],
-        verbose_name='Mobile Number',
-    )
     mobile_verification_code = models.CharField(max_length=200, null=True, blank=True, verbose_name="Mobile Verification Code")
     mobile_verification_expiry = models.DateTimeField(null=True, blank=True)
 
@@ -352,6 +347,18 @@ class CustomUser(EncryptedPropertyFieldsMixin, AbstractBaseUser, PermissionsMixi
     is_account_paused = models.BooleanField(default=False, verbose_name='Is Account Paused')
 
     @property
+    def mobile_number(self):
+        return self._protected_get("mobile_number")
+
+    @mobile_number.setter
+    def mobile_number(self, value):
+        if value is not None and not isinstance(value, str):
+            raise TypeError("Mobile number must be text or None.")
+        if value and len(value) > 20:
+            raise ValueError("Mobile number exceeds supported length.")
+        self._protected_set("mobile_number", value)
+
+    @property
     def birthday(self):
         return self._protected_get("birthday")
 
@@ -442,28 +449,29 @@ class CustomUser(EncryptedPropertyFieldsMixin, AbstractBaseUser, PermissionsMixi
                 user=self if self.pk else None,
             )
 
-        # Contact shadow values must be atomic with the legacy write.
-        # New rows need a primary key before row-bound encryption.
+        # Email remains a concrete auth field until the independent login
+        # cutover. Phone is now an encrypted logical property only.
         requested = kwargs.get("update_fields")
         requested = set(requested) if requested is not None else None
         changing_email = requested is None or "email" in requested
-        changing_phone = requested is None or "mobile_number" in requested
+        pending = self.__dict__.get("_dp_pending_fields", {})
+        changing_phone = "mobile_number" in pending and (
+            requested is None or "mobile_number" in requested
+        )
         new_row = self._state.adding
         alias = kwargs.get("using") or self._state.db
 
-        # Fail closed on key unavailability before persisting an existing row.
         if not new_row:
             if changing_email:
                 self.email_encrypted = encrypt_contact(self, self.email, field="email")
                 self.email_blind_index = blind_index(self.email, field="email")
             if changing_phone:
-                self.mobile_number_encrypted = encrypt_contact(self, self.mobile_number, field="mobile_number")
-                self.mobile_number_blind_index = blind_index(self.mobile_number, field="mobile_number")
+                self.mobile_number_blind_index = blind_index(pending["mobile_number"], field="mobile_number")
             if requested is not None:
                 if changing_email:
                     requested.update(("email_encrypted", "email_blind_index"))
                 if changing_phone:
-                    requested.update(("mobile_number_encrypted", "mobile_number_blind_index"))
+                    requested.add("mobile_number_blind_index")
                 kwargs["update_fields"] = requested
 
         with transaction.atomic(using=alias):
@@ -472,7 +480,6 @@ class CustomUser(EncryptedPropertyFieldsMixin, AbstractBaseUser, PermissionsMixi
                 changes = {
                     "email_encrypted": encrypt_contact(self, self.email, field="email"),
                     "email_blind_index": blind_index(self.email, field="email"),
-                    "mobile_number_encrypted": encrypt_contact(self, self.mobile_number, field="mobile_number"),
                     "mobile_number_blind_index": blind_index(self.mobile_number, field="mobile_number"),
                 }
                 type(self)._base_manager.db_manager(self._state.db).filter(pk=self.pk).update(**changes)

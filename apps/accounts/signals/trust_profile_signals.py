@@ -14,7 +14,7 @@ from apps.accounts.services.trust_engine import trigger_trust_recalculation
 
 TRUST_RELATED_FIELDS = {
     "is_active",
-    "mobile_number",
+    "mobile_number_encrypted",
     "name",
     "family",
     "birthday_encrypted",

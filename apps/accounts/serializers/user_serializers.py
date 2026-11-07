@@ -11,6 +11,7 @@ from django.db import IntegrityError
 
 from apps.accounts.serializers.label_serializers import CustomLabelSerializer
 from apps.accounts.services.age_policy import validate_standard_account_birthday
+from validators.user_validators import validate_phone_number
 from ..mixins import AvatarURLMixin
 from ..models import CustomLabel, LITShieldGrant
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -138,6 +139,10 @@ class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
     # --- Label + color ---
     label = CustomLabelSerializer(read_only=True)
     label_color = serializers.CharField(source="label.color", read_only=True)
+    mobile_number = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True,
+        max_length=20, validators=[validate_phone_number],
+    )
 
     # --- Identity verification ---
     is_verified_identity = serializers.BooleanField(read_only=True)
@@ -201,6 +206,8 @@ class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
             "reactivated_at",
             "deletion_requested_at",
             "email_change_tokens",
+            "email_encrypted", "email_blind_index",
+            "mobile_number_encrypted", "mobile_number_blind_index",
             "birthday_encrypted",
             "reset_token",
             "reset_token_expiration",
@@ -476,6 +483,7 @@ class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
 # PublicCustomUserSerializer — full public profile, with avatar_url
 # -------------------------------------------------------------------
 class PublicCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
+    mobile_number = serializers.CharField(read_only=True)
     label = CustomLabelSerializer(read_only=True)
     label_color = serializers.CharField(source="label.color", read_only=True)
 

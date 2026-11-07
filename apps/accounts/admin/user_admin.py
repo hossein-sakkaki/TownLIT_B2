@@ -8,6 +8,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from django.db.models import Q
+from apps.accounts.services.contact_protection import blind_index
 
 from django.utils.html import format_html
 from apps.accounts.forms import (
@@ -78,7 +79,8 @@ class CustomUserAdmin(UserAdmin):
         "is_active", "is_admin", "is_superuser", "gender", "label",
         "is_suspended", "is_deleted", "is_account_paused", "register_date",
     ]
-    search_fields = ["email", "username", "mobile_number", "name", "family"]
+    # Plaintext substring phone search is not available on encrypted storage.
+    search_fields = ["email", "username", "name", "family"]
     readonly_fields = ["register_date", "last_login", "email", "is_verified_identity", "identity_level", "email_change_request_pending"]
     ordering = ["-id"]
     filter_horizontal = ("groups", "user_permissions")
@@ -155,7 +157,9 @@ class CustomUserAdmin(UserAdmin):
         for title, options in sets:
             options = dict(options)
             options["fields"] = tuple(
-                "birthday_masked" if field == "birthday" else field
+                "birthday_masked" if field == "birthday"
+                else "mobile_masked" if field == "mobile_number"
+                else field
                 for field in options["fields"]
             )
             changed.append((title, options))
@@ -163,7 +167,21 @@ class CustomUserAdmin(UserAdmin):
 
     def get_readonly_fields(self, request, obj=None):
         fields = tuple(super().get_readonly_fields(request, obj))
-        return fields if request.user.is_superuser else fields + ("birthday_masked",)
+        return fields if request.user.is_superuser else fields + ("birthday_masked", "mobile_masked")
+
+    @admin.display(description="Mobile number (restricted)")
+    def mobile_masked(self, obj):
+        return "[Protected: superuser only]" if obj and obj.mobile_number_encrypted else "—"
+
+    def get_search_results(self, request, queryset, search_term):
+        # Exact phone equality is possible; do not create a partial-search index.
+        qs, use_distinct = super().get_search_results(request, queryset, search_term)
+        term = (search_term or "").strip()
+        if request.user.is_superuser and term and (term.startswith("+") or term[0].isdigit()):
+            indexed = blind_index(term, field="mobile_number")
+            if indexed:
+                qs = qs | queryset.filter(mobile_number_blind_index=indexed)
+        return qs, use_distinct
 
     @admin.display(description="Birthday (restricted)")
     def birthday_masked(self, obj):

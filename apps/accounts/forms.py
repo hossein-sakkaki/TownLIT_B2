@@ -13,6 +13,7 @@ CustomUser = get_user_model()
 
 # USER Form ----------------------------------------------------------------------
 class UserCreationForm(forms.ModelForm):
+    mobile_number = forms.CharField(required=False, max_length=20)
     birthday = forms.DateField(required=False)
     password = forms.CharField(label='Password', widget=forms.PasswordInput)
 
@@ -25,6 +26,8 @@ class UserCreationForm(forms.ModelForm):
         user.set_password(self.cleaned_data['password'])
         if 'birthday' in self.cleaned_data:
             user.birthday = self.cleaned_data['birthday']
+        if 'mobile_number' in self.cleaned_data:
+            user.mobile_number = self.cleaned_data['mobile_number'] or None
         if commit:
             user.save()
         return user
@@ -33,17 +36,21 @@ class UserCreationForm(forms.ModelForm):
     
 # USER CHANGE Form -----------------------------------------------------------------
 class UserChangeForm(forms.ModelForm):
+    mobile_number = forms.CharField(required=False, max_length=20)
     birthday = forms.DateField(required=False)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         if self.instance and self.instance.pk:
             self.fields['birthday'].initial = self.instance.birthday
+            self.fields['mobile_number'].initial = self.instance.mobile_number
 
     def save(self, commit=True):
         user = super().save(commit=False)
         if 'birthday' in self.cleaned_data:
             user.birthday = self.cleaned_data['birthday']
+        if 'mobile_number' in self.cleaned_data:
+            user.mobile_number = self.cleaned_data['mobile_number'] or None
         if commit:
             user.save()
             self.save_m2m()
@@ -80,7 +87,7 @@ class UserChangeRestrictedForm(forms.ModelForm):
     class Meta:
         model = CustomUser
         fields = [
-            'email', 'mobile_number', 'password', 'name', 'family', 'username',
+            'email', 'password', 'name', 'family', 'username',
             'gender', 'country', 'city', 'image_name', 'is_active', 'is_admin',
             'is_member', 'is_suspended', 'reports_count',
         ]
