@@ -50,6 +50,15 @@ def bootstrap():
     assert db["HOST"].endswith("/b1-mysql-socket/mysqld.sock")
     db["NAME"] = "test_townlit_b1_disposable"
     django.setup()
+    # Existing post-save hooks enqueue trust work. Bind them to the same
+    # isolated in-memory Celery configuration the HTTP test runner uses;
+    # never let the default unconfigured app try its AMQP fallback.
+    from townlit_b.celery import app as celery_app
+
+    celery_app.set_current()
+    celery_app.set_default()
+    assert celery_app.conf.broker_url == "memory://"
+    assert not celery_app.conf.task_always_eager
     from django.db import connection
 
     assert connection.vendor == "mysql"
