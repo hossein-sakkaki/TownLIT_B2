@@ -27,10 +27,13 @@ from validators.mediaValidators.image_validators import validate_image_file, val
 from validators.security_validators import validate_no_executable_file
 from validators.usernameValidators.username_normalizer import normalize_username
 from utils.common.utils import FileUpload, create_active_code
-from apps.core.crypto.protected_columns import ShadowProtectedFieldsMixin
+from apps.core.crypto.protected_columns import EncryptedPropertyFieldsMixin, ProtectedColumnsQuerySet
 
 
 class CustomUserManager(BaseUserManager):
+    def get_queryset(self):
+        return ProtectedColumnsQuerySet(self.model, using=self._db)
+
 
     def create_user(
         self,
@@ -177,7 +180,7 @@ class CustomUserManager(BaseUserManager):
         return user
 
 
-class CustomUser(ShadowProtectedFieldsMixin, AbstractBaseUser, PermissionsMixin):
+class CustomUser(EncryptedPropertyFieldsMixin, AbstractBaseUser, PermissionsMixin):
     protected_field_specs = {"birthday": ("birthday_encrypted", "date")}
 
     IMAGE = FileUpload('accounts', 'photos', 'custom_user')
@@ -212,7 +215,6 @@ class CustomUser(ShadowProtectedFieldsMixin, AbstractBaseUser, PermissionsMixin)
     family = models.CharField(max_length=40, null=True, blank=True, verbose_name='Family')
     username = models.CharField(max_length=20, unique=True, blank=True, verbose_name='Username')
 
-    birthday = models.DateField(auto_now=False, auto_now_add=False, blank=True, null=True, verbose_name='Birthday')
     birthday_encrypted = models.TextField(null=True, blank=True, editable=False)
     gender = models.CharField(max_length=6, choices=GENDER_CHOICES, null=True, blank=True, verbose_name='Gender')
     label = models.ForeignKey(
@@ -334,7 +336,15 @@ class CustomUser(ShadowProtectedFieldsMixin, AbstractBaseUser, PermissionsMixin)
 
     is_account_paused = models.BooleanField(default=False, verbose_name='Is Account Paused')
 
-    USERNAME_FIELD = 'email'
+    @property
+    def birthday(self):
+        return self._protected_get("birthday")
+
+    @birthday.setter
+    def birthday(self, value):
+        self._protected_set("birthday", value)
+
+    USERNAME_FIELD = 'email' 
     REQUIRED_FIELDS = []
     objects = CustomUserManager() 
 

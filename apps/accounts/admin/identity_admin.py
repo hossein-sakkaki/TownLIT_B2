@@ -335,7 +335,6 @@ class IdentityAuditLogAdmin(admin.ModelAdmin):
     search_fields = (
         "user__email",
         "actor__email",
-        "reason",
     )
 
     readonly_fields = (
@@ -351,6 +350,31 @@ class IdentityAuditLogAdmin(admin.ModelAdmin):
         "created_at",
     )
 
+    def get_readonly_fields(self, request, obj=None):
+        fields = tuple(super().get_readonly_fields(request, obj))
+        if request.user.is_superuser:
+            return fields
+        return tuple(
+            "reason_masked" if field == "reason" else
+            "metadata_masked" if field == "metadata" else field
+            for field in fields
+        )
+
+    @admin.display(description="Reason (restricted)")
+    def reason_masked(self, obj):
+        return "[Protected: superuser only]" if obj and obj.reason_encrypted else "—"
+
+    @admin.display(description="Metadata (restricted)")
+    def metadata_masked(self, obj):
+        return "[Protected: superuser only]" if obj and obj.metadata_encrypted else "—"
+
+    def get_object(self, request, object_id, from_field=None):
+        obj = super().get_object(request, object_id, from_field=from_field)
+        if obj is not None and request.user.is_superuser:
+            logger.info("Identity audit private view actor_id=%s audit_id=%s",
+                        request.user.pk, obj.pk)
+        return obj
+
     def has_add_permission(self, request):
         # Audit logs are write-once
         return False
@@ -364,9 +388,43 @@ class IdentityAuditLogAdmin(admin.ModelAdmin):
     #     return False
 
 
+# Protected identity grant reason remains editable by authorized administrators.
+class IdentityGrantProtectedForm(forms.ModelForm):
+    reason = forms.CharField(required=True, widget=forms.Textarea)
+
+    class Meta:
+        model = IdentityGrant
+        fields = "__all__"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance and self.instance.pk:
+            self.fields["reason"].initial = self.instance.reason or ""
+
+    def save(self, commit=True):
+        grant = super().save(commit=False)
+        grant.reason = self.cleaned_data["reason"]
+        if commit:
+            grant.save()
+            self.save_m2m()
+        return grant
+
+
+class IdentityGrantRestrictedForm(forms.ModelForm):
+    class Meta:
+        model = IdentityGrant
+        fields = "__all__"
+
+
 # Identity Grant Admin -------------------------------------------------------------
 @admin.register(IdentityGrant)
 class IdentityGrantAdmin(admin.ModelAdmin):
+    form = IdentityGrantProtectedForm
+
+    def get_form(self, request, obj=None, **kwargs):
+        if not request.user.is_superuser:
+            kwargs["form"] = IdentityGrantRestrictedForm
+        return super().get_form(request, obj, **kwargs)
     list_display = (
         "user",
         "level",
@@ -403,17 +461,48 @@ class IdentityGrantAdmin(admin.ModelAdmin):
         ("Timestamps", {"fields": ("granted_at", "revoked_at")}),
     )
 
+    def get_fieldsets(self, request, obj=None):
+        result = super().get_fieldsets(request, obj)
+        if request.user.is_superuser:
+            return result
+        changed = []
+        for title, options in result:
+            options = dict(options)
+            options["fields"] = tuple(
+                "reason_masked" if field == "reason" else field
+                for field in options["fields"]
+            )
+            changed.append((title, options))
+        return tuple(changed)
+
+    def get_readonly_fields(self, request, obj=None):
+        fields = tuple(super().get_readonly_fields(request, obj))
+        return fields if request.user.is_superuser else fields + ("reason_masked",)
+
+    @admin.display(description="Grant reason (restricted)")
+    def reason_masked(self, obj):
+        return "[Protected: superuser only]" if obj and obj.reason_encrypted else "—"
+
     actions = ["revoke_selected_grants"]
 
     # def has_delete_permission(self, request, obj=None):
     #     # Prevent hard delete from admin
     #     return False
 
+    def get_object(self, request, object_id, from_field=None):
+        obj = super().get_object(request, object_id, from_field=from_field)
+        if obj is not None and request.user.is_superuser:
+            logger.info("Identity grant private view actor_id=%s grant_id=%s",
+                        request.user.pk, obj.pk)
+        return obj
+
     def save_model(self, request, obj, form, change):
         """
         Limit direct grant edits.
         Grant lifecycle should be controlled by service layer.
         """
+        if request.user.is_superuser and "reason" in form.cleaned_data:
+            obj.reason = form.cleaned_data["reason"]
         if not change:
             # Track admin approver on create
             obj.approved_by = request.user

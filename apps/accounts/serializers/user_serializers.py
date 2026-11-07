@@ -133,6 +133,8 @@ class CustomUserAuthSerializer(AvatarURLMixin, serializers.ModelSerializer):
 # CustomUserSerializer — Full editable profile for owner
 # -------------------------------------------------------------------
 class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
+    # Preserves the owner API contract after removing the plaintext model column.
+    birthday = serializers.DateField(required=False, allow_null=True)
     # --- Label + color ---
     label = CustomLabelSerializer(read_only=True)
     label_color = serializers.CharField(source="label.color", read_only=True)

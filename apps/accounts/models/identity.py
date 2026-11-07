@@ -8,7 +8,7 @@
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
-from apps.core.crypto.protected_columns import ShadowProtectedFieldsMixin
+from apps.core.crypto.protected_columns import EncryptedPropertyFieldsMixin, ProtectedColumnsQuerySet
 
 from apps.accounts.services.identity_private_fields import (
     encrypt_identity_field,
@@ -127,7 +127,7 @@ class IdentityVerification(models.Model):
         self.save(update_fields=["status", "revoked_at", "notes", "updated_at"])
 
 
-class IdentityGrant(ShadowProtectedFieldsMixin, models.Model):
+class IdentityGrant(EncryptedPropertyFieldsMixin, models.Model):
     protected_field_specs = {"reason": ("reason_encrypted", "text")}
 
     SOURCE_ADMIN = "admin"
@@ -142,7 +142,6 @@ class IdentityGrant(ShadowProtectedFieldsMixin, models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="identity_grants")
     source = models.CharField(max_length=20, choices=SOURCE_CHOICES)
     level = models.CharField(max_length=20, choices=IDENTITY_VERIFICATION_LEVEL_CHOICES)
-    reason = models.TextField()
     reason_encrypted = models.TextField(null=True, blank=True, editable=False)
     approved_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -166,13 +165,23 @@ class IdentityGrant(ShadowProtectedFieldsMixin, models.Model):
             )
         ]
 
+    objects = ProtectedColumnsQuerySet.as_manager()
+
+    @property
+    def reason(self):
+        return self._protected_get("reason")
+
+    @reason.setter
+    def reason(self, value):
+        self._protected_set("reason", value)
+
     def revoke(self):
         self.is_active = False
         self.revoked_at = timezone.now()
         self.save(update_fields=["is_active", "revoked_at"])
 
 
-class IdentityAuditLog(ShadowProtectedFieldsMixin, models.Model):
+class IdentityAuditLog(EncryptedPropertyFieldsMixin, models.Model):
     protected_field_specs = {
         "reason": ("reason_encrypted", "text"),
         "metadata": ("metadata_encrypted", "json"),
@@ -204,13 +213,11 @@ class IdentityAuditLog(ShadowProtectedFieldsMixin, models.Model):
         blank=True,
         related_name="performed_identity_audits",
     )
-    reason = models.CharField(max_length=1000, null=True, blank=True)
     reason_encrypted = models.TextField(null=True, blank=True, editable=False)
 
     previous_status = models.CharField(max_length=20, null=True, blank=True)
     new_status = models.CharField(max_length=20, null=True, blank=True)
 
-    metadata = models.JSONField(null=True, blank=True)
     metadata_encrypted = models.TextField(null=True, blank=True, editable=False)
 
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
@@ -219,6 +226,26 @@ class IdentityAuditLog(ShadowProtectedFieldsMixin, models.Model):
         verbose_name = "Identity Audit Log"
         verbose_name_plural = "Identity Audit Logs"
         ordering = ("-created_at",)
+
+    objects = ProtectedColumnsQuerySet.as_manager()
+
+    @property
+    def reason(self):
+        return self._protected_get("reason")
+
+    @reason.setter
+    def reason(self, value):
+        if value is not None and len(value) > 1000:
+            raise ValueError("Identity audit reason exceeds allowed length.")
+        self._protected_set("reason", value)
+
+    @property
+    def metadata(self):
+        return self._protected_get("metadata")
+
+    @metadata.setter
+    def metadata(self, value):
+        self._protected_set("metadata", value)
 
     def __str__(self):
         return f"{self.user_id} {self.action} via {self.source} @ {self.created_at}"

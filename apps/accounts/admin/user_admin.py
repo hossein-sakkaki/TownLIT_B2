@@ -10,7 +10,10 @@ from django.contrib.auth.admin import UserAdmin
 from django.db.models import Q
 
 from django.utils.html import format_html
-from apps.accounts.forms import UserCreationForm, UserChangeForm
+from apps.accounts.forms import (
+    UserCreationForm, UserChangeForm,
+    UserCreationRestrictedForm, UserChangeRestrictedForm,
+)
 from django.contrib.auth import get_user_model
 from apps.profiles.models import Friendship
 from apps.sanctuary.models import SanctuaryParticipantProfile
@@ -138,6 +141,33 @@ class CustomUserAdmin(UserAdmin):
 
     # If you have FriendshipInline, keep it
     inlines = [SanctuaryParticipationInline]  # e.g. [FriendshipInline]
+
+    def get_form(self, request, obj=None, **kwargs):
+        if not request.user.is_superuser:
+            kwargs["form"] = UserChangeRestrictedForm if obj is not None else UserCreationRestrictedForm
+        return super().get_form(request, obj, **kwargs)
+
+    def get_fieldsets(self, request, obj=None):
+        sets = super().get_fieldsets(request, obj)
+        if request.user.is_superuser:
+            return sets
+        changed = []
+        for title, options in sets:
+            options = dict(options)
+            options["fields"] = tuple(
+                "birthday_masked" if field == "birthday" else field
+                for field in options["fields"]
+            )
+            changed.append((title, options))
+        return tuple(changed)
+
+    def get_readonly_fields(self, request, obj=None):
+        fields = tuple(super().get_readonly_fields(request, obj))
+        return fields if request.user.is_superuser else fields + ("birthday_masked",)
+
+    @admin.display(description="Birthday (restricted)")
+    def birthday_masked(self, obj):
+        return "[Protected: superuser only]" if obj and obj.birthday_encrypted else "—"
 
     def get_inline_instances(self, request, obj=None):
         if obj:
