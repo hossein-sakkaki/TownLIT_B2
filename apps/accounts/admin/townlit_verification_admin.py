@@ -31,9 +31,8 @@ class TownlitVerificationAuditLogAdmin(admin.ModelAdmin):
     )
 
     search_fields = (
-        "member__user__email",
         "member__user__username",
-        "actor__email",
+        "actor__username",
         "reason",
     )
 
@@ -77,7 +76,6 @@ class TownlitVerificationGrantAdmin(admin.ModelAdmin):
     )
 
     search_fields = (
-        "member__user__email",
         "member__user__username",
     )
 

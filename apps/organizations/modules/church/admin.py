@@ -258,7 +258,7 @@ class ChurchServingAssignmentAdmin(admin.ModelAdmin):
         "checked_out_at",
     )
     list_filter = ("status",)
-    search_fields = ("role_label", "membership__member__user__email")
+    search_fields = ("role_label", "membership__member__user__username")
 
 
 @admin.register(ChurchResource)

@@ -9,6 +9,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from django.db.models import Q
 from apps.accounts.services.contact_protection import blind_index
+from apps.accounts.services.email_lookup import user_email_index
 
 from django.utils.html import format_html
 from apps.accounts.forms import (
@@ -80,7 +81,7 @@ class CustomUserAdmin(UserAdmin):
         "is_suspended", "is_deleted", "is_account_paused", "register_date",
     ]
     # Plaintext substring phone search is not available on encrypted storage.
-    search_fields = ["email", "username", "name", "family"]
+    search_fields = ["username", "name", "family"]
     readonly_fields = ["register_date", "last_login", "email", "is_verified_identity", "identity_level", "email_change_request_pending"]
     ordering = ["-id"]
     filter_horizontal = ("groups", "user_permissions")
@@ -177,10 +178,15 @@ class CustomUserAdmin(UserAdmin):
         # Exact phone equality is possible; do not create a partial-search index.
         qs, use_distinct = super().get_search_results(request, queryset, search_term)
         term = (search_term or "").strip()
-        if request.user.is_superuser and term and (term.startswith("+") or term[0].isdigit()):
-            indexed = blind_index(term, field="mobile_number")
-            if indexed:
-                qs = qs | queryset.filter(mobile_number_blind_index=indexed)
+        if request.user.is_superuser and term:
+            if "@" in term:
+                indexed_email = user_email_index(term)
+                if indexed_email:
+                    qs = qs | queryset.filter(email_blind_index=indexed_email)
+            if term.startswith("+") or term[0].isdigit():
+                indexed_phone = blind_index(term, field="mobile_number")
+                if indexed_phone:
+                    qs = qs | queryset.filter(mobile_number_blind_index=indexed_phone)
         return qs, use_distinct
 
     @admin.display(description="Birthday (restricted)")

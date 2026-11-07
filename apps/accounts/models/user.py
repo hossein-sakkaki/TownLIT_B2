@@ -45,6 +45,18 @@ class CustomUserManager(BaseUserManager):
     def get_queryset(self):
         return ContactProtectedQuerySet(self.model, using=self._db)
 
+    def get_by_natural_key(self, username):
+        """Resolve credentials by exact username or protected email lookup.
+
+        The Django ModelBackend calls this manager entry point. Email equality
+        uses the HMAC blind index and never queries plaintext email. Username
+        authentication remains available for existing web/mobile clients.
+        Missing HMAC keys fail closed for email identifiers.
+        """
+        from apps.accounts.services.email_lookup import user_identifier_q
+
+        return self.get_queryset().get(user_identifier_q(username))
+
 
     def create_user(
         self,

@@ -134,6 +134,9 @@ class CustomUserAuthSerializer(AvatarURLMixin, serializers.ModelSerializer):
 # CustomUserSerializer — Full editable profile for owner
 # -------------------------------------------------------------------
 class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
+    # Email changes must complete the dedicated verified email-change flow.
+    # Explicit declaration also preserves the owner API after DB email cutover.
+    email = serializers.EmailField(read_only=True)
     # Preserves the owner API contract after removing the plaintext model column.
     birthday = serializers.DateField(required=False, allow_null=True)
     # --- Label + color ---

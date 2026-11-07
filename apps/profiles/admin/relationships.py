@@ -62,9 +62,7 @@ class FellowshipAdmin(admin.ModelAdmin):
 
     search_fields = (
         'from_user__username',
-        'from_user__email',
         'to_user__username',
-        'to_user__email',
     )
 
     readonly_fields = ('created_at', 'updated_at')

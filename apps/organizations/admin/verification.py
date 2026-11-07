@@ -190,8 +190,8 @@ class OrganizationVerificationCaseAdmin(admin.ModelAdmin):
         "public_id",
         "legal_name",
         "registration_number",
-        "submitted_by__email",
-        "reviewed_by__email",
+        "submitted_by__username",
+        "reviewed_by__username",
     )
     ordering = ("-submitted_at", "-created_at", "-id")
     list_select_related = (
@@ -947,7 +947,7 @@ class OrganizationVerificationGrantAdmin(admin.ModelAdmin):
         "organization__slug",
         "public_id",
         "verification_case__public_id",
-        "granted_by__email",
+        "granted_by__username",
     )
     list_select_related = (
         "organization",

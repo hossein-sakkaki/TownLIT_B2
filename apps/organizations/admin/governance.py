@@ -76,7 +76,7 @@ class OrganizationGovernanceElectorAdmin(admin.ModelAdmin):
         "created_at",
     )
     list_filter = ("is_eligible",)
-    search_fields = ("proposal__public_id", "user__email")
+    search_fields = ("proposal__public_id", "user__username")
     readonly_fields = (
         "proposal",
         "membership",
@@ -93,7 +93,7 @@ class OrganizationGovernanceElectorAdmin(admin.ModelAdmin):
 class OrganizationGovernanceVoteAdmin(admin.ModelAdmin):
     list_display = ("proposal", "cast_by", "choice", "cast_at")
     list_filter = ("choice",)
-    search_fields = ("proposal__public_id", "cast_by__email")
+    search_fields = ("proposal__public_id", "cast_by__username")
     readonly_fields = (
         "public_id",
         "proposal",
@@ -117,7 +117,7 @@ class OrganizationGovernanceVoteRevisionAdmin(admin.ModelAdmin):
     list_filter = ("new_choice",)
     search_fields = (
         "vote__proposal__public_id",
-        "actor__email",
+        "actor__username",
     )
     readonly_fields = (
         "vote",

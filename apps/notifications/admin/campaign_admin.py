@@ -468,7 +468,6 @@ class NotificationCampaignDeliveryAdmin(admin.ModelAdmin):
 
     search_fields = (
         "user__username",
-        "user__email",
         "campaign__internal_name",
     )
 

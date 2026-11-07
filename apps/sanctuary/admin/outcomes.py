@@ -64,7 +64,6 @@ class SanctuaryOutcomeAdmin(
         "=id",
         "appeal_message",
         "assigned_admin__username",
-        "assigned_admin__email",
         "object_id",
     )
 

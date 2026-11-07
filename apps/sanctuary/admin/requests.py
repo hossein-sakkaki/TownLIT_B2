@@ -134,7 +134,6 @@ class SanctuaryRequestAdmin(
         "=id",
         "description",
         "requester__username",
-        "requester__email",
         "assigned_admin__username",
         "object_id",
     )

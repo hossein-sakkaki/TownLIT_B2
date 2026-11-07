@@ -13,6 +13,7 @@ from rest_framework.response import Response
 
 from django.contrib.auth import get_user_model
 
+from apps.accounts.services.email_lookup import user_email_q
 from apps.core.pagination import ConfigurablePagination
 
 from apps.profiles.models.member import Member
@@ -362,7 +363,7 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                     Q(username__icontains=query)
                     | Q(name__icontains=query)
                     | Q(family__icontains=query)
-                    | Q(email__icontains=query)
+                    | ((Q(show_email=True) & user_email_q(query)) if "@" in query else Q(pk__in=[]))
                 )
                 .exclude(
                     id=request.user.id

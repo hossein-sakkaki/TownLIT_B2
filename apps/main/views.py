@@ -181,7 +181,7 @@ class UserFeedbackViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_201_CREATED
             )
         else:
-            logger.warning(f"[UserFeedback] Feedback saved, but failed to send email to {request.user.email} for feedback ID {feedback.id}")
+            logger.warning("[UserFeedback] Confirmation email failed feedback_id=%s", feedback.id)
             return Response(
                 {"message": "Feedback submitted successfully, but failed to send confirmation email."},
                 status=status.HTTP_201_CREATED

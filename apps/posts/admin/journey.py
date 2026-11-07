@@ -1210,7 +1210,6 @@ class JourneyEntryViewAdmin(admin.ModelAdmin):
         "entry__id",
         "entry__slug",
         "viewer__username",
-        "viewer__email",
         "viewer__name",
         "viewer__family",
     )

@@ -54,7 +54,6 @@ class ReactionAdmin(admin.ModelAdmin):
 
     search_fields = (
         "name__username",
-        "name__email",
         "name__name",
         "name__family",
         "reaction_type",

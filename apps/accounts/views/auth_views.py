@@ -74,6 +74,7 @@ from apps.accounts.services.password_session_policy import (
     password_security_v2_ready,
 )
 from apps.accounts.services.session_security import increment_session_generation
+from apps.accounts.services.email_lookup import user_email_q, user_identifier_q
 from apps.accounts.services.two_factor_login import (
     consume_login_two_factor_code,
 )
@@ -308,7 +309,7 @@ class AuthViewSet(viewsets.ViewSet):
         try:
             ser_data = RegisterUserSerializer(data=request.data)
             email = ser_data.initial_data.get('email')
-            existing_user = CustomUser.objects.filter(email=email).first()
+            existing_user = CustomUser.objects.filter(user_email_q(email)).first()
             if existing_user:
                 if existing_user.is_active:
                     return Response(
@@ -1116,8 +1117,7 @@ class AuthViewSet(viewsets.ViewSet):
                 CustomUser.objects
                 .select_related("label")
                 .get(
-                    Q(email__iexact=identifier) |
-                    Q(username__iexact=identifier)
+                    user_identifier_q(identifier)
                 )
             )
         except CustomUser.DoesNotExist:
@@ -1303,8 +1303,7 @@ class AuthViewSet(viewsets.ViewSet):
                 CustomUser.objects
                 .select_related("label")
                 .get(
-                    Q(email__iexact=identifier) |
-                    Q(username__iexact=identifier)
+                    user_identifier_q(identifier)
                 )
             )
         except CustomUser.DoesNotExist:
@@ -1639,7 +1638,7 @@ class AuthViewSet(viewsets.ViewSet):
         )
 
         try:
-            user = CustomUser.objects.get(email=serializer.validated_data['email'])
+            user = CustomUser.objects.get(user_email_q(serializer.validated_data['email']))
         except CustomUser.DoesNotExist:
             return Response({"message": public_message}, status=status.HTTP_200_OK)
 

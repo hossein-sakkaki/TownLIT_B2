@@ -16,6 +16,7 @@ from common.reference_data.languages import LANGUAGE_CHOICES
 from validators.user_validators import validate_password_field
 
 from ..models import InviteCode
+from apps.accounts.services.email_lookup import user_email_q
 
 
 CustomUser = get_user_model()
@@ -91,7 +92,7 @@ class RegisterUserSerializer(serializers.ModelSerializer):
 
         existing_user = (
             CustomUser.objects
-            .filter(email__iexact=normalized_email)
+            .filter(user_email_q(normalized_email))
             .first()
         )
 

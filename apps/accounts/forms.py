@@ -13,6 +13,7 @@ CustomUser = get_user_model()
 
 # USER Form ----------------------------------------------------------------------
 class UserCreationForm(forms.ModelForm):
+    email = forms.EmailField(required=True, max_length=254)
     mobile_number = forms.CharField(required=False, max_length=20)
     birthday = forms.DateField(required=False)
     password = forms.CharField(label='Password', widget=forms.PasswordInput)
@@ -36,6 +37,7 @@ class UserCreationForm(forms.ModelForm):
     
 # USER CHANGE Form -----------------------------------------------------------------
 class UserChangeForm(forms.ModelForm):
+    email = forms.EmailField(required=True, max_length=254, disabled=True)
     mobile_number = forms.CharField(required=False, max_length=20)
     birthday = forms.DateField(required=False)
 
@@ -65,6 +67,7 @@ class UserChangeForm(forms.ModelForm):
 
 # Restricted admin forms deliberately have no decrypted birthday field.
 class UserCreationRestrictedForm(forms.ModelForm):
+    email = forms.EmailField(required=True, max_length=254)
     password = forms.CharField(label='Password', widget=forms.PasswordInput)
 
     class Meta:
@@ -80,6 +83,7 @@ class UserCreationRestrictedForm(forms.ModelForm):
 
 
 class UserChangeRestrictedForm(forms.ModelForm):
+    email = forms.EmailField(required=True, max_length=254, disabled=True)
     password = ReadOnlyPasswordHashField(
         help_text='If you want to change password <a href="../password">click here...</a>'
     )

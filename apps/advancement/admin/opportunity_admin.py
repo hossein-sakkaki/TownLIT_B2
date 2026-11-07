@@ -44,7 +44,6 @@ class OpportunityAdmin(AdvancementRoleAdminMixin, CSVExportAdminMixin, admin.Mod
         "external_entity__name",
         "legal_entity__name",
         "notes",
-        "assigned_to__email",
         "assigned_to__username",
         "assigned_to__first_name",
         "assigned_to__last_name",

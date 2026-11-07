@@ -33,7 +33,7 @@ class UserDeviceKeyAdmin(admin.ModelAdmin):
     )
 
     search_fields = (
-        "user__email",
+        "user__username",
         "device_id",
         "device_name",
         "ip_address",

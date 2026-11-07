@@ -66,7 +66,6 @@ class IdentityVerificationAdmin(admin.ModelAdmin):
     )
 
     search_fields = (
-        "user__email",
         "user__username",
         "provider_reference",
     )
@@ -333,8 +332,8 @@ class IdentityAuditLogAdmin(admin.ModelAdmin):
     )
 
     search_fields = (
-        "user__email",
-        "actor__email",
+        "user__username",
+        "actor__username",
     )
 
     readonly_fields = (
@@ -442,7 +441,6 @@ class IdentityGrantAdmin(admin.ModelAdmin):
     )
 
     search_fields = (
-        "user__email",
         "user__username",
     )
 

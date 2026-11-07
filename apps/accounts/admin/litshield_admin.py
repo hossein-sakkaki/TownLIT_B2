@@ -23,7 +23,7 @@ class LITShieldGrantAdmin(admin.ModelAdmin):
     )
 
     search_fields = (
-        "user__email", "user__username", "organization__org_name"
+        "user__username", "user__username", "organization__org_name"
     )
 
     readonly_fields = (
@@ -87,7 +87,7 @@ class OrganizationLITShieldEndorsementAdmin(admin.ModelAdmin):
     )
 
     search_fields = (
-        "user__email", "user__username", "organization__org_name"
+        "user__username", "user__username", "organization__org_name"
     )
 
     readonly_fields = (

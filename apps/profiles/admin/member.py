@@ -59,7 +59,6 @@ class MemberAdmin(admin.ModelAdmin):
     # --- Search fields ---
     search_fields = [
         'user__username',
-        'user__email',
         'biography',
         'vision',
         'service_types__service__name',

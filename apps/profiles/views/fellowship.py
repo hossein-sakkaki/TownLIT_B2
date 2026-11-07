@@ -12,6 +12,7 @@ from rest_framework.response import Response
 
 from django.contrib.auth import get_user_model
 
+from apps.accounts.services.email_lookup import user_email_q
 from apps.core.pagination import ConfigurablePagination
 from apps.core.security.decorators import require_litshield_access
 
@@ -279,9 +280,9 @@ class FellowshipViewSet(viewsets.ModelViewSet):
                 .filter(id__in=friend_ids, is_deleted=False, is_active=True)
                 .filter(
                     Q(username__icontains=query) |
-                    Q(email__icontains=query) |
                     Q(name__icontains=query) |
-                    Q(family__icontains=query)
+                    Q(family__icontains=query) |
+                    ((Q(show_email=True) & user_email_q(query)) if "@" in query else Q(pk__in=[]))
                 )
                 .distinct()
             )

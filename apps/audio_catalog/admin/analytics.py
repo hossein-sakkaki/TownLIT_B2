@@ -219,7 +219,7 @@ class AudioPlaybackSessionAdmin(
         "session_id",
         "track__title",
         "track__slug",
-        "user__email",
+        "user__username",
         "device_id_hash",
     )
     readonly_fields = (
@@ -308,7 +308,7 @@ class AudioUserTrackAffinityAdmin(
         "last_used_at",
     )
     search_fields = (
-        "user__email",
+        "user__username",
         "track__title",
         "track__slug",
     )

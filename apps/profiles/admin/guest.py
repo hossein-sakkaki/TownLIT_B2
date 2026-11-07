@@ -40,7 +40,6 @@ class GuestUserAdmin(admin.ModelAdmin):
 
     search_fields = (
         "user__username",
-        "user__email",
         "user__name",
         "user__family",
         "biography",
@@ -118,7 +117,7 @@ class GuestUserAdmin(admin.ModelAdmin):
     def email(self, obj):
         return getattr(obj.user, "email", "-")
     email.short_description = "Email"
-    email.admin_order_field = "user__email"
+    email.admin_order_field = "user__username"
 
     def biography_preview(self, obj):
         # Short bio preview

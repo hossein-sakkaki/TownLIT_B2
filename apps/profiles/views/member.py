@@ -24,6 +24,7 @@ from rest_framework.exceptions import MethodNotAllowed, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.accounts.services.email_lookup import user_email_q
 from apps.accounts.services.email_change_security import (
     EMAIL_CHANGE_MAX_ATTEMPTS,
     email_change_expired,
@@ -437,7 +438,7 @@ class MemberViewSet(viewsets.ModelViewSet):
                 user = CustomUser.objects.select_for_update().get(pk=request.user.pk)
                 if user.last_email_change and timezone.now() - user.last_email_change < timedelta(days=30):
                     return Response({"error": "You can only change your email once per month."}, status=status.HTTP_403_FORBIDDEN)
-                if CustomUser.objects.filter(email__iexact=new_email).exists():
+                if CustomUser.objects.filter(user_email_q(new_email)).exists():
                     return Response({"error": "The new email is already associated with another account."}, status=status.HTTP_400_BAD_REQUEST)
                 previous = user.email_change_tokens or {}
                 if previous.get("v") == 2 and not email_change_expired(previous):
@@ -534,7 +535,7 @@ class MemberViewSet(viewsets.ModelViewSet):
                     return Response({"error": "Invalid verification codes."}, status=status.HTTP_400_BAD_REQUEST)
 
                 new_email = pending_new_email(state, user.pk)
-                if not new_email or CustomUser.objects.filter(email__iexact=new_email).exclude(pk=user.pk).exists():
+                if not new_email or CustomUser.objects.filter(user_email_q(new_email)).exclude(pk=user.pk).exists():
                     return Response({"error": "Email address is no longer available."}, status=status.HTTP_400_BAD_REQUEST)
                 user.email = new_email
                 user.last_email_change = timezone.now()
