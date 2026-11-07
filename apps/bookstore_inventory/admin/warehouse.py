@@ -485,7 +485,6 @@ class WarehouseStaffAssignmentAdmin(
         "warehouse__name",
         "warehouse__code",
         "user__username",
-        "user__email",
     )
 
     autocomplete_fields = (

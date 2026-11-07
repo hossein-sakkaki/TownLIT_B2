@@ -48,7 +48,6 @@ class CreativeRenderJobAdmin(
         "public_id",
         "composition__public_id",
         "composition__title",
-        "composition__owner__email",
         "composition__owner__username",
         "task_id",
         "document_sha256",

@@ -61,7 +61,6 @@ class SupportTicketAdmin(admin.ModelAdmin):
         "subject",
         "reply_email",
         "requester__username",
-        "requester__email",
         "messages__body",
     ]
 
@@ -148,7 +147,6 @@ class SupportTicketMessageAdmin(admin.ModelAdmin):
         "ticket__subject",
         "body",
         "author__username",
-        "author__email",
     ]
 
     readonly_fields = [

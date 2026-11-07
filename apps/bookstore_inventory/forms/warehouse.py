@@ -1,5 +1,5 @@
-#
-# TownLIT
+# apps/bookstore_inventory/forms/warehouse.py
+# TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-08-17.
 # Last Update by Hossein Sakkaki on 2026-08-17.
@@ -33,7 +33,7 @@ def eligible_warehouse_staff_users():
         .filter(
             Q(is_admin=True) | Q(is_superuser=True)
         )
-        .order_by("family", "name", "email", "pk")
+        .order_by("family", "name", "username", "pk")
     )
 
 
@@ -106,7 +106,7 @@ class WarehouseStaffAssignmentAdminForm(forms.ModelForm):
                         & (Q(is_admin=True) | Q(is_superuser=True))
                     )
                 )
-                .order_by("family", "name", "email", "pk")
+                .order_by("family", "name", "username", "pk")
                 .distinct()
             )
 

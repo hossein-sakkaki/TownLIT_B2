@@ -96,7 +96,6 @@ class CreativeCompositionAdmin(
     search_fields = (
         "public_id",
         "title",
-        "owner__email",
         "owner__username",
         "document_sha256",
         "metadata",

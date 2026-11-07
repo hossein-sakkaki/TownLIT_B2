@@ -56,7 +56,6 @@ class EmailLogAdmin(ReadOnlyCommunicationAdmin):
         "email",
         "provider_message_id",
         "user__username",
-        "user__email",
         "campaign__title",
     )
     date_hierarchy = "sent_at"

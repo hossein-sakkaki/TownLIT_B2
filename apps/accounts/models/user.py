@@ -1,11 +1,16 @@
 # apps/accounts/models/user.py
+# TownLIT-Backend
+#
+# Original Created date: not recorded in source; verify with Git history.
+# Last Update by Hossein Sakkaki on 2026-11-06.
+#
 
 from datetime import timedelta
 
 import bcrypt
 from django.conf import settings
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
-from django.db import models
+from django.db import models, transaction
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from django.db.models import F, Q
@@ -22,9 +27,37 @@ from validators.mediaValidators.image_validators import validate_image_file, val
 from validators.security_validators import validate_no_executable_file
 from validators.usernameValidators.username_normalizer import normalize_username
 from utils.common.utils import FileUpload, create_active_code
+from apps.core.crypto.protected_columns import EncryptedPropertyFieldsMixin, ProtectedColumnsQuerySet
+from apps.core.crypto.field_protection import FieldProtectionIntegrityError
+from apps.accounts.services.contact_protection import blind_index
+
+
+class ContactProtectedQuerySet(ProtectedColumnsQuerySet):
+    """Reject direct contact changes that bypass ciphertext and blind indexes."""
+
+    def _protected_names(self):
+        return super()._protected_names() | {
+            "email", "email_encrypted", "email_blind_index",
+            "mobile_number", "mobile_number_encrypted", "mobile_number_blind_index",
+        }
 
 
 class CustomUserManager(BaseUserManager):
+    def get_queryset(self):
+        return ContactProtectedQuerySet(self.model, using=self._db)
+
+    def get_by_natural_key(self, username):
+        """Resolve credentials by exact username or protected email lookup.
+
+        The Django ModelBackend calls this manager entry point. Email equality
+        uses the HMAC blind index and never queries plaintext email. Username
+        authentication remains available for existing web/mobile clients.
+        Missing HMAC keys fail closed for email identifiers.
+        """
+        from apps.accounts.services.email_lookup import user_identifier_q
+
+        return self.get_queryset().get(user_identifier_q(username))
+
 
     def create_user(
         self,
@@ -171,11 +204,20 @@ class CustomUserManager(BaseUserManager):
         return user
 
 
-class CustomUser(AbstractBaseUser, PermissionsMixin):
+class CustomUser(EncryptedPropertyFieldsMixin, AbstractBaseUser, PermissionsMixin):
+    protected_field_specs = {
+        "birthday": ("birthday_encrypted", "date"),
+        "mobile_number": ("mobile_number_encrypted", "text"),
+        "email": ("email_encrypted", "text"),
+    }
+
     IMAGE = FileUpload('accounts', 'photos', 'custom_user')
 
     id = models.BigAutoField(primary_key=True)
-    email = models.EmailField(max_length=254, unique=True, verbose_name='Email')
+    email_encrypted = models.TextField(null=True, blank=True, editable=False)
+    email_blind_index = models.CharField(max_length=128, null=True, blank=True, unique=True, editable=False)
+    mobile_number_encrypted = models.TextField(null=True, blank=True, editable=False)
+    mobile_number_blind_index = models.CharField(max_length=128, null=True, blank=True, db_index=True, editable=False)
     last_email_change = models.DateTimeField(null=True, blank=True, verbose_name='Last Email Change')
     email_change_tokens = models.JSONField(
         null=True,
@@ -184,19 +226,28 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
         help_text='Stores tokens for email change verification.',
     )
 
+    @property
+    def email(self):
+        if self._state.adding or "email" in self.__dict__.get("_dp_pending_fields", {}):
+            return self._protected_get("email")
+        if self.email_encrypted is None:
+            raise FieldProtectionIntegrityError("Protected email is unavailable.")
+        return self._protected_get("email")
+
+    @email.setter
+    def email(self, value):
+        if not isinstance(value, str):
+            raise TypeError("Email must be text.")
+        value = value.strip()
+        if not value or len(value) > 254 or "@" not in value:
+            raise ValueError("A valid non-empty email is required.")
+        self._protected_set("email", value)
+
     def change_email(self, new_email):
         self.email = new_email
         self.last_email_change = timezone.now()
-        self.save()
+        self.save(update_fields=["email", "last_email_change"])
 
-    mobile_number = models.CharField(
-        max_length=20,
-        unique=False,
-        null=True,
-        blank=True,
-        validators=[validate_phone_number],
-        verbose_name='Mobile Number',
-    )
     mobile_verification_code = models.CharField(max_length=200, null=True, blank=True, verbose_name="Mobile Verification Code")
     mobile_verification_expiry = models.DateTimeField(null=True, blank=True)
 
@@ -204,7 +255,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     family = models.CharField(max_length=40, null=True, blank=True, verbose_name='Family')
     username = models.CharField(max_length=20, unique=True, blank=True, verbose_name='Username')
 
-    birthday = models.DateField(auto_now=False, auto_now_add=False, blank=True, null=True, verbose_name='Birthday')
+    birthday_encrypted = models.TextField(null=True, blank=True, editable=False)
     gender = models.CharField(max_length=6, choices=GENDER_CHOICES, null=True, blank=True, verbose_name='Gender')
     label = models.ForeignKey(
         "accounts.CustomLabel",
@@ -325,7 +376,29 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
 
     is_account_paused = models.BooleanField(default=False, verbose_name='Is Account Paused')
 
-    USERNAME_FIELD = 'email'
+    @property
+    def mobile_number(self):
+        return self._protected_get("mobile_number")
+
+    @mobile_number.setter
+    def mobile_number(self, value):
+        if value is not None and not isinstance(value, str):
+            raise TypeError("Mobile number must be text or None.")
+        if value and len(value) > 20:
+            raise ValueError("Mobile number exceeds supported length.")
+        self._protected_set("mobile_number", value)
+
+    @property
+    def birthday(self):
+        return self._protected_get("birthday")
+
+    @birthday.setter
+    def birthday(self, value):
+        self._protected_set("birthday", value)
+
+    # A real unique database column is required by Django Authentication.
+    # The user-facing email remains an encrypted logical property.
+    USERNAME_FIELD = 'username'
     REQUIRED_FIELDS = []
     objects = CustomUserManager() 
 
@@ -408,7 +481,46 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
                 user=self if self.pk else None,
             )
 
-        super().save(*args, **kwargs)
+        # The public Email property is encrypted by the shared model mixin.
+        # Index updates are in the same transaction as ciphertext writes.
+        requested = kwargs.get("update_fields")
+        requested = set(requested) if requested is not None else None
+        pending = self.__dict__.get("_dp_pending_fields", {})
+        changing_email = "email" in pending and (
+            requested is None or "email" in requested
+        )
+        changing_phone = "mobile_number" in pending and (
+            requested is None or "mobile_number" in requested
+        )
+        new_row = self._state.adding
+        alias = kwargs.get("using") or self._state.db
+
+        if new_row and not self.email:
+            raise ValueError("Email is required for a new user.")
+        if not new_row:
+            if changing_email:
+                self.email_blind_index = blind_index(pending["email"], field="email")
+            if changing_phone:
+                self.mobile_number_blind_index = blind_index(pending["mobile_number"], field="mobile_number")
+            if requested is not None:
+                if changing_email:
+                    requested.add("email_blind_index")
+                if changing_phone:
+                    requested.add("mobile_number_blind_index")
+                kwargs["update_fields"] = requested
+
+        with transaction.atomic(using=alias):
+            # The shared mixin writes row-bound ciphertext and clears pending values.
+            result = super().save(*args, **kwargs)
+            if new_row:
+                changes = {
+                    "email_blind_index": blind_index(self.email, field="email"),
+                    "mobile_number_blind_index": blind_index(self.mobile_number, field="mobile_number"),
+                }
+                type(self)._base_manager.db_manager(self._state.db).filter(pk=self.pk).update(**changes)
+                for name, value in changes.items():
+                    setattr(self, name, value)
+        return result
 
     def generate_two_factor_token(self):
         token = str(create_active_code(6))

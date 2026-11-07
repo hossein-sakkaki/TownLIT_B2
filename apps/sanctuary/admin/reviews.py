@@ -43,7 +43,6 @@ class SanctuaryReviewAdmin(
         "=id",
         "=sanctuary_request__id",
         "reviewer__username",
-        "reviewer__email",
         "comment",
     )
 

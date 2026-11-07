@@ -116,7 +116,7 @@ def group_boundary_conflict_for_add(*, dialogue, target_user):
     existing_participants = (
         dialogue.participants
         .exclude(id=target_user.id)
-        .only("id", "username", "email")
+        .only("id", "username")
     )
 
     for participant in existing_participants:

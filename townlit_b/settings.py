@@ -200,6 +200,9 @@ INSTALLED_APPS = [
     'channels',             # Real-Time Notification
     
     'django.contrib.admin',
+    
+    'apps.accounts.apps.AccountsConfig',
+
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
@@ -226,7 +229,6 @@ INSTALLED_APPS = [
     'django_otp.plugins.otp_static',
 
     'apps.main.apps.MainConfig',
-    'apps.accounts.apps.AccountsConfig',
     'apps.profiles.apps.ProfilesConfig',
     'apps.posts.apps.PostsConfig',
     'apps.sanctuary.apps.SanctuaryConfig',

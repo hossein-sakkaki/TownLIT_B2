@@ -1,4 +1,9 @@
 # apps/accounts/services/identity_provider/stripe_provider.py
+# TownLIT-Backend
+#
+# Original Created date: verify from Git history before final commit.
+# Last Update by Hossein Sakkaki on 2026-11-06.
+#
 
 import logging
 import stripe
@@ -41,9 +46,8 @@ class StripeIdentityProvider(BaseIdentityProvider):
             )
 
             logger.info(
-                "[StripeIdentity] Session created user_id=%s session_id=%s status=%s",
+                "[StripeIdentity] Session created user_id=%s status=%s",
                 user.id,
-                session.id,
                 session.status,
             )
 
@@ -57,10 +61,9 @@ class StripeIdentityProvider(BaseIdentityProvider):
             }
 
         except stripe.error.StripeError as exc:
-            logger.exception(
-                "[StripeIdentity] Stripe error user_id=%s error=%s",
+            logger.error(
+                "[StripeIdentity] Stripe error user_id=%s",
                 user.id,
-                exc,
             )
             raise RuntimeError("Stripe identity verification failed.")
 
@@ -90,8 +93,7 @@ class StripeIdentityProvider(BaseIdentityProvider):
 
         except stripe.error.InvalidRequestError:
             logger.warning(
-                "[StripeIdentity] Session not found session_id=%s",
-                session_id,
+                "[StripeIdentity] Session not found"
             )
             return {
                 "id": session_id,
@@ -102,10 +104,8 @@ class StripeIdentityProvider(BaseIdentityProvider):
             }
 
         except stripe.error.StripeError as exc:
-            logger.exception(
-                "[StripeIdentity] Failed to retrieve session session_id=%s error=%s",
-                session_id,
-                exc,
+            logger.error(
+                "[StripeIdentity] Failed to retrieve session"
             )
             raise RuntimeError("Failed to retrieve Stripe identity session.")
 
@@ -130,7 +130,7 @@ class StripeIdentityProvider(BaseIdentityProvider):
             return None
 
         except Exception:
-            logger.exception("[StripeIdentity] Failed to verify webhook")
+            logger.error("[StripeIdentity] Failed to verify webhook")
             return None
 
     def parse_webhook(self, event) -> dict:

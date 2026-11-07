@@ -1,4 +1,9 @@
 # apps/accounts/views/identity_views.py
+# TownLIT-Backend
+#
+# Original Created date: verify from Git history before final commit.
+# Last Update by Hossein Sakkaki on 2026-11-06.
+#
 
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
@@ -77,11 +82,9 @@ class IdentityViewSet(viewsets.ViewSet):
             remote = provider.retrieve_session(iv.provider_reference)
         except Exception as exc:
             logger.warning(
-                "[IdentityStart] Could not reconcile session user_id=%s iv_id=%s provider_reference=%s error=%s",
+                "[IdentityStart] Could not reconcile session user_id=%s iv_id=%s",
                 iv.user_id,
                 iv.id,
-                iv.provider_reference,
-                exc,
             )
             return "active"
 
@@ -91,12 +94,11 @@ class IdentityViewSet(viewsets.ViewSet):
         remote_risk = (remote or {}).get("risk") or []
 
         logger.info(
-            "[IdentityStart] Reconcile session user_id=%s iv_id=%s local_status=%s remote_status=%s provider_reference=%s",
+            "[IdentityStart] Reconcile session user_id=%s iv_id=%s local_status=%s remote_status=%s",
             iv.user_id,
             iv.id,
             iv.status,
             remote_status,
-            iv.provider_reference,
         )
 
         if remote_status == "verified":
@@ -161,9 +163,8 @@ class IdentityViewSet(viewsets.ViewSet):
         """
 
         logger.info(
-            "[IdentityStart] Start requested user_id=%s email=%s",
+            "[IdentityStart] Start requested user_id=%s",
             request.user.id,
-            request.user.email,
         )
 
         serializer = IdentityStartSerializer(data=request.data)
@@ -173,10 +174,8 @@ class IdentityViewSet(viewsets.ViewSet):
         failure_url = serializer.validated_data.get("failure_url")
 
         logger.info(
-            "[IdentityStart] Payload validated user_id=%s success_url=%s failure_url=%s",
+            "[IdentityStart] Payload validated user_id=%s",
             request.user.id,
-            success_url,
-            failure_url,
         )
 
         # Block already verified users
@@ -256,10 +255,9 @@ class IdentityViewSet(viewsets.ViewSet):
             )
 
         except Exception as exc:
-            logger.exception(
-                "[IdentityStart] Failed to create provider session user_id=%s error=%s",
+            logger.error(
+                "[IdentityStart] Failed to create provider session user_id=%s",
                 request.user.id,
-                exc,
             )
 
             return Response(
@@ -273,9 +271,8 @@ class IdentityViewSet(viewsets.ViewSet):
 
         if not verification_id or not verification_url:
             logger.error(
-                "[IdentityStart] Invalid provider response user_id=%s session=%s",
+                "[IdentityStart] Invalid provider response user_id=%s",
                 request.user.id,
-                session,
             )
 
             return Response(
@@ -306,10 +303,9 @@ class IdentityViewSet(viewsets.ViewSet):
         )
 
         logger.info(
-            "[IdentityStart] Session stored user_id=%s iv_id=%s provider_reference=%s",
+            "[IdentityStart] Session stored user_id=%s iv_id=%s",
             request.user.id,
             iv.id,
-            verification_id,
         )
 
         return Response(
@@ -415,8 +411,7 @@ class IdentityViewSet(viewsets.ViewSet):
         )
 
         logger.info(
-            "[StripeWebhook] Received event signature=%s",
-            signature,
+            "[StripeWebhook] Received event"
         )
 
         event = provider.verify_webhook(request.body, signature)

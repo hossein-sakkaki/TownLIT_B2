@@ -201,7 +201,7 @@ def inventory_report_recipients(*, override_emails=None):
             Q(ends_at__isnull=True)
             | Q(ends_at__gt=now)
         )
-        .exclude(user__email="")
+        .exclude(user__email_blind_index__isnull=True)
         .select_related("user", "warehouse")
         .order_by("user_id", "warehouse_id", "pk")
     )

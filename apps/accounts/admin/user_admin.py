@@ -1,11 +1,21 @@
 # apps/accounts/admin/user_admin.py
+# TownLIT-Backend
+#
+# Original Created date: verify from Git history before final commit.
+# Last Update by Hossein Sakkaki on 2026-11-06.
+#
 
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from django.db.models import Q
+from apps.accounts.services.contact_protection import blind_index
+from apps.accounts.services.email_lookup import user_email_index
 
 from django.utils.html import format_html
-from apps.accounts.forms import UserCreationForm, UserChangeForm
+from apps.accounts.forms import (
+    UserCreationForm, UserChangeForm,
+    UserCreationRestrictedForm, UserChangeRestrictedForm,
+)
 from django.contrib.auth import get_user_model
 from apps.profiles.models import Friendship
 from apps.sanctuary.models import SanctuaryParticipantProfile
@@ -70,8 +80,9 @@ class CustomUserAdmin(UserAdmin):
         "is_active", "is_admin", "is_superuser", "gender", "label",
         "is_suspended", "is_deleted", "is_account_paused", "register_date",
     ]
-    search_fields = ["email", "username", "mobile_number", "name", "family"]
-    readonly_fields = ["register_date", "last_login", "email", "is_verified_identity", "identity_level"]
+    # Plaintext substring phone search is not available on encrypted storage.
+    search_fields = ["username", "name", "family"]
+    readonly_fields = ["register_date", "last_login", "email_display", "is_verified_identity", "identity_level", "email_change_request_pending"]
     ordering = ["-id"]
     filter_horizontal = ("groups", "user_permissions")
 
@@ -96,7 +107,6 @@ class CustomUserAdmin(UserAdmin):
             "fields": (
                 "two_factor_enabled", "two_factor_token_expiry",
                 "pin_security_enabled",
-                "access_pin", "delete_pin",
             )
         }),
         ("Sanctuary / Moderation", {
@@ -106,7 +116,7 @@ class CustomUserAdmin(UserAdmin):
             "fields": (
                 "user_active_code_expiry", "mobile_verification_expiry",
                 "reset_token_expiration", "last_email_change",
-                "email_change_tokens",
+                "email_change_request_pending",
             )
         }),
         ("Deletion", {
@@ -127,7 +137,7 @@ class CustomUserAdmin(UserAdmin):
                 "email", "mobile_number", "name", "family", "username",
                 "birthday", "gender", "label", "country", "city",
                 "primary_language", "secondary_language",
-                "image_name", "password1", "password2",
+                "image_name", "password",
             ),
         }),
     )
@@ -135,10 +145,69 @@ class CustomUserAdmin(UserAdmin):
     # If you have FriendshipInline, keep it
     inlines = [SanctuaryParticipationInline]  # e.g. [FriendshipInline]
 
+    def get_form(self, request, obj=None, **kwargs):
+        if not request.user.is_superuser:
+            kwargs["form"] = UserChangeRestrictedForm if obj is not None else UserCreationRestrictedForm
+        return super().get_form(request, obj, **kwargs)
+
+    def get_fieldsets(self, request, obj=None):
+        # Email is a protected Python property, not a model field. On change
+        # views it must be rendered through a distinct read-only admin method;
+        # otherwise Django shadows the declared ModelForm email field and
+        # raises FieldError while constructing the change form.
+        sets = super().get_fieldsets(request, obj)
+        changed = []
+        for title, options in sets:
+            options = dict(options)
+            options["fields"] = tuple(
+                "email_display" if obj is not None and field == "email"
+                else "birthday_masked" if not request.user.is_superuser and field == "birthday"
+                else "mobile_masked" if not request.user.is_superuser and field == "mobile_number"
+                else field
+                for field in options["fields"]
+            )
+            changed.append((title, options))
+        return tuple(changed)
+
+    def get_readonly_fields(self, request, obj=None):
+        fields = tuple(super().get_readonly_fields(request, obj))
+        return fields if request.user.is_superuser else fields + ("birthday_masked", "mobile_masked")
+
+    @admin.display(description="Email")
+    def email_display(self, obj):
+        return obj.email if obj is not None else "—"
+
+    @admin.display(description="Mobile number (restricted)")
+    def mobile_masked(self, obj):
+        return "[Protected: superuser only]" if obj and obj.mobile_number_encrypted else "—"
+
+    def get_search_results(self, request, queryset, search_term):
+        # Exact phone equality is possible; do not create a partial-search index.
+        qs, use_distinct = super().get_search_results(request, queryset, search_term)
+        term = (search_term or "").strip()
+        if request.user.is_superuser and term:
+            if "@" in term:
+                indexed_email = user_email_index(term)
+                if indexed_email:
+                    qs = qs | queryset.filter(email_blind_index=indexed_email)
+            if term.startswith("+") or term[0].isdigit():
+                indexed_phone = blind_index(term, field="mobile_number")
+                if indexed_phone:
+                    qs = qs | queryset.filter(mobile_number_blind_index=indexed_phone)
+        return qs, use_distinct
+
+    @admin.display(description="Birthday (restricted)")
+    def birthday_masked(self, obj):
+        return "[Protected: superuser only]" if obj and obj.birthday_encrypted else "—"
+
     def get_inline_instances(self, request, obj=None):
         if obj:
             return [inline(self.model, self.admin_site) for inline in self.inlines]
         return []
+
+    @admin.display(description="Email change pending", boolean=True)
+    def email_change_request_pending(self, obj):
+        return bool(obj and obj.email_change_tokens)
 
     def profile_image_thumbnail(self, obj):
         if obj.image_name:
@@ -149,3 +218,4 @@ class CustomUserAdmin(UserAdmin):
         return ""
     profile_image_thumbnail.short_description = "Profile Image"
     
+

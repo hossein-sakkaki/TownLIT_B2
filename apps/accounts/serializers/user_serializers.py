@@ -1,9 +1,8 @@
+# apps/accounts/serializers/user_serializers.py
+# TownLIT-Backend
 #
-#  apps/accounts/serializers/user_serializers.py
-#  TownLIT-Backend
-#
-#  Created by Hossein Sakkaki on 2023-01-01.
-#  Last Update by Hossein Sakkaki on 2026-07-30.
+# Created by Hossein Sakkaki on 2023-01-01.
+# Last Update by Hossein Sakkaki on 2026-11-06.
 #
 
 from rest_framework import serializers
@@ -12,6 +11,7 @@ from django.db import IntegrityError
 
 from apps.accounts.serializers.label_serializers import CustomLabelSerializer
 from apps.accounts.services.age_policy import validate_standard_account_birthday
+from validators.user_validators import validate_phone_number
 from ..mixins import AvatarURLMixin
 from ..models import CustomLabel, LITShieldGrant
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -134,9 +134,18 @@ class CustomUserAuthSerializer(AvatarURLMixin, serializers.ModelSerializer):
 # CustomUserSerializer — Full editable profile for owner
 # -------------------------------------------------------------------
 class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
+    # Email changes must complete the dedicated verified email-change flow.
+    # Explicit declaration also preserves the owner API after DB email cutover.
+    email = serializers.EmailField(read_only=True)
+    # Preserves the owner API contract after removing the plaintext model column.
+    birthday = serializers.DateField(required=False, allow_null=True)
     # --- Label + color ---
     label = CustomLabelSerializer(read_only=True)
     label_color = serializers.CharField(source="label.color", read_only=True)
+    mobile_number = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True,
+        max_length=20, validators=[validate_phone_number],
+    )
 
     # --- Identity verification ---
     is_verified_identity = serializers.BooleanField(read_only=True)
@@ -200,6 +209,9 @@ class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
             "reactivated_at",
             "deletion_requested_at",
             "email_change_tokens",
+            "email_encrypted", "email_blind_index",
+            "mobile_number_encrypted", "mobile_number_blind_index",
+            "birthday_encrypted",
             "reset_token",
             "reset_token_expiration",
             "mobile_verification_code",
@@ -474,6 +486,7 @@ class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
 # PublicCustomUserSerializer — full public profile, with avatar_url
 # -------------------------------------------------------------------
 class PublicCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
+    mobile_number = serializers.CharField(read_only=True)
     label = CustomLabelSerializer(read_only=True)
     label_color = serializers.CharField(source="label.color", read_only=True)
 
@@ -510,7 +523,7 @@ class PublicCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
             "country", "country_display",
             "primary_language", "primary_language_display",
             "secondary_language", "secondary_language_display",
-            "city", "birthday",
+            "city",
 
             # contact fields
             "email", "mobile_number",
@@ -536,6 +549,7 @@ class PublicCustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
     # -------------------------------------------------------
     def to_representation(self, instance):
         rep = super().to_representation(instance)
+        rep.pop("birthday", None)
 
         # respect privacy flags
         if not getattr(instance, 'show_email', False):

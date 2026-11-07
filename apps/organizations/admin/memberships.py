@@ -41,9 +41,8 @@ class OrganizationMembershipRequestAdmin(admin.ModelAdmin):
         "organization__name",
         "organization__slug",
         "member__user__username",
-        "member__user__email",
-        "initiated_by__email",
-        "responded_by__email",
+        "initiated_by__username",
+        "responded_by__username",
     )
     list_select_related = (
         "organization",
@@ -158,8 +157,7 @@ class OrganizationMembershipAdmin(admin.ModelAdmin):
         "organization__name",
         "organization__slug",
         "member__user__username",
-        "member__user__email",
-        "approved_by__email",
+        "approved_by__username",
         "source_request__public_id",
     )
     list_select_related = (

@@ -172,7 +172,6 @@ class EmailSubscriptionPreferenceAdmin(admin.ModelAdmin):
     )
     search_fields = (
         "email",
-        "user__email",
         "user__username",
     )
     autocomplete_fields = (
@@ -201,7 +200,6 @@ class UnsubscribedUserAdmin(admin.ModelAdmin):
     )
     search_fields = (
         "email",
-        "user__email",
         "user__username",
     )
     readonly_fields = (

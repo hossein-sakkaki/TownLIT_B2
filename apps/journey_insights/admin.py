@@ -56,7 +56,7 @@ class ReflectionSessionAdmin(admin.ModelAdmin):
         "completed_at",
     )
     list_filter = ("source_kind", "status")
-    search_fields = ("public_id", "user__email", "user__username")
+    search_fields = ("public_id", "user__username", "user__username")
 
 
 @admin.register(ReflectionSessionQuestion)
@@ -80,7 +80,7 @@ class ReflectionAnswerAdmin(admin.ModelAdmin):
         "submitted_at",
     )
     list_filter = ("status",)
-    search_fields = ("public_id", "user__email", "user__username")
+    search_fields = ("public_id", "user__username", "user__username")
 
 
 @admin.register(ReflectionQuestionExposure)
@@ -94,7 +94,7 @@ class ReflectionQuestionExposureAdmin(admin.ModelAdmin):
         "last_presented_at",
     )
     list_filter = ("exposure_cycle",)
-    search_fields = ("user__email", "user__username", "question__code")
+    search_fields = ("user__username", "user__username", "question__code")
 
 
 class MonthlyInsightDimensionInline(admin.TabularInline):
@@ -129,5 +129,5 @@ class MonthlyInsightReportAdmin(admin.ModelAdmin):
         "year",
         "month",
     )
-    search_fields = ("user__email", "user__username", "public_id")
+    search_fields = ("user__username", "user__username", "public_id")
     inlines = [MonthlyInsightDimensionInline]
