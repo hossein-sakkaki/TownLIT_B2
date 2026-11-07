@@ -21,9 +21,30 @@ from ..services.identity_verification_service import (
 
 logger = logging.getLogger(__name__)
 
+class IdentityVerificationAdminForm(forms.ModelForm):
+    notes = forms.CharField(required=False, widget=forms.Textarea, label="Admin notes")
+
+    class Meta:
+        model = IdentityVerification
+        fields = "__all__"
+
+    def __init__(self, *args, **kwargs):
+        instance = kwargs.get("instance")
+        super().__init__(*args, **kwargs)
+        if instance is not None and instance.pk:
+            self.fields["notes"].initial = instance.notes or ""
+
+
+class IdentityVerificationRestrictedAdminForm(forms.ModelForm):
+    class Meta:
+        model = IdentityVerification
+        fields = "__all__"
+
+
 # IdentityVerification Admin -----------------------------------------------------------
 @admin.register(IdentityVerification)
 class IdentityVerificationAdmin(admin.ModelAdmin):
+    form = IdentityVerificationAdminForm
     # Core visibility
     list_display = (
         "user",
@@ -83,6 +104,11 @@ class IdentityVerificationAdmin(admin.ModelAdmin):
             "fields": ("notes",)
         }),
     )
+
+    def get_form(self, request, obj=None, **kwargs):
+        if not request.user.is_superuser:
+            kwargs["form"] = IdentityVerificationRestrictedAdminForm
+        return super().get_form(request, obj, **kwargs)
 
     def get_fieldsets(self, request, obj=None):
         fieldsets = list(super().get_fieldsets(request, obj))
@@ -169,6 +195,8 @@ class IdentityVerificationAdmin(admin.ModelAdmin):
         for field in protected_fields:
             setattr(obj, field, getattr(original, field))
 
+        if request.user.is_superuser and "notes" in form.cleaned_data:
+            obj.notes = form.cleaned_data["notes"] or None
         super().save_model(request, obj, form, change)
 
     @admin.action(description="Mark as VERIFIED (STRONG)")

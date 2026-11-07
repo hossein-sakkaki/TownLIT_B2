@@ -11,6 +11,7 @@ from django.utils import timezone
 
 from apps.accounts.services.identity_private_fields import (
     encrypt_identity_field,
+    decrypt_identity_field,
 )
 
 from apps.accounts.constants.identity_audit import (
@@ -46,8 +47,6 @@ class IdentityVerification(models.Model):
     level = models.CharField(max_length=20, choices=IDENTITY_VERIFICATION_LEVEL_CHOICES, db_index=True)
 
     provider_reference = models.CharField(max_length=255, null=True, blank=True, db_index=True)
-    provider_payload = models.JSONField(null=True, blank=True)
-    # Shadow ciphertext columns; legacy columns remain until Stage B verification.
     provider_payload_encrypted = models.TextField(null=True, blank=True, editable=False)
     notes_encrypted = models.TextField(null=True, blank=True, editable=False)
 
@@ -56,7 +55,6 @@ class IdentityVerification(models.Model):
     rejected_at = models.DateTimeField(null=True, blank=True, db_index=True)
 
     risk_flag = models.BooleanField(default=False, db_index=True)
-    notes = models.TextField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -68,22 +66,48 @@ class IdentityVerification(models.Model):
     def __str__(self):
         return f"IV({self.user_id}) {self.method}:{self.status}:{self.level}"
 
+    @property
+    def provider_payload(self):
+        if "_dp_provider_payload_pending" in self.__dict__:
+            return self.__dict__["_dp_provider_payload_pending"]
+        return decrypt_identity_field("provider_payload", self.provider_payload_encrypted, self.user_id)
+
+    @provider_payload.setter
+    def provider_payload(self, value):
+        self.__dict__["_dp_provider_payload_pending"] = value
+
+    @property
+    def notes(self):
+        if "_dp_notes_pending" in self.__dict__:
+            return self.__dict__["_dp_notes_pending"]
+        return decrypt_identity_field("notes", self.notes_encrypted, self.user_id)
+
+    @notes.setter
+    def notes(self, value):
+        self.__dict__["_dp_notes_pending"] = value
+
     def save(self, *args, **kwargs):
-        # Write encrypted shadows for modified sensitive fields, including update_fields.
-        # IdentityVerification has a unique user_id, available before first insert.
-        fields = kwargs.get("update_fields")
-        requested = set(fields) if fields is not None else None
+        requested = kwargs.get("update_fields")
+        requested = set(requested) if requested is not None else None
+        processed = []
         for name in ("provider_payload", "notes"):
-            if requested is not None and name not in requested:
-                continue
-            value = getattr(self, name)
+            pending = f"_dp_{name}_pending"
             encrypted_name = f"{name}_encrypted"
-            setattr(self, encrypted_name, encrypt_identity_field(name, value, self.user_id))
-            if requested is not None:
+            if requested is not None and name in requested:
+                requested.discard(name)
                 requested.add(encrypted_name)
+            if pending not in self.__dict__:
+                continue
+            if requested is not None and encrypted_name not in requested:
+                continue
+            setattr(self, encrypted_name, encrypt_identity_field(name, self.__dict__[pending], self.user_id))
+            processed.append(pending)
         if requested is not None:
             kwargs["update_fields"] = requested
-        return super().save(*args, **kwargs)
+        result = super().save(*args, **kwargs)
+        for pending in processed:
+            self.__dict__.pop(pending, None)
+        return result
 
     def mark_verified(self, level=None):
         self.status = IV_STATUS_VERIFIED
