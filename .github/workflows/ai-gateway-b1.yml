@@ -42,7 +42,11 @@ jobs:
           ../b11a-venv/bin/python -m apps.ai_gateway.tests.run core test apps.ai_gateway.tests.service_tokens --noinput -v 2
 
   synthetic-mysql:
-    name: B1 security and Backend regressions
+    name: B1 compatibility / ${{ matrix.profile }}
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [baseline, minimal, supported]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -54,7 +58,7 @@ jobs:
 
       - name: Verify the authorized baseline and whitespace
         env:
-          B1_BASE_SHA: 429efd647bbceb30f71389f09b7bae6dfd33212a
+          B1_BASE_SHA: 00108e3eee45a67bdff8f80086875fb54af54211
         run: |
           test "$(git rev-parse origin/security/django-5.2-lts-20261022)" = "$B1_BASE_SHA"
           git merge-base --is-ancestor "$B1_BASE_SHA" HEAD
@@ -67,19 +71,30 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
 
-      - name: Install the unchanged Backend manifest and scoped lint tool
+      - name: Install a disposable full Backend dependency profile
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends build-essential pkg-config default-libmysqlclient-dev
-          python -m pip install -r requirements.txt ruff==0.14.4
+          python scripts/ai_gateway_dependency_profile.py "${{ matrix.profile }}" > ../b11b-profile.txt
+          python -m pip install -r ../b11b-profile.txt ruff==0.14.4
+          python -m pip freeze > ../b11b-resolved.txt
           python -m pip check
           python --version
 
       - name: Check B1 headers, code quality and formatting
         run: |
           python scripts/check_ai_gateway_headers.py
-          ruff check --select E4,E7,E9,F,I apps/ai_gateway scripts/check_ai_gateway_headers.py
-          ruff format --check apps/ai_gateway scripts/check_ai_gateway_headers.py
+          ruff check --select E4,E7,E9,F,I apps/ai_gateway scripts/check_ai_gateway_headers.py scripts/ai_gateway_dependency_profile.py
+          ruff format --check apps/ai_gateway scripts/check_ai_gateway_headers.py scripts/ai_gateway_dependency_profile.py
+
+      - name: Test crypto interoperability and baseline ciphertext
+        run: |
+          python -m apps.ai_gateway.tests.run core test apps.ai_gateway.tests.dependency_compatibility --noinput -v 2
+
+      - name: Test isolated ES256 in the common dependency environment
+        if: matrix.profile != 'baseline'
+        run: |
+          python -m apps.ai_gateway.tests.run core test apps.ai_gateway.tests.service_tokens --noinput -v 2
 
       - name: Start disposable MySQL with no network or published ports
         run: |
