@@ -133,7 +133,16 @@ client agreement/contract update is future read-only coordination here.
 ## Prerequisites before RFC 9421 implementation or enablement
 
 Choose and advisory-review a maintained compatible HTTP Message Signatures
-library; no library is approved by B1.1B. Ratify one signature profile including
+library; no library is approved by B1.1B. A metadata-only candidate is
+`http-message-signatures==3.0.0` (Python >=3.10, cryptography >=36.0.2,
+http-sf >=1.4.0; no reported PyPI advisories at review). It was **not installed
+or tested** here. Its canonicalization/ES256 coverage, Structured Fields parser,
+Django/ingress integration, transitive advisories and negative vectors require
+separate review before any approval. Source: version-specific PyPI JSON and
+https://github.com/pyauth/http-message-signatures. No optional HTTP client extra
+is necessary merely to verify a local request.
+
+Ratify one signature profile including
 algorithm, principal-specific registered request key, canonicalization, covered
 components, signature label, created/expires bounds and key/certificate roles.
 Cover method, authority, target URI including query, Content-Digest over actual
