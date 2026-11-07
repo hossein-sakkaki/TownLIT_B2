@@ -91,8 +91,8 @@ pip check passed. Explicit suite: **11/11 passed**, no skips, no database setup.
 error each because joserfc correctly refused importing public DER as an HMAC
 key. The final attack fixture constructs the library's symmetric-key object
 explicitly, then uses JOSE signing; the verifier rejects that actual HMAC token.
-No signature math is handwritten. Existing baseline regressions/hosted CI are
-pending at this first checkpoint; subsequent evidence will be appended.
+No signature math is handwritten. These were the first-checkpoint results;
+the completed hosted acceptance evidence below supersedes the pending status.
 
 CI adds a separate venv/job for this suite. The existing full-manifest baseline
 job retains all MySQL/SQLite, migration and human security tests. Its stale
@@ -129,3 +129,102 @@ Backend regressions. CI must run both profiles; passing only the isolated JOSE
 suite does not establish compatibility with the Backend runtime. Exact final
 pushed SHA and Draft PR URL belong in the PR and completion report (a document
 cannot include its own containing commit SHA).
+
+### Additional local evidence and hosted execution
+
+Local existing core command (`python -m apps.ai_gateway.tests.run core test
+apps.ai_gateway.tests --noinput -v 1`) discovered 28 tests: **24 passed / four
+explicit MySQL-only skips**, in the separate modern test venv. Gateway-only
+migration drift check and compilation also passed. No human-source/dependency,
+public-boundary/settings or Office source differences were found.
+
+The exact full baseline manifest install was attempted in a different local
+venv and failed at mysqlclient's missing pkg-config/client-header prerequisites;
+no local full Backend/MySQL result is claimed. CI installs the unchanged complete
+manifest with system build prerequisites and uses its existing fixed disposable
+MySQL socket/container profile, never a remote or production database.
+
+[Hosted run 42337750666](https://github.com/hossein-sakkaki/TownLIT_B2/actions/runs/42337750666)
+tests implementation commit `7557aaf5218effbef2b3cde80f5896f0760e6772`, using
+GitHub's proposed merge `d5aff83f297fa6d3164e534cf0df6748efedd4ef` against the
+verified base. This is a CI merge ref, **not a merge of the PR**. Python 3.12.16
+isolated ES256 job: **11/11 passed**, no skips/database setup; pip check passed.
+Local isolated Python uses OpenSSL 4.0.3 via cryptography 50.0.2. Resolved test
+support packages: cffi 2.1.1, pycparser 3.12, asgiref 3.13.0, sqlparse 0.6.1.
+
+Draft PR: https://github.com/hossein-sakkaki/TownLIT_B2/pull/5.
+
+
+## Final B1.1A acceptance evidence
+
+Resumed the existing branch and Draft PR #5; remote head, local HEAD and GitHub
+PR head all matched `7557aaf5218effbef2b3cde80f5896f0760e6772`. The sole
+uncommitted change was the additional handoff evidence above; it was preserved.
+Fresh fetch confirmed the security base remains
+`429efd647bbceb30f71389f09b7bae6dfd33212a`. No branch, baseline, source or
+implementation commit was replaced. This final correction changes Markdown only.
+
+Direct GitHub Actions run/job logs and commit check-runs API agree on the exact
+implementation SHA above. [Run 42337750666](https://github.com/hossein-sakkaki/TownLIT_B2/actions/runs/42337750666)
+completed successfully. Every step in both Actions jobs succeeded; no job or step
+was skipped or failed.
+
+| Gate | Actual completed evidence |
+| --- | --- |
+| [B1.1A isolated ES256 profile](https://github.com/hossein-sakkaki/TownLIT_B2/actions/runs/42337750666/job/128298416038) | SUCCESS; **11/11 tests passed**, zero skips, no database setup; isolated manifest install and pip check passed. |
+| [B1 security and Backend regressions](https://github.com/hossein-sakkaki/TownLIT_B2/actions/runs/42337750666/job/128298415834) | SUCCESS; Python 3.12.16, unchanged complete Backend manifest installed, pip check/header/lint/format passed. |
+| Gateway / MySQL 8.4.13 | **28/28 passed**, zero skips; includes four real transaction/concurrency checks. Disposable digest-pinned container had no network or published ports and was removed successfully. |
+| Gateway / SQLite | **24 passed / four explicit MySQL-only skips**, 28 discovered. Skips: conflicting payloads, nonce winner, revocation/receipt serialization and same-key serialization; each ran successfully on MySQL. |
+| Migration/system checks | Gateway drift checks under MySQL and full Backend profiles passed; apply/reverse/reapply passed. Backend check completed with existing warnings below. Full Backend test migration graph, including accounts/0105, applied without fake migrations. |
+| Selected full Backend regressions | **66/66 passed**, zero skips: five Gateway integration tests plus 61 existing authentication/security tests. Includes human JWT/session denial on Gateway, generation revocation, routes, encrypted-field/storage fixture, and unchanged domain snapshots/zero domain SQL during denial. |
+| [GitGuardian Security Checks](https://github.com/hossein-sakkaki/TownLIT_B2/runs/128298412982) | SUCCESS at implementation SHA; one commit scanned, no secrets detected. This is secret scanning, not a dependency audit or production security approval. |
+
+### Warnings, failures and remaining gaps
+
+There were no failed hosted tests. The earlier local mysqlclient installation
+failure and two corrected attack-fixture failures remain recorded above; they
+are not counted as passes. Hosted setup resolves the local build-prerequisite
+limitation for the unchanged baseline profile only.
+
+Observed baseline warnings were CKEditor 4.22.1 unsupported/unfixed-security
+warning, Requests compatibility warning for urllib3 2.0.4 and
+chardet 7.7.0/charset_normalizer 3.2.0, and eight models.W036 warnings across
+accounts/boundaries/main/profiles/sanctuary: MySQL does not enforce their
+conditional unique constraints. The full regression system check reports nine
+issues including CKEditor. Actions also emitted Node punycode/url.parse
+API deprecation warnings. Expected fault-injection error logs accompanied passing
+rollback/redaction tests. None of these findings was silently fixed or approved
+for production; the whole Backend dependency/security audit remains out of scope.
+
+Both dependency profiles passed independently. **The new JOSE/crypto profile was
+not installed with the full Backend manifest**, and these results do not prove
+such compatibility. Baseline pyOpenSSL/cryptography reconciliation and broader
+human/SSO/client/ciphertext regression remain future review requirements.
+No complete Backend suite, live TLS/mTLS, RFC 9421, production secret/credential,
+real issuer, authoritative organization mapping or domain permission was tested.
+DR-03 and DR-06 remain open for production approval.
+
+### Boundary confirmation and owner review
+
+Compared directly against the verified base: security.py, views.py, urls.py,
+production settings, requirements.txt, requirements.freeze.txt and accounts
+source are unchanged. Public HTTP still invokes only `UnavailableSecurity`;
+no configuration imports or dispatches the new verifier. A valid synthetic token
+and AI_GATEWAY_ENABLED=true still deny. Chloe remains denied. No usable identity,
+credential, domain operation, service access or production capability was added.
+Office working tree remains unchanged. B1.1B was not started.
+
+**B1.1A is ready for owner review as an isolated, disabled security checkpoint.**
+PR #5 stays Draft and unmerged. Review readiness is not permission to integrate
+the new dependencies, activate authentication, merge or deploy. No blocking
+failure remains within this checkpoint; deferred security controls still block
+live use.
+
+For recovery, fetch the SAME feature branch, inspect status and compare the PR
+head with `git rev-parse origin/feat/milestone-03b-gateway-jwt-verification`.
+Read this handoff and retain the separate venv commands above. The final pushed
+SHA in the PR description identifies this documentation completion commit; the
+runtime/workflow/requirements tree remains identical to tested implementation
+`7557aaf5218effbef2b3cde80f5896f0760e6772`. A push can schedule fresh hosted
+checks; predecessor evidence must not be presented as a completed run at a newer
+SHA. No local full regression rerun is necessary for this Markdown-only update.
