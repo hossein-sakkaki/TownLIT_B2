@@ -2,7 +2,7 @@
 # TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-11-06.
-# Last Update by Hossein Sakkaki on 2026-11-06.
+# Last Update by Hossein Sakkaki on 2026-11-07.
 #
 
 name: AI Gateway B1 acceptance
@@ -42,7 +42,11 @@ jobs:
           ../b11a-venv/bin/python -m apps.ai_gateway.tests.run core test apps.ai_gateway.tests.service_tokens --noinput -v 2
 
   synthetic-mysql:
-    name: B1 security and Backend regressions
+    name: B1 refresh compatibility / ${{ matrix.profile }}
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [baseline, supported]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -54,7 +58,7 @@ jobs:
 
       - name: Verify the authorized baseline and whitespace
         env:
-          B1_BASE_SHA: 429efd647bbceb30f71389f09b7bae6dfd33212a
+          B1_BASE_SHA: 00108e3eee45a67bdff8f80086875fb54af54211
         run: |
           test "$(git rev-parse origin/security/django-5.2-lts-20261022)" = "$B1_BASE_SHA"
           git merge-base --is-ancestor "$B1_BASE_SHA" HEAD
@@ -67,19 +71,21 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
 
-      - name: Install the unchanged Backend manifest and scoped lint tool
+      - name: Install an independent disposable full Backend profile
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends build-essential pkg-config default-libmysqlclient-dev
-          python -m pip install -r requirements.txt ruff==0.14.4
+          python scripts/ai_gateway_dependency_profile.py "${{ matrix.profile }}" > ../b11b-profile.txt
+          python -m pip install -r ../b11b-profile.txt ruff==0.14.4
+          python -m pip freeze > ../b11b-resolved.txt
           python -m pip check
           python --version
 
       - name: Check B1 headers, code quality and formatting
         run: |
           python scripts/check_ai_gateway_headers.py
-          ruff check --select E4,E7,E9,F,I apps/ai_gateway scripts/check_ai_gateway_headers.py
-          ruff format --check apps/ai_gateway scripts/check_ai_gateway_headers.py
+          ruff check --select E4,E7,E9,F,I apps/ai_gateway scripts/check_ai_gateway_headers.py scripts/ai_gateway_dependency_profile.py scripts/check_jwt_user_transitions.py apps/accounts/serializers/session_refresh.py apps/accounts/tests/test_refresh_user_id_compatibility.py apps/accounts/tests/test_jwt_user_acceptance.py apps/accounts/tests/test_refresh_failure_contract.py apps/accounts/tests/jwt_transition_worker.py
+          ruff format --check apps/ai_gateway scripts/check_ai_gateway_headers.py scripts/ai_gateway_dependency_profile.py scripts/check_jwt_user_transitions.py apps/accounts/serializers/session_refresh.py apps/accounts/tests/test_refresh_user_id_compatibility.py apps/accounts/tests/test_jwt_user_acceptance.py apps/accounts/tests/test_refresh_failure_contract.py apps/accounts/tests/jwt_transition_worker.py
 
       - name: Start disposable MySQL with no network or published ports
         run: |
@@ -128,7 +134,37 @@ jobs:
             apps.accounts.tests.test_password_session_revocation \
             apps.accounts.tests.test_two_factor_login_single_use \
             apps.accounts.tests.test_backend_exception_redaction \
-            --noinput -v 2
+            --noinput --keepdb -v 2
+
+      - name: Verify signed refresh claims and current account policy
+        run: |
+          python -m apps.ai_gateway.tests.run backend test apps.accounts.tests.test_refresh_user_id_compatibility --noinput --keepdb -v 2
+
+      - name: Run expanded account and WebSocket acceptance
+        run: |
+          python -m apps.ai_gateway.tests.run backend test \
+            apps.accounts.tests.test_jwt_user_acceptance \
+            apps.accounts.tests.test_refresh_failure_contract \
+            apps.accounts.tests.test_password_reset_disclosure \
+            apps.accounts.tests.test_account_deletion_organization_guard \
+            apps.accounts.tests.test_litshield_organization_contract \
+            apps.accounts.tests.test_social_organization_contract \
+            apps.accounts.tests.test_townlit_organization_score \
+            tests.test_ws_access_auth tests.test_ws_v2_gateway \
+            tests.test_security_logging tests.test_presence_utc_compat \
+            --noinput --keepdb -v 2
+
+      - name: Execute real cross-version issuance, refresh and rollback
+        if: matrix.profile == 'supported'
+        run: |
+          python scripts/ai_gateway_dependency_profile.py baseline > ../jwt-baseline-profile.txt
+          python -m venv ../jwt-baseline-venv
+          ../jwt-baseline-venv/bin/python -m pip install -r ../jwt-baseline-profile.txt
+          ../jwt-baseline-venv/bin/python -m pip check
+          python scripts/check_jwt_user_transitions.py \
+            --baseline-python ../jwt-baseline-venv/bin/python \
+            --supported-python "$(command -v python)" \
+            --output ../jwt-synthetic-transition-artifacts
 
       - name: Remove only this job's disposable database container
         if: always()
