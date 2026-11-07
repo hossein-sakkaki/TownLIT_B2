@@ -67,3 +67,21 @@ class DenialTests(SimpleTestCase):
             request.user = SimpleNamespace(is_authenticated=True, is_staff=True, is_superuser=True)
             response = denied_endpoint(request)
             self.assertEqual(response.status_code, 503)
+
+    def test_gateway_cors_is_excluded_and_human_preflight_preserved(self):
+        import ast
+        from pathlib import Path
+
+        tree = ast.parse((Path(__file__).resolve().parents[3] / "townlit_b/settings.py").read_text())
+        pattern = next(ast.literal_eval(node.value) for node in tree.body
+                       if isinstance(node, ast.Assign)
+                       and any(isinstance(target, ast.Name) and target.id == "CORS_URLS_REGEX"
+                               for target in node.targets))
+        with override_settings(MIDDLEWARE=["corsheaders.middleware.CorsMiddleware"],
+                               CORS_ALLOW_ALL_ORIGINS=True, CORS_URLS_REGEX=pattern):
+            for path, status in (("/api/v1/ai-integrations/capabilities/", 503),
+                                 ("/api/v1/human-synthetic/", 200)):
+                response = self.client.options(path, HTTP_ORIGIN="https://synthetic.example.invalid",
+                                               HTTP_ACCESS_CONTROL_REQUEST_METHOD="GET")
+                self.assertEqual(response.status_code, status)
+                self.assertEqual("access-control-allow-origin" in response, status == 200)

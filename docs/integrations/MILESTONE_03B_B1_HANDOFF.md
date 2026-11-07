@@ -168,3 +168,32 @@ avoid interference. The baseline graph has 744 application migration files plus
 third-party migrations. After the completed core transaction tests, disposable
 MySQL `innodb_flush_log_at_trx_commit` was set to 2 to reduce fresh-schema setup
 cost (binary logging was already off). No crash-durability claims are made.
+
+## CORS and baseline-test fixture checkpoint
+
+Added a CORS URL exclusion only for the new machine prefix. An allow-all-browser
+CORS fixture proves Gateway preflight stays denied without allow-origin headers
+while an unrelated human preflight retains existing handling. No authentication
+middleware exception or human CORS origin change was introduced.
+
+Latest Gateway suite: **24/24 passed on MySQL; SQLite 21 passed / 3 explicit skips**.
+This supersedes earlier core test counts above.
+
+The first complete Backend run created the full existing migration graph on
+MySQL, including accounts/0105, then ran **66 tests: 52 passed, 4 failures and 10
+errors**. It does not establish regression success. Five errors came from the
+new synthetic fixture trying to assign read-only CustomUser.is_staff; this was
+corrected to set only existing is_superuser. Five OTP errors were missing test
+EMAIL_CODE_EXPIRATION_MINUTES; four reset failures were the missing test
+RESET_LINK_EXPIRATION_MINUTES. Isolated defaults now match the baseline's 10/30
+minute values. No existing authentication source was changed. A full rerun with
+`--keepdb` is pending so additional fixture errors can be corrected without
+repeating fresh-schema creation. Do not treat this checkpoint as a green
+regression run.
+
+The real MySQL baseline migration run also reports existing conditional-unique
+constraint warnings (models.W036) in accounts/boundaries/main/profiles/sanctuary.
+Those baseline constraints are not enforced by MySQL. B1 introduces no
+conditional unique constraints; its unconditional metadata uniqueness was tested.
+These warnings and the pre-existing finance/report findings remain release
+review items, not security issues silently fixed by B1.

@@ -54,6 +54,9 @@ CORS_ALLOW_CREDENTIALS = os.getenv(
     "CORS_ALLOW_CREDENTIALS", "True"
 ).lower() in ("true", "1", "t")
 
+# Machine denial stubs must not inherit human-browser CORS/preflight handling.
+CORS_URLS_REGEX = r"^(?!/api/v1/ai-integrations(?:/|$)).*$"
+
 # ---------------------------------------------------------------------
 # FRONTEND BASE (for internal use only)
 # ---------------------------------------------------------------------

@@ -46,6 +46,7 @@ def _test_value(node):
 INSTALLED_APPS = ast.literal_eval(_assignments["INSTALLED_APPS"])
 MIDDLEWARE = ast.literal_eval(_assignments["MIDDLEWARE"])
 REST_FRAMEWORK = _test_value(_assignments["REST_FRAMEWORK"])
+CORS_URLS_REGEX = ast.literal_eval(_assignments["CORS_URLS_REGEX"])
 AUTH_USER_MODEL = ast.literal_eval(_assignments["AUTH_USER_MODEL"])
 SIMPLE_JWT = _test_value(_assignments["SIMPLE_JWT"])
 AUTH_SESSION_GENERATION_ENFORCE = False
@@ -94,4 +95,7 @@ AWS_STORAGE_BUCKET_NAME = "synthetic-b1"
 AWS_ACCESS_KEY_ID = "synthetic-b1-not-a-credential"
 AWS_SECRET_ACCESS_KEY = "synthetic-b1-not-a-credential"
 LITSHIELD_ACCESS_EXPIRATION_SECONDS = 300
+EMAIL_CODE_EXPIRATION_MINUTES = 10
+RESET_LINK_EXPIRATION_MINUTES = 30
+DEFAULT_USER_AVATAR_URL = "/synthetic/avatar.png"
 ASSET_CDN_BASE_URL = "https://synthetic.example.invalid"

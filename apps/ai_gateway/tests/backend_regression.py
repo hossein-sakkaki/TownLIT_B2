@@ -25,9 +25,8 @@ class BackendRegressionTests(TestCase):
             email="b1-synthetic@example.invalid", password="SyntheticPassword42!",
         )
         self.user.is_active = True
-        self.user.is_staff = True
         self.user.is_superuser = True
-        self.user.save(update_fields=["is_active", "is_staff", "is_superuser"])
+        self.user.save(update_fields=["is_active", "is_superuser"])
 
     @override_settings(AI_GATEWAY_ENABLED=True)
     def test_human_jwt_and_session_never_authorize_gateway(self):
@@ -60,7 +59,7 @@ class BackendRegressionTests(TestCase):
     @override_settings(AI_GATEWAY_ENABLED=True)
     def test_denied_requests_leave_all_domain_records_unchanged(self):
         from apps.advancement.models.external_entity import ExternalEntity
-        ExternalEntity.objects.create(name="Synthetic B1 fixture", entity_type="FOUNDATION")
+        ExternalEntity.objects.create(name="Synthetic B1 fixture", entity_type="FOUNDATION", country="CA")
         models = [model for app in ("accounting", "advancement")
                   for model in apps.get_app_config(app).get_models()]
 
