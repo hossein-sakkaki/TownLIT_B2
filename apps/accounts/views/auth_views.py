@@ -1,4 +1,9 @@
 # apps/accounts/views/auth_views.py
+# TownLIT-Backend
+#
+# Original Created date: not recorded in source; verify with Git history.
+# Last Update by Hossein Sakkaki on 2026-11-06.
+#
 
 from django.contrib.auth import update_session_auth_hash
 from django.utils import timezone
@@ -1121,8 +1126,7 @@ class AuthViewSet(viewsets.ViewSet):
             }, status=status.HTTP_401_UNAUTHORIZED)
         except CustomUser.MultipleObjectsReturned:
             logger.error(
-                "Multiple users matched login identifier=%s",
-                identifier,
+                "Multiple users matched login identifier (redacted)"
             )
             return Response({
                 "message": "We could not process this login. Please contact support."
@@ -1309,8 +1313,7 @@ class AuthViewSet(viewsets.ViewSet):
             }, status=status.HTTP_404_NOT_FOUND)
         except CustomUser.MultipleObjectsReturned:
             logger.error(
-                "Multiple users matched 2FA login identifier=%s",
-                identifier,
+                "Multiple users matched 2FA login identifier (redacted)"
             )
             return Response({
                 "message": "We could not process this login. Please contact support."

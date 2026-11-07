@@ -10,7 +10,7 @@ from datetime import timedelta
 import bcrypt
 from django.conf import settings
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
-from django.db import models
+from django.db import models, transaction
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from django.db.models import F, Q
@@ -28,11 +28,22 @@ from validators.security_validators import validate_no_executable_file
 from validators.usernameValidators.username_normalizer import normalize_username
 from utils.common.utils import FileUpload, create_active_code
 from apps.core.crypto.protected_columns import EncryptedPropertyFieldsMixin, ProtectedColumnsQuerySet
+from apps.accounts.services.contact_protection import blind_index, encrypt_contact
+
+
+class ContactProtectedQuerySet(ProtectedColumnsQuerySet):
+    """Reject direct contact changes that bypass ciphertext and blind indexes."""
+
+    def _protected_names(self):
+        return super()._protected_names() | {
+            "email", "email_encrypted", "email_blind_index",
+            "mobile_number", "mobile_number_encrypted", "mobile_number_blind_index",
+        }
 
 
 class CustomUserManager(BaseUserManager):
     def get_queryset(self):
-        return ProtectedColumnsQuerySet(self.model, using=self._db)
+        return ContactProtectedQuerySet(self.model, using=self._db)
 
 
     def create_user(
@@ -187,6 +198,10 @@ class CustomUser(EncryptedPropertyFieldsMixin, AbstractBaseUser, PermissionsMixi
 
     id = models.BigAutoField(primary_key=True)
     email = models.EmailField(max_length=254, unique=True, verbose_name='Email')
+    email_encrypted = models.TextField(null=True, blank=True, editable=False)
+    email_blind_index = models.CharField(max_length=128, null=True, blank=True, unique=True, editable=False)
+    mobile_number_encrypted = models.TextField(null=True, blank=True, editable=False)
+    mobile_number_blind_index = models.CharField(max_length=128, null=True, blank=True, db_index=True, editable=False)
     last_email_change = models.DateTimeField(null=True, blank=True, verbose_name='Last Email Change')
     email_change_tokens = models.JSONField(
         null=True,
@@ -427,7 +442,43 @@ class CustomUser(EncryptedPropertyFieldsMixin, AbstractBaseUser, PermissionsMixi
                 user=self if self.pk else None,
             )
 
-        super().save(*args, **kwargs)
+        # Contact shadow values must be atomic with the legacy write.
+        # New rows need a primary key before row-bound encryption.
+        requested = kwargs.get("update_fields")
+        requested = set(requested) if requested is not None else None
+        changing_email = requested is None or "email" in requested
+        changing_phone = requested is None or "mobile_number" in requested
+        new_row = self._state.adding
+        alias = kwargs.get("using") or self._state.db
+
+        # Fail closed on key unavailability before persisting an existing row.
+        if not new_row:
+            if changing_email:
+                self.email_encrypted = encrypt_contact(self, self.email, field="email")
+                self.email_blind_index = blind_index(self.email, field="email")
+            if changing_phone:
+                self.mobile_number_encrypted = encrypt_contact(self, self.mobile_number, field="mobile_number")
+                self.mobile_number_blind_index = blind_index(self.mobile_number, field="mobile_number")
+            if requested is not None:
+                if changing_email:
+                    requested.update(("email_encrypted", "email_blind_index"))
+                if changing_phone:
+                    requested.update(("mobile_number_encrypted", "mobile_number_blind_index"))
+                kwargs["update_fields"] = requested
+
+        with transaction.atomic(using=alias):
+            result = super().save(*args, **kwargs)
+            if new_row:
+                changes = {
+                    "email_encrypted": encrypt_contact(self, self.email, field="email"),
+                    "email_blind_index": blind_index(self.email, field="email"),
+                    "mobile_number_encrypted": encrypt_contact(self, self.mobile_number, field="mobile_number"),
+                    "mobile_number_blind_index": blind_index(self.mobile_number, field="mobile_number"),
+                }
+                type(self)._base_manager.db_manager(self._state.db).filter(pk=self.pk).update(**changes)
+                for name, value in changes.items():
+                    setattr(self, name, value)
+        return result
 
     def generate_two_factor_token(self):
         token = str(create_active_code(6))
