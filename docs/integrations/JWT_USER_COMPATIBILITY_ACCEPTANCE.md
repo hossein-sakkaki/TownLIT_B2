@@ -115,8 +115,13 @@ Booleans, floats, signs, whitespace, Unicode digits, containers and overflow den
 before account/generation lookup. The signed payload is never rewritten.
 `session_generation_matches` is byte-unchanged and receives resolved `user.pk`.
 Current active/rule checks cannot be bypassed by generation enforcement being OFF.
-Revoked/invalid input must produce no returned credentials; parent rotation and
-per-profile blacklist/outstanding semantics remain authoritative.
+Sequential invalid/revoked requests return no credentials in the executed
+checks. An atomic no-new-credentials guarantee during concurrent blacklist
+consumption is **not established**: the synchronized parent-library race returns
+two live children. Parent rotation and per-profile blacklist/outstanding
+semantics are preserved, rather than silently replaced with a new consumption
+protocol that could log out existing concurrent clients. AUTH-02 therefore stays
+open; this audit does not certify exactly-once refresh or retry idempotency.
 
 ### AUTH-01 — unconditional current-account policy (merge blocker)
 
@@ -149,9 +154,92 @@ it does not approve two live descendant refresh chains as a security policy.
 
 ## Actual execution ledger
 
-EXECUTION_PENDING — fill only from completed local/CI runs, never inferred from
-same-version synthetic claim editing. Existing head 7791af39's completed run
-42387580905 is prior evidence; new gate tests need their own exact SHA/results.
+The gate's source/test checkpoint is
+`b9b84ce367071bd861f3d59282d08b7afdc78ab3`. All source/test logic in the completed
+local runs below matches that checkpoint; only the acceptance documentation is
+updated afterward. Existing head 7791af39's run 42387580905 remains prior repair
+evidence, not a substitute for the expanded gate.
+
+| Actual completed local check | Baseline full profile | Supported full profile |
+| --- | --- | --- |
+| Full-manifest identity / pip check | PASS / SimpleJWT 5.3.1 | PASS / SimpleJWT 5.5.1 |
+| Unchanged selected regressions | **66/66 PASS**, 24.088s | **66/66 PASS**, 24.209s |
+| Expanded authentication acceptance | **82/82 PASS**, 12.554s | **82/82 PASS**, 12.197s |
+| Gateway MySQL | **28/28 PASS**, no skips | **28/28 PASS**, no skips |
+| Gateway SQLite | 24 PASS / 4 MySQL-only skips | 24 PASS / 4 MySQL-only skips |
+| Gateway + accounts migration drift, Gateway apply/zero/reapply, Backend check | PASS with existing warnings | PASS with existing warnings |
+| Real separate-interpreter transitions | **37 phases / 246 actions PASS**, both libraries; one signing fingerprint, 801 unchanged migration records | Same shared experiment |
+
+The 82-test suite includes the existing 24 refresh cases, five new availability/
+canonical-login/2FA-challenge/logout cases, seven disclosure cases, ten account/
+organization contract cases and 36 existing WS/access/session/logging/UTC cases.
+The five new cases prove canonical login's numeric API user ID is preserved,
+2FA challenge returns no credentials, logout is idempotent and token-scoped,
+enforcement-OFF lookup outages deny without credentials, and the serializer adds
+exactly **two SQL reads** over upstream for a valid OFF-mode refresh (one current
+user lookup plus one blacklist verification). No production load conclusion
+follows from that count. Logout leaves sibling refresh/access credentials valid
+unless a separate generation/device policy revokes them.
+
+The MySQL server is the workflow's pinned 8.4 image (observed 8.4.13), network
+NONE, no published ports, synthetic schema only. Python 3.12.14 locally; both
+venvs contain complete independently resolved manifests. The real full Backend
+graph applied accounts.0105; the supported reader applied blacklist 0013. Local
+subsequent suites retain that disposable schema, without fake migrations.
+Generated baseline manifest SHA-256:
+`d942524d2aa71a19dfe31bb94bba256883c7efe936b149970165a160944c6fda`;
+supported:
+`a8ee6f02469d25ecd78dde0d32a96c37209118a6671cd6a86263525f5d471171`.
+
+### Completed CI gate
+
+[Run 42392588702](https://github.com/hossein-sakkaki/TownLIT_B2/actions/runs/42392588702)
+completed **SUCCESS** for source/test head
+`b9b84ce367071bd861f3d59282d08b7afdc78ab3`. GitHub tested proposed merge ref
+`6d279394d599cbf3e783f55c13233a1a3eb7fc17` against security target
+`00108e3eee45a67bdff8f80086875fb54af54211`; this is a CI ref, not an actual PR
+merge. Each full-profile job installed its own complete environment and started
+its own network-isolated disposable MySQL. Observed Python 3.12.16 / MySQL 8.4.13.
+
+| Completed CI check | [Baseline job](https://github.com/hossein-sakkaki/TownLIT_B2/actions/runs/42392588702/job/128463158615) | [Supported job](https://github.com/hossein-sakkaki/TownLIT_B2/actions/runs/42392588702/job/128463158428) |
+| --- | --- | --- |
+| Selected Backend regressions | **66/66 PASS**, 25.764s | **66/66 PASS**, 22.292s |
+| Focused refresh compatibility | **24/24 PASS**, 5.349s | **24/24 PASS**, 4.702s |
+| Additional account/WS acceptance | **58/58 PASS**, 6.070s | **58/58 PASS**, 5.725s |
+| Gateway MySQL / SQLite | 28 PASS / 24 PASS + 4 MySQL-only skips | 28 PASS / 24 PASS + 4 MySQL-only skips |
+| Full manifests, pip check, headers/lint, migration drift/reversibility, Backend system check | PASS | PASS |
+| Real cross-version A–G plus H | Executed using an additional independent baseline full environment in the supported job | **37 phases / 246 actions PASS**, including the characterized concurrent-refresh race |
+| Disposable-container cleanup | PASS | PASS |
+
+The separate [isolated ES256 job](https://github.com/hossein-sakkaki/TownLIT_B2/actions/runs/42392588702/job/128463158565)
+also passed **11/11**, 0.042s. The 24+58 split is the same 82-case expanded
+acceptance set reported locally, not 82 additional tests beyond that set.
+Earlier canceled checkpoints are not final gate passes. Final documentation-only
+changes do not change the tested runtime, tests, manifests or workflow; the final
+delivered SHA is recorded separately in PR #7. The task-owned local MySQL
+container was also removed after successful verification.
+
+Test setup findings were fixed without weakening assertions: the old WS mock
+lacked `pk`; the isolated test settings lacked the production-default phone TTL.
+The first process worker attempted the default AMQP broker and was stopped by
+the no-network audit hook before external I/O. Its one synthetic fixture was
+removed from the disposable schema, the worker was bound to the configured
+in-memory test Celery app, and a fresh complete 37-phase run passed. Those
+failed setup attempts are not counted as passing scenarios. Queue delivery,
+real email/SMS/push and background trust work are not accepted by this harness.
+
+Existing CKEditor, Requests dependency, MySQL conditional-unique and empty
+Firebase test-configuration warnings remain visible. Reused Backend schema
+setup prints a known Posts model-state warning; explicit drift checks remain
+scoped to accounts/Gateway here, and no Posts source or migrations were edited.
+No selected or expanded Backend test skipped. Only four Gateway cases skip on
+SQLite; all four execute successfully on MySQL.
+
+Not executed: main's old runtime, production/deployed-client acceptance,
+historical production ciphertext, live SSO/email/SMS/push/queue delivery,
+production load/failover, multi-instance stress, or concurrent login/2FA/password
+mutation stress. The controlled two-request refresh race is the concurrency
+experiment actually performed; it does not stand in for those scenarios.
 
 The real transition harness is `scripts/check_jwt_user_transitions.py` with
 `apps/accounts/tests/jwt_transition_worker.py`. Each phase launches a fresh
@@ -163,14 +251,15 @@ artifacts outside the repository; never commit/upload those token artifacts.
 
 | Required case | Actually executed scenario | Result / evidence |
 | --- | --- | --- |
-| A | 5.3.1 issue → 5.3.1 refresh → 5.3.1 continued chain | PENDING |
-| B | 5.3.1 issue → 5.5.1 refresh → 5.3.1 continued chain | PENDING |
-| C | 5.5.1 issue → 5.5.1 refresh → 5.5.1 continued chain | PENDING |
-| D | 5.5.1 issue → 5.3.1 refresh/controlled package rollback → 5.5.1 continued chain | PENDING |
-| E | Real no-tl_sg tokens from each issuer, OFF and ON while zero; first revoke; OFF survives, ON denies | PENDING |
-| F | Each A–D with generation increment, actual secure password change and V2 reset dispatch; both readers reject prior access/refresh/WS | PENDING |
-| G | Consumed token replays rejected by both readers; rotated outstanding rows and user association match profile; blacklist survives transitions | PENDING |
-| Concurrent refresh | Two real MySQL requests synchronized after parent blacklist checks; inspect distinct live descendants, then revoke/reject both across profiles | PENDING |
+| A | 5.3.1 issue → 5.3.1 refresh → 5.3.1 continued chain | **PASS**, native integer claim retained |
+| B | 5.3.1 issue → 5.5.1 refresh → 5.3.1 continued chain | **PASS**, real old-issued integer claim retained |
+| C | 5.5.1 issue → 5.5.1 refresh → 5.5.1 continued chain | **PASS**, native string claim retained |
+| D | 5.5.1 issue → 5.3.1 refresh/controlled package rollback → 5.5.1 continued chain | **PASS**, real new-issued string claim accepted after rollback |
+| E | Real no-tl_sg tokens from each issuer, OFF and ON while zero; first revoke; OFF survives, ON denies | **PASS** under both libraries; test-only flag overrides |
+| F | Each A–D with generation increment, actual secure password change and V2 reset dispatch; both readers reject prior access/refresh/WS | **PASS**; fresh rotated tokens were not already blacklisted and access failure code was session_revoked |
+| G | Consumed token replays rejected by both readers; rotated outstanding rows and user association match profile; blacklist survives transitions | **PASS**; 5.3.1 defers rotated outstanding row, 5.5.1 records it immediately |
+| Concurrent refresh | Two real MySQL requests synchronized after parent blacklist checks; inspect distinct live descendants, then revoke/reject both across profiles | **OBSERVED** two 200 replies/two valid children in each profile; revocation then denies all children in both readers |
+| H (extra recovery check) | Eight legacy Fernet/V2 reset links issued/consumed across A–D; both readers retry consumed links and reject old JWTs | **PASS**; resets return login_required without JWT, replay is 404 |
 
 Test flags are overridden only inside synthetic workers/tests; no previously
 disabled deployment flag is enabled. Signing-key fingerprint and applied
@@ -179,6 +268,8 @@ the forward-compatible schema, migration records and blacklist data. It does
 not reverse accounts.0105, reset generations, flush blacklists or rotate keys.
 5.5.1's blacklist migration 0013 alters model options, not stored token fields;
 this bounded schema assumption must be re-reviewed for any other version.
+Reset-link consumption matches a stored verifier/bearer; H is not proof of
+historical production encrypted-field/ciphertext compatibility.
 
 ## Current client source review, distinct from deployed acceptance
 
@@ -187,8 +278,22 @@ Freshly fetched default branch refs (checkout source remains unmodified):
 | Client | Inspected SHA | Findings |
 | --- | --- | --- |
 | iOS | `95179ad944a1731dee9c22036bbfead5d08159d7` | AuthTokens stores String/String; refresh decodes String access/optional String refresh and saves rotation. URLSessionAPIClient is a final class with separate refresh calls in normal/upload 401 retry paths; no shared refresh flight/lock found. Its refresh catch clears tokens except CancellationError. Current password DTOs/repository support login_required; deployed app build unknown |
-| Android | `cb59509327863128922eaf0cc99f2b8d1dc24176` | TLTokenRefresher synchronizes per instance, reuses a changed access token after waiting, saves rotated pair, clears credentials on 400/401/403 but retains on network/5xx. Session store reloads the shared token store; WS provider sees newly persisted access. Multiple refresher instances/processes are not a proven single flight |
+| Android | `cb59509327863128922eaf0cc99f2b8d1dc24176` | TLTokenRefresher synchronizes per instance, reuses a changed access token after waiting, saves rotated pair, clears credentials on 400/401/403 but retains on network/5xx. Session store reloads the shared token store; WS provider sees newly persisted access. Multiple refresher instances/processes are not a proven single flight. Current reset DTO still requires refresh/access/is_member; password change ignores login_required (CLIENT-01) |
 | Web (`TownLIT_F`) | `614756be5f075850a22c1b3af8729b86d2d3544c` | authRefresh coalesces per-tab requests, saves rotation, clears only a still-current failed refresh on 400/401; no cross-tab lock. websocketManager stores this.token; RootAppShell captures a token in its connection effect; a refresh storage/cookie write alone is not a proven WS token update |
+
+### CLIENT-01 — Android secure-password response incompatibility
+
+At the inspected Android SHA, `AuthFlowDtos.kt:180` declares mandatory String
+`refresh`/`access` and Boolean `is_member` in `ResetPasswordResponseDto`;
+`DefaultAuthRepository.kt:681` requires `user` and constructs/stores an AuthSession.
+`ChangePasswordResponseDto` exposes only message/error and changePassword returns
+that message. There is no login_required handling in those current auth paths.
+The secure server response intentionally omits JWT/user fields, so this is a
+concrete source-contract incompatibility with enabling password-security V2,
+not an integer-JWT-claim problem. Android was not changed in this task. Keep
+that flag unchanged; updated clients/deployment acceptance are prerequisites.
+This blocks a full-auth compatibility claim and future flag rollout. AUTH-01
+and current refresh-client risks independently keep the present merge gate open.
 
 Repository-wide JWT decode searches and the inspected auth/storage/refresh
 paths found no direct JWT user_id decoder or integer-claim requirement. Numeric
@@ -216,6 +321,12 @@ Android `core/network/.../auth/TLTokenRefresher.kt`, `core/auth/.../storage/Andr
 `core/websocket/.../TLCentralWebSocketManager.kt`, `app/.../di/TLAppContainer.kt`;
 Web `src/lib/authRefresh.ts`, `src/lib/websocketManager.ts`,
 `src/utils/realtime/ws.ts`, `src/app/RootAppShell.tsx`.
+
+Immutable source links:
+[iOS refresh handling](https://github.com/hossein-sakkaki/TownLIT_iOS/blob/95179ad944a1731dee9c22036bbfead5d08159d7/TownLIT/Core/Networking/URLSessionAPIClient.swift),
+[Android password DTOs](https://github.com/hossein-sakkaki/TownLIT_Android/blob/cb59509327863128922eaf0cc99f2b8d1dc24176/core/auth/src/main/kotlin/com/townlit/android/core/auth/model/AuthFlowDtos.kt#L180),
+[Android password repository](https://github.com/hossein-sakkaki/TownLIT_Android/blob/cb59509327863128922eaf0cc99f2b8d1dc24176/core/auth/src/main/kotlin/com/townlit/android/core/auth/repository/DefaultAuthRepository.kt#L681),
+[Web refresh handling](https://github.com/hossein-sakkaki/TownLIT_F/blob/614756be5f075850a22c1b3af8729b86d2d3544c/src/lib/authRefresh.ts).
 
 ## Required deployed-build evidence — no production secrets/access assumed
 
