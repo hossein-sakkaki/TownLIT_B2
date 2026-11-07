@@ -28,7 +28,8 @@ from validators.security_validators import validate_no_executable_file
 from validators.usernameValidators.username_normalizer import normalize_username
 from utils.common.utils import FileUpload, create_active_code
 from apps.core.crypto.protected_columns import EncryptedPropertyFieldsMixin, ProtectedColumnsQuerySet
-from apps.accounts.services.contact_protection import blind_index, encrypt_contact
+from apps.core.crypto.field_protection import FieldProtectionIntegrityError
+from apps.accounts.services.contact_protection import blind_index
 
 
 class ContactProtectedQuerySet(ProtectedColumnsQuerySet):
@@ -207,12 +208,12 @@ class CustomUser(EncryptedPropertyFieldsMixin, AbstractBaseUser, PermissionsMixi
     protected_field_specs = {
         "birthday": ("birthday_encrypted", "date"),
         "mobile_number": ("mobile_number_encrypted", "text"),
+        "email": ("email_encrypted", "text"),
     }
 
     IMAGE = FileUpload('accounts', 'photos', 'custom_user')
 
     id = models.BigAutoField(primary_key=True)
-    email = models.EmailField(max_length=254, unique=True, verbose_name='Email')
     email_encrypted = models.TextField(null=True, blank=True, editable=False)
     email_blind_index = models.CharField(max_length=128, null=True, blank=True, unique=True, editable=False)
     mobile_number_encrypted = models.TextField(null=True, blank=True, editable=False)
@@ -225,10 +226,27 @@ class CustomUser(EncryptedPropertyFieldsMixin, AbstractBaseUser, PermissionsMixi
         help_text='Stores tokens for email change verification.',
     )
 
+    @property
+    def email(self):
+        if self._state.adding or "email" in self.__dict__.get("_dp_pending_fields", {}):
+            return self._protected_get("email")
+        if self.email_encrypted is None:
+            raise FieldProtectionIntegrityError("Protected email is unavailable.")
+        return self._protected_get("email")
+
+    @email.setter
+    def email(self, value):
+        if not isinstance(value, str):
+            raise TypeError("Email must be text.")
+        value = value.strip()
+        if not value or len(value) > 254 or "@" not in value:
+            raise ValueError("A valid non-empty email is required.")
+        self._protected_set("email", value)
+
     def change_email(self, new_email):
         self.email = new_email
         self.last_email_change = timezone.now()
-        self.save()
+        self.save(update_fields=["email", "last_email_change"])
 
     mobile_verification_code = models.CharField(max_length=200, null=True, blank=True, verbose_name="Mobile Verification Code")
     mobile_verification_expiry = models.DateTimeField(null=True, blank=True)
@@ -378,7 +396,9 @@ class CustomUser(EncryptedPropertyFieldsMixin, AbstractBaseUser, PermissionsMixi
     def birthday(self, value):
         self._protected_set("birthday", value)
 
-    USERNAME_FIELD = 'email' 
+    # A real unique database column is required by Django Authentication.
+    # The user-facing email remains an encrypted logical property.
+    USERNAME_FIELD = 'username'
     REQUIRED_FIELDS = []
     objects = CustomUserManager() 
 
@@ -461,36 +481,39 @@ class CustomUser(EncryptedPropertyFieldsMixin, AbstractBaseUser, PermissionsMixi
                 user=self if self.pk else None,
             )
 
-        # Email remains a concrete auth field until the independent login
-        # cutover. Phone is now an encrypted logical property only.
+        # The public Email property is encrypted by the shared model mixin.
+        # Index updates are in the same transaction as ciphertext writes.
         requested = kwargs.get("update_fields")
         requested = set(requested) if requested is not None else None
-        changing_email = requested is None or "email" in requested
         pending = self.__dict__.get("_dp_pending_fields", {})
+        changing_email = "email" in pending and (
+            requested is None or "email" in requested
+        )
         changing_phone = "mobile_number" in pending and (
             requested is None or "mobile_number" in requested
         )
         new_row = self._state.adding
         alias = kwargs.get("using") or self._state.db
 
+        if new_row and not self.email:
+            raise ValueError("Email is required for a new user.")
         if not new_row:
             if changing_email:
-                self.email_encrypted = encrypt_contact(self, self.email, field="email")
-                self.email_blind_index = blind_index(self.email, field="email")
+                self.email_blind_index = blind_index(pending["email"], field="email")
             if changing_phone:
                 self.mobile_number_blind_index = blind_index(pending["mobile_number"], field="mobile_number")
             if requested is not None:
                 if changing_email:
-                    requested.update(("email_encrypted", "email_blind_index"))
+                    requested.add("email_blind_index")
                 if changing_phone:
                     requested.add("mobile_number_blind_index")
                 kwargs["update_fields"] = requested
 
         with transaction.atomic(using=alias):
+            # The shared mixin writes row-bound ciphertext and clears pending values.
             result = super().save(*args, **kwargs)
             if new_row:
                 changes = {
-                    "email_encrypted": encrypt_contact(self, self.email, field="email"),
                     "email_blind_index": blind_index(self.email, field="email"),
                     "mobile_number_blind_index": blind_index(self.mobile_number, field="mobile_number"),
                 }

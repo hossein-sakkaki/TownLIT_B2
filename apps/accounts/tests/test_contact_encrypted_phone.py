@@ -52,12 +52,13 @@ class EncryptedContactTests(TestCase):
         self.assertIsNone(u.mobile_number_encrypted)
         self.assertIsNone(u.mobile_number_blind_index)
 
-    def test_emails_remain_legacy_auth_field_with_shadow(self):
+    def test_emails_are_encrypted_only_with_blind_index(self):
         User = get_user_model()
         u = User.objects.create_user(email="contacte@example.test", username="contacte",
                                      password="TestPassword123!")
         self.assertEqual(u.email, "contacte@example.test")
-        self.assertEqual(User.USERNAME_FIELD, "email")
+        self.assertEqual(User.USERNAME_FIELD, "username")
+        self.assertNotIn("email", {f.name for f in User._meta.concrete_fields})
         self.assertTrue(u.email_encrypted.startswith("tdp1:"))
         self.assertTrue(index_matches(u.email_blind_index, u.email, field="email"))
         out = StringIO()

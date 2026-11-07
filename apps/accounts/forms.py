@@ -24,6 +24,7 @@ class UserCreationForm(forms.ModelForm):
 
     def save(self, commit=True):
         user = super().save(commit=False)
+        user.email = self.cleaned_data['email']
         user.set_password(self.cleaned_data['password'])
         if 'birthday' in self.cleaned_data:
             user.birthday = self.cleaned_data['birthday']
@@ -44,8 +45,14 @@ class UserChangeForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         if self.instance and self.instance.pk:
-            self.fields['birthday'].initial = self.instance.birthday
-            self.fields['mobile_number'].initial = self.instance.mobile_number
+            # ModelAdmin excludes read-only display methods from the generated
+            # ModelForm. Guard declared properties that may not be in fields.
+            if 'email' in self.fields:
+                self.fields['email'].initial = self.instance.email
+            if 'birthday' in self.fields:
+                self.fields['birthday'].initial = self.instance.birthday
+            if 'mobile_number' in self.fields:
+                self.fields['mobile_number'].initial = self.instance.mobile_number
 
     def save(self, commit=True):
         user = super().save(commit=False)
@@ -76,6 +83,7 @@ class UserCreationRestrictedForm(forms.ModelForm):
 
     def save(self, commit=True):
         user = super().save(commit=False)
+        user.email = self.cleaned_data['email']
         user.set_password(self.cleaned_data['password'])
         if commit:
             user.save()
@@ -87,6 +95,11 @@ class UserChangeRestrictedForm(forms.ModelForm):
     password = ReadOnlyPasswordHashField(
         help_text='If you want to change password <a href="../password">click here...</a>'
     )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance and self.instance.pk and 'email' in self.fields:
+            self.fields['email'].initial = self.instance.email
 
     class Meta:
         model = CustomUser

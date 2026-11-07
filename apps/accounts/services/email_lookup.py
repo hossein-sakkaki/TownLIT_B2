@@ -11,9 +11,9 @@ This service intentionally never falls back to a plaintext email lookup.
 Only user email equality is handled here; external contact/invite records have
 separate storage contracts and are outside the CustomUser email domain.
 
-Until the final email schema cutover, CustomUser.email remains the concrete
-USERNAME_FIELD. Its ciphertext and blind index are maintained on writes by
-the existing protected contact layer.
+CustomUser.email is a Python property backed only by authenticated encrypted
+storage, and email equality queries use the indexed HMAC digest. The concrete
+Django USERNAME_FIELD is username, not email.
 """
 
 from __future__ import annotations

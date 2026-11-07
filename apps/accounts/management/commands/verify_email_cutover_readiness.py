@@ -7,9 +7,8 @@
 
 """Read-only verification of User email ciphertext, blind index and username.
 
-This verifies data prerequisites ONLY. Passing does NOT authorize removal of
-CustomUser.email: Django's USERNAME_FIELD and admin/form/runtime consumers must
-still be transitioned together before any destructive schema migration.
+This validates protected data integrity. Deployment authorization requires
+a separate, confirmed production migration runbook.
 """
 
 from django.contrib.auth import get_user_model
@@ -62,6 +61,11 @@ class Command(BaseCommand):
             f"rows={rows} email_verified={verified} "
             f"missing_username={missing_username} errors={errors}"
         )
-        self.stdout.write("schema_cutover_authorized=no (data validation only)")
+        concrete_email = any(
+            field.name == "email" for field in User._meta.concrete_fields
+        )
+        self.stdout.write(
+            "email_storage=" + ("legacy_plaintext" if concrete_email else "encrypted_only")
+        )
         if errors:
             raise CommandError("Email shadow/index readiness verification failed.")

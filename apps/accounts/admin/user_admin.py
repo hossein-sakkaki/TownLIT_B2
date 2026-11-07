@@ -82,7 +82,7 @@ class CustomUserAdmin(UserAdmin):
     ]
     # Plaintext substring phone search is not available on encrypted storage.
     search_fields = ["username", "name", "family"]
-    readonly_fields = ["register_date", "last_login", "email", "is_verified_identity", "identity_level", "email_change_request_pending"]
+    readonly_fields = ["register_date", "last_login", "email_display", "is_verified_identity", "identity_level", "email_change_request_pending"]
     ordering = ["-id"]
     filter_horizontal = ("groups", "user_permissions")
 
@@ -137,7 +137,7 @@ class CustomUserAdmin(UserAdmin):
                 "email", "mobile_number", "name", "family", "username",
                 "birthday", "gender", "label", "country", "city",
                 "primary_language", "secondary_language",
-                "image_name", "password1", "password2",
+                "image_name", "password",
             ),
         }),
     )
@@ -151,15 +151,18 @@ class CustomUserAdmin(UserAdmin):
         return super().get_form(request, obj, **kwargs)
 
     def get_fieldsets(self, request, obj=None):
+        # Email is a protected Python property, not a model field. On change
+        # views it must be rendered through a distinct read-only admin method;
+        # otherwise Django shadows the declared ModelForm email field and
+        # raises FieldError while constructing the change form.
         sets = super().get_fieldsets(request, obj)
-        if request.user.is_superuser:
-            return sets
         changed = []
         for title, options in sets:
             options = dict(options)
             options["fields"] = tuple(
-                "birthday_masked" if field == "birthday"
-                else "mobile_masked" if field == "mobile_number"
+                "email_display" if obj is not None and field == "email"
+                else "birthday_masked" if not request.user.is_superuser and field == "birthday"
+                else "mobile_masked" if not request.user.is_superuser and field == "mobile_number"
                 else field
                 for field in options["fields"]
             )
@@ -169,6 +172,10 @@ class CustomUserAdmin(UserAdmin):
     def get_readonly_fields(self, request, obj=None):
         fields = tuple(super().get_readonly_fields(request, obj))
         return fields if request.user.is_superuser else fields + ("birthday_masked", "mobile_masked")
+
+    @admin.display(description="Email")
+    def email_display(self, obj):
+        return obj.email if obj is not None else "—"
 
     @admin.display(description="Mobile number (restricted)")
     def mobile_masked(self, obj):

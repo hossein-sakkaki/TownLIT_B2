@@ -91,5 +91,5 @@ class EmailPrecutoverCompatibilityTests(TestCase):
         call_command("verify_email_cutover_readiness", stdout=out)
         result = out.getvalue()
         self.assertIn("rows=1 email_verified=1 missing_username=0 errors=0", result)
-        self.assertIn("schema_cutover_authorized=no", result)
+        self.assertIn("email_storage=encrypted_only", result)
         self.assertNotIn("Precutover@Example.TEST", result)
