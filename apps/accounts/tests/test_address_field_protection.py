@@ -16,10 +16,10 @@ from django.test import TestCase, override_settings
 
 from apps.accounts.models import Address
 from apps.accounts.serializers.address_serializers import AddressSerializer
-from apps.core.crypto.field_protection import FieldProtector
+from apps.core.crypto.field_protection import FieldProtectionIntegrityError, FieldProtectionUnavailable
 
 
-class AddressCompatibilityStageTests(TestCase):
+class AddressEncryptedOnlyTests(TestCase):
     def setUp(self):
         self.env = patch.dict(os.environ, {
             "TOWNLIT_DP_FERNET_KEYS_JSON": json.dumps({"dev_1": Fernet.generate_key().decode()}),
@@ -28,45 +28,55 @@ class AddressCompatibilityStageTests(TestCase):
         self.env.start()
         self.addCleanup(self.env.stop)
 
-    def test_writes_are_encrypted_without_feature_flags(self):
-        a = Address.objects.create(additional="Floor 2 • طبقه دوم")
-        self.assertEqual(a.additional, "Floor 2 • طبقه دوم")
-        self.assertEqual(AddressSerializer(a).data["additional"], a.additional)
+    def test_create_update_and_serializer_contract(self):
+        a = Address.objects.create(additional="Unit 4 • طبقه ۲")
+        self.assertEqual(a.additional, "Unit 4 • طبقه ۲")
+        a.refresh_from_db()
+        self.assertEqual(a.additional, "Unit 4 • طبقه ۲")
+        self.assertEqual(AddressSerializer(a).data["additional"], "Unit 4 • طبقه ۲")
         self.assertNotIn("additional_encrypted", AddressSerializer(a).data)
         self.assertTrue(a.additional_encrypted.startswith("tdp1:dev_1:"))
-        a.additional = "Door B"
+        self.assertTrue(AddressSerializer(data={"additional": "B"}).is_valid())
+        a.additional = "New note"
         a.save(update_fields=["additional"])
         a.refresh_from_db()
-        self.assertEqual(a.additional_for_read(), "Door B")
+        self.assertEqual(a.additional, "New note")
 
-    def test_backfill_requires_apply_and_verifies(self):
-        a = Address.objects.create(additional="Legacy")
-        Address._base_manager.filter(pk=a.pk).update(additional_encrypted=None)
-        with override_settings(DEBUG=True):
-            call_command("backfill_address_additional_encrypted", stdout=StringIO())
-            a.refresh_from_db()
-            self.assertIsNone(a.additional_encrypted)
-            call_command("backfill_address_additional_encrypted", "--apply", stdout=StringIO())
-            call_command("backfill_address_additional_encrypted", "--verify-only", stdout=StringIO())
-        a.refresh_from_db()
-        self.assertEqual(a.additional_for_read(), "Legacy")
+    def test_serializer_create_and_null_empty(self):
+        serializer = AddressSerializer(data={"additional": "From API"})
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        obj = serializer.save()
+        self.assertEqual(obj.additional, "From API")
+        self.assertEqual(Address.objects.get(pk=obj.pk).additional, "From API")
+        self.assertIsNone(Address.objects.create(additional=None).additional)
+        self.assertEqual(Address.objects.create(additional="").additional, "")
 
-    def test_null_and_empty_preserved(self):
-        a = Address.objects.create(additional=None)
-        b = Address.objects.create(additional="")
-        self.assertIsNone(a.additional_encrypted)
-        self.assertEqual(b.additional_for_read(), "")
-
-    def test_bulk_write_bypass_is_blocked(self):
+    def test_encrypted_only_and_bulk_write_protection(self):
+        self.assertNotIn("additional", [f.name for f in Address._meta.concrete_fields])
         a = Address.objects.create(additional="Private")
         with self.assertRaises(ValueError):
-            Address.objects.filter(pk=a.pk).update(additional="raw")
+            Address.objects.filter(pk=a.pk).update(additional_encrypted="raw")
         with self.assertRaises(ValueError):
             Address.objects.bulk_create([Address(additional="raw")])
 
-    def test_read_does_not_fallback_if_ciphertext_is_invalid(self):
-        a = Address.objects.create(additional="Private")
-        Address._base_manager.filter(pk=a.pk).update(additional_encrypted="damaged")
+    def test_tampering_does_not_fallback(self):
+        a = Address.objects.create(additional="Protected")
+        Address._base_manager.filter(pk=a.pk).update(additional_encrypted="not-an-envelope")
         a.refresh_from_db()
-        with self.assertRaises(Exception):
-            a.additional_for_read()
+        with self.assertRaises(FieldProtectionIntegrityError):
+            _ = a.additional
+
+    def test_missing_key_does_not_fallback(self):
+        a = Address.objects.create(additional="Protected")
+        a.refresh_from_db()
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(FieldProtectionUnavailable):
+                _ = a.additional
+
+    def test_dev_integrity_command(self):
+        a = Address.objects.create(additional="Protected")
+        with override_settings(DEBUG=True):
+            out = StringIO()
+            call_command("verify_address_additional_encrypted", stdout=out)
+            self.assertIn("errors=0", out.getvalue())
+            self.assertNotIn("Protected", out.getvalue())

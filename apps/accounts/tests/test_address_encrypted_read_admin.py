@@ -18,7 +18,7 @@ from apps.accounts.admin.address_admin import AddressAdmin
 from apps.accounts.models import Address
 
 
-class AddressAdminCompatibilityTests(TestCase):
+class AddressEncryptedAdminTests(TestCase):
     def test_staff_mask_and_superuser_reveal(self):
         with patch.dict(os.environ, {
             "TOWNLIT_DP_FERNET_KEYS_JSON": json.dumps({"dev_1": Fernet.generate_key().decode()}),
