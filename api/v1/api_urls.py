@@ -3,6 +3,8 @@
 from django.urls import include, path
 
 urlpatterns = [
+    # TownLIT B1: isolated denial stubs; no domain handler is registered.
+    path('ai-integrations/', include('apps.ai_gateway.urls')),
     path('', include('apps.main.urls')),
 
     path('accounts/', include('apps.accounts.urls')),

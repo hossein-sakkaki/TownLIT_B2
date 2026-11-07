@@ -197,6 +197,7 @@ DJANGO_CRYPTO_KEY = os.getenv("DJANGO_CRYPTO_KEY")
 # Application definition
 
 INSTALLED_APPS = [
+    'apps.ai_gateway.apps.AIGatewayConfig',
     'channels',             # Real-Time Notification
     
     'django.contrib.admin',
@@ -473,6 +474,9 @@ REST_FRAMEWORK = {
 AUTH_SESSION_GENERATION_ENFORCE = env_bool(
     "AUTH_SESSION_GENERATION_ENFORCE", default=False,
 )
+
+# B1 cannot enable credentials or domain operations, even with this switch on.
+AI_GATEWAY_ENABLED = env_bool("AI_GATEWAY_ENABLED", default=False)
 
 # Password changes invalidate previous JWT generations and reset never logs in.
 # Keep disabled until Web/iOS/other clients support login_required responses.
