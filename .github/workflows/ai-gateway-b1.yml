@@ -21,6 +21,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  isolated-b11a:
+    name: B1.1A isolated ES256 profile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: '3.12'
+      - name: Install only the isolated synthetic verifier profile
+        run: |
+          python -m venv ../b11a-venv
+          ../b11a-venv/bin/python -m pip install -r requirements.ai-gateway-b11a.txt
+          ../b11a-venv/bin/python -m pip check
+      - name: Verify signed synthetic tokens and public denial
+        run: |
+          ../b11a-venv/bin/python -m apps.ai_gateway.tests.run core test apps.ai_gateway.tests.service_tokens --noinput -v 2
+
   synthetic-mysql:
     name: B1 security and Backend regressions
     runs-on: ubuntu-24.04
@@ -34,7 +54,7 @@ jobs:
 
       - name: Verify the authorized baseline and whitespace
         env:
-          B1_BASE_SHA: 524dbffbb68ed7e1b74b72d6e088618ff73ae779
+          B1_BASE_SHA: 429efd647bbceb30f71389f09b7bae6dfd33212a
         run: |
           test "$(git rev-parse origin/security/django-5.2-lts-20261022)" = "$B1_BASE_SHA"
           git merge-base --is-ancestor "$B1_BASE_SHA" HEAD
