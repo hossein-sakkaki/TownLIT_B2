@@ -208,6 +208,12 @@ class RefreshUserIDCompatibilityTests(TestCase):
                 get_user_model().objects.filter(pk=self.user.pk).update(**{flag: value})
                 with self.subTest(flag=flag, claim_type=kind):
                     self._assert_denied(self._refresh(token))
+                    self.assertIsNone(
+                        validate_access_token_for_websocket(str(token.access_token))
+                    )
+                    self.assertFalse(
+                        validate_legacy_websocket_session_access(self.user.pk, 0)
+                    )
                 get_user_model().objects.filter(pk=self.user.pk).update(
                     **{flag: not value}
                 )
@@ -298,6 +304,10 @@ class RefreshUserIDCompatibilityTests(TestCase):
             OutstandingToken.objects.filter(jti=rotated["jti"]).exists(),
             rest_framework_simplejwt.__version__ == "5.5.1",
         )
+        if rest_framework_simplejwt.__version__ == "5.5.1":
+            row = OutstandingToken.objects.get(jti=rotated["jti"])
+            self.assertEqual(row.user_id, self.user.pk)
+            self.assertIsNotNone(row.created_at)
         # 5.3.1 records a rotated token when it is subsequently blacklisted.
         rotated.blacklist()
         self.assertTrue(OutstandingToken.objects.filter(jti=rotated["jti"]).exists())

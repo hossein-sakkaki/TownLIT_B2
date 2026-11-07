@@ -134,11 +134,11 @@ jobs:
             apps.accounts.tests.test_password_session_revocation \
             apps.accounts.tests.test_two_factor_login_single_use \
             apps.accounts.tests.test_backend_exception_redaction \
-            --noinput -v 2
+            --noinput --keepdb -v 2
 
       - name: Verify signed refresh claims and current account policy
         run: |
-          python -m apps.ai_gateway.tests.run backend test apps.accounts.tests.test_refresh_user_id_compatibility --noinput -v 2
+          python -m apps.ai_gateway.tests.run backend test apps.accounts.tests.test_refresh_user_id_compatibility --noinput --keepdb -v 2
 
       - name: Remove only this job's disposable database container
         if: always()
