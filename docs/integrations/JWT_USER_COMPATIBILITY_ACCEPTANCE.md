@@ -177,6 +177,18 @@ DRF's request-validation 400; they are not retryable dependency failures.
 View-level throttling remains 429. This serializer adds neither a retry loop nor
 a Retry-After promise; 503 is not evidence that replay is safe or will succeed.
 
+Inspected installed upstream source in both complete environments: the parent
+5.3.1 refresh path reparses/rechecks the blacklist, builds access in memory,
+gets/creates the old outstanding row and blacklist row, then changes JTI/expiry/
+issued-at and serializes the rotated refresh. Parent 5.5.1 also reads the current
+user before access creation and during blacklist/outstand operations, and calls
+outstand for the new refresh after consuming the old one. These parent methods
+are not copied or replaced here. TokenRefreshView catches TokenError and maps
+it to InvalidToken; typed DRF 503/500 exceptions pass to the existing TownLIT
+exception handler. Exceptions raised before serializer.validate (JSON/field
+validation, middleware, throttling) and transport failures after view return
+remain outside this remediation's mapping.
+
 | Boundary outcome | HTTP / machine code | Credential/state semantics |
 | --- | --- | --- |
 | Invalid signature, expired JWT, invalid encoding, wrong token type, missing required JWT claim, invalid canonical user ID; invalid enforced generation shape | 401 / `token_not_valid` | Known-invalid checks occur before DB access; no user lookup/rotation |
@@ -237,13 +249,77 @@ cache, new refresh family or guaranteed transparent recovery is introduced.
 
 ## AUTH-02 verification checkpoint
 
-At the initial remediation push, scoped lint/format/whitespace/header checks and
-the two strict-ID unit tests in each independent full-manifest profile pass.
-Full real-MySQL migrations, the 66 selected cases, the existing 82 acceptance
-cases, 15 new fault-contract cases, Gateway/migration checks and impacted
-cross-version runs are in progress. Their results are not inferred from the
-historical green gate below; this section must be completed from actual logs/CI
-before final handoff. PR #7 remains Draft and blocked.
+Runtime/test/workflow checkpoint:
+`7a5f4ed023efbde3e835d11e206da16f7b997d72`. Subsequent changes are acceptance
+Markdown only; the final delivered SHA is recorded in PR #7 separately.
+
+| Completed AUTH-02 local verification | Baseline full profile (5.3.1) | Supported full profile (5.5.1) |
+| --- | --- | --- |
+| Selected Backend regressions, unchanged assertions | **66/66 PASS**, 23.324s | **66/66 PASS**, 21.880s |
+| Existing 82 auth/WS + 15 new failure-contract cases | **97/97 PASS**, 14.551s | **97/97 PASS**, 13.810s |
+| Gateway MySQL | **28/28 PASS**, 0.371s | **28/28 PASS**, 0.411s |
+| Gateway SQLite | 24 PASS / 4 MySQL-only skips, 0.181s | 24 PASS / 4 MySQL-only skips, 0.187s |
+| Full-manifest pip check, scoped lint/format/headers/whitespace | PASS | PASS |
+| Accounts/Gateway drift, Gateway apply/zero/reapply, Backend check | PASS with existing warnings | PASS with existing warnings |
+| Real A–G plus H transitions after remediation | **37 phases / 246 actions PASS**, separate interpreters for both profiles | Same shared experiment |
+
+No selected or expanded Backend case skipped. The 97 count includes the
+previous 82; it is not 97 new cases. The new 15 cases test exact 503/500 JSON,
+401/403 denial, redaction, no returned credentials, real connection reopening,
+blacklist/generation retention, and consumed-token/lost-ack limitations. The
+profile-specific parent lookup and new-outstanding failure execute under 5.5.1;
+5.3.1 cases explicitly prove those parent operations are absent, not skipped.
+Both profiles also retain the measured two-extra-read assertion on valid OFF-mode
+refresh. No new broad exception→503 rule or retry protocol was required.
+
+Local full migrations applied accounts.0105 (800 baseline records), then the
+supported profile's blacklist 0013. The repeated 37-phase experiment retained
+**801 migration records and one signing fingerprint** throughout. Both races
+again returned two distinct live children/two 200s; generation revocation then
+denied every child in both readers. This remains characterization, not security
+approval. The pinned MySQL 8.4.13 container had network none, no published ports
+and synthetic tmpfs storage, and was removed after completed local verification.
+Independent complete manifests have the same hashes recorded in the initial
+gate below; production requirements remain unchanged.
+
+### Completed AUTH-02 CI
+
+[Run 42421070773](https://github.com/hossein-sakkaki/TownLIT_B2/actions/runs/42421070773)
+completed **SUCCESS** at source/test head
+`7a5f4ed023efbde3e835d11e206da16f7b997d72`, using proposed merge test ref
+`396aaf0929f490c0383ce7b295842bac3c7cb5c2` against unchanged security target
+`00108e3eee45a67bdff8f80086875fb54af54211`. This is not an actual PR merge.
+Finished job metadata and decoded logs were inspected. Both jobs freshly
+installed independent complete manifests and used separate isolated MySQL
+containers; observed Python 3.12.16 / MySQL 8.4.13.
+
+| Completed AUTH-02 CI check | [Baseline job](https://github.com/hossein-sakkaki/TownLIT_B2/actions/runs/42421070773/job/128549404343) | [Supported job](https://github.com/hossein-sakkaki/TownLIT_B2/actions/runs/42421070773/job/128549403353) |
+| --- | --- | --- |
+| Selected Backend regressions | **66/66 PASS**, 25.657s | **66/66 PASS**, 20.582s |
+| Focused refresh compatibility | **24/24 PASS**, 5.583s | **24/24 PASS**, 4.207s |
+| Expanded account/WS plus new failure-contract cases | **73/73 PASS**, 10.179s | **73/73 PASS**, 7.964s |
+| Gateway MySQL | **28/28 PASS**, 0.224s | **28/28 PASS**, 0.202s |
+| Gateway SQLite | 24 PASS / 4 MySQL-only skips, 0.107s | 24 PASS / 4 MySQL-only skips, 0.087s |
+| Full profiles/pip, headers/lint, migration drift/reversibility, Backend check, container cleanup | PASS | PASS |
+| Cross-version A–G plus H | Per-job step intentionally absent here; both interpreters execute in supported job | **37 phases / 246 actions PASS**, additional independent baseline full environment |
+
+The 24+73 split is the same **97** acceptance cases run locally, including the
+prior 82 and 15 new fault-contract cases. No Backend case was skipped. The only
+test skips are the four MySQL-only Gateway cases on SQLite; all execute on MySQL.
+The cross-version step is intentionally conditional on the supported CI job,
+not an omitted transition scenario. The separate [isolated ES256 job](https://github.com/hossein-sakkaki/TownLIT_B2/actions/runs/42421070773/job/128549403502)
+passed **11/11**, 0.043s. All three jobs and their cleanup steps succeeded.
+Subsequent documentation-only changes do not alter the tested runtime, tests,
+manifests or workflow. Historical run 42392588702 below remains initial-gate
+evidence, not the evidence for this changed error boundary.
+
+Server classification remediation is verified within these profiles. **AUTH-02
+release acceptance remains OPEN** for actual client token retention, transient
+error UI/backoff, production capacity/failover, lost acknowledgements and
+concurrency policy. AUTH-01 is still an explicit separate owner decision;
+CLIENT-01 Android password V2 and deployed-build/client acceptance remain open.
+PR #7 stays Draft and **BLOCKED**. No deployment, production migration, flag or
+dependency change follows from these passes.
 
 The changed outage assertions intentionally require the newly authorized 503
 contract, and additionally require sanitized code/body, no credentials, preserved
@@ -419,6 +495,13 @@ Important outer-boundary findings:
   server remediation introduces. A malformed 200 response also follows that
   catch; a failure saving the rotated pair occurs afterward and cannot recover
   the old consumed token.
+
+Exact source:
+[iOS refresh catch](https://github.com/hossein-sakkaki/TownLIT_iOS/blob/95179ad944a1731dee9c22036bbfead5d08159d7/TownLIT/Core/Networking/URLSessionAPIClient.swift#L765),
+[Android refresher](https://github.com/hossein-sakkaki/TownLIT_Android/blob/cb59509327863128922eaf0cc99f2b8d1dc24176/core/network/src/main/kotlin/com/townlit/android/core/network/auth/TLTokenRefresher.kt#L129),
+[Android authenticator](https://github.com/hossein-sakkaki/TownLIT_Android/blob/cb59509327863128922eaf0cc99f2b8d1dc24176/core/network/src/main/kotlin/com/townlit/android/core/network/auth/TLTokenAuthenticator.kt#L64),
+[Web startup catch](https://github.com/hossein-sakkaki/TownLIT_F/blob/614756be5f075850a22c1b3af8729b86d2d3544c/src/app/RootAppShell.tsx#L431),
+[Web status-losing thunk](https://github.com/hossein-sakkaki/TownLIT_F/blob/614756be5f075850a22c1b3af8729b86d2d3544c/src/redux/auth/authSlice.ts#L94).
 
 Narrow client recommendations for separate client changes/releases:
 
