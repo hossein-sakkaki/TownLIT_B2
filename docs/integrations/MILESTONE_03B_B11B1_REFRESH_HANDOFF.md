@@ -1,7 +1,7 @@
 # TownLIT B1.1B.1 — verified refresh user-ID compatibility
 
 `docs/integrations/MILESTONE_03B_B11B1_REFRESH_HANDOFF.md` · TownLIT-Backend
-Created by OpenAI Codex on 2026-11-07. Last Update by OpenAI Codex on 2026-11-07.
+Created by Hossein Sakkaki on 2026-11-07. Last Update by Hossein Sakkaki on 2026-11-07.
 
 ## Scope and provenance
 

@@ -2,7 +2,7 @@
 # TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-11-05.
-# Last Update by OpenAI Codex on 2026-11-07.
+# Last Update by Hossein Sakkaki on 2026-11-07.
 #
 
 """Validate the signed refresh identity and current session before rotation."""

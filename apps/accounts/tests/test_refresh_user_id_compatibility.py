@@ -1,8 +1,8 @@
 # apps/accounts/tests/test_refresh_user_id_compatibility.py
 # TownLIT-Backend
 #
-# Created by OpenAI Codex on 2026-11-07.
-# Last Update by OpenAI Codex on 2026-11-07.
+# Created by Hossein Sakkaki on 2026-11-07.
+# Last Update by Hossein Sakkaki on 2026-11-07.
 #
 
 """Signed refresh compatibility; shared identity/session validators stay strict."""
