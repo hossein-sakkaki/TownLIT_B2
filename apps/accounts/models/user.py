@@ -1,4 +1,9 @@
 # apps/accounts/models/user.py
+# TownLIT-Backend
+#
+# Original Created date: not recorded in source; verify with Git history.
+# Last Update by Hossein Sakkaki on 2026-11-06.
+#
 
 from datetime import timedelta
 
@@ -22,6 +27,7 @@ from validators.mediaValidators.image_validators import validate_image_file, val
 from validators.security_validators import validate_no_executable_file
 from validators.usernameValidators.username_normalizer import normalize_username
 from utils.common.utils import FileUpload, create_active_code
+from apps.core.crypto.protected_columns import ShadowProtectedFieldsMixin
 
 
 class CustomUserManager(BaseUserManager):
@@ -171,7 +177,9 @@ class CustomUserManager(BaseUserManager):
         return user
 
 
-class CustomUser(AbstractBaseUser, PermissionsMixin):
+class CustomUser(ShadowProtectedFieldsMixin, AbstractBaseUser, PermissionsMixin):
+    protected_field_specs = {"birthday": ("birthday_encrypted", "date")}
+
     IMAGE = FileUpload('accounts', 'photos', 'custom_user')
 
     id = models.BigAutoField(primary_key=True)
@@ -205,6 +213,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     username = models.CharField(max_length=20, unique=True, blank=True, verbose_name='Username')
 
     birthday = models.DateField(auto_now=False, auto_now_add=False, blank=True, null=True, verbose_name='Birthday')
+    birthday_encrypted = models.TextField(null=True, blank=True, editable=False)
     gender = models.CharField(max_length=6, choices=GENDER_CHOICES, null=True, blank=True, verbose_name='Gender')
     label = models.ForeignKey(
         "accounts.CustomLabel",

@@ -199,6 +199,7 @@ class CustomUserSerializer(AvatarURLMixin, serializers.ModelSerializer):
             "reactivated_at",
             "deletion_requested_at",
             "email_change_tokens",
+            "birthday_encrypted",
             "reset_token",
             "reset_token_expiration",
             "mobile_verification_code",

@@ -8,6 +8,7 @@
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
+from apps.core.crypto.protected_columns import ShadowProtectedFieldsMixin
 
 from apps.accounts.services.identity_private_fields import (
     encrypt_identity_field,
@@ -126,7 +127,9 @@ class IdentityVerification(models.Model):
         self.save(update_fields=["status", "revoked_at", "notes", "updated_at"])
 
 
-class IdentityGrant(models.Model):
+class IdentityGrant(ShadowProtectedFieldsMixin, models.Model):
+    protected_field_specs = {"reason": ("reason_encrypted", "text")}
+
     SOURCE_ADMIN = "admin"
     SOURCE_SYSTEM = "system"
 
@@ -140,6 +143,7 @@ class IdentityGrant(models.Model):
     source = models.CharField(max_length=20, choices=SOURCE_CHOICES)
     level = models.CharField(max_length=20, choices=IDENTITY_VERIFICATION_LEVEL_CHOICES)
     reason = models.TextField()
+    reason_encrypted = models.TextField(null=True, blank=True, editable=False)
     approved_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -168,7 +172,12 @@ class IdentityGrant(models.Model):
         self.save(update_fields=["is_active", "revoked_at"])
 
 
-class IdentityAuditLog(models.Model):
+class IdentityAuditLog(ShadowProtectedFieldsMixin, models.Model):
+    protected_field_specs = {
+        "reason": ("reason_encrypted", "text"),
+        "metadata": ("metadata_encrypted", "json"),
+    }
+
     id = models.BigAutoField(primary_key=True)
 
     user = models.ForeignKey(
@@ -196,11 +205,13 @@ class IdentityAuditLog(models.Model):
         related_name="performed_identity_audits",
     )
     reason = models.CharField(max_length=1000, null=True, blank=True)
+    reason_encrypted = models.TextField(null=True, blank=True, editable=False)
 
     previous_status = models.CharField(max_length=20, null=True, blank=True)
     new_status = models.CharField(max_length=20, null=True, blank=True)
 
     metadata = models.JSONField(null=True, blank=True)
+    metadata_encrypted = models.TextField(null=True, blank=True, editable=False)
 
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
