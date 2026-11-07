@@ -66,6 +66,13 @@ PR #7's initial main→security-independent delta is exactly these five paths:
 This gate adds process-separated transition tooling, focused availability tests,
 expanded existing test execution, this matrix and header corrections to PR #7.
 An existing WS mock gains `pk` to match a real user; its assertion is unchanged.
+Its new files are `apps/accounts/tests/jwt_transition_worker.py`,
+`apps/accounts/tests/test_jwt_user_acceptance.py`,
+`scripts/check_jwt_user_transitions.py` and this acceptance document. It also
+updates `tests/test_ws_access_auth.py` with a real-user-shaped fixture and
+`apps/ai_gateway/tests/settings_backend.py` with the production-default phone
+TTL for the previously unrun disclosure test. Existing security assertions stay
+unchanged. No runtime authentication logic changed during this gate.
 It does not reattribute security-branch runtime changes to PR #7.
 
 ## Authentication behavior impact matrix

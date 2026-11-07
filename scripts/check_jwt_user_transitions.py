@@ -258,6 +258,50 @@ def main():
                 for action in ("deny", "deny_access")
             ],
         )
+    for issuer in interpreters:
+        tasks = []
+        for case, (origin, _) in plans.items():
+            if origin != issuer:
+                continue
+            for token_format in ("legacy", "v2"):
+                label = f"H-{case}-{token_format}"
+                tasks.extend(
+                    [
+                        {"action": "issue", "fixture": label + ".json", "case": label},
+                        {
+                            "action": "prepare_reset",
+                            "fixture": label + ".json",
+                            "format": token_format,
+                        },
+                    ]
+                )
+        phase("prepare-cross-version-reset-links-" + issuer, issuer, tasks)
+    for consumer in interpreters:
+        phase(
+            "consume-cross-version-reset-links-" + consumer,
+            consumer,
+            [
+                {"action": "consume_reset", "fixture": f"H-{case}-{token_format}.json"}
+                for case, (_, target) in plans.items()
+                if target == consumer
+                for token_format in ("legacy", "v2")
+            ],
+        )
+    for consumer in interpreters:
+        phase(
+            "reset-replay-and-jwt-revocation-" + consumer,
+            consumer,
+            [
+                {
+                    "action": action,
+                    "fixture": f"H-{case}-{token_format}.json",
+                    "ensure_unblacklisted": True,
+                }
+                for case in plans
+                for token_format in ("legacy", "v2")
+                for action in ("consume_reset_denied", "deny", "deny_access")
+            ],
+        )
     summary = {
         "marker": MARKER,
         "result": "PASS",

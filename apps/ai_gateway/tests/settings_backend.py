@@ -2,7 +2,7 @@
 # TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-11-06.
-# Last Update by Hossein Sakkaki on 2026-11-06.
+# Last Update by Hossein Sakkaki on 2026-11-07.
 #
 
 """Isolated baseline regression settings; never execute settings.py or load .env.
@@ -127,6 +127,7 @@ AWS_ACCESS_KEY_ID = "synthetic-b1-not-a-credential"
 AWS_SECRET_ACCESS_KEY = "synthetic-b1-not-a-credential"
 LITSHIELD_ACCESS_EXPIRATION_SECONDS = 300
 EMAIL_CODE_EXPIRATION_MINUTES = 10
+PHONE_CODE_EXPIRATION_MINUTES = 10
 RESET_LINK_EXPIRATION_MINUTES = 30
 DEFAULT_USER_AVATAR_URL = "/synthetic/avatar.png"
 ASSET_CDN_BASE_URL = "https://synthetic.example.invalid"

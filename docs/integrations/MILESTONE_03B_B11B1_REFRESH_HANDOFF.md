@@ -3,6 +3,13 @@
 `docs/integrations/MILESTONE_03B_B11B1_REFRESH_HANDOFF.md` · TownLIT-Backend
 Created by Hossein Sakkaki on 2026-11-07. Last Update by Hossein Sakkaki on 2026-11-07.
 
+## Mandatory acceptance gate
+
+The subsequent [JWT/user compatibility acceptance matrix](JWT_USER_COMPATIBILITY_ACCEPTANCE.md)
+controls the final pre-merge recommendation. This file preserves the earlier
+repair's exact test/client-reference evidence; it does not establish the actual
+production release or supersede the gate's open decisions and latest client refs.
+
 ## Scope and provenance
 
 Draft repair, no dependency adoption or production readiness approval. Separate

@@ -93,7 +93,10 @@ def main():
         issue_password_reset_token_v2,
     )
     from apps.accounts.services.session_jwt import issue_session_refresh_token
-    from apps.accounts.services.session_security import increment_session_generation
+    from apps.accounts.services.session_security import (
+        get_session_generation,
+        increment_session_generation,
+    )
     from apps.accounts.views.auth_views import AuthViewSet
     from apps.core.websocket.access_auth import validate_access_token_for_websocket
 
@@ -155,6 +158,7 @@ def main():
                 old = fixture["refresh"]
                 if task.get("ensure_unblacklisted"):
                     RefreshToken(old)  # generation denial must not be blacklist denial
+                    assert get_session_generation(user.pk) == 1
                 if action == "refresh":
                     original = RefreshToken(old)
                     old_jti = original["jti"]
@@ -278,6 +282,51 @@ def main():
                 results.append(
                     {"case": fixture["case"], "action": action, "generation": 1}
                 )
+            elif action == "prepare_reset":
+                from datetime import timedelta
+
+                from django.utils import timezone
+
+                from apps.accounts.views.auth_views import cipher_suite
+
+                if task["format"] == "legacy":
+                    bearer = cipher_suite.encrypt(user.email.encode()).decode()
+                    verifier = bearer
+                else:
+                    bearer, verifier = issue_password_reset_token_v2()
+                user.reset_token = verifier
+                user.reset_token_expiration = timezone.now() + timedelta(minutes=5)
+                user.save(update_fields=["reset_token", "reset_token_expiration"])
+                fixture["reset_bearer"] = bearer
+                write_private(path, fixture)
+                results.append(
+                    {
+                        "case": fixture["case"],
+                        "action": action,
+                        "format": task["format"],
+                    }
+                )
+            elif action in {"consume_reset", "consume_reset_denied"}:
+                req = APIRequestFactory().post(
+                    "/synthetic/reset/", {"new_password": NEW_PASSWORD}, format="json"
+                )
+                response = AuthViewSet.as_view({"post": "reset_password"})(
+                    req, reset_token=fixture["reset_bearer"]
+                )
+                expected = 404 if action == "consume_reset_denied" else 200
+                assert response.status_code == expected, (
+                    f"Reset transition status {response.status_code}"
+                )
+                assert "access" not in response.data and "refresh" not in response.data
+                if expected == 200:
+                    assert response.data.get("login_required") is True
+                    user.refresh_from_db()
+                    assert (
+                        user.check_password(NEW_PASSWORD) and user.reset_token is None
+                    )
+                results.append(
+                    {"case": fixture["case"], "action": action, "status": expected}
+                )
             elif action in {"password_change", "password_reset"}:
                 factory = APIRequestFactory()
                 if action == "password_change":
@@ -319,8 +368,8 @@ def main():
                 access = AccessToken(fixture["access"])
                 try:
                     SessionGenerationJWTAuthentication().get_user(access)
-                except AuthenticationFailed:
-                    pass
+                except AuthenticationFailed as exc:
+                    assert exc.get_codes() == "session_revoked"
                 else:
                     raise AssertionError("Revoked access accepted")
                 assert validate_access_token_for_websocket(fixture["access"]) is None
