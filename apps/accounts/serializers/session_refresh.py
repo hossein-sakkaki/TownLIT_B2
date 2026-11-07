@@ -56,14 +56,10 @@ class SessionGenerationTokenRefreshSerializer(TokenRefreshSerializer):
             user = User.objects.get(**{api_settings.USER_ID_FIELD: user_id})
             # 5.3.1 lacks the parent's current-user check. Require an available,
             # active account in both profiles, including with enforcement off.
-            # Restricted-owner limited refresh remains governed by its existing
-            # account gate; refresh does not authorize protected API/WS use.
-            if (
-                not user.is_active
-                or user.is_deleted
-                or user.is_suspended
-                or not api_settings.USER_AUTHENTICATION_RULE(user)
-            ):
+            # Soft deletion/reactivation, suspension/logout and restricted-owner
+            # access remain governed by their existing action/account gates.
+            # Refresh identity alone does not authorize a protected API/WS action.
+            if not user.is_active or not api_settings.USER_AUTHENTICATION_RULE(user):
                 raise InvalidToken("Account access is unavailable.")
             if session_generation_enforced() and not session_generation_matches(
                 user.pk,

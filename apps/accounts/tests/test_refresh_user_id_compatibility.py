@@ -197,7 +197,7 @@ class RefreshUserIDCompatibilityTests(TestCase):
         token.blacklist()
         self._assert_denied(self._refresh(token))
 
-    def test_inactive_soft_deleted_and_suspended_accounts_cannot_refresh(self):
+    def test_inactive_denial_and_existing_domain_restrictions_are_preserved(self):
         for flag, value in (
             ("is_active", False),
             ("is_deleted", True),
@@ -207,7 +207,40 @@ class RefreshUserIDCompatibilityTests(TestCase):
                 token = self._token(kind)
                 get_user_model().objects.filter(pk=self.user.pk).update(**{flag: value})
                 with self.subTest(flag=flag, claim_type=kind):
-                    self._assert_denied(self._refresh(token))
+                    if flag == "is_active":
+                        self._assert_denied(self._refresh(token))
+                    else:
+                        # Canonical login issues limited reactivation tokens;
+                        # suspended accounts retain an explicit logout exception.
+                        # Preserve these domain gates instead of inventing a
+                        # blanket refresh-level account policy.
+                        from types import SimpleNamespace
+
+                        from apps.accounts.views.auth_views import AuthViewSet
+                        from apps.core.api_exceptions import (
+                            DeletedAccount,
+                            SuspendedAccount,
+                        )
+                        from apps.core.permissions import DenyIfDeletedOrSuspended
+
+                        self.assertEqual(self._refresh(token).status_code, 200)
+                        current = get_user_model().objects.get(pk=self.user.pk)
+                        request = SimpleNamespace(user=current)
+                        view = AuthViewSet()
+                        view.action = "protected_action"
+                        expected = (
+                            DeletedAccount if flag == "is_deleted" else SuspendedAccount
+                        )
+                        with self.assertRaises(expected):
+                            DenyIfDeletedOrSuspended().has_permission(request, view)
+                        view.action = (
+                            "confirm_reactivate_account"
+                            if flag == "is_deleted"
+                            else "logout"
+                        )
+                        self.assertTrue(
+                            DenyIfDeletedOrSuspended().has_permission(request, view)
+                        )
                     self.assertIsNone(
                         validate_access_token_for_websocket(str(token.access_token))
                     )
