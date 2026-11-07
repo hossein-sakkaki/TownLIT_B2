@@ -17,6 +17,7 @@ from .settings_mysql import *  # noqa: F403
 
 
 BASE_DIR = Path(__file__).resolve().parents[3]
+DATABASES["default"]["TEST"] = {"NAME": "test_townlit_b1_disposable"}  # noqa: F405
 _tree = ast.parse((BASE_DIR / "townlit_b" / "settings.py").read_text())
 _assignments = {target.id: node.value for node in _tree.body if isinstance(node, ast.Assign)
                 for target in node.targets if isinstance(target, ast.Name)}

@@ -160,6 +160,19 @@ class MetadataTests(TestCase):
             with self.assertRaisesMessage(GatewayDenied, "security_unavailable"):
                 self.authorize()
 
+    def test_mysql_case_insensitive_labels_do_not_expand_permission(self):
+        for model, pk, changes in (
+            (ServicePrincipal, self.principal.pk, {"agent_id": "PHOEBE"}),
+            (ServicePrincipal, self.principal.pk, {"environment": "SYNTHETIC"}),
+            (OfficeOrganizationBinding, self.organization.pk, {"environment": "SYNTHETIC"}),
+            (OperationGrant, self.grant.pk, {"operation": "GATEWAY.CAPABILITIES"}),
+        ):
+            with transaction.atomic():
+                model.objects.filter(pk=pk).update(**changes)
+                with self.assertRaises(GatewayDenied):
+                    self.authorize()
+                transaction.set_rollback(True)
+
     def test_database_constraints_and_empty_defaults(self):
         with self.assertRaises(IntegrityError), transaction.atomic():
             OperationGrant.objects.create(

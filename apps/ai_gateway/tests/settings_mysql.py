@@ -15,7 +15,7 @@ DATABASES = {"default": {
     "ENGINE": "django.db.backends.mysql",
     "HOST": str(SOCKET), "PORT": "", "USER": "root", "PASSWORD": "",
     "NAME": "townlit_b1_disposable",
-    "TEST": {"NAME": "test_townlit_b1_disposable"},
+    "TEST": {"NAME": "test_townlit_b1_gateway"},
     "OPTIONS": {"charset": "utf8mb4", "isolation_level": "read committed",
                 "init_command": "SET sql_mode='STRICT_TRANS_TABLES'"},
 }}

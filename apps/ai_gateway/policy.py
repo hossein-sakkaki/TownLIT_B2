@@ -20,7 +20,7 @@ def require_metadata_permission(identity, operation, version, scope_ref, *, lock
     if getattr(settings, "AI_GATEWAY_ENABLED", False) is not True:
         raise GatewayDenied("gateway_disabled")
     environment = getattr(settings, "AI_GATEWAY_ENVIRONMENT", "")
-    if (not environment or not isinstance(identity, VerifiedIdentity)
+    if (not isinstance(environment, str) or not environment or not isinstance(identity, VerifiedIdentity)
             or not isinstance(operation, str) or type(version) is not int
             or not isinstance(scope_ref, UUID)
             or not all(isinstance(value, UUID) for value in (
@@ -55,6 +55,10 @@ def require_metadata_permission(identity, operation, version, scope_ref, *, lock
             version=spec.version, scope_ref=scope_ref, active=True,
             revoked_at__isnull=True, expires_at__gt=timezone.now(),
         )
+        # MySQL's configured collation may compare security labels without case.
+        if (principal.agent_id != identity.agent_id or principal.environment != environment
+                or organization.environment != environment or grant.operation != spec.name):
+            raise GatewayDenied()
         return principal, organization, grant
     except (ServicePrincipal.DoesNotExist, OfficeOrganizationBinding.DoesNotExist,
             OperationGrant.DoesNotExist):

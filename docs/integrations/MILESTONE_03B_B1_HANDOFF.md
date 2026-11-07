@@ -139,3 +139,32 @@ Full migration plan loaded, including accounts/0105 and third-party migrations.
 Selected existing human-auth and new isolation regressions are still running;
 results are not yet claimed. Production storage ACLs, old encrypted ciphertext,
 full client/socket deployment behavior and advisory remediation remain unverified.
+
+
+## Required-case evidence map (updated core)
+
+| Requirement | Actual evidence / limit |
+| --- | --- |
+| 1 Disabled Gateway | All public paths/methods and complete synthetic policy configuration deny. |
+| 2 Unknown identity/operation | Current metadata tests; no dynamic handlers exist. |
+| 3 Missing grants | Denied; principals/bindings/grants inactive by default. |
+| 4 Agent/org combinations | Exact canonical agent and organization intersection, including MySQL collation checks. |
+| 5 Cross-org/record | Exact **principal metadata** record and invented org fixtures only. Real domain bindings/selectors deferred; all domain HTTP paths deny. |
+| 6 Chloe | Always denies even with an active mistaken metadata grant. |
+| 7 JWT negative matrix | **Deferred: no Gateway JWT verifier or issuance implemented.** Stub refusal is not cryptographic verification. |
+| 8 Certificates | Forged metadata never authorizes a public request. Actual trusted-hop/mTLS verification deferred. |
+| 9 Transport tampering | Mutated method/path/body/digest/signature cannot pass denial stubs. RFC 9421 cryptographic tamper detection deferred. |
+| 10 Replay/idempotency | Real MySQL nonce uniqueness, conflicting metadata payloads, same-key serialization. No domain effect/recovery claim. |
+| 11 Revoked grants | Next call/replay denies; two-connection revoke/reserve serialization tested. |
+| 12 Dependency outages | Policy/replay/audit failures deny; receipt/revoke audit failure rolls back metadata. |
+| 13 Domain records | New code/migration has no domain services/backfills; full baseline snapshot/SQL check pending. |
+| 14 Authentication/routing | Source unchanged outside new app registration/include/kill switch; selected runtime regressions pending. |
+| 15 Migration/schema | Core MySQL apply/reverse/reapply and drift passed; full baseline graph still running. |
+
+Latest core commands use `python -m apps.ai_gateway.tests.run` with `mysql` or
+`core` profile. **23/23 passed on MySQL; SQLite 20 passed and 3 explicitly skipped**.
+Core and Backend tests now have separate fixed disposable test database names to
+avoid interference. The baseline graph has 744 application migration files plus
+third-party migrations. After the completed core transaction tests, disposable
+MySQL `innodb_flush_log_at_trx_commit` was set to 2 to reduce fresh-schema setup
+cost (binary logging was already off). No crash-durability claims are made.
