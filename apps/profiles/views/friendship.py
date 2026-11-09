@@ -348,7 +348,6 @@ class FriendshipViewSet(viewsets.ModelViewSet):
                     "username",
                     "name",
                     "family",
-                    "email",
                     "image_name",
                     "avatar_version",
 

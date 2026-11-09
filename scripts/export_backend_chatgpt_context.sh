@@ -26,69 +26,94 @@ echo
 mkdir -p "$OUTPUT_DIR"
 
 echo "------------------------------------------------------------"
-echo " [1/13] Project Foundation"
+echo " [1/18] Project Foundation"
 echo "------------------------------------------------------------"
 /bin/bash "$SCRIPT_DIR/export_backend_foundation.sh"
 
 echo "------------------------------------------------------------"
-echo " [2/13] Core Domain Models"
+echo " [2/18] Core Domain Models"
 echo "------------------------------------------------------------"
 /bin/bash "$SCRIPT_DIR/export_backend_core_models.sh"
 
 echo "------------------------------------------------------------"
-echo " [3/13] Shared Infrastructure"
+echo " [3/18] Shared Infrastructure"
 echo "------------------------------------------------------------"
 /bin/bash "$SCRIPT_DIR/export_backend_shared_infrastructure.sh"
 
 echo "------------------------------------------------------------"
-echo " [4/13] Identity / Profile API"
+echo " [4/18] Identity / Profile API"
 echo "------------------------------------------------------------"
 /bin/bash "$SCRIPT_DIR/export_backend_identity_api.sh"
 
 echo "------------------------------------------------------------"
-echo " [5/13] Organizations"
+echo " [5/18] Organizations"
 echo "------------------------------------------------------------"
 /bin/bash "$SCRIPT_DIR/export_backend_organizations.sh"
 
 echo "------------------------------------------------------------"
-echo " [6/13] Conversation"
+echo " [6/18] Conversation"
 echo "------------------------------------------------------------"
 /bin/bash "$SCRIPT_DIR/export_backend_conversation.sh"
 
 echo "------------------------------------------------------------"
-echo " [7/13] Audio Catalog"
+echo " [7/18] Audio Catalog"
 echo "------------------------------------------------------------"
 /bin/bash "$SCRIPT_DIR/export_backend_audio_catalog.sh"
 
 echo "------------------------------------------------------------"
-echo " [8/13] Subscriptions / Entitlements"
+echo " [8/18] Subscriptions / Entitlements"
 echo "------------------------------------------------------------"
 /bin/bash "$SCRIPT_DIR/export_backend_subscriptions_entitlements.sh"
 
 echo "------------------------------------------------------------"
-echo " [9/13] Square and Stream"
+echo " [9/18] Square and Stream"
 echo "------------------------------------------------------------"
 /bin/bash "$SCRIPT_DIR/export_backend_square_streams.sh"
 
 echo "------------------------------------------------------------"
-echo " [10/13] Sanctuary"
+echo " [10/18] Sanctuary"
 echo "------------------------------------------------------------"
 /bin/bash "$SCRIPT_DIR/export_backend_sanctuary.sh"
 
 echo "------------------------------------------------------------"
-echo " [11/13] Notifications"
+echo " [11/18] Notifications"
 echo "------------------------------------------------------------"
 /bin/bash "$SCRIPT_DIR/export_backend_notifications.sh"
 
 echo "------------------------------------------------------------"
-echo " [12/13] Content Safety"
+echo " [12/18] Content Safety"
 echo "------------------------------------------------------------"
 /bin/bash "$SCRIPT_DIR/export_backend_content_safety.sh"
 
 echo "------------------------------------------------------------"
-echo " [13/13] Validators"
+echo " [13/18] Validators"
 echo "------------------------------------------------------------"
 /bin/bash "$SCRIPT_DIR/export_backend_validators.sh"
+
+echo "------------------------------------------------------------"
+echo " [14/18] Translations"
+echo "------------------------------------------------------------"
+/bin/bash "$SCRIPT_DIR/export_backend_translations.sh"
+
+echo "------------------------------------------------------------"
+echo " [15/18] Data Protection / Field Encryption"
+echo "------------------------------------------------------------"
+/bin/bash "$SCRIPT_DIR/export_backend_data_protection.sh"
+
+echo "------------------------------------------------------------"
+echo " [16/18] Accounting"
+echo "------------------------------------------------------------"
+/bin/bash "$SCRIPT_DIR/export_backend_accounting.sh"
+
+echo "------------------------------------------------------------"
+echo " [17/18] Advancement"
+echo "------------------------------------------------------------"
+/bin/bash "$SCRIPT_DIR/export_backend_advancement.sh"
+
+echo "------------------------------------------------------------"
+echo " [18/18] Subtitles"
+echo "------------------------------------------------------------"
+/bin/bash "$SCRIPT_DIR/export_backend_subtitles.sh"
 
 echo
 echo "============================================================"
