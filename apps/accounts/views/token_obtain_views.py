@@ -2,7 +2,7 @@
 # TownLIT-Backend
 #
 # Created by Hossein Sakkaki on 2026-11-05.
-# Last Update by Hossein Sakkaki on 2026-11-05.
+# Last Update by Hossein Sakkaki on 2026-11-09.
 #
 
 """Protect the legacy Simple JWT token-issuance endpoint.
@@ -10,6 +10,8 @@
 The canonical TownLIT auth flow is apps.accounts.views.auth_views.AuthViewSet.
 Do not allow this generic compatibility endpoint to bypass account/2FA policy.
 """
+
+from collections.abc import Mapping
 
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
@@ -21,6 +23,20 @@ from apps.core.security.account_gate.service import is_restricted_owner_user
 
 
 class TownLITTokenObtainPairSerializer(TokenObtainPairSerializer):
+    def to_internal_value(self, data):
+        # accounts.0114 uses a concrete username field while legacy clients
+        # still send email. Authenticate the alias through the existing manager's
+        # protected identifier lookup; never query the removed plaintext column.
+        # An explicit username retains the parent's precedence and validation.
+        if (
+            isinstance(data, Mapping)
+            and self.username_field not in data
+            and "email" in data
+        ):
+            data = data.copy()
+            data[self.username_field] = data["email"]
+        return super().to_internal_value(data)
+
     @classmethod
     def get_token(cls, user):
         # TokenObtainPairSerializer calls get_token only after credentials

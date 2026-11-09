@@ -1,8 +1,15 @@
 # api/v1/api_urls.py
+# TownLIT-Backend
+#
+# Created by Hossein Sakkaki on 2025-05-26.
+# Last Update by Hossein Sakkaki on 2026-11-09.
+#
 
 from django.urls import include, path
 
 urlpatterns = [
+    # TownLIT B1: isolated denial stubs; no domain handler is registered.
+    path('ai-integrations/', include('apps.ai_gateway.urls')),
     path('', include('apps.main.urls')),
 
     path('accounts/', include('apps.accounts.urls')),
