@@ -1,13 +1,23 @@
 # apps/translations/views/moment.py
+# TownLIT-Backend
+#
+# Created by Hossein Sakkaki (original creation date not recorded in source).
+# Last Update by Hossein Sakkaki on 2026-11-07.
 
+import logging
+
+from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from django.shortcuts import get_object_or_404
 
 from apps.posts.models.moment import Moment
+from apps.core.visibility.policy import VisibilityPolicy
 from apps.translations.services.base import translate_cached
 from apps.translations.services.exceptions import EmptySourceTextError
+
+
+logger = logging.getLogger(__name__)
 
 
 class MomentTranslationViewSet(viewsets.ViewSet):
@@ -43,11 +53,20 @@ class MomentTranslationViewSet(viewsets.ViewSet):
             )
 
         # Respect existing visibility / permission logic
-        reason = None
         try:
-            reason = moment.visibility_gate_reason(request.user)
+            reason = VisibilityPolicy.gate_reason(
+                viewer=request.user,
+                obj=moment,
+            )
         except Exception:
-            pass
+            logger.exception(
+                "moment_translation_visibility_check_failed moment_id=%s",
+                moment.pk,
+            )
+            return Response(
+                {"detail": "Visibility check unavailable."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
 
         if reason:
             return Response(

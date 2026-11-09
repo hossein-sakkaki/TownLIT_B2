@@ -1,13 +1,23 @@
 # apps/translations/views/prayer.py
+# TownLIT-Backend
+#
+# Created by Hossein Sakkaki (original creation date not recorded in source).
+# Last Update by Hossein Sakkaki on 2026-11-07.
 
+import logging
+
+from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from django.shortcuts import get_object_or_404
 
 from apps.posts.models.pray import Prayer
+from apps.core.visibility.policy import VisibilityPolicy
 from apps.translations.services.base import translate_cached
 from apps.translations.services.exceptions import EmptySourceTextError
+
+
+logger = logging.getLogger(__name__)
 
 
 class PrayerTranslationViewSet(viewsets.ViewSet):
@@ -36,9 +46,19 @@ class PrayerTranslationViewSet(viewsets.ViewSet):
 
         # Visibility gate
         try:
-            reason = prayer.visibility_gate_reason(request.user)
+            reason = VisibilityPolicy.gate_reason(
+                viewer=request.user,
+                obj=prayer,
+            )
         except Exception:
-            reason = None
+            logger.exception(
+                "prayer_translation_visibility_check_failed prayer_id=%s",
+                prayer.pk,
+            )
+            return Response(
+                {"detail": "Visibility check unavailable."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
 
         if reason:
             return Response(
@@ -76,9 +96,19 @@ class PrayerTranslationViewSet(viewsets.ViewSet):
 
         # Visibility gate is based on the parent prayer.
         try:
-            reason = prayer.visibility_gate_reason(request.user)
+            reason = VisibilityPolicy.gate_reason(
+                viewer=request.user,
+                obj=prayer,
+            )
         except Exception:
-            reason = None
+            logger.exception(
+                "prayer_translation_visibility_check_failed prayer_id=%s",
+                prayer.pk,
+            )
+            return Response(
+                {"detail": "Visibility check unavailable."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
 
         if reason:
             return Response(
