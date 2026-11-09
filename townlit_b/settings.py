@@ -1095,6 +1095,20 @@ TRANSLATIONS_STRUCTURED_PROMPT_VERSION = os.getenv(
     "structured-v1.0",
 )
 
+# Automatic Primary Language Translation
+TRANSLATIONS_AUTOMATIC_ENABLED = env_bool(
+    "TRANSLATIONS_AUTOMATIC_ENABLED",
+    default=False,
+)
+
+TRANSLATIONS_AUTOMATIC_CACHE_ALIAS = (
+    os.getenv(
+        "TRANSLATIONS_AUTOMATIC_CACHE_ALIAS",
+        "messenger_throttle",
+    ).strip()
+    or "messenger_throttle"
+)
+
 
 # Content Safety -------------------------------------------------------------------------
 CONTENT_SAFETY_ENABLED = env_bool(

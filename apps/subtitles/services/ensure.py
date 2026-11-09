@@ -1,7 +1,16 @@
 # apps/subtitles/services/ensure.py
+# TownLIT-Backend
+#
+# Created by Hossein Sakkaki on 2026-11-09.
+# Last Update by Hossein Sakkaki on 2026-11-09.
+
+# apps/subtitles/services/ensure.py
 
 from __future__ import annotations
 
+from datetime import timedelta
+
+from django.db import transaction
 from django.utils import timezone
 
 from apps.subtitles.models import (
@@ -44,44 +53,55 @@ def ensure_subtitle_track(
 
     fmt_norm = _norm_fmt(fmt)
 
-    track, created = SubtitleTrack.objects.get_or_create(
-        transcript=transcript,
-        target_language=lang,  # store normalized
-        fmt=fmt_norm,
-        defaults={
-            "status": SubtitleJobStatus.PENDING,
-            "engine": "",
-            "is_humanized": False,
-            "llm_model": "",
-            "prompt_version": "",
-            "content": "",
-            "error": "",
-        },
-    )
+    # Lock the unique track row to avoid duplicate work under concurrent ensure calls.
+    with transaction.atomic():
+        track, created = SubtitleTrack.objects.select_for_update().get_or_create(
+            transcript=transcript,
+            target_language=lang,
+            fmt=fmt_norm,
+            defaults={
+                "status": SubtitleJobStatus.PENDING,
+                "engine": "",
+                "is_humanized": False,
+                "llm_model": "",
+                "prompt_version": "",
+                "content": "",
+                "error": "",
+            },
+        )
 
-    # If already done, no work
-    if track.status == SubtitleJobStatus.DONE and track.content:
-        return track
+        if track.status == SubtitleJobStatus.DONE and track.content:
+            return track
 
-    # If currently running, just return
-    if track.status == SubtitleJobStatus.RUNNING:
-        return track
+        if track.status == SubtitleJobStatus.RUNNING:
+            return track
 
-    # If failed, retry only if allowed
-    if track.status == SubtitleJobStatus.FAILED and not force_retry_failed and not created:
-        return track
+        if track.status == SubtitleJobStatus.FAILED and not force_retry_failed:
+            return track
 
-    # Mark pending + enqueue
-    track.status = SubtitleJobStatus.PENDING
-    track.error = ""
-    track.updated_at = timezone.now()
-    track.save(update_fields=["status", "error", "updated_at"])
+        # A fresh PENDING row is already queued. A stale one can be recovered.
+        fresh_pending = (
+            not created
+            and track.status == SubtitleJobStatus.PENDING
+            and track.updated_at
+            and track.updated_at > timezone.now() - timedelta(minutes=10)
+        )
+        if fresh_pending:
+            return track
 
-    from apps.subtitles.tasks import generate_subtitles_task
-    generate_subtitles_task.delay(
-        transcript_id=transcript.id,
-        target_language=lang,
-        fmt=fmt_norm,
-    )
+        track.status = SubtitleJobStatus.PENDING
+        track.error = ""
+        track.updated_at = timezone.now()
+        track.save(update_fields=["status", "error", "updated_at"])
+
+        from apps.subtitles.tasks import generate_subtitles_task
+
+        transaction.on_commit(
+            lambda: generate_subtitles_task.delay(
+                transcript_id=transcript.pk,
+                target_language=lang,
+                fmt=fmt_norm,
+            )
+        )
 
     return track

@@ -1,8 +1,16 @@
 # apps/subtitles/serializers.py
+# TownLIT-Backend
+#
+# Created by Hossein Sakkaki on 2026-11-09.
+# Last Update by Hossein Sakkaki on 2026-11-09.
+
+# apps/subtitles/serializers.py
 
 from __future__ import annotations
 from rest_framework import serializers
-from apps.subtitles.models import SubtitleTrack, VoiceTrack, VideoTranscript
+from apps.subtitles.models import (
+    SubtitleTrack, VoiceTrack, VideoTranscript, SubtitleJobStatus, VoiceJobStatus
+)
 
 
 # SubtitleTrack serializers -----------------------------------------------------------------
@@ -37,7 +45,7 @@ class SubtitleTrackMiniSerializer(serializers.ModelSerializer):
         """
         Return a playable subtitle content URL only when content is ready.
         """
-        if not getattr(obj, "content", ""):
+        if obj.status != SubtitleJobStatus.DONE or not getattr(obj, "content", ""):
             return None
 
         return self._absolute_url(f"/api/v1/subtitles/tracks/{obj.id}/content/")
@@ -83,7 +91,7 @@ class VoiceTrackMiniSerializer(serializers.ModelSerializer):
         """
         Return a playable voice content URL only when audio is ready.
         """
-        if not getattr(obj, "audio", None):
+        if obj.status != VoiceJobStatus.DONE or not getattr(obj, "audio", None):
             return None
 
         return self._absolute_url(f"/api/v1/subtitles/voices/{obj.id}/content/")

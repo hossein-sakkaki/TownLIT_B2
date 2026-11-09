@@ -1,4 +1,8 @@
 # apps/core/streams/serializers.py
+# TownLIT-Backend
+#
+# Created by Hossein Sakkaki (original creation date not recorded in source).
+# Last Update by Hossein Sakkaki on 2026-11-09.
 
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
@@ -27,7 +31,15 @@ from apps.subtitles.serializers import (
     VoiceTrackMiniSerializer,
 )
 from apps.accounts.mixins import AvatarURLMixin
+from apps.translations.services.automatic import cached_automatic_fields
+from apps.translations.services.automatic_dispatch import (
+    automatic_stream_request_limit,
+    dispatch_missing_automatic_fields,
+)
+import logging
 
+
+logger = logging.getLogger(__name__)
 
 CustomUser = get_user_model()
 
@@ -100,6 +112,7 @@ class StreamItemSerializer(AvatarURLMixin, serializers.Serializer):
         self._payload_serializer_count = 0
         self._boundary_resolve_count = 0
         self._owner_resolve_count = 0
+        self._automatic_jobs_enqueued = 0
 
     def _item_cache_key(self, item_or_obj) -> str:
         obj = getattr(item_or_obj, "obj", item_or_obj)
@@ -256,6 +269,13 @@ class StreamItemSerializer(AvatarURLMixin, serializers.Serializer):
         data["has_boundary_between"] = state["has_boundary_between"]
         data["direct_interaction_available"] = state["direct_interaction_available"]
 
+        # Source fields remain authoritative originals for legacy consumers.
+        # Only a previously authorized payload may receive cached translations.
+        self._attach_automatic_translation(
+            data=data,
+            item=item,
+        )
+
         _stream_serializer_time(
             "Stream.serializer.payload.total",
             start,
@@ -265,6 +285,88 @@ class StreamItemSerializer(AvatarURLMixin, serializers.Serializer):
         )
 
         return data
+
+    def _enqueue_missing_automatic_fields(self, *, obj, presentation, viewer) -> int:
+        remaining = (
+            automatic_stream_request_limit()
+            - self._automatic_jobs_enqueued
+        )
+        if remaining <= 0:
+            return 0
+
+        queued = dispatch_missing_automatic_fields(
+            obj=obj,
+            presentation=presentation,
+            viewer=viewer,
+            remaining=remaining,
+        )
+        self._automatic_jobs_enqueued += queued
+        return queued
+
+    def _attach_automatic_translation(self, *, data: dict, item) -> None:
+        request = self.context.get("request")
+        viewer = getattr(request, "user", None)
+        if not getattr(viewer, "is_authenticated", False):
+            return
+
+        fields = {}
+        if item.kind in (STREAM_KIND_MOMENT, STREAM_KIND_PRAY):
+            fields["caption"] = data.get("caption")
+        elif item.kind == STREAM_KIND_TESTIMONY and data.get("type") == "written":
+            fields["title"] = data.get("title")
+            fields["content"] = data.get("content")
+
+        try:
+            if item.kind in (STREAM_KIND_MOMENT, STREAM_KIND_PRAY, STREAM_KIND_TESTIMONY):
+                # Media Testimonies also need the viewer language for subtitle selection.
+                presentation = cached_automatic_fields(
+                    obj=item.obj,
+                    fields=fields,
+                    viewer=viewer,
+                )
+                data["automatic_translation"] = presentation
+                if fields and self._enqueue_missing_automatic_fields(
+                    obj=item.obj,
+                    presentation=presentation,
+                    viewer=viewer,
+                ):
+                    # The client may make one bounded follow-up request.
+                    data["automatic_translation"] = {
+                        **presentation,
+                        "refresh_after_seconds": 12,
+                    }
+
+            # PrayerResponse has its own translation cache identity.
+            response_payload = data.get("response")
+            if (
+                item.kind == STREAM_KIND_PRAY
+                and isinstance(response_payload, dict)
+                and response_payload.get("response_text")
+            ):
+                response = getattr(item.obj, "response", None)
+                if response is not None:
+                    presentation = cached_automatic_fields(
+                        obj=response,
+                        fields={"response_text": response_payload["response_text"]},
+                        viewer=viewer,
+                    )
+                    response_payload["automatic_translation"] = presentation
+                    if self._enqueue_missing_automatic_fields(
+                        obj=response,
+                        presentation=presentation,
+                        viewer=viewer,
+                    ):
+                        response_payload["automatic_translation"] = {
+                            **presentation,
+                            "refresh_after_seconds": 12,
+                        }
+        except Exception:
+            # Translation failures must not break authorized feed content.
+            logger.exception(
+                "stream_automatic_translation_unavailable kind=%s object_id=%s",
+                item.kind,
+                getattr(item.obj, "pk", None),
+            )
 
     # ------------------------------------------------------------------
     # Video playback metadata

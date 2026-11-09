@@ -1,14 +1,29 @@
 # apps/core/square/projections/base.py
+# TownLIT-Backend
+#
+# Created by Hossein Sakkaki (original creation date not recorded in supplied source).
+# Last Update by Hossein Sakkaki on 2026-11-09.
+
+# apps/core/square/projections/base.py
 
 from __future__ import annotations
 
 from typing import Any, Dict
+
+import logging
+
+from apps.translations.services.automatic import cached_automatic_fields
+from apps.translations.services.automatic_dispatch import (
+    automatic_stream_request_limit,
+    dispatch_missing_automatic_fields,
+)
 
 from django.contrib.auth import get_user_model
 
 from apps.core.boundaries.services.policy import BoundaryPolicy
 
 UserModel = get_user_model()
+logger = logging.getLogger(__name__)
 
 
 class SquareProjection:
@@ -29,6 +44,7 @@ class SquareProjection:
         self.obj = obj
         self.request = request
         self.viewer = viewer if getattr(viewer, "is_authenticated", False) else None
+        self._peace_payload = None
 
     # ---------------------------------------------------------
     # Required projection hooks
@@ -147,24 +163,27 @@ class SquareProjection:
         - Boundary blocks direct interaction and should hide Square item.
         """
 
+        if self._peace_payload is not None:
+            return self._peace_payload
+
         owner_user = self.get_owner_user()
         viewer = self.viewer
 
         if not viewer or not owner_user:
-            return {
+            return self._remember_peace({
                 "in_stillness": False,
                 "has_boundary": False,
                 "has_boundary_between": False,
                 "direct_interaction_available": True,
-            }
+            })
 
         if viewer.id == owner_user.id:
-            return {
+            return self._remember_peace({
                 "in_stillness": False,
                 "has_boundary": False,
                 "has_boundary_between": False,
                 "direct_interaction_available": True,
-            }
+            })
 
         try:
             in_stillness = BoundaryPolicy.is_in_stillness(
@@ -182,22 +201,86 @@ class SquareProjection:
                 owner_user,
             )
 
-            return {
+            return self._remember_peace({
                 "in_stillness": bool(in_stillness),
                 "has_boundary": bool(has_boundary),
                 "has_boundary_between": bool(has_boundary_between),
                 "direct_interaction_available": not bool(has_boundary_between),
-            }
+            })
 
         except Exception:
-            # Do not break Square if boundary lookup fails.
-            # The iOS side also has a local boundary safety layer.
-            return {
+            logger.exception("square_boundary_check_failed object_id=%s", getattr(self.obj, "pk", None))
+            return self._remember_peace({
                 "in_stillness": False,
-                "has_boundary": False,
-                "has_boundary_between": False,
-                "direct_interaction_available": True,
+                "has_boundary": True,
+                "has_boundary_between": True,
+                "direct_interaction_available": False,
+            })
+
+    def _remember_peace(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        self._peace_payload = payload
+        return payload
+
+    def _localized_meta(self, meta: Dict[str, Any]) -> Dict[str, Any]:
+        """Read only fresh cached translations for already-authorized Square items."""
+        if self.viewer is None or not isinstance(meta, dict):
+            return meta
+
+        label = getattr(getattr(self.obj, "_meta", None), "label_lower", "")
+        if label == "posts.moment" or label == "posts.prayer":
+            source_fields = {"caption": getattr(self.obj, "caption", None)}
+        elif label == "posts.testimony" and getattr(self.obj, "type", None) == "written":
+            source_fields = {
+                "title": getattr(self.obj, "title", None),
+                "content": getattr(self.obj, "content", None),
             }
+        else:
+            return meta
+
+        if not any(value and str(value).strip() for value in source_fields.values()):
+            return meta
+        try:
+            presentation = cached_automatic_fields(
+                obj=self.obj,
+                fields=source_fields,
+                viewer=self.viewer,
+            )
+        except Exception:
+            logger.exception("square_translation_cache_read_failed id=%s", getattr(self.obj, "pk", None))
+            return meta
+
+        # Square is the home entry: translation generation must not depend on
+        # opening an individual Stream or tapping a client-side language menu.
+        # Only metadata of an item that passed the Boundary gate reaches here.
+        remaining = 2
+        if self.request is not None:
+            already_queued = getattr(
+                self.request, "_square_translation_jobs_enqueued", 0,
+            )
+            remaining = max(0, automatic_stream_request_limit() - already_queued)
+        if remaining:
+            queued = dispatch_missing_automatic_fields(
+                obj=self.obj,
+                presentation=presentation,
+                viewer=self.viewer,
+                remaining=min(remaining, 2),
+            )
+            if self.request is not None:
+                self.request._square_translation_jobs_enqueued = already_queued + queued
+
+        fields = presentation.get("fields", {})
+        for field_name, source in source_fields.items():
+            result = fields.get(field_name)
+            if not isinstance(result, dict) or result.get("status") != "ready":
+                continue
+            if result.get("original") != source:
+                continue
+            translated = result.get("translated")
+            if not isinstance(translated, str) or not translated.strip():
+                continue
+            output_key = "localized_title" if field_name == "title" else "localized_excerpt"
+            meta[output_key] = translated[:120 if field_name == "title" else 160]
+        return meta
 
     def should_hide_for_boundary(self) -> bool:
         """
@@ -236,7 +319,7 @@ class SquareProjection:
             "id": self.obj.id,
             "published_at": getattr(self.obj, "published_at", None),
             "preview": preview,
-            "meta": self.get_meta(),
+            "meta": self._localized_meta(dict(self.get_meta())),
 
             # Owner metadata for iOS/web local safety and future routing.
             **owner_payload,
