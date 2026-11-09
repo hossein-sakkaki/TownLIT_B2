@@ -1,4 +1,9 @@
 # townlit_b/settings.py
+# TownLIT-Backend
+#
+# Created by Hossein Sakkaki on 2025-04-16.
+# Last Update by Hossein Sakkaki on 2026-11-09.
+#
 
 from pathlib import Path
 import os
@@ -53,6 +58,9 @@ else:
 CORS_ALLOW_CREDENTIALS = os.getenv(
     "CORS_ALLOW_CREDENTIALS", "True"
 ).lower() in ("true", "1", "t")
+
+# Machine denial stubs must not inherit human-browser CORS/preflight handling.
+CORS_URLS_REGEX = r"^(?!/api/v1/ai-integrations(?:/|$)).*$"
 
 # ---------------------------------------------------------------------
 # FRONTEND BASE (for internal use only)
@@ -197,6 +205,7 @@ DJANGO_CRYPTO_KEY = os.getenv("DJANGO_CRYPTO_KEY")
 # Application definition
 
 INSTALLED_APPS = [
+    'apps.ai_gateway.apps.AIGatewayConfig',
     'channels',             # Real-Time Notification
     
     'django.contrib.admin',
@@ -475,6 +484,9 @@ REST_FRAMEWORK = {
 AUTH_SESSION_GENERATION_ENFORCE = env_bool(
     "AUTH_SESSION_GENERATION_ENFORCE", default=False,
 )
+
+# B1 cannot enable credentials or domain operations, even with this switch on.
+AI_GATEWAY_ENABLED = env_bool("AI_GATEWAY_ENABLED", default=False)
 
 # Password changes invalidate previous JWT generations and reset never logs in.
 # Keep disabled until Web/iOS/other clients support login_required responses.

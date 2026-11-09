@@ -1,0 +1,11 @@
+# requirements.ai-gateway-b11a.txt
+# TownLIT-Backend
+#
+# Created by Hossein Sakkaki on 2026-11-06.
+# Last Update by Hossein Sakkaki on 2026-11-06.
+#
+# Separate synthetic verifier venv ONLY. Never overlay requirements.txt.
+joserfc==1.8.0
+cryptography==50.0.2
+Django==5.2.18
+django-cors-headers==4.9.0

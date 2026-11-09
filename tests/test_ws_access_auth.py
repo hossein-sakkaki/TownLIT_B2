@@ -2,7 +2,7 @@
 # TownLIT
 #
 # Created by Hossein Sakkaki on 2026-10-23.
-# Last Update by Hossein Sakkaki on 2026-11-02.
+# Last Update by Hossein Sakkaki on 2026-11-07.
 
 import unittest
 from types import SimpleNamespace
@@ -19,6 +19,7 @@ class WebSocketAccessAuthTests(unittest.TestCase):
     def setUp(self):
         self.user = SimpleNamespace(
             id=1,
+            pk=1,
             is_authenticated=True,
             is_active=True,
             is_deleted=False,
@@ -112,6 +113,7 @@ class WebSocketSessionGateTests(unittest.TestCase):
     def setUp(self):
         self.user = SimpleNamespace(
             id=11,
+            pk=11,
             is_active=True,
             is_deleted=False,
             is_suspended=False,
